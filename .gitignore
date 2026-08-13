@@ -1,0 +1,12 @@
+.worktrees/
+.superpowers/
+.DS_Store
+/procmesh
+/procmesh-agent
+/procmesh-shim
+*.test
+/bin/
+dist/
+web/node_modules/
+web/dist/
+*.exe
