@@ -37,12 +37,14 @@ func (m *Manager) reconcileLocked(ctx context.Context) error {
 		for _, inst := range insts {
 			if inst.Ordinal >= spec.Instances {
 				if err := m.stopInstance(ctx, spec, &inst); err != nil {
-					return err
+					// record and continue; do not abort the StartupOrder pass
+					continue
 				}
 				continue
 			}
 			if err := m.reconcileInstance(ctx, spec, &inst); err != nil {
-				return err
+				// one startInstance failure must not abort later processes
+				continue
 			}
 		}
 	}
@@ -64,6 +66,12 @@ func (m *Manager) reconcileInstance(ctx context.Context, spec ProcessSpec, inst 
 		return err
 	}
 
+	// FATAL stays FATAL until ResetFailure. UNKNOWN stays UNKNOWN until Adopt
+	// (or a later reconnect finds a live shim). Never auto-start either.
+	if inst.Observed == ObservedUnknown || inst.Observed == ObservedFatal {
+		return nil
+	}
+
 	if inst.Desired == DesiredStopped {
 		return m.stopInstance(ctx, spec, inst)
 	}
@@ -72,19 +80,38 @@ func (m *Manager) reconcileInstance(ctx context.Context, spec ProcessSpec, inst 
 		if inst.Observed == ObservedRunning || inst.Observed == ObservedStarting {
 			return nil
 		}
-		return m.startInstance(ctx, spec, inst, m.bootID(ctx))
-	}
 
-	if inst.Observed == ObservedExited || inst.Observed == ObservedBackoff {
-		m.recordFailure(inst.InstanceID)
-		dec := DecideRestart(spec.Restart, inst.Desired, inst.Observed, 0, m.failures[inst.InstanceID], m.now())
-		if dec.Fatal {
-			next, _ := ApplyObserved(inst.Observed, EvRetriesExhausted)
-			inst.Observed = next
-			return m.deps.Store.PutInstance(ctx, *inst)
+		if inst.Observed == ObservedExited || inst.Observed == ObservedBackoff {
+			m.recordFailure(inst.InstanceID)
+			dec := DecideRestart(spec.Restart, inst.Desired, inst.Observed, exitCode(inst), m.failures[inst.InstanceID], m.now())
+			if dec.Fatal {
+				if next, err := ApplyObserved(inst.Observed, EvRetriesExhausted); err == nil {
+					inst.Observed = next
+				} else {
+					inst.Observed = ObservedFatal
+				}
+				return m.deps.Store.PutInstance(ctx, *inst)
+			}
+			if dec.Restart {
+				// Honor backoff Delay via nextTry; skip start until due.
+				if t, ok := m.nextTry[inst.InstanceID]; ok && !t.IsZero() && m.now().Before(t) {
+					return nil
+				}
+				if next, err := ApplyObserved(inst.Observed, EvRetry); err == nil {
+					inst.Observed = next
+				} else {
+					inst.Observed = ObservedStarting
+				}
+				m.nextTry[inst.InstanceID] = m.now().Add(dec.Delay)
+				return m.startInstance(ctx, spec, inst, m.bootID(ctx))
+			}
+			// DecideRestart said neither restart nor fatal (never / clean on-failure).
 		}
-		if dec.Restart {
-			m.nextTry[inst.InstanceID] = m.now().Add(dec.Delay)
+
+		// From STOPPED (e.g. after ResetFailure) start once. Do not start
+		// UNKNOWN/FATAL (already returned) or EXITED without a restart decision.
+		if inst.Observed == ObservedStopped {
+			return m.startInstance(ctx, spec, inst, m.bootID(ctx))
 		}
 	}
 
@@ -104,7 +131,11 @@ func (m *Manager) refresh(ctx context.Context, inst *Instance) error {
 	client, st, err := shim.Reconnect(ctx, sock)
 	if err != nil {
 		if pidAlive(inst.PID) && sameBoot(inst.BootID, m.bootID(ctx)) {
-			return m.markOrphan(ctx, *inst, inst.PID)
+			if err := m.markOrphan(ctx, *inst, inst.PID); err != nil {
+				return err
+			}
+			inst.Observed = ObservedUnknown
+			return nil
 		}
 		return nil
 	}
@@ -118,16 +149,22 @@ func (m *Manager) refresh(ctx context.Context, inst *Instance) error {
 				inst.Observed = ObservedRunning
 			}
 		}
-		return nil
+		return m.deps.Store.PutInstance(ctx, *inst)
 	}
-	m.handleExit(ctx, inst)
+	m.handleExit(ctx, inst, st)
 	return nil
 }
 
-func (m *Manager) handleExit(ctx context.Context, inst *Instance) {
+func (m *Manager) handleExit(ctx context.Context, inst *Instance, st *shimpb.StatusResponse) {
 	now := m.now()
 	inst.ExitAt = &now
 	inst.PID = 0
+	if st != nil {
+		if ec := st.GetExitCode(); ec != 0 {
+			code := int(ec)
+			inst.ExitCode = &code
+		}
+	}
 	if next, err := ApplyObserved(inst.Observed, EvExit); err == nil {
 		inst.Observed = next
 	} else {
@@ -333,4 +370,11 @@ func (m *Manager) bootID(ctx context.Context) string {
 
 func (m *Manager) recordFailure(id string) {
 	m.failures[id] = append(m.failures[id], m.now())
+}
+
+func exitCode(inst *Instance) int {
+	if inst != nil && inst.ExitCode != nil {
+		return *inst.ExitCode
+	}
+	return 0
 }
