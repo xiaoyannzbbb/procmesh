@@ -64,9 +64,11 @@ func Run(ctx context.Context, dataDir, listen, shimBin string) error {
 		return fmt.Errorf("new server: %w", err)
 	}
 	go func() {
-		if err := srv.Serve(srv.Listener); err != nil && err != http.ErrServerClosed {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			fmt.Fprintf(os.Stderr, "serve: %v\n", err)
 		}
 	}()
 	return nil
 }
+// Fix: pre-existing build error fixed by using ListenAndServe() (replaces Serve(listener) which required undefined Listener field).
+// This starts the server using the embedded http.Server's ListenAndServe method.
