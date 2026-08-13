@@ -132,5 +132,5 @@ type ResourceLimit struct{}
 
 type Dependency struct {
 	ProcessName string
-	Condition   string
+	Condition   DepCondition
 }
