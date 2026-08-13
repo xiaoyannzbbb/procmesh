@@ -1,0 +1,43 @@
+syntax = "proto3";
+package procmesh.shim.v1;
+option go_package = "github.com/qleelulu/procmesh/proto/shim/v1;shimpb";
+
+message StartRequest {
+  string command = 1;
+  repeated string args = 2;
+  map<string, string> env = 3;
+  string cwd = 4;
+  string run_as_user = 5;
+  string stdout_path = 6;
+  string stderr_path = 7;
+}
+message StartResponse { int32 pid = 1; string error = 2; }
+message StopRequest { string signal = 1; int32 timeout_ms = 2; string kill_signal = 3; }
+message StopResponse { int32 exit_code = 1; string error = 2; }
+message SignalRequest { string signal = 1; }
+message SignalResponse { string error = 1; }
+message StatusRequest {}
+message StatusResponse {
+  int32 pid = 1;
+  bool alive = 2;
+  int32 exit_code = 3;
+  int64 started_unix = 4;
+  string error = 5;
+}
+message WaitRequest {}
+message WaitResponse { int32 exit_code = 1; string error = 2; }
+
+message Envelope {
+  oneof body {
+    StartRequest start = 1;
+    StopRequest stop = 2;
+    SignalRequest signal = 3;
+    StatusRequest status = 4;
+    WaitRequest wait = 5;
+    StartResponse start_ok = 10;
+    StopResponse stop_ok = 11;
+    SignalResponse signal_ok = 12;
+    StatusResponse status_ok = 13;
+    WaitResponse wait_ok = 14;
+  }
+}
