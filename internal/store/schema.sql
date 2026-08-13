@@ -11,7 +11,20 @@ CREATE TABLE IF NOT EXISTS process_specs (
 );
 
 CREATE TABLE IF NOT EXISTS process_instances (
-    _stub INTEGER
+    instance_id TEXT PRIMARY KEY,
+    process_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL,
+    pid INTEGER NOT NULL,
+    shim_pid INTEGER NOT NULL,
+    desired TEXT NOT NULL,
+    observed TEXT NOT NULL,
+    health TEXT NOT NULL,
+    started_at TEXT,
+    exit_at TEXT,
+    exit_code INTEGER,
+    restart_count INTEGER NOT NULL,
+    active_revision INTEGER NOT NULL,
+    boot_id TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS config_revisions (
@@ -26,7 +39,18 @@ CREATE TABLE IF NOT EXISTS config_revisions (
 );
 
 CREATE TABLE IF NOT EXISTS operation_journal (
-    _stub INTEGER
+    operation_id TEXT PRIMARY KEY,
+    operator TEXT NOT NULL,
+    source_agent TEXT NOT NULL,
+    target TEXT NOT NULL,
+    type TEXT NOT NULL,
+    request_payload BLOB,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    status TEXT NOT NULL,
+    result BLOB,
+    error TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS audit_events (
