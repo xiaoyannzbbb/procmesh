@@ -1,0 +1,59 @@
+package paths_test
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/qleelulu/procmesh/internal/paths"
+)
+
+func TestShimSocket_SanitizesColon(t *testing.T) {
+	l := paths.New("/data")
+	if l.ShimSocket("abc:0") != "/data/shim/abc_0.sock" {
+		t.Fatal(l.ShimSocket("abc:0"))
+	}
+}
+
+func TestNew_LayoutFields(t *testing.T) {
+	l := paths.New("/data")
+	if l.Root != "/data" {
+		t.Fatalf("Root=%q", l.Root)
+	}
+	if l.Store != "/data/store.db" {
+		t.Fatalf("Store=%q", l.Store)
+	}
+	if l.ShimDir != "/data/shim" {
+		t.Fatalf("ShimDir=%q", l.ShimDir)
+	}
+	if l.LogDir != "/data/logs" {
+		t.Fatalf("LogDir=%q", l.LogDir)
+	}
+	if l.RuntimeDir != "/data/runtime" {
+		t.Fatalf("RuntimeDir=%q", l.RuntimeDir)
+	}
+	if l.ClusterDir != "/data/cluster" {
+		t.Fatalf("ClusterDir=%q", l.ClusterDir)
+	}
+}
+
+func TestEnsure_CreatesDirs0750(t *testing.T) {
+	root := t.TempDir()
+	base := filepath.Join(root, "pm")
+	l := paths.New(base)
+	if err := l.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{l.Root, l.ShimDir, l.LogDir, l.RuntimeDir, l.ClusterDir} {
+		st, err := os.Stat(dir)
+		if err != nil {
+			t.Fatalf("stat %s: %v", dir, err)
+		}
+		if !st.IsDir() {
+			t.Fatalf("%s is not a dir", dir)
+		}
+		if perm := st.Mode().Perm(); perm != 0o750 {
+			t.Fatalf("%s perm=%o want 0750", dir, perm)
+		}
+	}
+}
