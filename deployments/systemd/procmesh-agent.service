@@ -1,0 +1,13 @@
+[Unit]
+Description=ProcMesh Agent
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/procmesh-agent --data-dir /var/lib/procmesh --listen 127.0.0.1:9000
+Restart=on-failure
+KillMode=process
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

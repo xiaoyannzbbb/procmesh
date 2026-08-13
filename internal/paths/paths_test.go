@@ -57,3 +57,9 @@ func TestEnsure_CreatesDirs0750(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultRoot_NonEmpty(t *testing.T) {
+	if paths.DefaultRoot() == "" {
+		t.Fatal("empty")
+	}
+}
