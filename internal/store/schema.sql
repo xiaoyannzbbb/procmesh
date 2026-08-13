@@ -54,5 +54,16 @@ CREATE TABLE IF NOT EXISTS operation_journal (
 );
 
 CREATE TABLE IF NOT EXISTS audit_events (
-    _stub INTEGER
+    audit_id TEXT PRIMARY KEY,
+    timestamp TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    username TEXT NOT NULL,
+    source_ip TEXT NOT NULL,
+    source_agent TEXT NOT NULL,
+    target_agent TEXT NOT NULL,
+    resource TEXT NOT NULL,
+    action TEXT NOT NULL,
+    operation_id TEXT NOT NULL,
+    result TEXT NOT NULL,
+    metadata BLOB
 );
