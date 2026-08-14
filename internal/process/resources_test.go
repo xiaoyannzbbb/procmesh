@@ -33,3 +33,10 @@ func TestApplyResourceLimit_NonLinux(t *testing.T) {
 		t.Fatalf("want INVALID got %v", err)
 	}
 }
+
+func TestApplyResourceLimit_InvalidPID(t *testing.T) {
+	err := process.ApplyResourceLimit(0, process.ResourceLimit{MemoryBytes: 1 << 20})
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("want INVALID got %v", err)
+	}
+}

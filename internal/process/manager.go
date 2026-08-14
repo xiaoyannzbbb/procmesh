@@ -82,13 +82,6 @@ func (m *Manager) ApplySpec(ctx context.Context, spec ProcessSpec, expectedRevis
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ApplyDefaults(&spec)
-	if expectedRevision == 0 && spec.ProcessID == "" {
-		id, err := newProcessID()
-		if err != nil {
-			return ProcessSpec{}, err
-		}
-		spec.ProcessID = id
-	}
 	if err := ValidateSpec(spec); err != nil {
 		return ProcessSpec{}, err
 	}
@@ -97,14 +90,15 @@ func (m *Manager) ApplySpec(ctx context.Context, spec ProcessSpec, expectedRevis
 		return ProcessSpec{}, err
 	}
 	if done {
-		got, getErr := m.deps.Store.GetSpec(ctx, spec.ProcessID)
-		if getErr != nil {
-			if existing.Error != "" {
-				return ProcessSpec{}, errcode.E(errcode.INVALID, existing.Error)
-			}
-			return ProcessSpec{}, getErr
+		return m.replayApplySpec(ctx, spec.ProcessID, opID, existing)
+	}
+	if expectedRevision == 0 && spec.ProcessID == "" {
+		id, err := newProcessID()
+		if err != nil {
+			_ = m.finishOp(ctx, opID, opFailed, nil, err.Error())
+			return ProcessSpec{}, err
 		}
-		return got, nil
+		spec.ProcessID = id
 	}
 	out, err := m.deps.Store.PutSpec(ctx, spec, expectedRevision, operator, comment)
 	if err != nil {
@@ -455,9 +449,27 @@ func (m *Manager) ensureInstances(ctx context.Context, spec ProcessSpec) error {
 			if err := m.deps.Store.DeleteInstance(ctx, inst.InstanceID); err != nil {
 				return err
 			}
+			m.forgetInstance(inst.InstanceID)
 		}
 	}
 	return nil
+}
+
+func (m *Manager) replayApplySpec(ctx context.Context, processID, opID string, existing opResult) (ProcessSpec, error) {
+	if existing.Status == opFailed {
+		return ProcessSpec{}, errcode.E(errcode.INVALID, existing.Error)
+	}
+	_, result, _, err := m.deps.Store.GetOp(ctx, opID)
+	if err == nil && len(result) > 0 {
+		var out ProcessSpec
+		if json.Unmarshal(result, &out) == nil && out.ProcessID != "" {
+			return out, nil
+		}
+	}
+	if processID == "" {
+		return ProcessSpec{}, errcode.E(errcode.NOT_FOUND, "process")
+	}
+	return m.deps.Store.GetSpec(ctx, processID)
 }
 
 func extraInstanceDeletable(inst Instance) bool {

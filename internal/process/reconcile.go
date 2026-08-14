@@ -49,7 +49,10 @@ func (m *Manager) reconcileLocked(ctx context.Context) error {
 					continue
 				}
 				if extraInstanceDeletable(inst) {
-					_ = m.deps.Store.DeleteInstance(ctx, inst.InstanceID)
+					if err := m.deps.Store.DeleteInstance(ctx, inst.InstanceID); err != nil {
+						continue
+					}
+					m.forgetInstance(inst.InstanceID)
 				}
 				continue
 			}
@@ -478,6 +481,13 @@ func (m *Manager) resetHealth(id string) {
 	delete(m.healthTrackers, id)
 	delete(m.lastHealthCheck, id)
 	delete(m.lastHealthRestart, id)
+}
+
+func (m *Manager) forgetInstance(id string) {
+	m.closeClient(id)
+	delete(m.failures, id)
+	delete(m.nextTry, id)
+	m.resetHealth(id)
 }
 
 func (m *Manager) resetAllHealth() {

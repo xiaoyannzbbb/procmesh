@@ -7,6 +7,28 @@ import (
 	"github.com/qleelulu/procmesh/internal/process"
 )
 
+func TestDecideRestart_NegativeBackoffUsesMax(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	pol := process.RestartPolicy{
+		Mode:    process.RestartAlways,
+		Backoff: process.Backoff{Initial: time.Second, Max: 3 * time.Second, Multiplier: -2},
+	}
+	d := process.DecideRestart(pol, process.DesiredRunning, process.ObservedExited, 1, []time.Time{now}, now)
+	if !d.Restart || d.Delay != 3*time.Second {
+		t.Fatalf("negative delay should clamp to max: %+v", d)
+	}
+}
+
+func TestCountFailures_IgnoresFutureAndOutsideWindow(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	pol := process.RestartPolicy{Mode: process.RestartAlways, MaxRetries: 2, RetryWindow: time.Second}
+	fails := []time.Time{now.Add(time.Second), now.Add(-2 * time.Second), now.Add(-100 * time.Millisecond)}
+	d := process.DecideRestart(pol, process.DesiredRunning, process.ObservedExited, 1, fails, now)
+	if d.Fatal || !d.Restart {
+		t.Fatalf("one in-window failure: %+v", d)
+	}
+}
+
 func TestDecideRestart_CrashLoopBecomesFatal(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	pol := process.RestartPolicy{Mode: process.RestartOnFailure, MaxRetries: 3, RetryWindow: time.Minute, Backoff: process.Backoff{Initial: time.Second, Max: time.Minute, Multiplier: 2}}

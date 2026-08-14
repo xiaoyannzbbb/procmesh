@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -22,6 +23,8 @@ import (
 	"github.com/qleelulu/procmesh/internal/store"
 	"golang.org/x/sys/unix"
 )
+
+var processIDRE = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
 func TestApplySpec_CreatesInstancesAndIdempotentOp(t *testing.T) {
 	ctx := context.Background()
@@ -57,6 +60,36 @@ func TestApplySpec_GeneratesProcessID(t *testing.T) {
 	if err != nil || got.ProcessID == "" {
 		t.Fatalf("%+v %v", got, err)
 	}
+	if !processIDRE.MatchString(got.ProcessID) {
+		t.Fatalf("uuid form %q", got.ProcessID)
+	}
+}
+
+func TestApplySpec_EmptyProcessIDReplayKeepsSameID(t *testing.T) {
+	ctx := context.Background()
+	m, st, _ := newTestManager(t)
+	spec := process.ProcessSpec{Name: "n", Command: "/bin/true"}
+	first, err := m.ApplySpec(ctx, spec, 0, "op-empty", "t", "")
+	if err != nil || first.ProcessID == "" {
+		t.Fatalf("%+v %v", first, err)
+	}
+	if !processIDRE.MatchString(first.ProcessID) {
+		t.Fatalf("uuid form %q", first.ProcessID)
+	}
+	again, err := m.ApplySpec(ctx, spec, 0, "op-empty", "t", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ProcessID != first.ProcessID {
+		t.Fatalf("replay generated new id %q vs %q", again.ProcessID, first.ProcessID)
+	}
+	if again.LatestRevision != first.LatestRevision {
+		t.Fatalf("replay changed rev %d vs %d", again.LatestRevision, first.LatestRevision)
+	}
+	got, err := st.GetSpec(ctx, first.ProcessID)
+	if err != nil || got.LatestRevision != first.LatestRevision {
+		t.Fatalf("store %+v %v", got, err)
+	}
 }
 
 func TestApplySpec_ScaleDownDeletesStoppedExtra(t *testing.T) {
@@ -88,6 +121,41 @@ func TestApplySpec_ScaleDownDeletesStoppedExtra(t *testing.T) {
 	}
 	if insts[0].Ordinal != 0 {
 		t.Fatalf("want ordinal 0 got %+v", insts[0])
+	}
+}
+
+func TestApplySpec_ScaleDownClearsInstanceMemory(t *testing.T) {
+	ctx := context.Background()
+	m, st, _ := newTestManager(t)
+	spec := process.ProcessSpec{ProcessID: "p1", Name: "n", Command: "/bin/true", Instances: 2}
+	got, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := process.MakeInstanceID("p1", 1)
+	process.SeedInstanceMemory(m, id)
+	if !process.InstanceMemoryHeld(m, id) {
+		t.Fatal("seed failed")
+	}
+	spec.Instances = 1
+	if _, err := m.ApplySpec(ctx, spec, got.LatestRevision, "op-scale", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	insts, err := st.ListInstances(ctx, "p1")
+	if err != nil || len(insts) != 1 {
+		t.Fatalf("scale-down insts=%d err=%v", len(insts), err)
+	}
+	if process.InstanceMemoryHeld(m, id) {
+		t.Fatal("scale-down must drop failures/nextTry/health/clients")
+	}
+}
+
+func TestApplySpec_StoreClosed(t *testing.T) {
+	m, st, _ := newTestManager(t)
+	_ = st.Close()
+	_, err := m.ApplySpec(context.Background(), process.ProcessSpec{ProcessID: "p1", Name: "n", Command: "/bin/true"}, 0, "op", "t", "")
+	if err == nil {
+		t.Fatal("expected store error")
 	}
 }
 
@@ -1249,5 +1317,388 @@ func TestReconcile_StartsAfterDepStarted(t *testing.T) {
 	}
 	if gotAPI.Observed != process.ObservedRunning || gotAPI.PID <= 0 {
 		t.Fatalf("api should start after mysql STARTED, got %+v", gotAPI)
+	}
+}
+
+func TestManager_ReadAccessors(t *testing.T) {
+	ctx := context.Background()
+	m, _, layout := newTestManager(t)
+	spec := process.ProcessSpec{ProcessID: "p1", Name: "true", Command: "/bin/true", Instances: 1}
+	if _, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.GetSpec(ctx, "p1")
+	if err != nil || got.ProcessID != "p1" {
+		t.Fatalf("%+v %v", got, err)
+	}
+	specs, err := m.ListSpecs(ctx)
+	if err != nil || len(specs) != 1 {
+		t.Fatalf("%v %v", specs, err)
+	}
+	insts, err := m.ListInstances(ctx, "p1")
+	if err != nil || len(insts) != 1 {
+		t.Fatalf("%v %v", insts, err)
+	}
+	inst, err := m.GetInstance(ctx, insts[0].InstanceID)
+	if err != nil || inst.InstanceID != insts[0].InstanceID {
+		t.Fatalf("%+v %v", inst, err)
+	}
+	status, result, _, err := m.PeekOp(ctx, "op-c")
+	if err != nil || status != "SUCCESS" || len(result) == 0 {
+		t.Fatalf("peek %s %q %v", status, result, err)
+	}
+	if m.Layout().Root != layout.Root {
+		t.Fatalf("layout root %q", m.Layout().Root)
+	}
+}
+
+func TestApplySpec_RejectsInvalidName(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	_, err := m.ApplySpec(context.Background(), process.ProcessSpec{ProcessID: "p1", Name: "!!!", Command: "/bin/true"}, 0, "op", "t", "")
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestApplySpec_ReplayFailedRevision(t *testing.T) {
+	ctx := context.Background()
+	m, _, _ := newTestManager(t)
+	_, err := m.ApplySpec(ctx, process.ProcessSpec{ProcessID: "missing", Name: "n", Command: "/bin/true"}, 5, "op-fail", "t", "")
+	if err == nil {
+		t.Fatal("expected revision error")
+	}
+	_, err = m.ApplySpec(ctx, process.ProcessSpec{ProcessID: "missing", Name: "n", Command: "/bin/true"}, 5, "op-fail", "t", "")
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("replay want INVALID got %v", err)
+	}
+}
+
+func TestRestart_StopsThenSetsDesiredRunning(t *testing.T) {
+	ctx := context.Background()
+	m, st, _ := newTestManager(t)
+	spec := process.ProcessSpec{
+		ProcessID: "p1",
+		Name:      "sleep",
+		Command:   "/bin/sleep",
+		Args:      []string{"60"},
+		Instances: 1,
+		Restart:   process.RestartPolicy{Mode: process.RestartAlways},
+	}
+	inst := startSleep(t, m, st, spec)
+	oldPID := inst.PID
+	if err := m.Restart(ctx, "p1", "op-rst", "t"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetInstance(ctx, inst.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Desired != process.DesiredRunning {
+		t.Fatalf("desired %s", got.Desired)
+	}
+	if got.Observed != process.ObservedStopped {
+		t.Fatalf("observed after inner stop %s", got.Observed)
+	}
+	if err := unix.Kill(oldPID, 0); err == nil {
+		t.Fatal("old pid still alive")
+	}
+	if err := m.Restart(ctx, "p1", "op-rst", "t"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRestart_MissingSpec(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	err := m.Restart(context.Background(), "nope", "op-r", "t")
+	if !errcode.Is(err, errcode.NOT_FOUND) {
+		t.Fatalf("got %v", err)
+	}
+	err = m.Restart(context.Background(), "nope", "op-r", "t")
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("replay want INVALID got %v", err)
+	}
+}
+
+func TestNewManager_DefaultNow(t *testing.T) {
+	root := shortRoot(t)
+	st := openStoreAt(t, filepath.Join(root, "store.db"))
+	layout := paths.New(root)
+	if err := layout.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	m := process.NewManager(process.Deps{Store: st, Layout: layout})
+	if err := m.RotateLogs(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestApplySpec_ReplayFallsBackToGetSpec(t *testing.T) {
+	ctx := context.Background()
+	m, st, _ := newTestManager(t)
+	spec := process.ProcessSpec{ProcessID: "p1", Name: "n", Command: "/bin/true"}
+	if _, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := st.StartOp(ctx, "op-bad-json", "t", "apply_spec", "p1", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.FinishOperation(ctx, "op-bad-json", "SUCCESS", []byte("not-json"), ""); err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.ApplySpec(ctx, spec, 0, "op-bad-json", "t", "")
+	if err != nil || got.ProcessID != "p1" {
+		t.Fatalf("%+v %v", got, err)
+	}
+	if _, _, _, err := st.StartOp(ctx, "op-blank", "t", "apply_spec", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.FinishOperation(ctx, "op-blank", "SUCCESS", nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	_, err = m.ApplySpec(ctx, process.ProcessSpec{Name: "n", Command: "/bin/true"}, 0, "op-blank", "t", "")
+	if !errcode.Is(err, errcode.NOT_FOUND) {
+		t.Fatalf("empty id replay want NOT_FOUND got %v", err)
+	}
+}
+
+func TestSetDesired_ReplayAndMissing(t *testing.T) {
+	ctx := context.Background()
+	m, _, _ := newTestManager(t)
+	spec := process.ProcessSpec{ProcessID: "p1", Name: "true", Command: "/bin/true", Instances: 1}
+	if _, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetDesired(ctx, "p1", process.DesiredRunning, "op-s", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetDesired(ctx, "p1", process.DesiredRunning, "op-s", "t"); err != nil {
+		t.Fatal(err)
+	}
+	err := m.SetDesired(ctx, "missing", process.DesiredRunning, "op-miss", "t")
+	if !errcode.Is(err, errcode.NOT_FOUND) {
+		t.Fatalf("got %v", err)
+	}
+	err = m.SetDesired(ctx, "missing", process.DesiredRunning, "op-miss", "t")
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("replay want INVALID got %v", err)
+	}
+}
+
+func TestDeleteSpec_ReplayAndLivePID(t *testing.T) {
+	ctx := context.Background()
+	m, st, _ := newTestManager(t)
+	spec := process.ProcessSpec{ProcessID: "p1", Name: "true", Command: "/bin/true", Instances: 1}
+	got, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.DeleteSpec(ctx, "p1", got.LatestRevision, "op-d", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.DeleteSpec(ctx, "p1", got.LatestRevision, "op-d", "t"); err != nil {
+		t.Fatal(err)
+	}
+	spec = process.ProcessSpec{ProcessID: "p2", Name: "live", Command: "/bin/true", Instances: 1}
+	got, err = m.ApplySpec(ctx, spec, 0, "op-c2", "t", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := st.GetInstance(ctx, process.MakeInstanceID("p2", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	boot, err := st.GetBootID(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst.PID = os.Getpid()
+	inst.BootID = boot
+	inst.Desired = process.DesiredStopped
+	inst.Observed = process.ObservedStopped
+	if err := st.PutInstance(ctx, inst); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.DeleteSpec(ctx, "p2", got.LatestRevision, "op-dlive", "t"); !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("live pid want INVALID got %v", err)
+	}
+	err = m.DeleteSpec(ctx, "p2", got.LatestRevision, "op-dlive", "t")
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("replay want INVALID got %v", err)
+	}
+}
+
+func TestDeleteSpec_NonTerminalAndBadRevision(t *testing.T) {
+	ctx := context.Background()
+	m, st, _ := newTestManager(t)
+	spec := process.ProcessSpec{ProcessID: "p1", Name: "n", Command: "/bin/true", Instances: 1}
+	got, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := st.GetInstance(ctx, process.MakeInstanceID("p1", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst.Desired = process.DesiredStopped
+	inst.Observed = process.ObservedRunning
+	if err := st.PutInstance(ctx, inst); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.DeleteSpec(ctx, "p1", got.LatestRevision, "op-nt", "t"); !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("non-terminal want INVALID got %v", err)
+	}
+	inst.Observed = process.ObservedStopped
+	if err := st.PutInstance(ctx, inst); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.DeleteSpec(ctx, "p1", got.LatestRevision+9, "op-rev", "t"); err == nil {
+		t.Fatal("bad revision")
+	}
+}
+
+func TestResetFailure_Replay(t *testing.T) {
+	ctx := context.Background()
+	m, _, _ := newTestManager(t)
+	spec := process.ProcessSpec{ProcessID: "p1", Name: "true", Command: "/bin/true", Instances: 1}
+	if _, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ResetFailure(ctx, "p1", "op-r", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ResetFailure(ctx, "p1", "op-r", "t"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAdopt_ReplayAndMissingInstance(t *testing.T) {
+	ctx := context.Background()
+	m, _, _ := newTestManager(t)
+	spec := process.ProcessSpec{ProcessID: "p1", Name: "self", Command: "/bin/true", Instances: 1}
+	if _, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	pid := os.Getpid()
+	if err := m.Adopt(ctx, process.MakeInstanceID("p1", 0), pid, "op-a", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Adopt(ctx, process.MakeInstanceID("p1", 0), pid, "op-a", "t"); err != nil {
+		t.Fatal(err)
+	}
+	err := m.Adopt(ctx, "nope:0", pid, "op-miss", "t")
+	if !errcode.Is(err, errcode.NOT_FOUND) {
+		t.Fatalf("got %v", err)
+	}
+	err = m.Adopt(ctx, "nope:0", pid, "op-miss", "t")
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("replay want INVALID got %v", err)
+	}
+}
+
+func TestRotateLogs_NilManagerAndCanceled(t *testing.T) {
+	var m *process.Manager
+	if err := m.RotateLogs(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	m2, _, _ := newTestManager(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := m2.RotateLogs(ctx); err == nil {
+		t.Fatal("canceled ctx")
+	}
+}
+
+func TestApplySpec_ScaleDownKeepsLiveExtra(t *testing.T) {
+	ctx := context.Background()
+	m, st, _ := newTestManager(t)
+	spec := process.ProcessSpec{ProcessID: "p1", Name: "n", Command: "/bin/true", Instances: 2}
+	got, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	insts, err := st.ListInstances(ctx, "p1")
+	if err != nil || len(insts) != 2 {
+		t.Fatalf("insts=%d err=%v", len(insts), err)
+	}
+	extra := insts[1]
+	extra.Desired = process.DesiredStopped
+	extra.Observed = process.ObservedStopped
+	extra.PID = os.Getpid()
+	if err := st.PutInstance(ctx, extra); err != nil {
+		t.Fatal(err)
+	}
+	spec.Instances = 1
+	if _, err := m.ApplySpec(ctx, spec, got.LatestRevision, "op-scale", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	insts, err = st.ListInstances(ctx, "p1")
+	if err != nil || len(insts) != 2 {
+		t.Fatalf("live extra must remain insts=%d err=%v", len(insts), err)
+	}
+}
+
+func TestReconcile_ScaleDownDeletesStoppedExtra(t *testing.T) {
+	ctx := context.Background()
+	m, st, _ := newTestManager(t)
+	t.Cleanup(func() { killManaged(t, st, "p1") })
+	spec := process.ProcessSpec{ProcessID: "p1", Name: "sleep", Command: "/bin/sleep", Args: []string{"60"}, Instances: 2}
+	got, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetDesired(ctx, "p1", process.DesiredRunning, "op-s", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	insts, err := st.ListInstances(ctx, "p1")
+	if err != nil || len(insts) != 2 {
+		t.Fatalf("insts=%d err=%v", len(insts), err)
+	}
+	id1 := process.MakeInstanceID("p1", 1)
+	process.SeedInstanceMemory(m, id1)
+	spec.Instances = 1
+	if _, err := m.ApplySpec(ctx, spec, got.LatestRevision, "op-scale", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	insts, err = st.ListInstances(ctx, "p1")
+	if err != nil || len(insts) != 1 {
+		t.Fatalf("reconcile scale-down insts=%d err=%v", len(insts), err)
+	}
+	if process.InstanceMemoryHeld(m, id1) {
+		t.Fatal("reconcile delete must forget extra instance")
+	}
+}
+
+func TestReconcile_RunAsUserWithoutLookUser(t *testing.T) {
+	ctx := context.Background()
+	m, st, _ := newTestManager(t)
+	spec := process.ProcessSpec{
+		ProcessID: "p1",
+		Name:      "n",
+		Command:   "/bin/sleep",
+		Args:      []string{"60"},
+		Instances: 1,
+		RunAsUser: "nobody",
+	}
+	if _, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetDesired(ctx, "p1", process.DesiredRunning, "op-s", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetInstance(ctx, process.MakeInstanceID("p1", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PID != 0 {
+		t.Fatalf("must not start without LookUser: %+v", got)
 	}
 }

@@ -8,6 +8,10 @@ import (
 	"github.com/qleelulu/procmesh/internal/process"
 )
 
+func TestApplyDefaults_Nil(t *testing.T) {
+	process.ApplyDefaults(nil)
+}
+
 func TestApplyDefaults_InstancesOne(t *testing.T) {
 	s := process.ProcessSpec{Name: "n", Command: "/bin/true"}
 	process.ApplyDefaults(&s)

@@ -32,6 +32,20 @@ func TestStartupOrder_PriorityAndCycle(t *testing.T) {
 	}
 }
 
+func TestStartupOrder_DuplicateDependencySkipped(t *testing.T) {
+	specs := []process.ProcessSpec{
+		{ProcessID: "a", Name: "a", Dependencies: []process.Dependency{{ProcessName: "b"}, {ProcessName: "b"}}},
+		{ProcessID: "b", Name: "b"},
+	}
+	got, err := process.StartupOrder(specs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != "b" || got[1] != "a" {
+		t.Fatalf("got %v", got)
+	}
+}
+
 func TestStartupOrder_MissingDependency(t *testing.T) {
 	specs := []process.ProcessSpec{
 		{ProcessID: "api", Name: "api", Dependencies: []process.Dependency{{ProcessName: "mysql"}}},

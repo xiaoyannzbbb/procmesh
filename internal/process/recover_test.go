@@ -9,6 +9,7 @@ import (
 
 	"github.com/qleelulu/procmesh/internal/paths"
 	"github.com/qleelulu/procmesh/internal/process"
+	"github.com/qleelulu/procmesh/internal/shim"
 	"github.com/qleelulu/procmesh/internal/store"
 	"golang.org/x/sys/unix"
 )
@@ -73,6 +74,50 @@ func killManaged(t *testing.T, st *store.Store, processID string) {
 		if inst.ShimPID > 0 {
 			_ = unix.Kill(inst.ShimPID, unix.SIGKILL)
 		}
+	}
+}
+
+func TestRecover_LeftoverUnknownSocketLeftAlone(t *testing.T) {
+	ctx := context.Background()
+	m, st, layout := newTestManager(t)
+	sock := layout.ShimSocket("orphan:0")
+	pid, err := shim.Launch(ctx, testShimBin, sock, "orphan:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = unix.Kill(pid, unix.SIGKILL) })
+	dead := filepath.Join(layout.ShimDir, "dead_0.sock")
+	if err := os.WriteFile(dead, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Recover(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Kill(pid, 0); err != nil {
+		t.Fatalf("leftover shim must stay: %v", err)
+	}
+	specs, err := st.ListSpecs(ctx)
+	if err != nil || len(specs) != 0 {
+		t.Fatalf("must not invent spec: %v %v", specs, err)
+	}
+	c, status, err := shim.Reconnect(ctx, sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = c.Close()
+	if status == nil {
+		t.Fatal("missing status")
+	}
+}
+
+func TestRecover_MissingShimDir(t *testing.T) {
+	ctx := context.Background()
+	m, _, layout := newTestManager(t)
+	if err := os.RemoveAll(layout.ShimDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Recover(ctx); err != nil {
+		t.Fatal(err)
 	}
 }
 

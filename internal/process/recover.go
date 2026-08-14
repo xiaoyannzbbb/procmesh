@@ -2,6 +2,7 @@ package process
 
 import (
 	"context"
+	"errors"
 	"os"
 
 	"github.com/qleelulu/procmesh/internal/shim"
@@ -50,7 +51,7 @@ func (m *Manager) recoverLocked(ctx context.Context) error {
 func (m *Manager) recoverLeftoverSockets(ctx context.Context, known map[string]struct{}) error {
 	found, err := shim.Discover(m.deps.Layout.ShimDir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if os.IsNotExist(err) || errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
 		return err

@@ -137,6 +137,41 @@ func TestLookPath_PATHThenSibling(t *testing.T) {
 	}
 }
 
+func TestLaunch_RejectsEmptyArgsAndCanceled(t *testing.T) {
+	ctx := context.Background()
+	if _, err := shim.Launch(ctx, "", "s", "i"); err == nil {
+		t.Fatal("empty bin")
+	}
+	if _, err := shim.Launch(ctx, testShimBin, "", "i"); err == nil {
+		t.Fatal("empty socket")
+	}
+	if _, err := shim.Launch(ctx, testShimBin, "s", ""); err == nil {
+		t.Fatal("empty instance")
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := shim.Launch(canceled, testShimBin, filepath.Join(t.TempDir(), "s.sock"), "i"); err == nil {
+		t.Fatal("canceled ctx")
+	}
+}
+
+func TestDiscover_MissingDir(t *testing.T) {
+	_, err := shim.Discover(filepath.Join(t.TempDir(), "nope"))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestClient_CloseNil(t *testing.T) {
+	var c *shim.Client
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&shim.Client{}).Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestReconnect_MissingSocket(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
