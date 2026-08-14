@@ -221,3 +221,121 @@ service LogService {
   rpc StreamLogs(StreamLogsRequest) returns (stream LogChunk);
   rpc DownloadLogs(DownloadLogsRequest) returns (stream LogChunk);
 }
+
+message ResourceSummary {
+  int32 cpu_percent = 1;
+  int32 memory_percent = 2;
+  int32 disk_percent = 3;
+}
+
+message ProcessSummary {
+  string name = 1;
+  string desired = 2;
+  string observed = 3;
+  string health = 4;
+  int64 latest_revision = 5;
+  int64 active_revision = 6;
+  int64 freshness_unix_ms = 7;
+}
+
+message Node {
+  string node_id = 1;
+  string cluster_id = 2;
+  string hostname = 3;
+  string boot_id = 4;
+  string state = 5; // JOINING | ALIVE | SUSPECT | FAILED | LEFT | REMOVED | REVOKED
+  string agent_version = 6;
+  int32 protocol_version = 7;
+  string api_address = 8;
+  string rpc_address = 9;
+  string gossip_address = 10;
+  map<string, string> labels = 11;
+  ResourceSummary resources = 12;
+  repeated ProcessSummary processes = 13;
+  int64 last_updated_unix_ms = 14;
+}
+
+message ListNodesRequest {}
+message ListNodesResponse { repeated Node nodes = 1; }
+
+message GetNodeRequest { string id_or_hostname = 1; }
+message GetNodeResponse { Node node = 1; }
+
+message CreateJoinTokenRequest {
+  MutationMeta meta = 1;
+  int64 ttl_seconds = 2; // 0 = default
+  int32 uses = 3;        // 0 = default
+}
+message CreateJoinTokenResponse {
+  string token_id = 1;
+  string token = 2;
+  int64 expires_unix = 3;
+  int32 uses = 4;
+}
+
+message RevokeJoinTokenRequest {
+  MutationMeta meta = 1;
+  string token_id = 2;
+}
+message RevokeJoinTokenResponse {}
+
+service NodeService {
+  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+  rpc GetNode(GetNodeRequest) returns (GetNodeResponse);
+  rpc CreateJoinToken(CreateJoinTokenRequest) returns (CreateJoinTokenResponse);
+  rpc RevokeJoinToken(RevokeJoinTokenRequest) returns (RevokeJoinTokenResponse);
+}
+
+message InitClusterRequest {
+  MutationMeta meta = 1;
+  string admin_username = 2;
+}
+message InitClusterResponse {
+  string cluster_id = 1;
+  string node_id = 2;
+  string admin_username = 3;
+  string admin_password = 4;
+}
+
+message JoinClusterRequest {
+  MutationMeta meta = 1;
+  string token = 2;
+  string node_id = 3;
+  string hostname = 4;
+  string boot_id = 5;
+  int32 protocol_version = 6;
+  string api_address = 7;
+  string gossip_address = 8;
+  string rpc_address = 9;
+  bytes csr_pem = 10;
+}
+message JoinClusterResponse {
+  string cluster_id = 1;
+  bytes ca_pem = 2;
+  bytes cert_pem = 3;
+  string gossip_address = 4;
+}
+
+message ClusterOverviewRequest {}
+message ClusterOverviewResponse {
+  string cluster_id = 1;
+  int32 members = 2;
+  int32 alive = 3;
+}
+
+message RequestJoinRequest {
+  MutationMeta meta = 1;
+  string seed_server = 2; // host:port of seed :9000
+  string token = 3;
+}
+message RequestJoinResponse {
+  string cluster_id = 1;
+  string gossip_address = 2;
+}
+
+service ClusterService {
+  rpc Init(InitClusterRequest) returns (InitClusterResponse);
+  rpc Join(JoinClusterRequest) returns (JoinClusterResponse);
+  rpc RequestJoin(RequestJoinRequest) returns (RequestJoinResponse);
+  rpc Overview(ClusterOverviewRequest) returns (ClusterOverviewResponse);
+}

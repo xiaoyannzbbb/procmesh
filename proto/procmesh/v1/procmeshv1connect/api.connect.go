@@ -27,6 +27,10 @@ const (
 	ConfigServiceName = "procmesh.v1.ConfigService"
 	// LogServiceName is the fully-qualified name of the LogService service.
 	LogServiceName = "procmesh.v1.LogService"
+	// NodeServiceName is the fully-qualified name of the NodeService service.
+	NodeServiceName = "procmesh.v1.NodeService"
+	// ClusterServiceName is the fully-qualified name of the ClusterService service.
+	ClusterServiceName = "procmesh.v1.ClusterService"
 )
 
 // These constants are the fully-qualified names of the RPCs defined in this package. They're
@@ -84,6 +88,25 @@ const (
 	LogServiceStreamLogsProcedure = "/procmesh.v1.LogService/StreamLogs"
 	// LogServiceDownloadLogsProcedure is the fully-qualified name of the LogService's DownloadLogs RPC.
 	LogServiceDownloadLogsProcedure = "/procmesh.v1.LogService/DownloadLogs"
+	// NodeServiceListNodesProcedure is the fully-qualified name of the NodeService's ListNodes RPC.
+	NodeServiceListNodesProcedure = "/procmesh.v1.NodeService/ListNodes"
+	// NodeServiceGetNodeProcedure is the fully-qualified name of the NodeService's GetNode RPC.
+	NodeServiceGetNodeProcedure = "/procmesh.v1.NodeService/GetNode"
+	// NodeServiceCreateJoinTokenProcedure is the fully-qualified name of the NodeService's
+	// CreateJoinToken RPC.
+	NodeServiceCreateJoinTokenProcedure = "/procmesh.v1.NodeService/CreateJoinToken"
+	// NodeServiceRevokeJoinTokenProcedure is the fully-qualified name of the NodeService's
+	// RevokeJoinToken RPC.
+	NodeServiceRevokeJoinTokenProcedure = "/procmesh.v1.NodeService/RevokeJoinToken"
+	// ClusterServiceInitProcedure is the fully-qualified name of the ClusterService's Init RPC.
+	ClusterServiceInitProcedure = "/procmesh.v1.ClusterService/Init"
+	// ClusterServiceJoinProcedure is the fully-qualified name of the ClusterService's Join RPC.
+	ClusterServiceJoinProcedure = "/procmesh.v1.ClusterService/Join"
+	// ClusterServiceRequestJoinProcedure is the fully-qualified name of the ClusterService's
+	// RequestJoin RPC.
+	ClusterServiceRequestJoinProcedure = "/procmesh.v1.ClusterService/RequestJoin"
+	// ClusterServiceOverviewProcedure is the fully-qualified name of the ClusterService's Overview RPC.
+	ClusterServiceOverviewProcedure = "/procmesh.v1.ClusterService/Overview"
 )
 
 // ProcessServiceClient is a client for the procmesh.v1.ProcessService service.
@@ -684,4 +707,300 @@ func (UnimplementedLogServiceHandler) StreamLogs(context.Context, *connect.Reque
 
 func (UnimplementedLogServiceHandler) DownloadLogs(context.Context, *connect.Request[v1.DownloadLogsRequest], *connect.ServerStream[v1.LogChunk]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.LogService.DownloadLogs is not implemented"))
+}
+
+// NodeServiceClient is a client for the procmesh.v1.NodeService service.
+type NodeServiceClient interface {
+	ListNodes(context.Context, *connect.Request[v1.ListNodesRequest]) (*connect.Response[v1.ListNodesResponse], error)
+	GetNode(context.Context, *connect.Request[v1.GetNodeRequest]) (*connect.Response[v1.GetNodeResponse], error)
+	CreateJoinToken(context.Context, *connect.Request[v1.CreateJoinTokenRequest]) (*connect.Response[v1.CreateJoinTokenResponse], error)
+	RevokeJoinToken(context.Context, *connect.Request[v1.RevokeJoinTokenRequest]) (*connect.Response[v1.RevokeJoinTokenResponse], error)
+}
+
+// NewNodeServiceClient constructs a client for the procmesh.v1.NodeService service. By default, it
+// uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses, and sends
+// uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the connect.WithGRPC() or
+// connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewNodeServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) NodeServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	nodeServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("NodeService").Methods()
+	return &nodeServiceClient{
+		listNodes: connect.NewClient[v1.ListNodesRequest, v1.ListNodesResponse](
+			httpClient,
+			baseURL+NodeServiceListNodesProcedure,
+			connect.WithSchema(nodeServiceMethods.ByName("ListNodes")),
+			connect.WithClientOptions(opts...),
+		),
+		getNode: connect.NewClient[v1.GetNodeRequest, v1.GetNodeResponse](
+			httpClient,
+			baseURL+NodeServiceGetNodeProcedure,
+			connect.WithSchema(nodeServiceMethods.ByName("GetNode")),
+			connect.WithClientOptions(opts...),
+		),
+		createJoinToken: connect.NewClient[v1.CreateJoinTokenRequest, v1.CreateJoinTokenResponse](
+			httpClient,
+			baseURL+NodeServiceCreateJoinTokenProcedure,
+			connect.WithSchema(nodeServiceMethods.ByName("CreateJoinToken")),
+			connect.WithClientOptions(opts...),
+		),
+		revokeJoinToken: connect.NewClient[v1.RevokeJoinTokenRequest, v1.RevokeJoinTokenResponse](
+			httpClient,
+			baseURL+NodeServiceRevokeJoinTokenProcedure,
+			connect.WithSchema(nodeServiceMethods.ByName("RevokeJoinToken")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// nodeServiceClient implements NodeServiceClient.
+type nodeServiceClient struct {
+	listNodes       *connect.Client[v1.ListNodesRequest, v1.ListNodesResponse]
+	getNode         *connect.Client[v1.GetNodeRequest, v1.GetNodeResponse]
+	createJoinToken *connect.Client[v1.CreateJoinTokenRequest, v1.CreateJoinTokenResponse]
+	revokeJoinToken *connect.Client[v1.RevokeJoinTokenRequest, v1.RevokeJoinTokenResponse]
+}
+
+// ListNodes calls procmesh.v1.NodeService.ListNodes.
+func (c *nodeServiceClient) ListNodes(ctx context.Context, req *connect.Request[v1.ListNodesRequest]) (*connect.Response[v1.ListNodesResponse], error) {
+	return c.listNodes.CallUnary(ctx, req)
+}
+
+// GetNode calls procmesh.v1.NodeService.GetNode.
+func (c *nodeServiceClient) GetNode(ctx context.Context, req *connect.Request[v1.GetNodeRequest]) (*connect.Response[v1.GetNodeResponse], error) {
+	return c.getNode.CallUnary(ctx, req)
+}
+
+// CreateJoinToken calls procmesh.v1.NodeService.CreateJoinToken.
+func (c *nodeServiceClient) CreateJoinToken(ctx context.Context, req *connect.Request[v1.CreateJoinTokenRequest]) (*connect.Response[v1.CreateJoinTokenResponse], error) {
+	return c.createJoinToken.CallUnary(ctx, req)
+}
+
+// RevokeJoinToken calls procmesh.v1.NodeService.RevokeJoinToken.
+func (c *nodeServiceClient) RevokeJoinToken(ctx context.Context, req *connect.Request[v1.RevokeJoinTokenRequest]) (*connect.Response[v1.RevokeJoinTokenResponse], error) {
+	return c.revokeJoinToken.CallUnary(ctx, req)
+}
+
+// NodeServiceHandler is an implementation of the procmesh.v1.NodeService service.
+type NodeServiceHandler interface {
+	ListNodes(context.Context, *connect.Request[v1.ListNodesRequest]) (*connect.Response[v1.ListNodesResponse], error)
+	GetNode(context.Context, *connect.Request[v1.GetNodeRequest]) (*connect.Response[v1.GetNodeResponse], error)
+	CreateJoinToken(context.Context, *connect.Request[v1.CreateJoinTokenRequest]) (*connect.Response[v1.CreateJoinTokenResponse], error)
+	RevokeJoinToken(context.Context, *connect.Request[v1.RevokeJoinTokenRequest]) (*connect.Response[v1.RevokeJoinTokenResponse], error)
+}
+
+// NewNodeServiceHandler builds an HTTP handler from the service implementation. It returns the path
+// on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewNodeServiceHandler(svc NodeServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	nodeServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("NodeService").Methods()
+	nodeServiceListNodesHandler := connect.NewUnaryHandler(
+		NodeServiceListNodesProcedure,
+		svc.ListNodes,
+		connect.WithSchema(nodeServiceMethods.ByName("ListNodes")),
+		connect.WithHandlerOptions(opts...),
+	)
+	nodeServiceGetNodeHandler := connect.NewUnaryHandler(
+		NodeServiceGetNodeProcedure,
+		svc.GetNode,
+		connect.WithSchema(nodeServiceMethods.ByName("GetNode")),
+		connect.WithHandlerOptions(opts...),
+	)
+	nodeServiceCreateJoinTokenHandler := connect.NewUnaryHandler(
+		NodeServiceCreateJoinTokenProcedure,
+		svc.CreateJoinToken,
+		connect.WithSchema(nodeServiceMethods.ByName("CreateJoinToken")),
+		connect.WithHandlerOptions(opts...),
+	)
+	nodeServiceRevokeJoinTokenHandler := connect.NewUnaryHandler(
+		NodeServiceRevokeJoinTokenProcedure,
+		svc.RevokeJoinToken,
+		connect.WithSchema(nodeServiceMethods.ByName("RevokeJoinToken")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/procmesh.v1.NodeService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case NodeServiceListNodesProcedure:
+			nodeServiceListNodesHandler.ServeHTTP(w, r)
+		case NodeServiceGetNodeProcedure:
+			nodeServiceGetNodeHandler.ServeHTTP(w, r)
+		case NodeServiceCreateJoinTokenProcedure:
+			nodeServiceCreateJoinTokenHandler.ServeHTTP(w, r)
+		case NodeServiceRevokeJoinTokenProcedure:
+			nodeServiceRevokeJoinTokenHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedNodeServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedNodeServiceHandler struct{}
+
+func (UnimplementedNodeServiceHandler) ListNodes(context.Context, *connect.Request[v1.ListNodesRequest]) (*connect.Response[v1.ListNodesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.NodeService.ListNodes is not implemented"))
+}
+
+func (UnimplementedNodeServiceHandler) GetNode(context.Context, *connect.Request[v1.GetNodeRequest]) (*connect.Response[v1.GetNodeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.NodeService.GetNode is not implemented"))
+}
+
+func (UnimplementedNodeServiceHandler) CreateJoinToken(context.Context, *connect.Request[v1.CreateJoinTokenRequest]) (*connect.Response[v1.CreateJoinTokenResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.NodeService.CreateJoinToken is not implemented"))
+}
+
+func (UnimplementedNodeServiceHandler) RevokeJoinToken(context.Context, *connect.Request[v1.RevokeJoinTokenRequest]) (*connect.Response[v1.RevokeJoinTokenResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.NodeService.RevokeJoinToken is not implemented"))
+}
+
+// ClusterServiceClient is a client for the procmesh.v1.ClusterService service.
+type ClusterServiceClient interface {
+	Init(context.Context, *connect.Request[v1.InitClusterRequest]) (*connect.Response[v1.InitClusterResponse], error)
+	Join(context.Context, *connect.Request[v1.JoinClusterRequest]) (*connect.Response[v1.JoinClusterResponse], error)
+	RequestJoin(context.Context, *connect.Request[v1.RequestJoinRequest]) (*connect.Response[v1.RequestJoinResponse], error)
+	Overview(context.Context, *connect.Request[v1.ClusterOverviewRequest]) (*connect.Response[v1.ClusterOverviewResponse], error)
+}
+
+// NewClusterServiceClient constructs a client for the procmesh.v1.ClusterService service. By
+// default, it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses,
+// and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the
+// connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewClusterServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) ClusterServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	clusterServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("ClusterService").Methods()
+	return &clusterServiceClient{
+		init: connect.NewClient[v1.InitClusterRequest, v1.InitClusterResponse](
+			httpClient,
+			baseURL+ClusterServiceInitProcedure,
+			connect.WithSchema(clusterServiceMethods.ByName("Init")),
+			connect.WithClientOptions(opts...),
+		),
+		join: connect.NewClient[v1.JoinClusterRequest, v1.JoinClusterResponse](
+			httpClient,
+			baseURL+ClusterServiceJoinProcedure,
+			connect.WithSchema(clusterServiceMethods.ByName("Join")),
+			connect.WithClientOptions(opts...),
+		),
+		requestJoin: connect.NewClient[v1.RequestJoinRequest, v1.RequestJoinResponse](
+			httpClient,
+			baseURL+ClusterServiceRequestJoinProcedure,
+			connect.WithSchema(clusterServiceMethods.ByName("RequestJoin")),
+			connect.WithClientOptions(opts...),
+		),
+		overview: connect.NewClient[v1.ClusterOverviewRequest, v1.ClusterOverviewResponse](
+			httpClient,
+			baseURL+ClusterServiceOverviewProcedure,
+			connect.WithSchema(clusterServiceMethods.ByName("Overview")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// clusterServiceClient implements ClusterServiceClient.
+type clusterServiceClient struct {
+	init        *connect.Client[v1.InitClusterRequest, v1.InitClusterResponse]
+	join        *connect.Client[v1.JoinClusterRequest, v1.JoinClusterResponse]
+	requestJoin *connect.Client[v1.RequestJoinRequest, v1.RequestJoinResponse]
+	overview    *connect.Client[v1.ClusterOverviewRequest, v1.ClusterOverviewResponse]
+}
+
+// Init calls procmesh.v1.ClusterService.Init.
+func (c *clusterServiceClient) Init(ctx context.Context, req *connect.Request[v1.InitClusterRequest]) (*connect.Response[v1.InitClusterResponse], error) {
+	return c.init.CallUnary(ctx, req)
+}
+
+// Join calls procmesh.v1.ClusterService.Join.
+func (c *clusterServiceClient) Join(ctx context.Context, req *connect.Request[v1.JoinClusterRequest]) (*connect.Response[v1.JoinClusterResponse], error) {
+	return c.join.CallUnary(ctx, req)
+}
+
+// RequestJoin calls procmesh.v1.ClusterService.RequestJoin.
+func (c *clusterServiceClient) RequestJoin(ctx context.Context, req *connect.Request[v1.RequestJoinRequest]) (*connect.Response[v1.RequestJoinResponse], error) {
+	return c.requestJoin.CallUnary(ctx, req)
+}
+
+// Overview calls procmesh.v1.ClusterService.Overview.
+func (c *clusterServiceClient) Overview(ctx context.Context, req *connect.Request[v1.ClusterOverviewRequest]) (*connect.Response[v1.ClusterOverviewResponse], error) {
+	return c.overview.CallUnary(ctx, req)
+}
+
+// ClusterServiceHandler is an implementation of the procmesh.v1.ClusterService service.
+type ClusterServiceHandler interface {
+	Init(context.Context, *connect.Request[v1.InitClusterRequest]) (*connect.Response[v1.InitClusterResponse], error)
+	Join(context.Context, *connect.Request[v1.JoinClusterRequest]) (*connect.Response[v1.JoinClusterResponse], error)
+	RequestJoin(context.Context, *connect.Request[v1.RequestJoinRequest]) (*connect.Response[v1.RequestJoinResponse], error)
+	Overview(context.Context, *connect.Request[v1.ClusterOverviewRequest]) (*connect.Response[v1.ClusterOverviewResponse], error)
+}
+
+// NewClusterServiceHandler builds an HTTP handler from the service implementation. It returns the
+// path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewClusterServiceHandler(svc ClusterServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	clusterServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("ClusterService").Methods()
+	clusterServiceInitHandler := connect.NewUnaryHandler(
+		ClusterServiceInitProcedure,
+		svc.Init,
+		connect.WithSchema(clusterServiceMethods.ByName("Init")),
+		connect.WithHandlerOptions(opts...),
+	)
+	clusterServiceJoinHandler := connect.NewUnaryHandler(
+		ClusterServiceJoinProcedure,
+		svc.Join,
+		connect.WithSchema(clusterServiceMethods.ByName("Join")),
+		connect.WithHandlerOptions(opts...),
+	)
+	clusterServiceRequestJoinHandler := connect.NewUnaryHandler(
+		ClusterServiceRequestJoinProcedure,
+		svc.RequestJoin,
+		connect.WithSchema(clusterServiceMethods.ByName("RequestJoin")),
+		connect.WithHandlerOptions(opts...),
+	)
+	clusterServiceOverviewHandler := connect.NewUnaryHandler(
+		ClusterServiceOverviewProcedure,
+		svc.Overview,
+		connect.WithSchema(clusterServiceMethods.ByName("Overview")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/procmesh.v1.ClusterService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case ClusterServiceInitProcedure:
+			clusterServiceInitHandler.ServeHTTP(w, r)
+		case ClusterServiceJoinProcedure:
+			clusterServiceJoinHandler.ServeHTTP(w, r)
+		case ClusterServiceRequestJoinProcedure:
+			clusterServiceRequestJoinHandler.ServeHTTP(w, r)
+		case ClusterServiceOverviewProcedure:
+			clusterServiceOverviewHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedClusterServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedClusterServiceHandler struct{}
+
+func (UnimplementedClusterServiceHandler) Init(context.Context, *connect.Request[v1.InitClusterRequest]) (*connect.Response[v1.InitClusterResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterService.Init is not implemented"))
+}
+
+func (UnimplementedClusterServiceHandler) Join(context.Context, *connect.Request[v1.JoinClusterRequest]) (*connect.Response[v1.JoinClusterResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterService.Join is not implemented"))
+}
+
+func (UnimplementedClusterServiceHandler) RequestJoin(context.Context, *connect.Request[v1.RequestJoinRequest]) (*connect.Response[v1.RequestJoinResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterService.RequestJoin is not implemented"))
+}
+
+func (UnimplementedClusterServiceHandler) Overview(context.Context, *connect.Request[v1.ClusterOverviewRequest]) (*connect.Response[v1.ClusterOverviewResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterService.Overview is not implemented"))
 }

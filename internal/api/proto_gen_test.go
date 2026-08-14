@@ -3,6 +3,7 @@ package api
 import (
 	"testing"
 
+	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
 
@@ -16,4 +17,16 @@ func TestGeneratedServiceNames(t *testing.T) {
 	if procmeshv1connect.LogServiceName != "procmesh.v1.LogService" {
 		t.Fatalf("log=%s", procmeshv1connect.LogServiceName)
 	}
+}
+
+func TestProto_NodeAndClusterServicesGenerated(t *testing.T) {
+	if procmeshv1connect.NodeServiceName == "" {
+		t.Fatal("missing NodeService")
+	}
+	if procmeshv1connect.ClusterServiceName == "" {
+		t.Fatal("missing ClusterService")
+	}
+	_ = (&procmeshv1.JoinClusterRequest{}).GetCsrPem
+	_ = (&procmeshv1.InitClusterResponse{}).GetAdminPassword
+	_ = (&procmeshv1.RequestJoinRequest{}).GetSeedServer
 }
