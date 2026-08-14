@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/qleelulu/procmesh/internal/api"
 	"github.com/qleelulu/procmesh/internal/errcode"
-	"github.com/qleelulu/procmesh/internal/localhttp"
 	"github.com/qleelulu/procmesh/internal/logmgr"
 	"github.com/qleelulu/procmesh/internal/paths"
 	"github.com/qleelulu/procmesh/internal/process"
@@ -56,7 +56,7 @@ func Run(ctx context.Context, opt Options) error {
 		st, err = store.Open(layout.Store)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "reopen store after quarantine: %v\n", err)
-			return serveHTTP(ctx, opt, nil, nil, true, func() error {
+			return serveHTTP(ctx, opt, nil, nil, nil, true, func() error {
 				return errcode.E(errcode.DEGRADED, "store unavailable")
 			})
 		}
@@ -102,11 +102,23 @@ func Run(ctx context.Context, opt Options) error {
 		}
 		return nil
 	}
-	return serveHTTP(ctx, opt, mgr, logs, degraded, ready)
+	return serveHTTP(ctx, opt, mgr, logs, st, degraded, ready)
 }
 
-func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *logmgr.Manager, degraded bool, ready func() error) error {
-	srv, err := localhttp.NewServerOpts(mgr, logs, opt.Listen, degraded, ready)
+func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *logmgr.Manager, st *store.Store, degraded bool, ready func() error) error {
+	var revs api.RevisionStore
+	if st != nil {
+		revs = st
+	}
+	srv, err := api.NewServer(api.Options{
+		Addr:     opt.Listen,
+		Mgr:      mgr,
+		Logs:     logs,
+		Store:    revs,
+		Degraded: degraded,
+		Ready:    ready,
+		Started:  time.Now(),
+	})
 	if err != nil {
 		return fmt.Errorf("new server: %w", err)
 	}
