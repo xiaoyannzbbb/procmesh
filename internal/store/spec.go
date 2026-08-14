@@ -196,8 +196,27 @@ func (s *Store) DeleteSpec(ctx context.Context, processID string, expectedRevisi
 	return nil
 }
 
-// ListRevisions returns the revision history for a process, oldest first.
-func (s *Store) ListRevisions(ctx context.Context, processID string) ([]Revision, error) {
+// ListRevisions returns revision metadata for a process, oldest first.
+// Spec payloads stay in the store; use GetRevisionSpecJSON to read them.
+func (s *Store) ListRevisions(ctx context.Context, processID string) ([]process.Revision, error) {
+	rows, err := s.listRevisionRows(ctx, processID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]process.Revision, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, process.Revision{
+			Revision:  r.Revision,
+			Operator:  r.Operator,
+			Timestamp: r.Timestamp,
+			Diff:      r.Diff,
+			Comment:   r.Comment,
+		})
+	}
+	return out, nil
+}
+
+func (s *Store) listRevisionRows(ctx context.Context, processID string) ([]Revision, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT revision, operator, ts, diff, comment, spec_json
 		FROM config_revisions
@@ -231,6 +250,21 @@ func (s *Store) ListRevisions(ctx context.Context, processID string) ([]Revision
 		out = []Revision{}
 	}
 	return out, nil
+}
+
+// GetRevisionSpecJSON returns the stored spec payload for one revision.
+func (s *Store) GetRevisionSpecJSON(ctx context.Context, processID string, rev int64) ([]byte, error) {
+	var specJSON string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT spec_json FROM config_revisions WHERE process_id = ? AND revision = ?
+	`, processID, rev).Scan(&specJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, errcode.E(errcode.NOT_FOUND, "revision")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get revision spec: %w", err)
+	}
+	return []byte(specJSON), nil
 }
 
 // RollbackSpec copies toRevision's payload into a new revision.

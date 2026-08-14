@@ -423,6 +423,22 @@ func (m *Manager) applyRunning(ctx context.Context, inst *Instance, pid int, boo
 }
 
 func (m *Manager) stopInstance(ctx context.Context, spec ProcessSpec, inst *Instance) error {
+	timeout := spec.StopTimeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	return m.signalStop(ctx, inst, spec.StopSignal, spec.KillSignal, int32(timeout/time.Millisecond))
+}
+
+func (m *Manager) killInstance(ctx context.Context, spec ProcessSpec, inst *Instance) error {
+	sig := spec.KillSignal
+	if sig == "" {
+		sig = "SIGKILL"
+	}
+	return m.signalStop(ctx, inst, sig, sig, 0)
+}
+
+func (m *Manager) signalStop(ctx context.Context, inst *Instance, signal, killSignal string, timeoutMs int32) error {
 	if inst.Observed == ObservedUnknown && pidAlive(inst.PID) && sameBoot(inst.BootID, m.bootID(ctx)) {
 		return errcode.E(errcode.INVALID, adoptRequiredMsg)
 	}
@@ -454,14 +470,10 @@ func (m *Manager) stopInstance(ctx context.Context, spec ProcessSpec, inst *Inst
 		_ = m.deps.Store.PutInstance(ctx, *inst)
 	}
 
-	timeout := spec.StopTimeout
-	if timeout <= 0 {
-		timeout = 10 * time.Second
-	}
 	resp, err := client.Stop(ctx, &shimpb.StopRequest{
-		Signal:     spec.StopSignal,
-		TimeoutMs:  int32(timeout / time.Millisecond),
-		KillSignal: spec.KillSignal,
+		Signal:     signal,
+		TimeoutMs:  timeoutMs,
+		KillSignal: killSignal,
 	})
 	if err != nil {
 		return err

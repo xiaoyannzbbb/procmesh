@@ -271,8 +271,9 @@ func TestPutSpec_RecordsDiffAndPersists(t *testing.T) {
 	if !strings.Contains(revs[1].Diff, "-args a") || !strings.Contains(revs[1].Diff, "+env") {
 		t.Fatalf("diff: %q", revs[1].Diff)
 	}
-	if len(revs[1].SpecJSON) == 0 || revs[1].Timestamp.IsZero() {
-		t.Fatalf("payload/ts: %+v", revs[1])
+	payload, err := s2.GetRevisionSpecJSON(ctx, "p1", revs[1].Revision)
+	if err != nil || len(payload) == 0 || revs[1].Timestamp.IsZero() {
+		t.Fatalf("payload/ts: %+v %v", revs[1], err)
 	}
 }
 

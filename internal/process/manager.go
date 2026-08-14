@@ -21,8 +21,11 @@ import (
 type StateStore interface {
 	PutSpec(ctx context.Context, spec ProcessSpec, expectedRevision int64, operator, comment string) (ProcessSpec, error)
 	GetSpec(ctx context.Context, processID string) (ProcessSpec, error)
+	GetSpecByName(ctx context.Context, name string) (ProcessSpec, error)
 	ListSpecs(ctx context.Context) ([]ProcessSpec, error)
 	DeleteSpec(ctx context.Context, processID string, expectedRevision int64) error
+	ListRevisions(ctx context.Context, processID string) ([]Revision, error)
+	RollbackSpec(ctx context.Context, processID string, toRevision, expectedLatest int64, operator, comment string) (ProcessSpec, error)
 	PutInstance(ctx context.Context, inst Instance) error
 	GetInstance(ctx context.Context, instanceID string) (Instance, error)
 	ListInstances(ctx context.Context, processID string) ([]Instance, error)
@@ -217,6 +220,106 @@ func (m *Manager) SetDesired(ctx context.Context, processID string, desired Desi
 	}
 	m.audit(ctx, processID, action, opID, operator, "SUCCESS")
 	return m.finishOp(ctx, opID, opSuccess, nil, "")
+}
+
+// Resolve looks up a spec by process_id, then by unique name.
+func (m *Manager) Resolve(ctx context.Context, idOrName string) (ProcessSpec, error) {
+	if idOrName == "" {
+		return ProcessSpec{}, errcode.E(errcode.INVALID, "id or name required")
+	}
+	spec, err := m.deps.Store.GetSpec(ctx, idOrName)
+	if err == nil {
+		return spec, nil
+	}
+	if !errcode.Is(err, errcode.NOT_FOUND) {
+		return ProcessSpec{}, err
+	}
+	return m.deps.Store.GetSpecByName(ctx, idOrName)
+}
+
+// Kill immediately terminates instances, then sets desired STOPPED and reconciles.
+func (m *Manager) Kill(ctx context.Context, processID, opID, operator string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	done, existing, err := m.beginOp(ctx, opID, operator, "kill", processID, nil)
+	if err != nil {
+		return err
+	}
+	if done {
+		if existing.Status == opFailed {
+			return errcode.E(errcode.INVALID, existing.Error)
+		}
+		return nil
+	}
+	spec, err := m.deps.Store.GetSpec(ctx, processID)
+	if err != nil {
+		_ = m.finishOp(ctx, opID, opFailed, nil, err.Error())
+		return err
+	}
+	insts, err := m.deps.Store.ListInstances(ctx, processID)
+	if err != nil {
+		_ = m.finishOp(ctx, opID, opFailed, nil, err.Error())
+		return err
+	}
+	if err := m.rejectLiveOrphanStop(ctx, insts); err != nil {
+		_ = m.finishOp(ctx, opID, opFailed, nil, err.Error())
+		return err
+	}
+	for i := range insts {
+		if err := m.killInstance(ctx, spec, &insts[i]); err != nil {
+			_ = m.finishOp(ctx, opID, opFailed, nil, err.Error())
+			return err
+		}
+	}
+	insts, err = m.deps.Store.ListInstances(ctx, processID)
+	if err != nil {
+		_ = m.finishOp(ctx, opID, opFailed, nil, err.Error())
+		return err
+	}
+	for _, inst := range insts {
+		inst.Desired = DesiredStopped
+		if err := m.deps.Store.PutInstance(ctx, inst); err != nil {
+			_ = m.finishOp(ctx, opID, opFailed, nil, err.Error())
+			return err
+		}
+	}
+	if err := m.reconcileLocked(ctx); err != nil {
+		_ = m.finishOp(ctx, opID, opFailed, nil, err.Error())
+		return err
+	}
+	m.audit(ctx, processID, "process.kill", opID, operator, "SUCCESS")
+	return m.finishOp(ctx, opID, opSuccess, nil, "")
+}
+
+// ListRevisions returns stored revision history (no journal).
+func (m *Manager) ListRevisions(ctx context.Context, processID string) ([]Revision, error) {
+	return m.deps.Store.ListRevisions(ctx, processID)
+}
+
+// Rollback copies toRevision into a new latest revision via the journal.
+func (m *Manager) Rollback(ctx context.Context, processID string, toRevision, expectedLatest int64, opID, operator, comment string) (ProcessSpec, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	done, existing, err := m.beginOp(ctx, opID, operator, "rollback", processID, nil)
+	if err != nil {
+		return ProcessSpec{}, err
+	}
+	if done {
+		return m.replayApplySpec(ctx, processID, opID, existing)
+	}
+	out, err := m.deps.Store.RollbackSpec(ctx, processID, toRevision, expectedLatest, operator, comment)
+	if err != nil {
+		_ = m.finishOp(ctx, opID, opFailed, nil, err.Error())
+		return ProcessSpec{}, err
+	}
+	if err := m.ensureInstances(ctx, out); err != nil {
+		_ = m.finishOp(ctx, opID, opFailed, nil, err.Error())
+		return ProcessSpec{}, err
+	}
+	m.audit(ctx, processID, "process.rollback", opID, operator, "SUCCESS")
+	payload, _ := json.Marshal(out)
+	_ = m.finishOp(ctx, opID, opSuccess, payload, "")
+	return out, nil
 }
 
 // GetSpec returns the stored spec.

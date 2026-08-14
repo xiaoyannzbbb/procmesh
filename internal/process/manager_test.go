@@ -626,6 +626,14 @@ func newTestManagerNow(t *testing.T, now func() time.Time) (*process.Manager, *s
 	return process.NewManager(process.Deps{Store: st, Layout: layout, ShimBin: testShimBin, Now: now}), st, layout
 }
 
+func pidAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := unix.Kill(pid, 0)
+	return err == nil || err == unix.EPERM
+}
+
 func startSleep(t *testing.T, m *process.Manager, st *store.Store, spec process.ProcessSpec) process.Instance {
 	t.Helper()
 	ctx := context.Background()
@@ -1875,5 +1883,203 @@ func TestReconcile_RunAsUserWithoutLookUser(t *testing.T) {
 	}
 	if got.PID != 0 {
 		t.Fatalf("must not start without LookUser: %+v", got)
+	}
+}
+
+func TestResolve_ByNameAndID(t *testing.T) {
+	ctx := context.Background()
+	m, _, _ := newTestManager(t)
+	got, err := m.ApplySpec(ctx, process.ProcessSpec{Name: "nginx", Command: "/bin/true"}, 0, "op-a", "t", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID, err := m.Resolve(ctx, got.ProcessID)
+	if err != nil || byID.Name != "nginx" {
+		t.Fatalf("%+v %v", byID, err)
+	}
+	byName, err := m.Resolve(ctx, "nginx")
+	if err != nil || byName.ProcessID != got.ProcessID {
+		t.Fatalf("%+v %v", byName, err)
+	}
+	if _, err := m.Resolve(ctx, "missing"); !errcode.Is(err, errcode.NOT_FOUND) {
+		t.Fatalf("%v", err)
+	}
+	if _, err := m.Resolve(ctx, ""); !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestKill_StopsRunningProcess(t *testing.T) {
+	if testing.Short() {
+		t.Skip("shim")
+	}
+	ctx := context.Background()
+	m, st, _ := newTestManager(t)
+	spec := process.ProcessSpec{ProcessID: "k1", Name: "k1", Command: "/bin/sleep", Args: []string{"60"}}
+	inst := startSleep(t, m, st, spec)
+	if err := m.Kill(ctx, "k1", "op-kill", "t"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetInstance(ctx, inst.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Desired != process.DesiredStopped {
+		t.Fatalf("desired=%s", got.Desired)
+	}
+	if pidAlive(got.PID) && got.Observed != process.ObservedStopped {
+		// after kill+reconcile, pid should be dead or observed STOPPED
+		if err := m.Reconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
+		got, _ = st.GetInstance(ctx, inst.InstanceID)
+	}
+	if got.Observed != process.ObservedStopped && got.Observed != process.ObservedStopping {
+		t.Fatalf("observed=%s pid=%d", got.Observed, got.PID)
+	}
+}
+
+func TestKill_Idempotent(t *testing.T) {
+	ctx := context.Background()
+	m, _, _ := newTestManager(t)
+	if _, err := m.ApplySpec(ctx, process.ProcessSpec{ProcessID: "k2", Name: "k2", Command: "/bin/true"}, 0, "op-c", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Kill(ctx, "k2", "op-k", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Kill(ctx, "k2", "op-k", "t"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRollback_CreatesNewRevision(t *testing.T) {
+	ctx := context.Background()
+	m, _, _ := newTestManager(t)
+	s1 := process.ProcessSpec{ProcessID: "r1", Name: "r1", Command: "/bin/true", Args: []string{"a"}}
+	if _, err := m.ApplySpec(ctx, s1, 0, "op-1", "t", "c1"); err != nil {
+		t.Fatal(err)
+	}
+	s1.Args = []string{"b"}
+	if _, err := m.ApplySpec(ctx, s1, 1, "op-2", "t", "c2"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := m.Rollback(ctx, "r1", 1, 2, "op-rb", "t", "back")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.LatestRevision != 3 || len(out.Args) != 1 || out.Args[0] != "a" {
+		t.Fatalf("%+v", out)
+	}
+	revs, err := m.ListRevisions(ctx, "r1")
+	if err != nil || len(revs) != 3 {
+		t.Fatalf("n=%d err=%v", len(revs), err)
+	}
+}
+
+func TestRollback_Conflict(t *testing.T) {
+	ctx := context.Background()
+	m, _, _ := newTestManager(t)
+	s1 := process.ProcessSpec{ProcessID: "r2", Name: "r2", Command: "/bin/true"}
+	if _, err := m.ApplySpec(ctx, s1, 0, "op-1", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Rollback(ctx, "r2", 1, 99, "op-rb", "t", ""); !errcode.Is(err, errcode.CONFLICT) {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestResolve_StoreClosed(t *testing.T) {
+	m, st, _ := newTestManager(t)
+	_ = st.Close()
+	if _, err := m.Resolve(context.Background(), "x"); err == nil {
+		t.Fatal("expected store error")
+	}
+}
+
+func TestKill_MissingSpec(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	err := m.Kill(context.Background(), "nope", "op-kmiss", "t")
+	if !errcode.Is(err, errcode.NOT_FOUND) {
+		t.Fatalf("got %v", err)
+	}
+	err = m.Kill(context.Background(), "nope", "op-kmiss", "t")
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("replay want INVALID got %v", err)
+	}
+}
+
+func TestKill_EmptyOpID(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	if err := m.Kill(context.Background(), "k", "", "t"); !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestKill_OrphanRequiresAdopt(t *testing.T) {
+	if testing.Short() {
+		t.Skip("shim")
+	}
+	ctx := context.Background()
+	m, st, layout := newTestManager(t)
+	spec := process.ProcessSpec{ProcessID: "k3", Name: "k3", Command: "/bin/sleep", Args: []string{"60"}}
+	inst := startSleep(t, m, st, spec)
+	oldPID := inst.PID
+	if err := unix.Kill(inst.ShimPID, unix.SIGKILL); err != nil {
+		t.Fatalf("kill shim: %v", err)
+	}
+	waitPIDGone(t, inst.ShimPID)
+	_ = os.Remove(layout.ShimSocket(inst.InstanceID))
+	if err := m.Recover(ctx); err != nil {
+		t.Fatal(err)
+	}
+	err := m.Kill(ctx, "k3", "op-kill-orphan", "t")
+	if !errcode.Is(err, errcode.INVALID) || !strings.Contains(err.Error(), "adopt required") {
+		t.Fatalf("want INVALID adopt required, got %v", err)
+	}
+	got, err := st.GetInstance(ctx, inst.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Desired != process.DesiredRunning {
+		t.Fatalf("refused kill must not flip desired: %+v", got)
+	}
+	if got.Observed != process.ObservedUnknown {
+		t.Fatalf("observed %s want UNKNOWN", got.Observed)
+	}
+	if err := unix.Kill(oldPID, 0); err != nil {
+		t.Fatalf("orphan pid must stay alive: %v", err)
+	}
+	err = m.Kill(ctx, "k3", "op-kill-orphan", "t")
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("replay want INVALID got %v", err)
+	}
+}
+
+func TestRollback_Idempotent(t *testing.T) {
+	ctx := context.Background()
+	m, _, _ := newTestManager(t)
+	s1 := process.ProcessSpec{ProcessID: "r3", Name: "r3", Command: "/bin/true", Args: []string{"a"}}
+	if _, err := m.ApplySpec(ctx, s1, 0, "op-1", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	s1.Args = []string{"b"}
+	if _, err := m.ApplySpec(ctx, s1, 1, "op-2", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	out, err := m.Rollback(ctx, "r3", 1, 2, "op-rb2", "t", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := m.Rollback(ctx, "r3", 1, 2, "op-rb2", "t", "")
+	if err != nil || again.LatestRevision != out.LatestRevision || again.Args[0] != "a" {
+		t.Fatalf("%+v %v", again, err)
+	}
+}
+
+func TestRollback_EmptyOpID(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	if _, err := m.Rollback(context.Background(), "r", 1, 1, "", "t", ""); !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("got %v", err)
 	}
 }

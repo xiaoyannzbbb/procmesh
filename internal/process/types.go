@@ -36,6 +36,15 @@ type ProcessSpec struct {
 	UpdatedAt        time.Time
 }
 
+// Revision is one historical snapshot of a process spec (no payload).
+type Revision struct {
+	Revision  int64
+	Operator  string
+	Timestamp time.Time
+	Diff      string
+	Comment   string
+}
+
 // ApplyDefaults fills empty spec fields. ValidateSpec still rejects explicit Instances=0
 // if this is not called first.
 func ApplyDefaults(s *ProcessSpec) {
