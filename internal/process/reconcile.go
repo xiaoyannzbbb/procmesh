@@ -132,7 +132,7 @@ func (m *Manager) refresh(ctx context.Context, inst *Instance) error {
 	m.closeClient(inst.InstanceID)
 	sock := m.deps.Layout.ShimSocket(inst.InstanceID)
 	if !socketExists(sock) {
-		return nil
+		return m.refreshNoSocket(ctx, inst)
 	}
 	client, st, err := shim.Reconnect(ctx, sock)
 	if err != nil {
@@ -158,6 +158,49 @@ func (m *Manager) refresh(ctx context.Context, inst *Instance) error {
 		return m.deps.Store.PutInstance(ctx, *inst)
 	}
 	m.handleExit(ctx, inst, st)
+	return nil
+}
+
+// refreshNoSocket handles a missing shim socket without launching a second copy
+// when the managed PID is still live on the same boot.
+func (m *Manager) refreshNoSocket(ctx context.Context, inst *Instance) error {
+	boot := m.bootID(ctx)
+	livePID := 0
+	if sameBoot(inst.BootID, boot) && pidAlive(inst.PID) {
+		livePID = inst.PID
+	}
+	if livePID == 0 && sameBoot(inst.BootID, boot) {
+		if snap, err := readRuntime(m.deps.Layout, inst.InstanceID); err == nil && pidAlive(snap.PID) {
+			livePID = snap.PID
+			inst.PID = snap.PID
+			if snap.ShimPID > 0 {
+				inst.ShimPID = snap.ShimPID
+			}
+		}
+	}
+	if livePID > 0 {
+		if err := m.markOrphan(ctx, *inst, livePID); err != nil {
+			return err
+		}
+		inst.PID = livePID
+		inst.Observed = ObservedUnknown
+		return nil
+	}
+
+	// Boot mismatch or dead child: never treat the stored PID as live.
+	cleared := false
+	if inst.PID != 0 {
+		inst.PID = 0
+		cleared = true
+	}
+	switch inst.Observed {
+	case ObservedRunning, ObservedStarting, ObservedStopping:
+		m.handleExit(ctx, inst, nil)
+		return nil
+	}
+	if cleared {
+		return m.deps.Store.PutInstance(ctx, *inst)
+	}
 	return nil
 }
 

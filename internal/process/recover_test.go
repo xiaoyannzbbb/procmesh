@@ -337,3 +337,128 @@ func TestRecover_BootMismatchIgnoresOldPID(t *testing.T) {
 		}
 	})
 }
+
+func TestReconcile_DeadShimLivePIDBecomesUnknown(t *testing.T) {
+	ctx := context.Background()
+	root := shortRoot(t)
+	st := openStoreAt(t, filepath.Join(root, "store.db"))
+	layout := paths.New(root)
+	if err := layout.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	m := process.NewManager(process.Deps{Store: st, Layout: layout, ShimBin: testShimBin, Now: time.Now})
+	spec := process.ProcessSpec{ProcessID: "p1", Name: "sleep", Command: "/bin/sleep", Args: []string{"60"}, Instances: 1, Autostart: true}
+	t.Cleanup(func() { killManaged(t, st, "p1") })
+	if _, err := m.ApplySpec(ctx, spec, 0, "op-create", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetDesired(ctx, "p1", process.DesiredRunning, "op-start", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	insts, err := st.ListInstances(ctx, "p1")
+	if err != nil || len(insts) != 1 || insts[0].PID <= 0 || insts[0].ShimPID <= 0 {
+		t.Fatalf("%+v %v", insts, err)
+	}
+	oldPID := insts[0].PID
+	shimPID := insts[0].ShimPID
+	if err := unix.Kill(shimPID, unix.SIGKILL); err != nil {
+		t.Fatalf("kill shim: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := unix.Kill(shimPID, 0); err != nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	_ = os.Remove(layout.ShimSocket(insts[0].InstanceID))
+
+	// Do not Recover — only Reconcile must orphan a live child without a socket.
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetInstance(ctx, insts[0].InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PID != oldPID {
+		t.Fatalf("pid changed (double start?): %d -> %d", oldPID, got.PID)
+	}
+	if got.Observed != process.ObservedUnknown {
+		t.Fatalf("observed %s want UNKNOWN", got.Observed)
+	}
+	if err := unix.Kill(oldPID, 0); err != nil {
+		t.Fatalf("child must stay alive: %v", err)
+	}
+}
+
+func TestReconcile_DeadChildWithoutSocketRestarts(t *testing.T) {
+	ctx := context.Background()
+	root := shortRoot(t)
+	st := openStoreAt(t, filepath.Join(root, "store.db"))
+	layout := paths.New(root)
+	if err := layout.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	m := process.NewManager(process.Deps{Store: st, Layout: layout, ShimBin: testShimBin, Now: time.Now})
+	spec := process.ProcessSpec{
+		ProcessID: "p1",
+		Name:      "sleep",
+		Command:   "/bin/sleep",
+		Args:      []string{"60"},
+		Instances: 1,
+		Restart:   process.RestartPolicy{Mode: process.RestartAlways},
+	}
+	t.Cleanup(func() { killManaged(t, st, "p1") })
+	if _, err := m.ApplySpec(ctx, spec, 0, "op-create", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetDesired(ctx, "p1", process.DesiredRunning, "op-start", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	insts, err := st.ListInstances(ctx, "p1")
+	if err != nil || len(insts) != 1 || insts[0].PID <= 0 {
+		t.Fatalf("%+v %v", insts, err)
+	}
+	oldPID := insts[0].PID
+	shimPID := insts[0].ShimPID
+	if oldPID > 0 {
+		_ = unix.Kill(oldPID, unix.SIGKILL)
+	}
+	if shimPID > 0 {
+		_ = unix.Kill(shimPID, unix.SIGKILL)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		childDead := oldPID <= 0 || unix.Kill(oldPID, 0) != nil
+		shimDead := shimPID <= 0 || unix.Kill(shimPID, 0) != nil
+		if childDead && shimDead {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	_ = os.Remove(layout.ShimSocket(insts[0].InstanceID))
+
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetInstance(ctx, insts[0].InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PID <= 0 {
+		t.Fatalf("expected restart with new PID: %+v", got)
+	}
+	if got.PID == oldPID {
+		t.Fatalf("expected new pid after dead child, still %d", oldPID)
+	}
+	if got.Observed != process.ObservedRunning {
+		t.Fatalf("observed %s want RUNNING", got.Observed)
+	}
+}
