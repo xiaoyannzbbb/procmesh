@@ -1,6 +1,6 @@
 package localhttp
 
-// DTOs for HTTP JSON (snake_case)
+// DTOs for HTTP JSON (snake_case). Do not leak store types.
 
 type CreateProcessRequest struct {
 	OperationID      string      `json:"operation_id"`
@@ -10,14 +10,21 @@ type CreateProcessRequest struct {
 }
 
 type ProcessSpec struct {
-	ProcessID   string `json:"process_id"`
-	Name        string `json:"name"`
-	Command     string `json:"command"`
-	Args        []string `json:"args"`
-	Instances   int    `json:"instances"`
+	ProcessID        string            `json:"process_id"`
+	Name             string            `json:"name"`
+	Command          string            `json:"command"`
+	Args             []string          `json:"args"`
+	WorkingDirectory string            `json:"working_directory,omitempty"`
+	RunAsUser        string            `json:"run_as_user,omitempty"`
+	Environment      map[string]string `json:"environment,omitempty"`
+	Instances        int               `json:"instances"`
+	Autostart        bool              `json:"autostart,omitempty"`
+	StopSignal       string            `json:"stop_signal,omitempty"`
+	KillSignal       string            `json:"kill_signal,omitempty"`
+	LatestRevision   int64             `json:"latest_revision,omitempty"`
 }
 
-type StartProcessRequest struct {
+type MutationRequest struct {
 	OperationID string `json:"operation_id"`
 	Operator    string `json:"operator"`
 }
@@ -33,9 +40,9 @@ type ListProcessesResponse struct {
 }
 
 type ProcessResponse struct {
-	ProcessID string `json:"process_id"`
+	ProcessID string      `json:"process_id"`
 	Spec      ProcessSpec `json:"spec"`
-	Instances []Instance `json:"instances"`
+	Instances []Instance   `json:"instances"`
 }
 
 type Instance struct {
@@ -43,6 +50,7 @@ type Instance struct {
 	Ordinal    int    `json:"ordinal"`
 	Desired    string `json:"desired"`
 	Observed   string `json:"observed"`
+	Health     string `json:"health"`
 	PID        int    `json:"pid"`
 }
 

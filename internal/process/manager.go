@@ -27,6 +27,7 @@ type StateStore interface {
 	GetBootID(ctx context.Context) (string, error)
 	StartOp(ctx context.Context, opID, operator, typ, target string, payload []byte) (duplicate bool, status, errMsg string, err error)
 	FinishOperation(ctx context.Context, operationID, status string, result []byte, errMsg string) error
+	GetOp(ctx context.Context, operationID string) (status string, result []byte, errMsg string, err error)
 	WriteAudit(ctx context.Context, resource, action, opID, operator, result string) error
 }
 
@@ -194,6 +195,86 @@ func (m *Manager) SetDesired(ctx context.Context, processID string, desired Desi
 		action = "process.start"
 	}
 	m.audit(ctx, processID, action, opID, operator, "SUCCESS")
+	return m.finishOp(ctx, opID, opSuccess, nil, "")
+}
+
+// GetSpec returns the stored spec.
+func (m *Manager) GetSpec(ctx context.Context, processID string) (ProcessSpec, error) {
+	return m.deps.Store.GetSpec(ctx, processID)
+}
+
+// ListSpecs returns all specs.
+func (m *Manager) ListSpecs(ctx context.Context) ([]ProcessSpec, error) {
+	return m.deps.Store.ListSpecs(ctx)
+}
+
+// ListInstances returns instances for processID.
+func (m *Manager) ListInstances(ctx context.Context, processID string) ([]Instance, error) {
+	return m.deps.Store.ListInstances(ctx, processID)
+}
+
+// GetInstance returns one instance row.
+func (m *Manager) GetInstance(ctx context.Context, instanceID string) (Instance, error) {
+	return m.deps.Store.GetInstance(ctx, instanceID)
+}
+
+// PeekOp returns a journal row for HTTP idempotent replay.
+func (m *Manager) PeekOp(ctx context.Context, operationID string) (status string, result []byte, errMsg string, err error) {
+	return m.deps.Store.GetOp(ctx, operationID)
+}
+
+// Layout returns the manager data layout (for log paths).
+func (m *Manager) Layout() paths.Layout {
+	return m.deps.Layout
+}
+
+// Restart stops then sets desired RUNNING under a single operation_id.
+func (m *Manager) Restart(ctx context.Context, processID, opID, operator string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	done, existing, err := m.beginOp(ctx, opID, operator, "restart", processID, nil)
+	if err != nil {
+		return err
+	}
+	if done {
+		if existing.Status == opFailed {
+			return errcode.E(errcode.INVALID, existing.Error)
+		}
+		return nil
+	}
+	if _, err := m.deps.Store.GetSpec(ctx, processID); err != nil {
+		_ = m.finishOp(ctx, opID, opFailed, nil, err.Error())
+		return err
+	}
+	insts, err := m.deps.Store.ListInstances(ctx, processID)
+	if err != nil {
+		_ = m.finishOp(ctx, opID, opFailed, nil, err.Error())
+		return err
+	}
+	for _, inst := range insts {
+		inst.Desired = DesiredStopped
+		if err := m.deps.Store.PutInstance(ctx, inst); err != nil {
+			_ = m.finishOp(ctx, opID, opFailed, nil, err.Error())
+			return err
+		}
+	}
+	if err := m.reconcileLocked(ctx); err != nil {
+		_ = m.finishOp(ctx, opID, opFailed, nil, err.Error())
+		return err
+	}
+	insts, err = m.deps.Store.ListInstances(ctx, processID)
+	if err != nil {
+		_ = m.finishOp(ctx, opID, opFailed, nil, err.Error())
+		return err
+	}
+	for _, inst := range insts {
+		inst.Desired = DesiredRunning
+		if err := m.deps.Store.PutInstance(ctx, inst); err != nil {
+			_ = m.finishOp(ctx, opID, opFailed, nil, err.Error())
+			return err
+		}
+	}
+	m.audit(ctx, processID, "process.restart", opID, operator, "SUCCESS")
 	return m.finishOp(ctx, opID, opSuccess, nil, "")
 }
 

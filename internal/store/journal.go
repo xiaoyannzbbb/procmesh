@@ -118,6 +118,15 @@ func (s *Store) GetOperation(ctx context.Context, operationID string) (Operation
 	`, operationID))
 }
 
+// GetOp returns journal status fields for process.StateStore / HTTP replay.
+func (s *Store) GetOp(ctx context.Context, operationID string) (status string, result []byte, errMsg string, err error) {
+	op, err := s.GetOperation(ctx, operationID)
+	if err != nil {
+		return "", nil, "", err
+	}
+	return op.Status, op.Result, op.Error, nil
+}
+
 func scanOperation(row *sql.Row) (Operation, error) {
 	var op Operation
 	var createdAt string
