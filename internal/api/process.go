@@ -19,6 +19,9 @@ type ProcessAPI struct {
 }
 
 func (s *ProcessAPI) ListProcesses(ctx context.Context, _ *connect.Request[procmeshv1.ListProcessesRequest]) (*connect.Response[procmeshv1.ListProcessesResponse], error) {
+	if err := requireMgr(s.Mgr); err != nil {
+		return nil, err
+	}
 	specs, err := s.Mgr.ListSpecs(ctx)
 	if err != nil {
 		return nil, ToConnect(err)
@@ -37,6 +40,9 @@ func (s *ProcessAPI) ListProcesses(ctx context.Context, _ *connect.Request[procm
 }
 
 func (s *ProcessAPI) GetProcess(ctx context.Context, req *connect.Request[procmeshv1.GetProcessRequest]) (*connect.Response[procmeshv1.GetProcessResponse], error) {
+	if err := requireMgr(s.Mgr); err != nil {
+		return nil, err
+	}
 	spec, err := s.Mgr.Resolve(ctx, req.Msg.GetIdOrName())
 	if err != nil {
 		return nil, ToConnect(err)
@@ -214,6 +220,13 @@ func (s *ProcessAPI) mutateRef(ctx context.Context, req *connect.Request[procmes
 
 func (s *ProcessAPI) rejectMutation() error {
 	if s.Degraded != nil && s.Degraded() {
+		return ToConnect(errcode.E(errcode.DEGRADED, "degraded"))
+	}
+	return nil
+}
+
+func requireMgr(mgr *process.Manager) error {
+	if mgr == nil {
 		return ToConnect(errcode.E(errcode.DEGRADED, "degraded"))
 	}
 	return nil

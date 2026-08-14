@@ -24,6 +24,9 @@ type ConfigAPI struct {
 }
 
 func (s *ConfigAPI) GetConfig(ctx context.Context, req *connect.Request[procmeshv1.GetConfigRequest]) (*connect.Response[procmeshv1.GetConfigResponse], error) {
+	if err := requireMgr(s.Mgr); err != nil {
+		return nil, err
+	}
 	spec, err := s.Mgr.Resolve(ctx, req.Msg.GetIdOrName())
 	if err != nil {
 		return nil, ToConnect(err)
@@ -56,6 +59,9 @@ func (s *ConfigAPI) UpdateConfig(ctx context.Context, req *connect.Request[procm
 }
 
 func (s *ConfigAPI) History(ctx context.Context, req *connect.Request[procmeshv1.HistoryRequest]) (*connect.Response[procmeshv1.HistoryResponse], error) {
+	if err := requireMgr(s.Mgr); err != nil {
+		return nil, err
+	}
 	spec, err := s.Mgr.Resolve(ctx, req.Msg.GetIdOrName())
 	if err != nil {
 		return nil, ToConnect(err)
@@ -78,6 +84,9 @@ func (s *ConfigAPI) History(ctx context.Context, req *connect.Request[procmeshv1
 }
 
 func (s *ConfigAPI) Diff(ctx context.Context, req *connect.Request[procmeshv1.DiffRequest]) (*connect.Response[procmeshv1.DiffResponse], error) {
+	if err := requireMgr(s.Mgr); err != nil {
+		return nil, err
+	}
 	spec, err := s.Mgr.Resolve(ctx, req.Msg.GetIdOrName())
 	if err != nil {
 		return nil, ToConnect(err)

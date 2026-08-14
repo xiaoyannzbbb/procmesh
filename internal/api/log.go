@@ -37,6 +37,9 @@ type LogAPI struct {
 }
 
 func (s *LogAPI) TailLogs(ctx context.Context, req *connect.Request[procmeshv1.TailLogsRequest]) (*connect.Response[procmeshv1.TailLogsResponse], error) {
+	if err := requireMgr(s.Mgr); err != nil {
+		return nil, err
+	}
 	spec, err := s.Mgr.Resolve(ctx, req.Msg.GetIdOrName())
 	if err != nil {
 		return nil, ToConnect(err)
@@ -74,6 +77,9 @@ func (s *LogAPI) TailLogs(ctx context.Context, req *connect.Request[procmeshv1.T
 }
 
 func (s *LogAPI) StreamLogs(ctx context.Context, req *connect.Request[procmeshv1.StreamLogsRequest], stream *connect.ServerStream[procmeshv1.LogChunk]) error {
+	if err := requireMgr(s.Mgr); err != nil {
+		return err
+	}
 	spec, err := s.Mgr.Resolve(ctx, req.Msg.GetIdOrName())
 	if err != nil {
 		return ToConnect(err)
@@ -127,6 +133,9 @@ func (s *LogAPI) StreamLogs(ctx context.Context, req *connect.Request[procmeshv1
 }
 
 func (s *LogAPI) DownloadLogs(ctx context.Context, req *connect.Request[procmeshv1.DownloadLogsRequest], stream *connect.ServerStream[procmeshv1.LogChunk]) error {
+	if err := requireMgr(s.Mgr); err != nil {
+		return err
+	}
 	spec, err := s.Mgr.Resolve(ctx, req.Msg.GetIdOrName())
 	if err != nil {
 		return ToConnect(err)

@@ -124,3 +124,34 @@ func TestServer_ConnectAndLegacyJSON(t *testing.T) {
 		t.Fatalf("POST /v1/processes %d %s", res.StatusCode, got)
 	}
 }
+
+func TestServer_ConnectNilMgrReturnsDegraded(t *testing.T) {
+	srv, err := NewServer(Options{Started: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hs := httptest.NewServer(srv.Engine)
+	t.Cleanup(hs.Close)
+	ctx := context.Background()
+
+	proc := procmeshv1connect.NewProcessServiceClient(hs.Client(), hs.URL)
+	_, err = proc.ListProcesses(ctx, connect.NewRequest(&procmeshv1.ListProcessesRequest{}))
+	code, detail := connectDetail(t, err)
+	if code != connect.CodeUnavailable || detail != "DEGRADED" {
+		t.Fatalf("ListProcesses code=%v detail=%s err=%v", code, detail, err)
+	}
+
+	cfg := procmeshv1connect.NewConfigServiceClient(hs.Client(), hs.URL)
+	_, err = cfg.GetConfig(ctx, connect.NewRequest(&procmeshv1.GetConfigRequest{IdOrName: "web"}))
+	code, detail = connectDetail(t, err)
+	if code != connect.CodeUnavailable || detail != "DEGRADED" {
+		t.Fatalf("GetConfig code=%v detail=%s err=%v", code, detail, err)
+	}
+
+	logs := procmeshv1connect.NewLogServiceClient(hs.Client(), hs.URL)
+	_, err = logs.TailLogs(ctx, connect.NewRequest(&procmeshv1.TailLogsRequest{IdOrName: "web"}))
+	code, detail = connectDetail(t, err)
+	if code != connect.CodeUnavailable || detail != "DEGRADED" {
+		t.Fatalf("TailLogs code=%v detail=%s err=%v", code, detail, err)
+	}
+}
