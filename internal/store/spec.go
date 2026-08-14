@@ -62,7 +62,7 @@ func (s *Store) PutSpec(ctx context.Context, spec process.ProcessSpec, expectedR
 			}
 			return process.ProcessSpec{}, fmt.Errorf("insert spec: %w", err)
 		}
-		if err := insertRevision(ctx, tx, out.ProcessID, 1, operator, now, specDiff(process.ProcessSpec{}, out), comment, payload); err != nil {
+		if err := insertRevision(ctx, tx, out.ProcessID, 1, operator, now, SpecDiff(process.ProcessSpec{}, out), comment, payload); err != nil {
 			return process.ProcessSpec{}, err
 		}
 	} else {
@@ -99,7 +99,7 @@ func (s *Store) PutSpec(ctx context.Context, spec process.ProcessSpec, expectedR
 		if n == 0 {
 			return process.ProcessSpec{}, errcode.E(errcode.CONFLICT, "revision mismatch")
 		}
-		if err := insertRevision(ctx, tx, out.ProcessID, out.LatestRevision, operator, now, specDiff(current, out), comment, payload); err != nil {
+		if err := insertRevision(ctx, tx, out.ProcessID, out.LatestRevision, operator, now, SpecDiff(current, out), comment, payload); err != nil {
 			return process.ProcessSpec{}, err
 		}
 	}
@@ -252,6 +252,15 @@ func (s *Store) listRevisionRows(ctx context.Context, processID string) ([]Revis
 	return out, nil
 }
 
+// GetRevisionSpec returns the decoded spec for one revision.
+func (s *Store) GetRevisionSpec(ctx context.Context, processID string, rev int64) (process.ProcessSpec, error) {
+	payload, err := s.GetRevisionSpecJSON(ctx, processID, rev)
+	if err != nil {
+		return process.ProcessSpec{}, err
+	}
+	return decodeSpec(payload, rev)
+}
+
 // GetRevisionSpecJSON returns the stored spec payload for one revision.
 func (s *Store) GetRevisionSpecJSON(ctx context.Context, processID string, rev int64) ([]byte, error) {
 	var specJSON string
@@ -323,7 +332,7 @@ func (s *Store) RollbackSpec(ctx context.Context, processID string, toRevision, 
 	if n == 0 {
 		return process.ProcessSpec{}, errcode.E(errcode.CONFLICT, "revision mismatch")
 	}
-	if err := insertRevision(ctx, tx, processID, out.LatestRevision, operator, now, specDiff(current, out), comment, newPayload); err != nil {
+	if err := insertRevision(ctx, tx, processID, out.LatestRevision, operator, now, SpecDiff(current, out), comment, newPayload); err != nil {
 		return process.ProcessSpec{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -371,7 +380,8 @@ func insertRevision(ctx context.Context, tx *sql.Tx, processID string, rev int64
 	return nil
 }
 
-func specDiff(oldSpec, newSpec process.ProcessSpec) string {
+// SpecDiff is a compact text diff of command, args, and environment.
+func SpecDiff(oldSpec, newSpec process.ProcessSpec) string {
 	var b strings.Builder
 	if oldSpec.Command != newSpec.Command {
 		fmt.Fprintf(&b, "-command %s\n+command %s\n", oldSpec.Command, newSpec.Command)

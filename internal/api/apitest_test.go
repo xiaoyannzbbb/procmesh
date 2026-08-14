@@ -71,11 +71,25 @@ func newProcessClient(t *testing.T, degraded func() bool) procmeshv1connect.Proc
 
 func newProcessClientWith(t *testing.T, m *process.Manager, degraded func() bool) procmeshv1connect.ProcessServiceClient {
 	t.Helper()
-	api := &ProcessAPI{Mgr: m, Degraded: degraded}
+	proc, _ := newServiceClientsWith(t, m, nil, degraded)
+	return proc
+}
+
+func newConfigClients(t *testing.T) (procmeshv1connect.ProcessServiceClient, procmeshv1connect.ConfigServiceClient) {
+	t.Helper()
+	m, st, _ := newTestManager(t)
+	return newServiceClientsWith(t, m, st, nil)
+}
+
+func newServiceClientsWith(t *testing.T, m *process.Manager, revs RevisionStore, degraded func() bool) (procmeshv1connect.ProcessServiceClient, procmeshv1connect.ConfigServiceClient) {
+	t.Helper()
 	mux := http.NewServeMux()
-	path, h := procmeshv1connect.NewProcessServiceHandler(api)
-	mux.Handle(path, h)
+	pp, ph := procmeshv1connect.NewProcessServiceHandler(&ProcessAPI{Mgr: m, Degraded: degraded})
+	mux.Handle(pp, ph)
+	cp, ch := procmeshv1connect.NewConfigServiceHandler(&ConfigAPI{Mgr: m, Revs: revs, Degraded: degraded})
+	mux.Handle(cp, ch)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return procmeshv1connect.NewProcessServiceClient(srv.Client(), srv.URL)
+	return procmeshv1connect.NewProcessServiceClient(srv.Client(), srv.URL),
+		procmeshv1connect.NewConfigServiceClient(srv.Client(), srv.URL)
 }

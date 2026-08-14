@@ -275,6 +275,13 @@ func TestPutSpec_RecordsDiffAndPersists(t *testing.T) {
 	if err != nil || len(payload) == 0 || revs[1].Timestamp.IsZero() {
 		t.Fatalf("payload/ts: %+v %v", revs[1], err)
 	}
+	decoded, err := s2.GetRevisionSpec(ctx, "p1", revs[1].Revision)
+	if err != nil || decoded.Command != "v1" || decoded.Args[0] != "b" || decoded.LatestRevision != 2 {
+		t.Fatalf("GetRevisionSpec: %+v %v", decoded, err)
+	}
+	if _, err := s2.GetRevisionSpec(ctx, "p1", 99); !errcode.Is(err, errcode.NOT_FOUND) {
+		t.Fatalf("missing rev: %v", err)
+	}
 }
 
 func TestListSpecsAndRevisions_Empty(t *testing.T) {
