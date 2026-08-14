@@ -43,13 +43,27 @@ func Run(ctx context.Context, opt Options) error {
 	if err := layout.Ensure(); err != nil {
 		return fmt.Errorf("ensure layout: %w", err)
 	}
+
+	degraded := false
 	st, err := store.Open(layout.Store)
 	if err != nil {
-		return fmt.Errorf("open store: %w", err)
+		quarantine := layout.Store + ".corrupt-" + strconv.FormatInt(time.Now().Unix(), 10)
+		if rerr := os.Rename(layout.Store, quarantine); rerr != nil {
+			fmt.Fprintf(os.Stderr, "quarantine store: %v (open: %v)\n", rerr, err)
+		} else {
+			fmt.Fprintf(os.Stderr, "quarantined corrupt store to %s: %v\n", quarantine, err)
+		}
+		st, err = store.Open(layout.Store)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "reopen store after quarantine: %v\n", err)
+			return serveHTTP(ctx, opt, nil, nil, true, func() error {
+				return errcode.E(errcode.DEGRADED, "store unavailable")
+			})
+		}
+		degraded = true
 	}
 	defer func() { _ = st.Close() }()
 
-	degraded := false
 	if err := st.IntegrityCheck(ctx); err != nil {
 		degraded = true
 		fmt.Fprintf(os.Stderr, "integrity check: %v\n", err)
@@ -85,6 +99,10 @@ func Run(ctx context.Context, opt Options) error {
 		}
 		return nil
 	}
+	return serveHTTP(ctx, opt, mgr, logs, degraded, ready)
+}
+
+func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *logmgr.Manager, degraded bool, ready func() error) error {
 	srv, err := localhttp.NewServerOpts(mgr, logs, opt.Listen, degraded, ready)
 	if err != nil {
 		return fmt.Errorf("new server: %w", err)
@@ -98,24 +116,28 @@ func Run(ctx context.Context, opt Options) error {
 		opt.OnListen(ln.Addr().String())
 	}
 
-	go func() {
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if err := mgr.Reconcile(ctx); err != nil {
-					fmt.Fprintf(os.Stderr, "reconcile: %v\n", err)
+	if mgr != nil {
+		go func() {
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if err := mgr.Reconcile(ctx); err != nil {
+						fmt.Fprintf(os.Stderr, "reconcile: %v\n", err)
+					}
+					if logs != nil {
+						if _, err := logs.Protect(ctx); err != nil {
+							fmt.Fprintf(os.Stderr, "protect: %v\n", err)
+						}
+					}
+					_ = mgr.RotateLogs(ctx)
 				}
-				if _, err := logs.Protect(ctx); err != nil {
-					fmt.Fprintf(os.Stderr, "protect: %v\n", err)
-				}
-				_ = mgr.RotateLogs(ctx)
 			}
-		}
-	}()
+		}()
+	}
 
 	errCh := make(chan error, 1)
 	go func() {

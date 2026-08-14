@@ -35,6 +35,74 @@ func TestCase3_AgentCancelDoesNotKillChild(t *testing.T) {
 	_ = base
 }
 
+func TestCase4_BootMismatchDoesNotAdoptOldPID(t *testing.T) {
+	// Host reboot is systemd/manual; automate boot mismatch via SetBootID.
+	ctx := context.Background()
+	root, err := os.MkdirTemp("", "pm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	st := openStoreAt(t, filepath.Join(root, "store.db"))
+	if err := st.SetBootID(ctx, "boot-1"); err != nil {
+		t.Fatal(err)
+	}
+	layout := paths.New(root)
+	if err := layout.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	m := process.NewManager(process.Deps{Store: st, Layout: layout, ShimBin: testShimBin, Now: time.Now})
+	spec := process.ProcessSpec{
+		ProcessID: "p1",
+		Name:      "sleep",
+		Command:   "/bin/sleep",
+		Args:      []string{"60"},
+		Instances: 1,
+		Autostart: false,
+	}
+	if _, err := m.ApplySpec(ctx, spec, 0, "op-create", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetDesired(ctx, "p1", process.DesiredRunning, "op-start", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	insts, err := st.ListInstances(ctx, "p1")
+	if err != nil || len(insts) != 1 || insts[0].PID <= 0 {
+		t.Fatalf("%+v %v", insts, err)
+	}
+	oldPID := insts[0].PID
+	oldShim := insts[0].ShimPID
+	t.Cleanup(func() {
+		if oldPID > 0 {
+			_ = unix.Kill(oldPID, unix.SIGKILL)
+		}
+		if oldShim > 0 {
+			_ = unix.Kill(oldShim, unix.SIGKILL)
+		}
+	})
+
+	if err := st.SetBootID(ctx, "rebooted"); err != nil {
+		t.Fatal(err)
+	}
+	m2 := process.NewManager(process.Deps{Store: st, Layout: layout, ShimBin: testShimBin, Now: time.Now})
+	if err := m2.Recover(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetInstance(ctx, insts[0].InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Observed == process.ObservedUnknown {
+		t.Fatalf("boot mismatch must not treat old pid as UNKNOWN: %+v", got)
+	}
+	if got.PID == oldPID {
+		t.Fatalf("must not adopt old pid %d after boot mismatch: %+v", oldPID, got)
+	}
+}
+
 func TestCase5_ConcurrentCAS(t *testing.T) {
 	s := openStoreAt(t, filepath.Join(t.TempDir(), "store.db"))
 	ctx := context.Background()

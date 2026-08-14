@@ -74,7 +74,7 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) isDegraded() bool {
-	if s.degraded {
+	if s.degraded || s.mgr == nil {
 		return true
 	}
 	if s.ready != nil && s.ready() != nil {
@@ -84,6 +84,11 @@ func (s *Server) isDegraded() bool {
 }
 
 func (s *Server) processes(w http.ResponseWriter, r *http.Request) {
+	if s.mgr == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		fmt.Fprint(w, "DEGRADED")
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		s.listProcesses(w, r)
@@ -126,6 +131,11 @@ func (s *Server) listProcesses(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) processSub(w http.ResponseWriter, r *http.Request) {
+	if s.mgr == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		fmt.Fprint(w, "DEGRADED")
+		return
+	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/processes/"), "/")
 	if len(parts) == 0 || parts[0] == "" {
 		http.Error(w, "not found", http.StatusNotFound)
@@ -343,6 +353,11 @@ func (s *Server) logsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) instanceSub(w http.ResponseWriter, r *http.Request) {
+	if s.mgr == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		fmt.Fprint(w, "DEGRADED")
+		return
+	}
 	rest := strings.TrimPrefix(r.URL.Path, "/v1/instances/")
 	parts := strings.Split(rest, "/")
 	if len(parts) != 2 || parts[1] != "adopt" {

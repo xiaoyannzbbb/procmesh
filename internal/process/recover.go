@@ -24,9 +24,7 @@ func (m *Manager) recoverLocked(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if _, err := shim.Discover(m.deps.Layout.ShimDir); err != nil && !os.IsNotExist(err) {
-		return err
-	}
+	known := make(map[string]struct{})
 	for i := range specs {
 		if err := m.ensureInstances(ctx, specs[i]); err != nil {
 			return err
@@ -36,12 +34,43 @@ func (m *Manager) recoverLocked(ctx context.Context) error {
 			return err
 		}
 		for _, inst := range insts {
+			known[sanitizedID(inst.InstanceID)] = struct{}{}
 			if err := m.recoverInstance(ctx, specs[i], inst, boot); err != nil {
 				return err
 			}
 		}
 	}
+	if err := m.recoverLeftoverSockets(ctx, known); err != nil {
+		return err
+	}
 	m.closeAll()
+	return nil
+}
+
+func (m *Manager) recoverLeftoverSockets(ctx context.Context, known map[string]struct{}) error {
+	found, err := shim.Discover(m.deps.Layout.ShimDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for id, sock := range found {
+		if _, ok := known[id]; ok {
+			continue
+		}
+		// Leftover socket: reconnect and leave it. Never start a second child.
+		client, st, recErr := shim.Reconnect(ctx, sock)
+		if recErr == nil && st != nil && st.GetAlive() {
+			if client != nil {
+				_ = client.Close()
+			}
+			continue
+		}
+		if client != nil {
+			_ = client.Close()
+		}
+	}
 	return nil
 }
 
@@ -50,9 +79,13 @@ func (m *Manager) recoverInstance(ctx context.Context, spec ProcessSpec, inst In
 	if socketExists(sock) {
 		client, st, err := shim.Reconnect(ctx, sock)
 		if err == nil && st != nil && st.GetAlive() {
-			return m.takeOver(ctx, inst, client, st, boot)
-		}
-		if client != nil {
+			if sameBoot(inst.BootID, boot) {
+				return m.takeOver(ctx, inst, client, st, boot)
+			}
+			if client != nil {
+				_ = client.Close()
+			}
+		} else if client != nil {
 			_ = client.Close()
 		}
 	}
