@@ -1,0 +1,223 @@
+syntax = "proto3";
+package procmesh.v1;
+option go_package = "github.com/qleelulu/procmesh/proto/procmesh/v1;procmeshv1";
+
+message ErrorInfo {
+  string code = 1;    // CONFLICT, NOT_FOUND, INVALID, DEGRADED, ...
+  string message = 2;
+}
+
+message MutationMeta {
+  string operation_id = 1;
+  string operator = 2;
+}
+
+message Backoff {
+  int64 initial_ms = 1;
+  int64 max_ms = 2;
+  double multiplier = 3;
+}
+
+message RestartPolicy {
+  string mode = 1;            // never | always | on-failure
+  int32 max_retries = 2;
+  int64 retry_window_ms = 3;
+  Backoff backoff = 4;
+}
+
+message HealthCheck {
+  string type = 1;            // alive | http | tcp | exec
+  string url = 2;
+  string method = 3;
+  string address = 4;
+  string command = 5;
+  int32 expected_status = 6;
+  repeated string args = 7;
+  int64 initial_delay_ms = 8;
+  int64 interval_ms = 9;
+  int64 timeout_ms = 10;
+  int32 failure_threshold = 11;
+  int32 success_threshold = 12;
+  bool restart_on_failure = 13;
+  int64 restart_cooldown_ms = 14;
+}
+
+message LogPolicy {
+  int64 max_size = 1;
+  int32 max_files = 2;
+  int64 max_age_seconds = 3;
+  bool compress = 4;
+}
+
+message ResourceLimit {
+  int64 cpu_quota_millis = 1;
+  int64 memory_bytes = 2;
+  int64 open_files = 3;
+}
+
+message Dependency {
+  string process_name = 1;
+  string condition = 2;       // STARTED | HEALTHY
+}
+
+message ProcessSpec {
+  string process_id = 1;
+  string name = 2;
+  string owner_agent_id = 3;
+  string group = 4;
+  string command = 5;
+  repeated string args = 6;
+  string working_directory = 7;
+  string run_as_user = 8;
+  map<string, string> environment = 9;
+  int32 instances = 10;
+  bool autostart = 11;
+  string stop_signal = 12;
+  string kill_signal = 13;
+  int64 stop_timeout_ms = 14;
+  int32 startup_priority = 15;
+  RestartPolicy restart = 16;
+  HealthCheck health = 17;
+  LogPolicy log = 18;
+  ResourceLimit resources = 19;
+  repeated Dependency dependencies = 20;
+  int64 latest_revision = 21;
+}
+
+message Instance {
+  string instance_id = 1;
+  int32 ordinal = 2;
+  string desired = 3;
+  string observed = 4;
+  string health = 5;
+  int32 pid = 6;
+  int64 active_revision = 7;
+  int32 restart_count = 8;
+  int32 exit_code = 9;
+  bool has_exit_code = 10;
+}
+
+message ProcessView {
+  string process_id = 1;
+  ProcessSpec spec = 2;
+  repeated Instance instances = 3;
+}
+
+message ApplyProcessRequest {
+  MutationMeta meta = 1;
+  int64 expected_revision = 2;
+  ProcessSpec spec = 3;
+  string comment = 4;
+}
+message ApplyProcessResponse { ProcessSpec spec = 1; }
+
+message GetProcessRequest { string id_or_name = 1; }
+message GetProcessResponse { ProcessView process = 1; }
+
+message ListProcessesRequest {}
+message ListProcessesResponse { repeated ProcessView processes = 1; }
+
+message DeleteProcessRequest {
+  MutationMeta meta = 1;
+  string id_or_name = 2;
+  int64 expected_revision = 3;
+}
+message DeleteProcessResponse {}
+
+message ProcessRefRequest {
+  MutationMeta meta = 1;
+  string id_or_name = 2;
+}
+message ProcessRefResponse { ProcessView process = 1; }
+
+message AdoptRequest {
+  MutationMeta meta = 1;
+  string instance_id = 2;
+  int32 pid = 3;
+}
+message AdoptResponse { ProcessView process = 1; }
+
+service ProcessService {
+  rpc ListProcesses(ListProcessesRequest) returns (ListProcessesResponse);
+  rpc GetProcess(GetProcessRequest) returns (GetProcessResponse);
+  rpc ApplyProcess(ApplyProcessRequest) returns (ApplyProcessResponse);
+  rpc DeleteProcess(DeleteProcessRequest) returns (DeleteProcessResponse);
+  rpc StartProcess(ProcessRefRequest) returns (ProcessRefResponse);
+  rpc StopProcess(ProcessRefRequest) returns (ProcessRefResponse);
+  rpc RestartProcess(ProcessRefRequest) returns (ProcessRefResponse);
+  rpc KillProcess(ProcessRefRequest) returns (ProcessRefResponse);
+  rpc ResetFailure(ProcessRefRequest) returns (ProcessRefResponse);
+  rpc AdoptInstance(AdoptRequest) returns (AdoptResponse);
+}
+
+message GetConfigRequest { string id_or_name = 1; }
+message GetConfigResponse { ProcessSpec spec = 1; }
+
+message UpdateConfigRequest {
+  MutationMeta meta = 1;
+  string id_or_name = 2;
+  int64 expected_revision = 3;
+  ProcessSpec spec = 4;
+  string comment = 5;
+}
+message UpdateConfigResponse { ProcessSpec spec = 1; }
+
+message HistoryRequest { string id_or_name = 1; }
+message Revision {
+  int64 revision = 1;
+  string operator = 2;
+  int64 timestamp_unix_ms = 3;
+  string diff = 4;
+  string comment = 5;
+}
+message HistoryResponse { repeated Revision revisions = 1; }
+
+message DiffRequest {
+  string id_or_name = 1;
+  int64 from_revision = 2;
+  int64 to_revision = 3;
+}
+message DiffResponse { string diff = 1; }
+
+message RollbackRequest {
+  MutationMeta meta = 1;
+  string id_or_name = 2;
+  int64 to_revision = 3;
+  int64 expected_revision = 4;
+  string comment = 5;
+}
+message RollbackResponse { ProcessSpec spec = 1; }
+
+service ConfigService {
+  rpc GetConfig(GetConfigRequest) returns (GetConfigResponse);
+  rpc UpdateConfig(UpdateConfigRequest) returns (UpdateConfigResponse);
+  rpc History(HistoryRequest) returns (HistoryResponse);
+  rpc Diff(DiffRequest) returns (DiffResponse);
+  rpc Rollback(RollbackRequest) returns (RollbackResponse);
+}
+
+message TailLogsRequest {
+  string id_or_name = 1;
+  string instance_id = 2;   // 空 = 全部 instance 的 stdout
+  string stream = 3;        // stdout | stderr；默认 stdout
+  int32 lines = 4;          // 0 = 默认 100
+}
+message TailLogsResponse { repeated string lines = 1; }
+
+message StreamLogsRequest {
+  string id_or_name = 1;
+  string instance_id = 2;
+  string stream = 3;
+}
+message DownloadLogsRequest {
+  string id_or_name = 1;
+  string instance_id = 2;
+  string stream = 3;
+}
+message LogChunk { bytes data = 1; bool eof = 2; }
+
+service LogService {
+  rpc TailLogs(TailLogsRequest) returns (TailLogsResponse);
+  rpc StreamLogs(StreamLogsRequest) returns (stream LogChunk);
+  rpc DownloadLogs(DownloadLogsRequest) returns (stream LogChunk);
+}
