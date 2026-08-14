@@ -30,6 +30,7 @@ type Options struct {
 	Mgr      *process.Manager
 	Logs     *logmgr.Manager
 	Store    RevisionStore // 可为 *store.Store；nil 时 Config.Diff 不可用
+	Cluster  ClusterDeps   // 零值 = 未接线；Init/Join → UNAVAILABLE
 	Degraded bool
 	Ready    func() error
 	Started  time.Time
@@ -61,6 +62,10 @@ func NewServer(opts Options) (*Server, error) {
 	mountConnect(engine, cp, ch)
 	lp, lh := procmeshv1connect.NewLogServiceHandler(&LogAPI{Mgr: opts.Mgr})
 	mountConnect(engine, lp, lh)
+	np, nh := procmeshv1connect.NewNodeServiceHandler(&NodeAPI{Deps: opts.Cluster, Degraded: degraded})
+	mountConnect(engine, np, nh)
+	clp, clh := procmeshv1connect.NewClusterServiceHandler(&ClusterAPI{Deps: opts.Cluster, Degraded: degraded})
+	mountConnect(engine, clp, clh)
 
 	legacy, err := localhttp.NewServerOpts(opts.Mgr, opts.Logs, opts.Addr, opts.Degraded, opts.Ready)
 	if err != nil {

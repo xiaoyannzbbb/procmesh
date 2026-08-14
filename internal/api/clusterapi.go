@@ -1,0 +1,363 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"connectrpc.com/connect"
+	"github.com/qleelulu/procmesh/internal/cluster"
+	"github.com/qleelulu/procmesh/internal/control"
+	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/version"
+	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
+	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
+)
+
+var _ procmeshv1connect.ClusterServiceHandler = (*ClusterAPI)(nil)
+
+type ClusterDeps struct {
+	Dir        string           // layout.ClusterDir
+	Store      ClusterMetaStore // GetOrCreateNodeID, SetClusterID, GetClusterID
+	Mesh       NodeLister       // Members(); nil → List uses Local
+	Local      func() cluster.NodeSummary
+	GossipAddr func() string // local advertise, returned by seed Join
+	Now        func() time.Time
+	NodeID     string
+	Hostname   string
+	BootID     string
+	APIAddr    string
+	HTTPClient *http.Client
+}
+
+type ClusterMetaStore interface {
+	GetOrCreateNodeID(ctx context.Context) (string, error)
+	SetClusterID(ctx context.Context, id string) error
+	GetClusterID(ctx context.Context) (string, error)
+}
+
+type NodeLister interface {
+	Members() []cluster.NodeSummary
+}
+
+type meshJoiner interface {
+	Join(seeds []string) (int, error)
+}
+
+type ClusterAPI struct {
+	Deps     ClusterDeps
+	Degraded func() bool
+}
+
+func (s *ClusterAPI) Init(ctx context.Context, req *connect.Request[procmeshv1.InitClusterRequest]) (*connect.Response[procmeshv1.InitClusterResponse], error) {
+	if err := rejectDegraded(s.Degraded); err != nil {
+		return nil, err
+	}
+	if _, _, err := metaOf(req.Msg.GetMeta()); err != nil {
+		return nil, err
+	}
+	if err := requireCluster(s.Deps); err != nil {
+		return nil, err
+	}
+	nodeID, err := s.Deps.localNodeID(ctx)
+	if err != nil {
+		return nil, ToConnect(err)
+	}
+	result, err := control.Init(s.Deps.Dir, nodeID, req.Msg.GetAdminUsername(), s.Deps.now())
+	if err != nil {
+		return nil, ToConnect(err)
+	}
+	if s.Deps.Store != nil {
+		if err := s.Deps.Store.SetClusterID(ctx, result.ClusterID); err != nil {
+			return nil, ToConnect(err)
+		}
+	}
+	return connect.NewResponse(&procmeshv1.InitClusterResponse{
+		ClusterId:     result.ClusterID,
+		NodeId:        result.NodeID,
+		AdminUsername: result.AdminUser,
+		AdminPassword: result.AdminPassword,
+	}), nil
+}
+
+func (s *ClusterAPI) Join(ctx context.Context, req *connect.Request[procmeshv1.JoinClusterRequest]) (*connect.Response[procmeshv1.JoinClusterResponse], error) {
+	if err := rejectDegraded(s.Degraded); err != nil {
+		return nil, err
+	}
+	if _, _, err := metaOf(req.Msg.GetMeta()); err != nil {
+		return nil, err
+	}
+	if err := requireCluster(s.Deps); err != nil {
+		return nil, err
+	}
+	if err := requireInited(s.Deps.Dir); err != nil {
+		return nil, err
+	}
+	if err := cluster.CheckJoin(s.Deps.members(), cluster.JoinIdentity{
+		NodeID:          req.Msg.GetNodeId(),
+		BootID:          req.Msg.GetBootId(),
+		ProtocolVersion: int(req.Msg.GetProtocolVersion()),
+	}); err != nil {
+		return nil, ToConnect(err)
+	}
+	now := s.Deps.now()
+	if err := control.ConsumeToken(s.Deps.Dir, req.Msg.GetToken(), now); err != nil {
+		return nil, ToConnect(err)
+	}
+	meta, err := control.LoadMeta(s.Deps.Dir)
+	if err != nil {
+		return nil, ToConnect(err)
+	}
+	bundle, err := control.LoadBundle(s.Deps.Dir)
+	if err != nil {
+		return nil, ToConnect(err)
+	}
+	certPEM, err := control.SignCSR(bundle.CACertPEM, bundle.CAKeyPEM, req.Msg.GetCsrPem(), meta.ClusterID, req.Msg.GetNodeId(), now)
+	if err != nil {
+		return nil, ToConnect(err)
+	}
+	return connect.NewResponse(&procmeshv1.JoinClusterResponse{
+		ClusterId:     meta.ClusterID,
+		CaPem:         bundle.CACertPEM,
+		CertPem:       certPEM,
+		GossipAddress: s.Deps.gossipAddr(),
+	}), nil
+}
+
+func (s *ClusterAPI) RequestJoin(ctx context.Context, req *connect.Request[procmeshv1.RequestJoinRequest]) (*connect.Response[procmeshv1.RequestJoinResponse], error) {
+	if err := rejectDegraded(s.Degraded); err != nil {
+		return nil, err
+	}
+	if _, _, err := metaOf(req.Msg.GetMeta()); err != nil {
+		return nil, err
+	}
+	if err := requireCluster(s.Deps); err != nil {
+		return nil, err
+	}
+	if control.AlreadyInited(s.Deps.Dir) {
+		return nil, ToConnect(errcode.E(errcode.CONFLICT, "cluster already initialized"))
+	}
+	if req.Msg.GetSeedServer() == "" {
+		return nil, ToConnect(errcode.E(errcode.INVALID, "seed_server required"))
+	}
+	if req.Msg.GetToken() == "" {
+		return nil, ToConnect(errcode.E(errcode.INVALID, "token required"))
+	}
+	nodeID, err := s.Deps.localNodeID(ctx)
+	if err != nil {
+		return nil, ToConnect(err)
+	}
+	csrPEM, keyPEM, err := control.NewCSR("join", nodeID)
+	if err != nil {
+		return nil, ToConnect(err)
+	}
+	client := procmeshv1connect.NewClusterServiceClient(s.Deps.httpClient(), seedBaseURL(req.Msg.GetSeedServer()))
+	joined, err := client.Join(ctx, connect.NewRequest(&procmeshv1.JoinClusterRequest{
+		Meta:            req.Msg.GetMeta(),
+		Token:           req.Msg.GetToken(),
+		NodeId:          nodeID,
+		Hostname:        s.Deps.Hostname,
+		BootId:          s.Deps.BootID,
+		ProtocolVersion: int32(version.Protocol),
+		ApiAddress:      s.Deps.APIAddr,
+		GossipAddress:   s.Deps.gossipAddr(),
+		CsrPem:          csrPEM,
+	}))
+	if err != nil {
+		return nil, mapSeedErr(err)
+	}
+	now := s.Deps.now()
+	meta := control.Meta{
+		ClusterID:     joined.Msg.GetClusterId(),
+		NodeID:        nodeID,
+		ControlMember: false,
+		CreatedAt:     now.UTC().Format(time.RFC3339),
+	}
+	if err := writeJoinerBundle(s.Deps.Dir, joined.Msg.GetCaPem(), joined.Msg.GetCertPem(), keyPEM, meta); err != nil {
+		return nil, ToConnect(err)
+	}
+	if s.Deps.Store != nil {
+		if err := s.Deps.Store.SetClusterID(ctx, joined.Msg.GetClusterId()); err != nil {
+			return nil, ToConnect(err)
+		}
+	}
+	if j, ok := s.Deps.Mesh.(meshJoiner); ok {
+		if gossip := joined.Msg.GetGossipAddress(); gossip != "" {
+			if _, err := j.Join([]string{gossip}); err != nil {
+				return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "mesh join failed"))
+			}
+		}
+	}
+	return connect.NewResponse(&procmeshv1.RequestJoinResponse{
+		ClusterId:     joined.Msg.GetClusterId(),
+		GossipAddress: joined.Msg.GetGossipAddress(),
+	}), nil
+}
+
+func (s *ClusterAPI) Overview(ctx context.Context, _ *connect.Request[procmeshv1.ClusterOverviewRequest]) (*connect.Response[procmeshv1.ClusterOverviewResponse], error) {
+	members := s.Deps.members()
+	var alive int32
+	for _, n := range members {
+		if n.State == cluster.StateAlive {
+			alive++
+		}
+	}
+	return connect.NewResponse(&procmeshv1.ClusterOverviewResponse{
+		ClusterId: s.Deps.clusterID(ctx),
+		Members:   int32(len(members)),
+		Alive:     alive,
+	}), nil
+}
+
+func requireCluster(d ClusterDeps) error {
+	if d.Dir == "" {
+		return ToConnect(errcode.E(errcode.UNAVAILABLE, "cluster not configured"))
+	}
+	return nil
+}
+
+func requireInited(dir string) error {
+	if !control.AlreadyInited(dir) {
+		return ToConnect(errcode.E(errcode.INVALID, "cluster not initialized"))
+	}
+	return nil
+}
+
+func rejectDegraded(fn func() bool) error {
+	if fn != nil && fn() {
+		return ToConnect(errcode.E(errcode.DEGRADED, "degraded"))
+	}
+	return nil
+}
+
+func (d ClusterDeps) now() time.Time {
+	if d.Now != nil {
+		return d.Now()
+	}
+	return time.Now()
+}
+
+func (d ClusterDeps) localNodeID(ctx context.Context) (string, error) {
+	if d.Store != nil {
+		id, err := d.Store.GetOrCreateNodeID(ctx)
+		if err != nil {
+			return "", err
+		}
+		if id != "" {
+			return id, nil
+		}
+	}
+	if d.NodeID != "" {
+		return d.NodeID, nil
+	}
+	return "", errcode.E(errcode.INVALID, "node_id required")
+}
+
+func (d ClusterDeps) members() []cluster.NodeSummary {
+	if d.Mesh != nil {
+		return d.Mesh.Members()
+	}
+	if d.Local != nil {
+		return []cluster.NodeSummary{d.Local()}
+	}
+	return nil
+}
+
+func (d ClusterDeps) gossipAddr() string {
+	if d.GossipAddr != nil {
+		if a := d.GossipAddr(); a != "" {
+			return a
+		}
+	}
+	if d.Local != nil {
+		return d.Local().GossipAddress
+	}
+	return ""
+}
+
+func (d ClusterDeps) clusterID(ctx context.Context) string {
+	if d.Store != nil {
+		id, err := d.Store.GetClusterID(ctx)
+		if err == nil && id != "" {
+			return id
+		}
+	}
+	if d.Dir != "" {
+		if meta, err := control.LoadMeta(d.Dir); err == nil {
+			return meta.ClusterID
+		}
+	}
+	if d.Local != nil {
+		return d.Local().ClusterID
+	}
+	return ""
+}
+
+func (d ClusterDeps) httpClient() *http.Client {
+	if d.HTTPClient != nil {
+		return d.HTTPClient
+	}
+	return http.DefaultClient
+}
+
+func seedBaseURL(seed string) string {
+	if strings.Contains(seed, "://") {
+		return seed
+	}
+	return "http://" + seed
+}
+
+func mapSeedErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	var ce *connect.Error
+	if errors.As(err, &ce) {
+		switch ce.Code() {
+		case connect.CodeUnavailable, connect.CodeUnknown, connect.CodeDeadlineExceeded:
+			return ToConnect(errcode.E(errcode.UNAVAILABLE, "seed unreachable"))
+		default:
+			return err
+		}
+	}
+	return ToConnect(errcode.E(errcode.UNAVAILABLE, "seed unreachable"))
+}
+
+// writeJoinerBundle persists CA + agent cert/key and cluster.json.
+// It must not write ca.key or the cluster secret.
+func writeJoinerBundle(dir string, caPEM, certPEM, keyPEM []byte, meta control.Meta) error {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return err
+	}
+	files := []struct {
+		name string
+		data []byte
+		perm os.FileMode
+	}{
+		{"ca.crt", caPEM, 0o640},
+		{"agent.crt", certPEM, 0o640},
+		{"agent.key", keyPEM, 0o600},
+	}
+	for _, f := range files {
+		if err := writePerm(filepath.Join(dir, f.name), f.data, f.perm); err != nil {
+			return err
+		}
+	}
+	doc, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writePerm(filepath.Join(dir, "cluster.json"), append(doc, '\n'), 0o640)
+}
+
+func writePerm(path string, data []byte, perm os.FileMode) error {
+	if err := os.WriteFile(path, data, perm); err != nil {
+		return err
+	}
+	return os.Chmod(path, perm)
+}
