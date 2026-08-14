@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hashicorp/memberlist"
@@ -29,7 +30,9 @@ type Config struct {
 type Mesh struct {
 	cfg       Config
 	localName string
+	bound     string
 	list      *memberlist.Memberlist
+	leaving   atomic.Bool
 
 	mu   sync.RWMutex
 	view map[string]NodeSummary
@@ -103,6 +106,8 @@ func Start(cfg Config) (*Mesh, error) {
 		return nil, fmt.Errorf("cluster: start memberlist: %w", err)
 	}
 	m.list = list
+	ln := list.LocalNode()
+	m.bound = net.JoinHostPort(ln.Addr.String(), strconv.Itoa(int(ln.Port)))
 	// Refresh NodeMeta now that the bound port is known.
 	_ = list.UpdateNode(0)
 	return m, nil
@@ -119,6 +124,15 @@ func (m *Mesh) Leave(timeout time.Duration) error {
 	if m.list == nil {
 		return nil
 	}
+	// Publish State=LEFT in NodeMeta before the leave broadcast.
+	// memberlist v0.5.3 NotifyLeave passes &nodeState.Node; Node.State is
+	// never written (nodeState.State shadows it) so peers cannot use n.State.
+	m.leaving.Store(true)
+	up := timeout
+	if up <= 0 {
+		up = 500 * time.Millisecond
+	}
+	_ = m.list.UpdateNode(up)
 	return m.list.Leave(timeout)
 }
 
@@ -130,6 +144,9 @@ func (m *Mesh) Shutdown() error {
 }
 
 func (m *Mesh) LocalAddr() string {
+	if m.bound != "" {
+		return m.bound
+	}
 	if m.list == nil {
 		return net.JoinHostPort(m.cfg.BindAddr, strconv.Itoa(m.cfg.BindPort))
 	}
@@ -200,7 +217,7 @@ func (m *Mesh) NotifyJoin(n *memberlist.Node) {
 	if s.State == "" {
 		s.State = StateAlive
 	}
-	m.upsertMeta(s)
+	m.upsertMeta(s, true)
 }
 
 func (m *Mesh) NotifyLeave(n *memberlist.Node) {
@@ -208,12 +225,17 @@ func (m *Mesh) NotifyLeave(n *memberlist.Node) {
 		return
 	}
 	s := summaryFromNode(n)
-	if n.State == memberlist.StateLeft {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prev := m.view[s.NodeID]
+	s = mergePreserved(s, prev)
+	// Do not trust n.State: memberlist v0.5.3 never assigns Node.State.
+	if s.State == StateLeft || prev.State == StateLeft {
 		s.State = StateLeft
 	} else {
 		s.State = StateFailed
 	}
-	m.upsertMeta(s)
+	m.view[s.NodeID] = s
 }
 
 func (m *Mesh) NotifyUpdate(n *memberlist.Node) {
@@ -221,7 +243,7 @@ func (m *Mesh) NotifyUpdate(n *memberlist.Node) {
 		return
 	}
 	s := summaryFromNode(n)
-	m.upsertMeta(s)
+	m.upsertMeta(s, false)
 }
 
 func (m *Mesh) localSummary() NodeSummary {
@@ -244,30 +266,31 @@ func (m *Mesh) localSummary() NodeSummary {
 			s.ProtocolVersion = version.Protocol
 		}
 	}
+	if m.leaving.Load() {
+		s.State = StateLeft
+	}
 	return s
 }
 
 func (m *Mesh) store(s NodeSummary) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if prev, ok := m.view[s.NodeID]; ok && keepTerminal(prev.State, s.State) {
+		return
+	}
 	m.view[s.NodeID] = s
 }
 
-func (m *Mesh) upsertMeta(s NodeSummary) {
+func (m *Mesh) upsertMeta(s NodeSummary, revive bool) {
 	if s.NodeID == "" {
 		return
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if prev, ok := m.view[s.NodeID]; ok {
-		if len(s.Processes) == 0 {
-			s.Processes = prev.Processes
-		}
-		if s.Resources == (ResourceSummary{}) {
-			s.Resources = prev.Resources
-		}
-		if s.LastUpdatedUnixMs == 0 {
-			s.LastUpdatedUnixMs = prev.LastUpdatedUnixMs
+		s = mergePreserved(s, prev)
+		if !revive && keepTerminal(prev.State, s.State) {
+			s.State = prev.State
 		}
 		if s.State == "" {
 			s.State = prev.State
@@ -277,6 +300,35 @@ func (m *Mesh) upsertMeta(s NodeSummary) {
 		s.State = StateAlive
 	}
 	m.view[s.NodeID] = s
+}
+
+func mergePreserved(s, prev NodeSummary) NodeSummary {
+	if prev.NodeID == "" {
+		return s
+	}
+	if len(s.Processes) == 0 {
+		s.Processes = prev.Processes
+	}
+	if s.Resources == (ResourceSummary{}) {
+		s.Resources = prev.Resources
+	}
+	if s.LastUpdatedUnixMs == 0 {
+		s.LastUpdatedUnixMs = prev.LastUpdatedUnixMs
+	}
+	return s
+}
+
+// keepTerminal holds LEFT/FAILED against a late ALIVE snapshot.
+// LEFT may replace FAILED; FAILED/LEFT are not revived except via NotifyJoin.
+func keepTerminal(prev, incoming State) bool {
+	switch prev {
+	case StateLeft:
+		return incoming != StateLeft
+	case StateFailed:
+		return incoming != StateLeft && incoming != StateFailed
+	default:
+		return false
+	}
 }
 
 func summaryFromNode(n *memberlist.Node) NodeSummary {
