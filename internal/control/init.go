@@ -13,23 +13,24 @@ import (
 )
 
 const (
-	metaFileName    = "cluster.json"
-	secretFileName  = "secret"
-	adminFileName   = "admin.bootstrap"
-	defaultAdmin    = "admin"
-	adminPasswordN  = 20
-	secretBytes     = 32
-	metaFileMode    = 0o640
-	secretFileMode  = 0o600
-	adminFileMode   = 0o600
+	metaFileName   = "cluster.json"
+	secretFileName = "secret"
+	adminFileName  = "admin.bootstrap"
+	defaultAdmin   = "admin"
+	adminPasswordN = 20
+	secretBytes    = 32
+	metaFileMode   = 0o640
+	secretFileMode = 0o600
+	adminFileMode  = 0o600
 )
 
 // Meta is persisted as cluster.json under the cluster data directory.
 type Meta struct {
-	ClusterID     string `json:"cluster_id"`
-	NodeID        string `json:"node_id"`
-	ControlMember bool   `json:"control_member"`
-	CreatedAt     string `json:"created_at"`
+	ClusterID     string   `json:"cluster_id"`
+	NodeID        string   `json:"node_id"`
+	ControlMember bool     `json:"control_member"`
+	CreatedAt     string   `json:"created_at"`
+	GossipSeeds   []string `json:"gossip_seeds,omitempty"`
 }
 
 // InitResult is returned once with the plaintext admin password.

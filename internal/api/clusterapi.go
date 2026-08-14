@@ -178,6 +178,9 @@ func (s *ClusterAPI) RequestJoin(ctx context.Context, req *connect.Request[procm
 		ControlMember: false,
 		CreatedAt:     now.UTC().Format(time.RFC3339),
 	}
+	if gossip := joined.Msg.GetGossipAddress(); gossip != "" {
+		meta.GossipSeeds = []string{gossip}
+	}
 	if err := writeJoinerBundle(s.Deps.Dir, joined.Msg.GetCaPem(), joined.Msg.GetCertPem(), keyPEM, meta); err != nil {
 		return nil, ToConnect(err)
 	}

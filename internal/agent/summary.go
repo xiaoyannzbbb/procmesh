@@ -1,0 +1,93 @@
+package agent
+
+import (
+	"context"
+	"sync"
+	"time"
+
+	"github.com/qleelulu/procmesh/internal/cluster"
+	"github.com/qleelulu/procmesh/internal/process"
+	"github.com/qleelulu/procmesh/internal/store"
+	"github.com/qleelulu/procmesh/internal/version"
+)
+
+// liveSource implements cluster.SummarySource from the agent process plane.
+// cluster must not import process; this adapter lives in agent.
+type liveSource struct {
+	mu       sync.RWMutex
+	nodeID   string
+	hostname string
+	bootID   string
+	apiAddr  string
+	rpcAddr  string
+	gossip   string
+	store    *store.Store
+	mgr      *process.Manager
+}
+
+func (s *liveSource) Snapshot() cluster.NodeSummary {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	clusterID := ""
+	if s.store != nil {
+		if id, err := s.store.GetClusterID(context.Background()); err == nil {
+			clusterID = id
+		}
+	}
+	return cluster.NodeSummary{
+		NodeID:            s.nodeID,
+		ClusterID:         clusterID,
+		Hostname:          s.hostname,
+		BootID:            s.bootID,
+		State:             cluster.StateAlive,
+		AgentVersion:      version.Agent,
+		ProtocolVersion:   version.Protocol,
+		APIAddress:        s.apiAddr,
+		RPCAddress:        s.rpcAddr,
+		GossipAddress:     s.gossip,
+		Processes:         processSummaries(s.mgr),
+		LastUpdatedUnixMs: time.Now().UnixMilli(),
+	}
+}
+
+func (s *liveSource) setAPI(addr string) {
+	s.mu.Lock()
+	s.apiAddr = addr
+	s.mu.Unlock()
+}
+
+func (s *liveSource) setGossip(addr string) {
+	s.mu.Lock()
+	s.gossip = addr
+	s.mu.Unlock()
+}
+
+func processSummaries(mgr *process.Manager) []cluster.ProcessSummary {
+	if mgr == nil {
+		return nil
+	}
+	ctx := context.Background()
+	specs, err := mgr.ListSpecs(ctx)
+	if err != nil {
+		return nil
+	}
+	now := time.Now().UnixMilli()
+	out := make([]cluster.ProcessSummary, 0, len(specs))
+	for _, spec := range specs {
+		sum := cluster.ProcessSummary{
+			Name:            spec.Name,
+			LatestRevision:  spec.LatestRevision,
+			FreshnessUnixMs: now,
+		}
+		insts, err := mgr.ListInstances(ctx, spec.ProcessID)
+		if err == nil && len(insts) > 0 {
+			inst := insts[0]
+			sum.Desired = string(inst.Desired)
+			sum.Observed = string(inst.Observed)
+			sum.Health = string(inst.Health)
+			sum.ActiveRevision = inst.ActiveRevision
+		}
+		out = append(out, sum)
+	}
+	return out
+}

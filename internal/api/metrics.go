@@ -32,14 +32,20 @@ func runningInstances(mgr *process.Manager) int {
 	return n
 }
 
-func renderMetrics(uptimeSeconds float64, running int) []byte {
+func renderMetrics(uptimeSeconds float64, running, members, alive int) []byte {
 	return []byte(fmt.Sprintf(
 		"# HELP procmesh_agent_uptime Agent uptime in seconds.\n"+
 			"# TYPE procmesh_agent_uptime gauge\n"+
 			"procmesh_agent_uptime %g\n"+
 			"# HELP procmesh_process_running Number of process instances with observed=RUNNING.\n"+
 			"# TYPE procmesh_process_running gauge\n"+
-			"procmesh_process_running %d\n",
-		uptimeSeconds, running,
+			"procmesh_process_running %d\n"+
+			"# HELP procmesh_cluster_members Number of known cluster members.\n"+
+			"# TYPE procmesh_cluster_members gauge\n"+
+			"procmesh_cluster_members %d\n"+
+			"# HELP procmesh_cluster_alive_members Number of ALIVE cluster members.\n"+
+			"# TYPE procmesh_cluster_alive_members gauge\n"+
+			"procmesh_cluster_alive_members %d\n",
+		uptimeSeconds, running, members, alive,
 	))
 }

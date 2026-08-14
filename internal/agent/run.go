@@ -7,27 +7,36 @@ import (
 	"net/http"
 	"os"
 	"os/user"
+	"path/filepath"
 	"strconv"
 	"time"
 
 	"github.com/qleelulu/procmesh/internal/agentcfg"
 	"github.com/qleelulu/procmesh/internal/api"
+	"github.com/qleelulu/procmesh/internal/cluster"
+	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/identity"
 	"github.com/qleelulu/procmesh/internal/logmgr"
 	"github.com/qleelulu/procmesh/internal/paths"
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/store"
+	"github.com/qleelulu/procmesh/internal/version"
 )
+
+const defaultGossipListen = "127.0.0.1:7946"
 
 // Options is the procmesh-agent runtime configuration.
 type Options struct {
-	DataDir        string
-	Listen         string
-	ShimBin        string
-	InsecureListen bool
-	OnListen       func(addr string)
-	ConfigPath     string
+	DataDir         string
+	Listen          string
+	ShimBin         string
+	InsecureListen  bool
+	OnListen        func(addr string)
+	ConfigPath      string
+	GossipListen    string // default 127.0.0.1:7946
+	GossipAdvertise string
+	BootID          string // empty = paths.CurrentBootID(); tests may override
 }
 
 // Run owns the agent lifecycle and blocks until ctx is cancelled.
@@ -61,7 +70,7 @@ func Run(ctx context.Context, opt Options) error {
 			fmt.Fprintf(os.Stderr, "reopen store after quarantine: %v\n", err)
 			return serveHTTP(ctx, opt, nil, nil, nil, true, func() error {
 				return errcode.E(errcode.DEGRADED, "store unavailable")
-			})
+			}, nil, nil, api.ClusterDeps{})
 		}
 		degraded = true
 	}
@@ -72,10 +81,14 @@ func Run(ctx context.Context, opt Options) error {
 		fmt.Fprintf(os.Stderr, "integrity check: %v\n", err)
 	}
 
-	if err := st.SetBootID(ctx, paths.CurrentBootID()); err != nil {
+	hostBoot := opt.BootID
+	if hostBoot == "" {
+		hostBoot = paths.CurrentBootID()
+	}
+	if err := st.SetBootID(ctx, hostBoot); err != nil {
 		return fmt.Errorf("set boot id: %w", err)
 	}
-	if _, err := identity.Ensure(ctx, layout, st, paths.CurrentBootID()); err != nil {
+	if _, err := identity.Ensure(ctx, layout, st, hostBoot); err != nil {
 		return fmt.Errorf("ensure identity: %w", err)
 	}
 
@@ -84,11 +97,11 @@ func Run(ctx context.Context, opt Options) error {
 	if path == "" {
 		path = agentcfg.DefaultPath()
 	}
-	pol, err := agentcfg.Load(path, required)
+	cfg, err := agentcfg.LoadAll(path, required)
 	if err != nil {
 		return err
 	}
-	logs := &logmgr.Manager{Root: layout.Root, Now: time.Now, Policy: pol}
+	logs := &logmgr.Manager{Root: layout.Root, Now: time.Now, Policy: cfg.Disk}
 	mgr := process.NewManager(process.Deps{
 		Store:    st,
 		Layout:   layout,
@@ -104,6 +117,66 @@ func Run(ctx context.Context, opt Options) error {
 		fmt.Fprintf(os.Stderr, "reconcile: %v\n", err)
 	}
 
+	gossipListen := opt.GossipListen
+	if gossipListen == "" {
+		gossipListen = cfg.Gossip.Listen
+	}
+	if gossipListen == "" {
+		gossipListen = defaultGossipListen
+	}
+	gossipAdvertise := opt.GossipAdvertise
+	if gossipAdvertise == "" {
+		gossipAdvertise = cfg.Gossip.Advertise
+	}
+	if err := CheckListen(gossipListen, opt.InsecureListen); err != nil {
+		return err
+	}
+	bindAddr, bindPort, err := splitListen(gossipListen)
+	if err != nil {
+		return err
+	}
+
+	nodeID, err := st.GetOrCreateNodeID(ctx)
+	if err != nil {
+		return fmt.Errorf("node id: %w", err)
+	}
+	hostname, _ := os.Hostname()
+	src := &liveSource{
+		nodeID:   nodeID,
+		hostname: hostname,
+		bootID:   hostBoot,
+		store:    st,
+		mgr:      mgr,
+	}
+
+	if control.AlreadyInited(layout.ClusterDir) || agentCertExists(layout.ClusterDir) {
+		// Joiners persist agent.crt without ca.key; skip LoadBundle unless the seed CA key is present.
+		if _, err := os.Stat(filepath.Join(layout.ClusterDir, "ca.key")); err == nil {
+			if _, err := control.LoadBundle(layout.ClusterDir); err != nil {
+				fmt.Fprintf(os.Stderr, "load cluster bundle: %v\n", err)
+			}
+		}
+	}
+
+	mesh, err := cluster.Start(cluster.Config{
+		NodeID:    nodeID,
+		BindAddr:  bindAddr,
+		BindPort:  bindPort,
+		Advertise: gossipAdvertise,
+		Source:    src,
+		Protocol:  version.Protocol,
+		TestFast:  bindPort == 0,
+	})
+	if err != nil {
+		return fmt.Errorf("start mesh: %w", err)
+	}
+	src.setGossip(mesh.LocalAddr())
+	if meta, err := control.LoadMeta(layout.ClusterDir); err == nil && len(meta.GossipSeeds) > 0 {
+		if _, err := mesh.Join(meta.GossipSeeds); err != nil {
+			fmt.Fprintf(os.Stderr, "rejoin gossip: %v\n", err)
+		}
+	}
+
 	ready := func() error {
 		if err := st.IntegrityCheck(context.Background()); err != nil {
 			return err
@@ -117,10 +190,33 @@ func Run(ctx context.Context, opt Options) error {
 		}
 		return nil
 	}
-	return serveHTTP(ctx, opt, mgr, logs, st, degraded, ready)
+	return serveHTTP(ctx, opt, mgr, logs, st, degraded, ready, mesh, src, api.ClusterDeps{
+		Dir:        layout.ClusterDir,
+		Store:      st,
+		Mesh:       mesh,
+		Local:      src.Snapshot,
+		GossipAddr: mesh.LocalAddr,
+		NodeID:     nodeID,
+		Hostname:   hostname,
+		BootID:     hostBoot,
+	})
 }
 
-func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *logmgr.Manager, st *store.Store, degraded bool, ready func() error) error {
+func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *logmgr.Manager, st *store.Store, degraded bool, ready func() error, mesh *cluster.Mesh, src *liveSource, clusterDeps api.ClusterDeps) error {
+	ln, err := net.Listen("tcp", opt.Listen)
+	if err != nil {
+		shutdownMesh(mesh)
+		return fmt.Errorf("listen: %w", err)
+	}
+	apiAddr := ln.Addr().String()
+	if src != nil {
+		src.setAPI(apiAddr)
+	}
+	clusterDeps.APIAddr = apiAddr
+	if mesh != nil {
+		mesh.Update()
+	}
+
 	var revs api.RevisionStore
 	if st != nil {
 		revs = st
@@ -130,20 +226,19 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		Mgr:      mgr,
 		Logs:     logs,
 		Store:    revs,
+		Cluster:  clusterDeps,
 		Degraded: degraded,
 		Ready:    ready,
 		Started:  time.Now(),
 	})
 	if err != nil {
+		_ = ln.Close()
+		shutdownMesh(mesh)
 		return fmt.Errorf("new server: %w", err)
 	}
 
-	ln, err := net.Listen("tcp", opt.Listen)
-	if err != nil {
-		return fmt.Errorf("listen: %w", err)
-	}
 	if opt.OnListen != nil {
-		opt.OnListen(ln.Addr().String())
+		opt.OnListen(apiAddr)
 	}
 
 	if mgr != nil {
@@ -164,6 +259,9 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 						}
 					}
 					_ = mgr.RotateLogs(ctx)
+					if mesh != nil {
+						mesh.Update()
+					}
 				}
 			}
 		}()
@@ -183,10 +281,37 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		shutCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shutCtx)
+		shutdownMesh(mesh)
 		return nil
 	case err := <-errCh:
+		shutdownMesh(mesh)
 		return err
 	}
+}
+
+func shutdownMesh(mesh *cluster.Mesh) {
+	if mesh == nil {
+		return
+	}
+	_ = mesh.Leave(time.Second)
+	_ = mesh.Shutdown()
+}
+
+func agentCertExists(dir string) bool {
+	st, err := os.Stat(filepath.Join(dir, "agent.crt"))
+	return err == nil && !st.IsDir()
+}
+
+func splitListen(addr string) (host string, port int, err error) {
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", 0, fmt.Errorf("gossip address: %w", err)
+	}
+	port, err = strconv.Atoi(portStr)
+	if err != nil {
+		return "", 0, fmt.Errorf("gossip port: %w", err)
+	}
+	return host, port, nil
 }
 
 // CheckListen refuses non-loopback binds unless insecure is set.

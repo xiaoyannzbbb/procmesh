@@ -10,8 +10,19 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type Config struct {
+	Disk   logmgr.Policy
+	Gossip Gossip
+}
+
+type Gossip struct {
+	Listen    string
+	Advertise string
+}
+
 type file struct {
-	Disk *diskFile `yaml:"disk"`
+	Disk   *diskFile   `yaml:"disk"`
+	Gossip *gossipFile `yaml:"gossip"`
 }
 
 type diskFile struct {
@@ -20,6 +31,11 @@ type diskFile struct {
 	EmergencyPercent    *int  `yaml:"emergency_percent"`
 	AutoDelete          *bool `yaml:"auto_delete"`
 	EmergencyStopWrites *bool `yaml:"emergency_stop_writes"`
+}
+
+type gossipFile struct {
+	Listen    string `yaml:"listen"`
+	Advertise string `yaml:"advertise"`
 }
 
 func DefaultPath() string {
@@ -35,27 +51,35 @@ func DefaultPath() string {
 }
 
 func Load(path string, required bool) (logmgr.Policy, error) {
+	cfg, err := LoadAll(path, required)
+	if err != nil {
+		return logmgr.Policy{}, err
+	}
+	return cfg.Disk, nil
+}
+
+func LoadAll(path string, required bool) (Config, error) {
 	if path == "" {
 		if required {
-			return logmgr.Policy{}, errcode.E(errcode.INVALID, "config file not found")
+			return Config{}, errcode.E(errcode.INVALID, "config file not found")
 		}
-		return logmgr.DefaultPolicy(), nil
+		return Config{Disk: logmgr.DefaultPolicy()}, nil
 	}
 
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			if required {
-				return logmgr.Policy{}, errcode.E(errcode.INVALID, "config file not found")
+				return Config{}, errcode.E(errcode.INVALID, "config file not found")
 			}
-			return logmgr.DefaultPolicy(), nil
+			return Config{Disk: logmgr.DefaultPolicy()}, nil
 		}
-		return logmgr.Policy{}, err
+		return Config{}, err
 	}
 
 	var f file
 	if err := yaml.Unmarshal(b, &f); err != nil {
-		return logmgr.Policy{}, err
+		return Config{}, err
 	}
 
 	p := logmgr.DefaultPolicy()
@@ -77,7 +101,12 @@ func Load(path string, required bool) (logmgr.Policy, error) {
 		}
 	}
 	if err := p.Validate(); err != nil {
-		return logmgr.Policy{}, err
+		return Config{}, err
 	}
-	return p, nil
+	cfg := Config{Disk: p}
+	if g := f.Gossip; g != nil {
+		cfg.Gossip.Listen = g.Listen
+		cfg.Gossip.Advertise = g.Advertise
+	}
+	return cfg, nil
 }

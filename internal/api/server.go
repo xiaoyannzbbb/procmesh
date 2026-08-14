@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/localhttp"
 	"github.com/qleelulu/procmesh/internal/logmgr"
 	"github.com/qleelulu/procmesh/internal/process"
@@ -97,7 +98,19 @@ func (s *Server) readyz(c *gin.Context) {
 }
 
 func (s *Server) metrics(c *gin.Context) {
-	c.Data(http.StatusOK, prometheusContentType, renderMetrics(time.Since(s.opts.Started).Seconds(), runningInstances(s.opts.Mgr)))
+	members, alive := clusterMemberCounts(s.opts.Cluster)
+	c.Data(http.StatusOK, prometheusContentType, renderMetrics(time.Since(s.opts.Started).Seconds(), runningInstances(s.opts.Mgr), members, alive))
+}
+
+func clusterMemberCounts(d ClusterDeps) (members, alive int) {
+	ms := d.members()
+	members = len(ms)
+	for _, n := range ms {
+		if n.State == cluster.StateAlive {
+			alive++
+		}
+	}
+	return members, alive
 }
 
 func (s *Server) isDegraded() bool {

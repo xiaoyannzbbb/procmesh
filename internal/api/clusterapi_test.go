@@ -392,6 +392,9 @@ func TestRequestJoin_JoinerPersistsBundle(t *testing.T) {
 	if meta.ClusterID != inited.GetClusterId() || meta.ControlMember {
 		t.Fatalf("joiner meta %+v", meta)
 	}
+	if len(meta.GossipSeeds) != 1 || meta.GossipSeeds[0] != seed.local.GossipAddress {
+		t.Fatalf("joiner gossip seeds=%v want [%q]", meta.GossipSeeds, seed.local.GossipAddress)
+	}
 	if _, err := os.Stat(filepath.Join(joiner.dir, "ca.key")); !os.IsNotExist(err) {
 		t.Fatalf("joiner must not have ca.key: %v", err)
 	}

@@ -55,6 +55,41 @@ func TestLoad_InvalidOrder(t *testing.T) {
 	}
 }
 
+func TestLoadAll_GossipListenAndAdvertise(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent.yaml")
+	body := "gossip:\n  listen: 127.0.0.1:7946\n  advertise: 10.0.0.1:7946\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := agentcfg.LoadAll(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Gossip.Listen != "127.0.0.1:7946" || cfg.Gossip.Advertise != "10.0.0.1:7946" {
+		t.Fatalf("%+v", cfg.Gossip)
+	}
+	if cfg.Disk != logmgr.DefaultPolicy() {
+		t.Fatalf("disk %+v", cfg.Disk)
+	}
+}
+
+func TestLoad_UsesLoadAllDiskOnly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent.yaml")
+	body := "disk:\n  auto_delete: true\ngossip:\n  listen: 127.0.0.1:0\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p, err := agentcfg.Load(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.AutoDelete {
+		t.Fatalf("%+v", p)
+	}
+}
+
 func TestDefaultPath_DarwinOrLinux(t *testing.T) {
 	p := agentcfg.DefaultPath()
 	if runtime.GOOS == "darwin" {

@@ -51,6 +51,12 @@ func TestServer_HealthReadyMetrics(t *testing.T) {
 	if !strings.Contains(body, "procmesh_process_running") {
 		t.Fatalf("missing running: %q", body)
 	}
+	if !strings.Contains(body, "procmesh_cluster_members") {
+		t.Fatalf("missing cluster members: %q", body)
+	}
+	if !strings.Contains(body, "procmesh_cluster_alive_members") {
+		t.Fatalf("missing cluster alive members: %q", body)
+	}
 
 	bare, err := NewServer(Options{Started: time.Now()})
 	if err != nil {
