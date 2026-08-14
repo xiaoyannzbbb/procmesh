@@ -978,3 +978,135 @@ func TestApplyHealth_SkipsWhenDesiredStoppedDuringProbe(t *testing.T) {
 		t.Fatalf("unexpected pid change from health path: old=%d new=%d", inst.PID, got.PID)
 	}
 }
+
+func TestReconcile_WaitsForDepHealthy(t *testing.T) {
+	ctx := context.Background()
+	m, st, _ := newTestManager(t)
+	t.Cleanup(func() {
+		killManaged(t, st, "pid-mysql")
+		killManaged(t, st, "pid-api")
+	})
+	mysql := process.ProcessSpec{
+		ProcessID: "pid-mysql",
+		Name:      "mysql",
+		Command:   "/bin/sleep",
+		Args:      []string{"60"},
+		Instances: 1,
+		Health: process.HealthCheckSpec{
+			Type:             "http",
+			URL:              "http://127.0.0.1:1",
+			Timeout:          50 * time.Millisecond,
+			FailureThreshold: 1,
+			SuccessThreshold: 1,
+		},
+	}
+	api := process.ProcessSpec{
+		ProcessID: "pid-api",
+		Name:      "api",
+		Command:   "/bin/sleep",
+		Args:      []string{"60"},
+		Instances: 1,
+		Dependencies: []process.Dependency{{
+			ProcessName: "mysql",
+			Condition:   process.DepHealthy,
+		}},
+	}
+	if _, err := m.ApplySpec(ctx, mysql, 0, "op-mysql", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.ApplySpec(ctx, api, 0, "op-api", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetDesired(ctx, "pid-mysql", process.DesiredRunning, "op-s-mysql", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetDesired(ctx, "pid-api", process.DesiredRunning, "op-s-api", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	gotMySQL, err := st.GetInstance(ctx, process.MakeInstanceID("pid-mysql", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMySQL.Observed != process.ObservedRunning || gotMySQL.PID <= 0 {
+		t.Fatalf("mysql want RUNNING, got %+v", gotMySQL)
+	}
+	if gotMySQL.Health == process.HealthHealthy {
+		t.Fatalf("mysql health should stay UNKNOWN without a live HTTP probe, got %s", gotMySQL.Health)
+	}
+	gotAPI, err := st.GetInstance(ctx, process.MakeInstanceID("pid-api", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotAPI.Observed != process.ObservedStopped || gotAPI.PID != 0 {
+		t.Fatalf("api must wait for mysql HEALTHY, got %+v", gotAPI)
+	}
+}
+
+func TestReconcile_StartsAfterDepStarted(t *testing.T) {
+	ctx := context.Background()
+	m, st, _ := newTestManager(t)
+	t.Cleanup(func() {
+		killManaged(t, st, "pid-mysql")
+		killManaged(t, st, "pid-api")
+	})
+	mysql := process.ProcessSpec{
+		ProcessID: "pid-mysql",
+		Name:      "mysql",
+		Command:   "/bin/sleep",
+		Args:      []string{"60"},
+		Instances: 1,
+	}
+	api := process.ProcessSpec{
+		ProcessID: "pid-api",
+		Name:      "api",
+		Command:   "/bin/sleep",
+		Args:      []string{"60"},
+		Instances: 1,
+		Dependencies: []process.Dependency{{
+			ProcessName: "mysql",
+			Condition:   process.DepStarted,
+		}},
+	}
+	if _, err := m.ApplySpec(ctx, mysql, 0, "op-mysql", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.ApplySpec(ctx, api, 0, "op-api", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetDesired(ctx, "pid-mysql", process.DesiredRunning, "op-s-mysql", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetDesired(ctx, "pid-api", process.DesiredRunning, "op-s-api", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	gotMySQL, err := st.GetInstance(ctx, process.MakeInstanceID("pid-mysql", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMySQL.Observed != process.ObservedRunning || gotMySQL.PID <= 0 {
+		t.Fatalf("mysql want RUNNING, got %+v", gotMySQL)
+	}
+	gotAPI, err := st.GetInstance(ctx, process.MakeInstanceID("pid-api", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotAPI.Observed != process.ObservedStopped || gotAPI.PID != 0 {
+		t.Fatalf("api must not start in the same pass, got %+v", gotAPI)
+	}
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	gotAPI, err = st.GetInstance(ctx, process.MakeInstanceID("pid-api", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotAPI.Observed != process.ObservedRunning || gotAPI.PID <= 0 {
+		t.Fatalf("api should start after mysql STARTED, got %+v", gotAPI)
+	}
+}

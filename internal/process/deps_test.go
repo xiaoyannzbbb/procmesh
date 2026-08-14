@@ -84,6 +84,89 @@ func TestStartupOrder_ReturnsProcessIDs(t *testing.T) {
 	}
 }
 
+func TestDepsReady_EmptyDepsTrue(t *testing.T) {
+	if !process.DepsReady(process.ProcessSpec{Name: "solo"}, nil) {
+		t.Fatal("no dependencies should be ready")
+	}
+}
+
+func TestDepsReady_MissingInstancesNotReady(t *testing.T) {
+	spec := process.ProcessSpec{
+		Name:         "api",
+		Dependencies: []process.Dependency{{ProcessName: "mysql", Condition: process.DepStarted}},
+	}
+	if process.DepsReady(spec, map[string][]process.Instance{}) {
+		t.Fatal("missing dep instances must not be ready")
+	}
+	if process.DepsReady(spec, map[string][]process.Instance{"mysql": {}}) {
+		t.Fatal("empty dep instance list must not be ready")
+	}
+}
+
+func TestDepsReady_EmptyConditionIsHealthy(t *testing.T) {
+	spec := process.ProcessSpec{
+		Name:         "api",
+		Dependencies: []process.Dependency{{ProcessName: "mysql"}},
+	}
+	running := []process.Instance{{Observed: process.ObservedRunning, Health: process.HealthUnknown}}
+	if process.DepsReady(spec, map[string][]process.Instance{"mysql": running}) {
+		t.Fatal("empty condition is HEALTHY; UNKNOWN is not ready")
+	}
+	healthy := []process.Instance{{Observed: process.ObservedRunning, Health: process.HealthHealthy}}
+	if !process.DepsReady(spec, map[string][]process.Instance{"mysql": healthy}) {
+		t.Fatal("HEALTHY dep should be ready")
+	}
+}
+
+func TestDepsReady_StartedRequiresObservedRunning(t *testing.T) {
+	spec := process.ProcessSpec{
+		Name:         "api",
+		Dependencies: []process.Dependency{{ProcessName: "mysql", Condition: process.DepStarted}},
+	}
+	stopped := []process.Instance{{Observed: process.ObservedStopped}}
+	if process.DepsReady(spec, map[string][]process.Instance{"mysql": stopped}) {
+		t.Fatal("STOPPED is not STARTED")
+	}
+	running := []process.Instance{{Observed: process.ObservedRunning, Health: process.HealthUnknown}}
+	if !process.DepsReady(spec, map[string][]process.Instance{"mysql": running}) {
+		t.Fatal("RUNNING satisfies STARTED even if health is UNKNOWN")
+	}
+}
+
+func TestDepsReady_AllInstancesMustSatisfy(t *testing.T) {
+	spec := process.ProcessSpec{
+		Name:         "api",
+		Dependencies: []process.Dependency{{ProcessName: "mysql", Condition: process.DepHealthy}},
+	}
+	mixed := []process.Instance{
+		{Observed: process.ObservedRunning, Health: process.HealthHealthy},
+		{Observed: process.ObservedRunning, Health: process.HealthUnknown},
+	}
+	if process.DepsReady(spec, map[string][]process.Instance{"mysql": mixed}) {
+		t.Fatal("every dep instance must be HEALTHY")
+	}
+}
+
+func TestDepsReady_KeyedBySpecName(t *testing.T) {
+	spec := process.ProcessSpec{
+		Name:         "api",
+		Dependencies: []process.Dependency{{ProcessName: "mysql", Condition: process.DepStarted}},
+	}
+	// Process ID must not be used as the lookup key.
+	byID := map[string][]process.Instance{
+		"pid-mysql": {{Observed: process.ObservedRunning}},
+	}
+	if process.DepsReady(spec, byID) {
+		t.Fatal("byName must be keyed by spec Name, not process ID")
+	}
+	byName := map[string][]process.Instance{
+		"mysql": {{Observed: process.ObservedRunning}},
+	}
+	if !process.DepsReady(spec, byName) {
+		t.Fatal("lookup by spec Name should succeed")
+	}
+}
+
 func TestStartupOrder_EmptyConditionAccepted(t *testing.T) {
 	specs := []process.ProcessSpec{
 		{ProcessID: "api", Name: "api", StartupPriority: 20, Dependencies: []process.Dependency{{ProcessName: "mysql"}}},

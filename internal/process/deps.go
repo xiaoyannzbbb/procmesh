@@ -78,3 +78,31 @@ func effectiveCondition(c DepCondition) DepCondition {
 	}
 	return c
 }
+
+// DepsReady reports whether every declared dependency currently satisfies
+// its condition. byName is keyed by spec Name, not process ID.
+func DepsReady(spec ProcessSpec, byName map[string][]Instance) bool {
+	for _, d := range spec.Dependencies {
+		insts := byName[d.ProcessName]
+		if len(insts) == 0 {
+			return false
+		}
+		cond := d.Condition
+		if cond == "" {
+			cond = DepHealthy
+		}
+		for _, inst := range insts {
+			switch cond {
+			case DepStarted:
+				if inst.Observed != ObservedRunning {
+					return false
+				}
+			default:
+				if inst.Health != HealthHealthy {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}

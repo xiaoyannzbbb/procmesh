@@ -28,6 +28,10 @@ func (m *Manager) reconcileLocked(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	byName, err := m.instancesByName(ctx, specs)
+	if err != nil {
+		return err
+	}
 	for _, pid := range order {
 		spec, ok := m.getSpecByID(specs, pid)
 		if !ok {
@@ -45,7 +49,7 @@ func (m *Manager) reconcileLocked(ctx context.Context) error {
 				}
 				continue
 			}
-			if err := m.reconcileInstance(ctx, spec, &inst); err != nil {
+			if err := m.reconcileInstance(ctx, spec, &inst, byName); err != nil {
 				// one startInstance failure must not abort later processes
 				continue
 			}
@@ -64,7 +68,20 @@ func (m *Manager) getSpecByID(specs []ProcessSpec, pid string) (ProcessSpec, boo
 	return ProcessSpec{}, false
 }
 
-func (m *Manager) reconcileInstance(ctx context.Context, spec ProcessSpec, inst *Instance) error {
+// instancesByName snapshots current instance rows keyed by spec Name.
+func (m *Manager) instancesByName(ctx context.Context, specs []ProcessSpec) (map[string][]Instance, error) {
+	byName := make(map[string][]Instance, len(specs))
+	for _, spec := range specs {
+		insts, err := m.deps.Store.ListInstances(ctx, spec.ProcessID)
+		if err != nil {
+			return nil, err
+		}
+		byName[spec.Name] = insts
+	}
+	return byName, nil
+}
+
+func (m *Manager) reconcileInstance(ctx context.Context, spec ProcessSpec, inst *Instance, byName map[string][]Instance) error {
 	if err := m.refresh(ctx, inst); err != nil {
 		return err
 	}
@@ -109,6 +126,9 @@ func (m *Manager) reconcileInstance(ctx context.Context, spec ProcessSpec, inst 
 				if now.Before(m.nextTry[inst.InstanceID]) {
 					return nil
 				}
+				if !DepsReady(spec, byName) {
+					return nil
+				}
 				delete(m.nextTry, inst.InstanceID)
 				if next, err := ApplyObserved(inst.Observed, EvRetry); err == nil {
 					inst.Observed = next
@@ -123,6 +143,9 @@ func (m *Manager) reconcileInstance(ctx context.Context, spec ProcessSpec, inst 
 		// From STOPPED (e.g. after ResetFailure) start once. Do not start
 		// UNKNOWN/FATAL (already returned) or EXITED without a restart decision.
 		if inst.Observed == ObservedStopped {
+			if !DepsReady(spec, byName) {
+				return nil
+			}
 			return m.startInstance(ctx, spec, inst, m.bootID(ctx))
 		}
 	}
