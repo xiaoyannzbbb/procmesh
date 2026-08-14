@@ -128,6 +128,24 @@ type LogPolicy struct {
 	Compress bool
 }
 
+// WithDefaults fills empty log policy fields: 100MiB, 10 files, 7 days, compress.
+func (p LogPolicy) WithDefaults() LogPolicy {
+	empty := p == LogPolicy{}
+	if p.MaxSize == 0 {
+		p.MaxSize = 100 << 20
+	}
+	if p.MaxFiles == 0 {
+		p.MaxFiles = 10
+	}
+	if p.MaxAge == 0 {
+		p.MaxAge = 7 * 24 * time.Hour
+	}
+	if empty {
+		p.Compress = true
+	}
+	return p
+}
+
 type ResourceLimit struct{}
 
 type Dependency struct {

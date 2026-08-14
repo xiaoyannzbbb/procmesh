@@ -3,9 +3,11 @@ package process
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/logmgr"
 	"github.com/qleelulu/procmesh/internal/shim"
 	shimpb "github.com/qleelulu/procmesh/proto/shim/v1"
 )
@@ -230,12 +232,22 @@ func (m *Manager) startInstance(ctx context.Context, spec ProcessSpec, inst *Ins
 		inst.Observed = ObservedStarting
 	}
 
+	stdout, stderr := logmgr.InstancePaths(m.deps.Layout, spec.ProcessID, inst.InstanceID)
+	if m.deps.Logs != nil && !m.deps.Logs.WritesAllowed() {
+		stdout, stderr = os.DevNull, os.DevNull
+		m.audit(ctx, inst.ProcessID, "LOG_WRITES_DISABLED", "", "", "")
+	} else if err := logmgr.Prepare(stdout, stderr); err != nil {
+		return err
+	}
+
 	resp, err := client.Start(ctx, &shimpb.StartRequest{
-		Command:   spec.Command,
-		Args:      spec.Args,
-		Env:       spec.Environment,
-		Cwd:       spec.WorkingDirectory,
-		RunAsUser: spec.RunAsUser,
+		Command:    spec.Command,
+		Args:       spec.Args,
+		Env:        spec.Environment,
+		Cwd:        spec.WorkingDirectory,
+		RunAsUser:  spec.RunAsUser,
+		StdoutPath: stdout,
+		StderrPath: stderr,
 	})
 	if err != nil || (resp != nil && resp.GetError() != "") {
 		msg := "start failed"

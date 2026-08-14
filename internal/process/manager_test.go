@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/logmgr"
 	"github.com/qleelulu/procmesh/internal/paths"
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/store"
@@ -213,6 +215,111 @@ func TestReconcile_StartsAndStops(t *testing.T) {
 	if err := unix.Kill(pid, 0); err == nil {
 		t.Fatal("child still alive after stop")
 	}
+}
+
+func TestApplySpec_AppliesLogDefaults(t *testing.T) {
+	ctx := context.Background()
+	m, _, _ := newTestManager(t)
+	got, err := m.ApplySpec(ctx, process.ProcessSpec{ProcessID: "p1", Name: "true", Command: "/bin/true", Instances: 1}, 0, "op-c", "t", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Log.MaxSize != 100<<20 || got.Log.MaxFiles != 10 || got.Log.MaxAge != 7*24*time.Hour || !got.Log.Compress {
+		t.Fatalf("log defaults %+v", got.Log)
+	}
+}
+
+func TestReconcile_WritesStdoutToInstanceLog(t *testing.T) {
+	ctx := context.Background()
+	m, st, layout := newTestManager(t)
+	t.Cleanup(func() { killManaged(t, st, "p1") })
+	spec := process.ProcessSpec{
+		ProcessID: "p1",
+		Name:      "echo",
+		Command:   "/bin/sh",
+		Args:      []string{"-c", "printf 'hello-log\\n'; exec sleep 60"},
+		Instances: 1,
+	}
+	if _, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetDesired(ctx, "p1", process.DesiredRunning, "op-s", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr := logmgr.InstancePaths(layout, "p1", process.MakeInstanceID("p1", 0))
+	waitFileContains(t, stdout, "hello-log")
+	if _, err := os.Stat(stderr); err != nil {
+		t.Fatalf("stderr not prepared: %v", err)
+	}
+}
+
+func TestReconcile_EmergencyStdioDevNullAndAudit(t *testing.T) {
+	ctx := context.Background()
+	root := shortRoot(t)
+	st := openStoreAt(t, filepath.Join(root, "store.db"))
+	layout := paths.New(root)
+	if err := layout.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	lm := &logmgr.Manager{Root: root, Usage: func(string) (float64, error) { return 96, nil }, Now: time.Now}
+	if _, err := lm.Protect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if lm.WritesAllowed() {
+		t.Fatal("writes should be blocked")
+	}
+	m := process.NewManager(process.Deps{Store: st, Layout: layout, ShimBin: testShimBin, Now: time.Now, Logs: lm})
+	t.Cleanup(func() { killManaged(t, st, "p1") })
+	spec := process.ProcessSpec{ProcessID: "p1", Name: "echo", Command: "/bin/echo", Args: []string{"hi"}, Instances: 1}
+	if _, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetDesired(ctx, "p1", process.DesiredRunning, "op-s", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	inst, err := st.GetInstance(ctx, process.MakeInstanceID("p1", 0))
+	if err != nil || inst.PID <= 0 {
+		t.Fatalf("process should still start: %+v %v", inst, err)
+	}
+	stdout, _ := logmgr.InstancePaths(layout, "p1", process.MakeInstanceID("p1", 0))
+	if b, _ := os.ReadFile(stdout); len(b) != 0 {
+		t.Fatalf("expected no new log bytes, got %q", b)
+	}
+	evs, err := st.ListAudit(ctx, "p1", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, ev := range evs {
+		if ev.Action == "LOG_WRITES_DISABLED" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("missing LOG_WRITES_DISABLED audit: %+v", evs)
+	}
+}
+
+func waitFileContains(t *testing.T, path, want string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	var last []byte
+	for time.Now().Before(deadline) {
+		b, err := os.ReadFile(path)
+		last = b
+		if err == nil && strings.Contains(string(b), want) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("log %s missing %q, got %q", path, want, last)
 }
 
 func newTestManager(t *testing.T) (*process.Manager, *store.Store, paths.Layout) {

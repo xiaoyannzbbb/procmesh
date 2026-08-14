@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/logmgr"
 	"github.com/qleelulu/procmesh/internal/paths"
 	"github.com/qleelulu/procmesh/internal/shim"
 )
@@ -34,15 +35,15 @@ const (
 	opRunning = "RUNNING"
 )
 
-// Deps wires Manager to store, layout, and optional Task 13 logs.
+// Deps wires Manager to store, layout, and optional log manager.
 type Deps struct {
 	Store    StateStore
 	Layout   paths.Layout
 	ShimBin  string
 	Now      func() time.Time
 	LookUser func(user string) error
-	// Logs is reserved for Task 13 (*logmgr.Manager). Nil is accepted.
-	Logs any
+	// Logs is optional disk-protection state. Nil is accepted (writes allowed).
+	Logs *logmgr.Manager
 }
 
 // Manager reconciles desired process specs against observed instances.
@@ -358,6 +359,7 @@ func applyDefaults(spec *ProcessSpec) {
 	if spec.Restart.Mode == "" {
 		spec.Restart.Mode = RestartOnFailure
 	}
+	spec.Log = spec.Log.WithDefaults()
 }
 
 func socketExists(path string) bool {
