@@ -93,6 +93,32 @@ func TestSetBootID_Persists(t *testing.T) {
 	}
 }
 
+func TestSetNodeID_OverwritesAndReadable(t *testing.T) {
+	ctx := context.Background()
+	p := filepath.Join(t.TempDir(), "store.db")
+	s, err := store.Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	orig, err := s.GetOrCreateNodeID(ctx)
+	if err != nil || orig == "" {
+		t.Fatalf("orig %q err %v", orig, err)
+	}
+	const next = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	if err := s.SetNodeID(ctx, next); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetOrCreateNodeID(ctx)
+	if err != nil || got != next {
+		t.Fatalf("got %q want %q err %v", got, next, err)
+	}
+	if got == orig {
+		t.Fatal("SetNodeID must overwrite existing node_id")
+	}
+}
+
 func TestMeta_BootAndClusterPersist(t *testing.T) {
 	ctx := context.Background()
 	p := filepath.Join(t.TempDir(), "store.db")

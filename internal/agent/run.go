@@ -13,6 +13,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/agentcfg"
 	"github.com/qleelulu/procmesh/internal/api"
 	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/identity"
 	"github.com/qleelulu/procmesh/internal/logmgr"
 	"github.com/qleelulu/procmesh/internal/paths"
 	"github.com/qleelulu/procmesh/internal/process"
@@ -73,6 +74,9 @@ func Run(ctx context.Context, opt Options) error {
 
 	if err := st.SetBootID(ctx, paths.CurrentBootID()); err != nil {
 		return fmt.Errorf("set boot id: %w", err)
+	}
+	if _, err := identity.Ensure(ctx, layout, st, paths.CurrentBootID()); err != nil {
+		return fmt.Errorf("ensure identity: %w", err)
 	}
 
 	path := opt.ConfigPath

@@ -36,6 +36,12 @@ func (l Layout) ShimSocket(instanceID string) string {
 	return filepath.Join(l.ShimDir, strings.ReplaceAll(instanceID, ":", "_")+".sock")
 }
 
+// NodeIDFile is the durable node identity file under the data root.
+func (l Layout) NodeIDFile() string { return filepath.Join(l.Root, "node_id") }
+
+// BootIDFile is the last-seen host boot id file under the data root.
+func (l Layout) BootIDFile() string { return filepath.Join(l.Root, "boot_id") }
+
 // Ensure creates layout directories with mode 0750.
 func (l Layout) Ensure() error {
 	for _, dir := range []string{l.Root, l.ShimDir, l.LogDir, l.RuntimeDir, l.ClusterDir} {

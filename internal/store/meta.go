@@ -38,6 +38,14 @@ func (s *Store) GetOrCreateNodeID(ctx context.Context) (string, error) {
 	return id, nil
 }
 
+// SetNodeID overwrites the persisted node UUID (e.g. when the node_id file wins).
+func (s *Store) SetNodeID(ctx context.Context, id string) error {
+	if err := s.putMeta(ctx, keyNodeID, id); err != nil {
+		return fmt.Errorf("set node_id: %w", err)
+	}
+	return nil
+}
+
 // RotateBootID always writes a new boot UUID and returns it.
 // Kept for store tests; agent startup uses SetBootID with the OS boot id.
 func (s *Store) RotateBootID(ctx context.Context) (string, error) {

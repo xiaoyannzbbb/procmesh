@@ -79,3 +79,13 @@ func TestCurrentBootID_NonEmpty(t *testing.T) {
 		t.Fatal("boot id must be stable in-process")
 	}
 }
+
+func TestLayout_NodeAndBootFiles(t *testing.T) {
+	l := paths.New("/data")
+	if l.NodeIDFile() != "/data/node_id" {
+		t.Fatalf("NodeIDFile=%q", l.NodeIDFile())
+	}
+	if l.BootIDFile() != "/data/boot_id" {
+		t.Fatalf("BootIDFile=%q", l.BootIDFile())
+	}
+}
