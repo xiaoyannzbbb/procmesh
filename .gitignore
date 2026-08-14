@@ -1,5 +1,6 @@
 .worktrees/
 .superpowers/
+.claude/
 .DS_Store
 /procmesh
 /procmesh-agent
