@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -892,5 +893,88 @@ func TestAdopt_RespectsInitialDelay(t *testing.T) {
 	}
 	if hits != 0 || got.Health != process.HealthUnknown {
 		t.Fatalf("InitialDelay must skip Check: hits=%d health=%s", hits, got.Health)
+	}
+}
+
+// TestApplyHealth_SkipsWhenDesiredStoppedDuringProbe proves post-unlock
+// revalidation: if Desired becomes STOPPED while Check runs unlocked, the
+// probe result must not Observe or health-restart.
+func TestApplyHealth_SkipsWhenDesiredStoppedDuringProbe(t *testing.T) {
+	ctx := context.Background()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var enterOnce sync.Once
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		enterOnce.Do(func() { close(entered) })
+		select {
+		case <-release:
+		case <-time.After(5 * time.Second):
+		}
+		// Would be UNHEALTHY + restart if Observe were applied.
+		w.WriteHeader(500)
+	}))
+	t.Cleanup(srv.Close)
+
+	m, st, _ := newTestManager(t)
+	spec := process.ProcessSpec{
+		ProcessID: "p1",
+		Name:      "sleep",
+		Command:   "/bin/sleep",
+		Args:      []string{"60"},
+		Instances: 1,
+	}
+	inst := startSleep(t, m, st, spec)
+	// Attach health after start so startSleep's Reconcile does not block on probe.
+	cur, err := st.GetSpec(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.Health = process.HealthCheckSpec{
+		Type:             "http",
+		URL:              srv.URL,
+		ExpectedStatus:   200,
+		Timeout:          5 * time.Second,
+		FailureThreshold: 1,
+		SuccessThreshold: 1,
+		RestartOnFailure: true,
+	}
+	if _, err := m.ApplySpec(ctx, spec, cur.LatestRevision, "op-h", "t", "health"); err != nil {
+		t.Fatal(err)
+	}
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- m.Reconcile(ctx) }()
+
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("health probe did not start")
+	}
+	if err := m.SetDesired(ctx, "p1", process.DesiredStopped, "op-stop-mid-probe", "t"); err != nil {
+		close(release)
+		<-errCh
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := st.GetInstance(ctx, inst.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Health != process.HealthUnknown {
+		t.Fatalf("must not Observe after Desired=STOPPED during probe: health=%s", got.Health)
+	}
+	if got.RestartCount != 0 {
+		t.Fatalf("must not health-restart after Desired=STOPPED: restart=%d", got.RestartCount)
+	}
+	if got.Desired != process.DesiredStopped {
+		t.Fatalf("desired %s", got.Desired)
+	}
+	// Health path must not replace the process; stop is deferred to a later pass.
+	if got.PID != inst.PID {
+		t.Fatalf("unexpected pid change from health path: old=%d new=%d", inst.PID, got.PID)
 	}
 }

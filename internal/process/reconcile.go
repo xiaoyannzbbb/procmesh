@@ -485,13 +485,17 @@ func (m *Manager) applyHealth(ctx context.Context, spec ProcessSpec, inst *Insta
 		checkErr = health.Check(ctx, hspec, pid)
 	}()
 
-	// Re-validate instance still matches the snapshot after re-lock.
+	// Re-validate after re-lock: another pass may have stopped the instance,
+	// changed PID, or already recorded a probe in this Interval.
 	fresh, err := m.deps.Store.GetInstance(ctx, id)
 	if err != nil {
 		return err
 	}
 	*inst = fresh
-	if inst.Observed != ObservedRunning || inst.PID != pid {
+	if inst.Desired != DesiredRunning || inst.Observed != ObservedRunning || inst.PID != pid {
+		return nil
+	}
+	if last, ok := m.lastHealthCheck[inst.InstanceID]; ok && spec.Health.Interval > 0 && now.Before(last.Add(spec.Health.Interval)) {
 		return nil
 	}
 
