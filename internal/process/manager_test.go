@@ -3,6 +3,8 @@ package process_test
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -324,11 +326,381 @@ func waitFileContains(t *testing.T, path, want string) {
 
 func newTestManager(t *testing.T) (*process.Manager, *store.Store, paths.Layout) {
 	t.Helper()
+	return newTestManagerNow(t, time.Now)
+}
+
+func newTestManagerNow(t *testing.T, now func() time.Time) (*process.Manager, *store.Store, paths.Layout) {
+	t.Helper()
 	root := shortRoot(t)
 	st := openStoreAt(t, filepath.Join(root, "store.db"))
 	layout := paths.New(root)
 	if err := layout.Ensure(); err != nil {
 		t.Fatal(err)
 	}
-	return process.NewManager(process.Deps{Store: st, Layout: layout, ShimBin: testShimBin, Now: time.Now}), st, layout
+	return process.NewManager(process.Deps{Store: st, Layout: layout, ShimBin: testShimBin, Now: now}), st, layout
+}
+
+func startSleep(t *testing.T, m *process.Manager, st *store.Store, spec process.ProcessSpec) process.Instance {
+	t.Helper()
+	ctx := context.Background()
+	t.Cleanup(func() { killManaged(t, st, spec.ProcessID) })
+	if _, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetDesired(ctx, spec.ProcessID, process.DesiredRunning, "op-s", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	inst, err := st.GetInstance(ctx, process.MakeInstanceID(spec.ProcessID, 0))
+	if err != nil || inst.PID <= 0 || inst.Observed != process.ObservedRunning {
+		t.Fatalf("start %+v %v", inst, err)
+	}
+	return inst
+}
+
+func TestReconcile_HealthHTTPMarksHealthy(t *testing.T) {
+	ctx := context.Background()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	t.Cleanup(srv.Close)
+	m, st, _ := newTestManager(t)
+	spec := process.ProcessSpec{
+		ProcessID: "p1",
+		Name:      "sleep",
+		Command:   "/bin/sleep",
+		Args:      []string{"60"},
+		Instances: 1,
+		Health: process.HealthCheckSpec{
+			Type:             "http",
+			URL:              srv.URL,
+			ExpectedStatus:   200,
+			Timeout:          time.Second,
+			FailureThreshold: 1,
+			SuccessThreshold: 1,
+		},
+	}
+	inst := startSleep(t, m, st, spec)
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetInstance(ctx, inst.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Health != process.HealthHealthy {
+		t.Fatalf("health %s", got.Health)
+	}
+	if got.Desired != process.DesiredRunning {
+		t.Fatalf("desired %s", got.Desired)
+	}
+}
+
+func TestReconcile_UnhealthyRestartsWithoutChangingDesired(t *testing.T) {
+	ctx := context.Background()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+	}))
+	t.Cleanup(srv.Close)
+	m, st, _ := newTestManager(t)
+	spec := process.ProcessSpec{
+		ProcessID: "p1",
+		Name:      "sleep",
+		Command:   "/bin/sleep",
+		Args:      []string{"60"},
+		Instances: 1,
+		Health: process.HealthCheckSpec{
+			Type:             "http",
+			URL:              srv.URL,
+			ExpectedStatus:   200,
+			Timeout:          time.Second,
+			FailureThreshold: 1,
+			SuccessThreshold: 1,
+			RestartOnFailure: true,
+		},
+	}
+	inst := startSleep(t, m, st, spec)
+	oldPID := inst.PID
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetInstance(ctx, inst.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Desired != process.DesiredRunning {
+		t.Fatalf("desired changed to %s", got.Desired)
+	}
+	if got.PID == oldPID || got.PID <= 0 {
+		t.Fatalf("expected new pid, got %+v", got)
+	}
+	if got.Observed != process.ObservedRunning {
+		t.Fatalf("observed %s", got.Observed)
+	}
+	if got.RestartCount < 1 {
+		t.Fatalf("restart count %d", got.RestartCount)
+	}
+}
+
+func TestReconcile_HealthCooldownSkipsRestart(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now()
+	m, st, _ := newTestManagerNow(t, func() time.Time { return now })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+	}))
+	t.Cleanup(srv.Close)
+	spec := process.ProcessSpec{
+		ProcessID: "p1",
+		Name:      "sleep",
+		Command:   "/bin/sleep",
+		Args:      []string{"60"},
+		Instances: 1,
+		Health: process.HealthCheckSpec{
+			Type:             "http",
+			URL:              srv.URL,
+			ExpectedStatus:   200,
+			Timeout:          time.Second,
+			FailureThreshold: 1,
+			SuccessThreshold: 1,
+			RestartOnFailure: true,
+			RestartCooldown:  time.Hour,
+		},
+	}
+	inst := startSleep(t, m, st, spec)
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	after, err := st.GetInstance(ctx, inst.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.PID == inst.PID {
+		t.Fatal("expected first health restart")
+	}
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	again, err := st.GetInstance(ctx, inst.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.PID != after.PID {
+		t.Fatalf("cooldown should skip restart %d -> %d", after.PID, again.PID)
+	}
+	if again.Desired != process.DesiredRunning {
+		t.Fatalf("desired %s", again.Desired)
+	}
+}
+
+func TestReconcile_HealthInitialDelayAndInterval(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now()
+	m, st, _ := newTestManagerNow(t, func() time.Time { return now })
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(200)
+	}))
+	t.Cleanup(srv.Close)
+	spec := process.ProcessSpec{
+		ProcessID: "p1",
+		Name:      "sleep",
+		Command:   "/bin/sleep",
+		Args:      []string{"60"},
+		Instances: 1,
+		Health: process.HealthCheckSpec{
+			Type:             "http",
+			URL:              srv.URL,
+			ExpectedStatus:   200,
+			Timeout:          time.Second,
+			InitialDelay:     10 * time.Second,
+			Interval:         10 * time.Second,
+			FailureThreshold: 1,
+			SuccessThreshold: 1,
+		},
+	}
+	inst := startSleep(t, m, st, spec)
+	now = now.Add(5 * time.Second)
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetInstance(ctx, inst.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hits != 0 || got.Health != process.HealthUnknown {
+		t.Fatalf("delay: hits=%d health=%s", hits, got.Health)
+	}
+	now = now.Add(6 * time.Second)
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err = st.GetInstance(ctx, inst.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hits != 1 || got.Health != process.HealthHealthy {
+		t.Fatalf("first check: hits=%d health=%s", hits, got.Health)
+	}
+	now = now.Add(5 * time.Second)
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if hits != 1 {
+		t.Fatalf("interval not elapsed: hits=%d", hits)
+	}
+	now = now.Add(6 * time.Second)
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if hits != 2 {
+		t.Fatalf("second check: hits=%d", hits)
+	}
+}
+
+func TestRecover_HealthUnknownUntilFirstCheck(t *testing.T) {
+	ctx := context.Background()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	t.Cleanup(srv.Close)
+	m, st, _ := newTestManager(t)
+	spec := process.ProcessSpec{
+		ProcessID: "p1",
+		Name:      "sleep",
+		Command:   "/bin/sleep",
+		Args:      []string{"60"},
+		Instances: 1,
+		Health: process.HealthCheckSpec{
+			Type:             "http",
+			URL:              srv.URL,
+			ExpectedStatus:   200,
+			Timeout:          time.Second,
+			FailureThreshold: 1,
+			SuccessThreshold: 1,
+		},
+	}
+	inst := startSleep(t, m, st, spec)
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetInstance(ctx, inst.InstanceID)
+	if err != nil || got.Health != process.HealthHealthy {
+		t.Fatalf("pre-recover %+v %v", got, err)
+	}
+	if err := m.Recover(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err = st.GetInstance(ctx, inst.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Health != process.HealthUnknown {
+		t.Fatalf("recover health %s", got.Health)
+	}
+	if got.Desired != process.DesiredRunning || got.Observed != process.ObservedRunning {
+		t.Fatalf("recover state %+v", got)
+	}
+}
+
+func TestReconcile_HealthRestartCountsTowardCrashLoop(t *testing.T) {
+	ctx := context.Background()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+	}))
+	t.Cleanup(srv.Close)
+	m, st, _ := newTestManager(t)
+	spec := process.ProcessSpec{
+		ProcessID: "p1",
+		Name:      "sleep",
+		Command:   "/bin/sleep",
+		Args:      []string{"60"},
+		Instances: 1,
+		Restart: process.RestartPolicy{
+			Mode:        process.RestartOnFailure,
+			MaxRetries:  2,
+			RetryWindow: time.Minute,
+		},
+		Health: process.HealthCheckSpec{
+			Type:             "http",
+			URL:              srv.URL,
+			ExpectedStatus:   200,
+			Timeout:          time.Second,
+			FailureThreshold: 1,
+			SuccessThreshold: 1,
+			RestartOnFailure: true,
+		},
+	}
+	inst := startSleep(t, m, st, spec)
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetInstance(ctx, inst.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Observed != process.ObservedRunning || got.Desired != process.DesiredRunning {
+		t.Fatalf("first restart %+v", got)
+	}
+	if got.PID == inst.PID {
+		t.Fatal("expected health restart")
+	}
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err = st.GetInstance(ctx, inst.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Observed != process.ObservedFatal {
+		t.Fatalf("want FATAL got %s", got.Observed)
+	}
+	if got.Desired != process.DesiredRunning {
+		t.Fatalf("desired %s", got.Desired)
+	}
+}
+
+func TestReconcile_UnhealthyWithoutRestartKeepsProcess(t *testing.T) {
+	ctx := context.Background()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+	}))
+	t.Cleanup(srv.Close)
+	m, st, _ := newTestManager(t)
+	spec := process.ProcessSpec{
+		ProcessID: "p1",
+		Name:      "sleep",
+		Command:   "/bin/sleep",
+		Args:      []string{"60"},
+		Instances: 1,
+		Health: process.HealthCheckSpec{
+			Type:             "http",
+			URL:              srv.URL,
+			ExpectedStatus:   200,
+			Timeout:          time.Second,
+			FailureThreshold: 1,
+			SuccessThreshold: 1,
+			RestartOnFailure: false,
+		},
+	}
+	inst := startSleep(t, m, st, spec)
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetInstance(ctx, inst.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Health != process.HealthUnhealthy {
+		t.Fatalf("health %s", got.Health)
+	}
+	if got.Desired != process.DesiredRunning {
+		t.Fatalf("desired %s", got.Desired)
+	}
+	if got.PID != inst.PID {
+		t.Fatalf("pid changed %d -> %d", inst.PID, got.PID)
+	}
 }

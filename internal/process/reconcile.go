@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/health"
 	"github.com/qleelulu/procmesh/internal/logmgr"
 	"github.com/qleelulu/procmesh/internal/shim"
 	shimpb "github.com/qleelulu/procmesh/proto/shim/v1"
@@ -79,7 +80,10 @@ func (m *Manager) reconcileInstance(ctx context.Context, spec ProcessSpec, inst 
 	}
 
 	if inst.Desired == DesiredRunning {
-		if inst.Observed == ObservedRunning || inst.Observed == ObservedStarting {
+		if inst.Observed == ObservedRunning {
+			return m.applyHealth(ctx, spec, inst)
+		}
+		if inst.Observed == ObservedStarting {
 			return nil
 		}
 
@@ -382,6 +386,77 @@ func (m *Manager) bootID(ctx context.Context) string {
 
 func (m *Manager) recordFailure(id string) {
 	m.failures[id] = append(m.failures[id], m.now())
+}
+
+func (m *Manager) resetHealth(id string) {
+	delete(m.healthTrackers, id)
+	delete(m.lastHealthCheck, id)
+	delete(m.lastHealthRestart, id)
+}
+
+func (m *Manager) resetAllHealth() {
+	m.healthTrackers = make(map[string]*health.Tracker)
+	m.lastHealthCheck = make(map[string]time.Time)
+	m.lastHealthRestart = make(map[string]time.Time)
+}
+
+func (m *Manager) tracker(id string, spec HealthCheckSpec) *health.Tracker {
+	if tr := m.healthTrackers[id]; tr != nil {
+		return tr
+	}
+	tr := health.NewTracker(spec)
+	m.healthTrackers[id] = tr
+	return tr
+}
+
+func (m *Manager) applyHealth(ctx context.Context, spec ProcessSpec, inst *Instance) error {
+	now := m.now()
+	if inst.StartedAt != nil && now.Before(inst.StartedAt.Add(spec.Health.InitialDelay)) {
+		return nil
+	}
+	if last, ok := m.lastHealthCheck[inst.InstanceID]; ok && spec.Health.Interval > 0 && now.Before(last.Add(spec.Health.Interval)) {
+		return nil
+	}
+
+	err := health.Check(ctx, spec.Health, inst.PID)
+	state := m.tracker(inst.InstanceID, spec.Health).Observe(err, now)
+	m.lastHealthCheck[inst.InstanceID] = now
+
+	if inst.Health != state {
+		inst.Health = state
+		if putErr := m.deps.Store.PutInstance(ctx, *inst); putErr != nil {
+			return putErr
+		}
+	}
+
+	if state != HealthUnhealthy || !spec.Health.RestartOnFailure {
+		return nil
+	}
+	if prev, ok := m.lastHealthRestart[inst.InstanceID]; ok && spec.Health.RestartCooldown > 0 && now.Before(prev.Add(spec.Health.RestartCooldown)) {
+		return nil
+	}
+
+	desired := inst.Desired
+	m.failures[inst.InstanceID] = append(m.failures[inst.InstanceID], now)
+	if spec.Restart.MaxRetries > 0 && countFailuresInWindow(m.failures[inst.InstanceID], now, spec.Restart.RetryWindow) >= spec.Restart.MaxRetries {
+		if err := m.stopInstance(ctx, spec, inst); err != nil {
+			return err
+		}
+		inst.Desired = desired
+		inst.Observed = ObservedFatal
+		inst.Health = HealthUnhealthy
+		return m.deps.Store.PutInstance(ctx, *inst)
+	}
+
+	inst.RestartCount++
+	m.lastHealthRestart[inst.InstanceID] = now
+	delete(m.healthTrackers, inst.InstanceID)
+	delete(m.lastHealthCheck, inst.InstanceID)
+	if err := m.stopInstance(ctx, spec, inst); err != nil {
+		return err
+	}
+	inst.Desired = desired
+	return m.startInstance(ctx, spec, inst, m.bootID(ctx))
 }
 
 func exitCode(inst *Instance) int {

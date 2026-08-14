@@ -15,6 +15,7 @@ func (m *Manager) Recover(ctx context.Context) error {
 }
 
 func (m *Manager) recoverLocked(ctx context.Context) error {
+	m.resetAllHealth()
 	boot, err := m.deps.Store.GetBootID(ctx)
 	if err != nil {
 		return err

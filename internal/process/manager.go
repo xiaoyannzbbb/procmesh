@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/health"
 	"github.com/qleelulu/procmesh/internal/logmgr"
 	"github.com/qleelulu/procmesh/internal/paths"
 	"github.com/qleelulu/procmesh/internal/shim"
@@ -48,11 +49,14 @@ type Deps struct {
 
 // Manager reconciles desired process specs against observed instances.
 type Manager struct {
-	mu       sync.Mutex
-	deps     Deps
-	clients  map[string]*shim.Client
-	failures map[string][]time.Time
-	nextTry  map[string]time.Time
+	mu                sync.Mutex
+	deps              Deps
+	clients           map[string]*shim.Client
+	failures          map[string][]time.Time
+	nextTry           map[string]time.Time
+	healthTrackers    map[string]*health.Tracker
+	lastHealthCheck   map[string]time.Time
+	lastHealthRestart map[string]time.Time
 }
 
 func NewManager(d Deps) *Manager {
@@ -60,10 +64,13 @@ func NewManager(d Deps) *Manager {
 		d.Now = time.Now
 	}
 	return &Manager{
-		deps:     d,
-		clients:  make(map[string]*shim.Client),
-		failures: make(map[string][]time.Time),
-		nextTry:  make(map[string]time.Time),
+		deps:              d,
+		clients:           make(map[string]*shim.Client),
+		failures:          make(map[string][]time.Time),
+		nextTry:           make(map[string]time.Time),
+		healthTrackers:    make(map[string]*health.Tracker),
+		lastHealthCheck:   make(map[string]time.Time),
+		lastHealthRestart: make(map[string]time.Time),
 	}
 }
 
@@ -211,6 +218,7 @@ func (m *Manager) ResetFailure(ctx context.Context, processID, opID, operator st
 	for _, inst := range insts {
 		delete(m.failures, inst.InstanceID)
 		delete(m.nextTry, inst.InstanceID)
+		m.resetHealth(inst.InstanceID)
 		if inst.Observed == ObservedFatal {
 			inst.Observed = ObservedStopped
 			inst.RestartCount = 0

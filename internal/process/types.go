@@ -3,6 +3,8 @@ package process
 import (
 	"strconv"
 	"time"
+
+	"github.com/qleelulu/procmesh/internal/health"
 )
 
 // ProcessSpec is the desired configuration for a managed process.
@@ -75,12 +77,12 @@ const (
 	ObservedUnknown  ObservedState = "UNKNOWN"
 )
 
-type HealthState string
+type HealthState = health.HealthState
 
 const (
-	HealthHealthy   HealthState = "HEALTHY"
-	HealthUnhealthy HealthState = "UNHEALTHY"
-	HealthUnknown   HealthState = "UNKNOWN"
+	HealthHealthy   = health.HealthHealthy
+	HealthUnhealthy = health.HealthUnhealthy
+	HealthUnknown   = health.HealthUnknown
 )
 
 type Instance struct {
@@ -104,22 +106,7 @@ func MakeInstanceID(processID string, ordinal int) string {
 	return processID + ":" + strconv.Itoa(ordinal)
 }
 
-type HealthCheckSpec struct {
-	Type             string
-	URL              string
-	Method           string
-	ExpectedStatus   int
-	Address          string
-	Command          string
-	Args             []string
-	InitialDelay     time.Duration
-	Interval         time.Duration
-	Timeout          time.Duration
-	FailureThreshold int
-	SuccessThreshold int
-	RestartOnFailure bool
-	RestartCooldown  time.Duration
-}
+type HealthCheckSpec = health.HealthCheckSpec
 
 type LogPolicy struct {
 	MaxSize  int64
