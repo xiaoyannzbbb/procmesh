@@ -73,6 +73,21 @@ func (s *Store) BeginOperation(ctx context.Context, op Operation) (Operation, bo
 	return existing, n == 0, nil
 }
 
+// StartOp wraps BeginOperation for process.StateStore.
+func (s *Store) StartOp(ctx context.Context, opID, operator, typ, target string, payload []byte) (duplicate bool, status, errMsg string, err error) {
+	op, dup, err := s.BeginOperation(ctx, Operation{
+		OperationID:    opID,
+		Operator:       operator,
+		Type:           typ,
+		Target:         target,
+		RequestPayload: payload,
+	})
+	if err != nil {
+		return false, "", "", err
+	}
+	return dup, op.Status, op.Error, nil
+}
+
 // FinishOperation sets status, result, and error on an existing journal row.
 func (s *Store) FinishOperation(ctx context.Context, operationID, status string, result []byte, errMsg string) error {
 	if !validOpStatus(status) {

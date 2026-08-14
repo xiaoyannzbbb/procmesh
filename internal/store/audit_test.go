@@ -199,6 +199,30 @@ func TestAppendAudit_DuplicateIDDoesNotUpdate(t *testing.T) {
 	}
 }
 
+func TestWriteAudit_WrapsAppendAudit(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	if err := s.WriteAudit(ctx, "p1", "process.create", "op-1", "admin", "SUCCESS"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteAudit(ctx, "p1", "process.start", "op-2", "admin", "SUCCESS"); err != nil {
+		t.Fatal(err)
+	}
+	evs, err := s.ListAudit(ctx, "p1", 10)
+	if err != nil || len(evs) != 2 {
+		t.Fatalf("%+v %v", evs, err)
+	}
+	if evs[0].Action != "process.start" || evs[0].OperationID != "op-2" || evs[0].Username != "admin" || evs[0].Result != "SUCCESS" {
+		t.Fatalf("newest: %+v", evs[0])
+	}
+	if evs[1].Action != "process.create" || evs[1].OperationID != "op-1" {
+		t.Fatalf("older: %+v", evs[1])
+	}
+	if evs[0].AuditID == "" || evs[0].Timestamp.IsZero() {
+		t.Fatal("expected generated AuditID and Timestamp")
+	}
+}
+
 func TestAudit_ErrorAfterClose(t *testing.T) {
 	ctx := context.Background()
 	s := openStore(t)

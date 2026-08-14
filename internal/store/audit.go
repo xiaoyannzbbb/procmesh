@@ -58,6 +58,17 @@ func (s *Store) AppendAudit(ctx context.Context, ev AuditEvent) error {
 	return nil
 }
 
+// WriteAudit wraps AppendAudit for process.StateStore.
+func (s *Store) WriteAudit(ctx context.Context, resource, action, opID, operator, result string) error {
+	return s.AppendAudit(ctx, AuditEvent{
+		Resource:    resource,
+		Action:      action,
+		OperationID: opID,
+		Username:    operator,
+		Result:      result,
+	})
+}
+
 // ListAudit returns events for resource, newest first.
 func (s *Store) ListAudit(ctx context.Context, resource string, limit int) ([]AuditEvent, error) {
 	q := `SELECT ` + auditCols + ` FROM audit_events WHERE resource = ? ORDER BY timestamp DESC, rowid DESC`

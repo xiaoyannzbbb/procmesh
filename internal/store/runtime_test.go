@@ -240,6 +240,39 @@ func TestBeginOperation_RejectsEmptyID(t *testing.T) {
 	}
 }
 
+func TestStartOp_WrapsBeginOperation(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	var _ process.StateStore = s
+
+	dup, status, errMsg, err := s.StartOp(ctx, "op-start", "admin", "apply_spec", "p1", []byte(`{"n":1}`))
+	if err != nil || dup || status != store.OpPending || errMsg != "" {
+		t.Fatalf("first: dup=%v status=%s errMsg=%q err=%v", dup, status, errMsg, err)
+	}
+	got, err := s.GetOperation(ctx, "op-start")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Operator != "admin" || got.Type != "apply_spec" || got.Target != "p1" || string(got.RequestPayload) != `{"n":1}` {
+		t.Fatalf("stored: %+v", got)
+	}
+
+	if err := s.FinishOperation(ctx, "op-start", store.OpSuccess, []byte(`{"ok":true}`), ""); err != nil {
+		t.Fatal(err)
+	}
+	dup, status, errMsg, err = s.StartOp(ctx, "op-start", "other", "stop", "p2", nil)
+	if err != nil || !dup || status != store.OpSuccess || errMsg != "" {
+		t.Fatalf("second: dup=%v status=%s errMsg=%q err=%v", dup, status, errMsg, err)
+	}
+}
+
+func TestStartOp_RejectsEmptyID(t *testing.T) {
+	_, _, _, err := openStore(t).StartOp(context.Background(), "", "t", "start", "p1", nil)
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("want INVALID got %v", err)
+	}
+}
+
 func TestBeginOperation_DefaultsPending(t *testing.T) {
 	ctx := context.Background()
 	s := openStore(t)
