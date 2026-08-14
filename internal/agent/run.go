@@ -54,8 +54,8 @@ func Run(ctx context.Context, opt Options) error {
 		fmt.Fprintf(os.Stderr, "integrity check: %v\n", err)
 	}
 
-	if _, err := st.RotateBootID(ctx); err != nil {
-		return fmt.Errorf("rotate boot id: %w", err)
+	if err := st.SetBootID(ctx, paths.CurrentBootID()); err != nil {
+		return fmt.Errorf("set boot id: %w", err)
 	}
 
 	logs := &logmgr.Manager{Root: layout.Root, Now: time.Now}

@@ -3,6 +3,7 @@ package paths_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/qleelulu/procmesh/internal/paths"
@@ -61,5 +62,20 @@ func TestEnsure_CreatesDirs0750(t *testing.T) {
 func TestDefaultRoot_NonEmpty(t *testing.T) {
 	if paths.DefaultRoot() == "" {
 		t.Fatal("empty")
+	}
+}
+
+func TestDefaultRoot_NoTilde(t *testing.T) {
+	if strings.Contains(paths.DefaultRoot(), "~") {
+		t.Fatalf("DefaultRoot must not contain ~: %q", paths.DefaultRoot())
+	}
+}
+
+func TestCurrentBootID_NonEmpty(t *testing.T) {
+	if paths.CurrentBootID() == "" {
+		t.Fatal("empty boot id")
+	}
+	if paths.CurrentBootID() != paths.CurrentBootID() {
+		t.Fatal("boot id must be stable in-process")
 	}
 }

@@ -64,6 +64,35 @@ func TestIntegrityCheck_OKOnFreshDB(t *testing.T) {
 	}
 }
 
+func TestSetBootID_Persists(t *testing.T) {
+	ctx := context.Background()
+	p := filepath.Join(t.TempDir(), "store.db")
+	s, err := store.Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	if err := s.SetBootID(ctx, "boot-from-os"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetBootID(ctx)
+	if err != nil || got != "boot-from-os" {
+		t.Fatalf("got %q err %v", got, err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s2, err := store.Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s2.Close() })
+	got, err = s2.GetBootID(ctx)
+	if err != nil || got != "boot-from-os" {
+		t.Fatalf("reopen got %q err %v", got, err)
+	}
+}
+
 func TestMeta_BootAndClusterPersist(t *testing.T) {
 	ctx := context.Background()
 	p := filepath.Join(t.TempDir(), "store.db")

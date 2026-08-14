@@ -39,6 +39,7 @@ func (s *Store) GetOrCreateNodeID(ctx context.Context) (string, error) {
 }
 
 // RotateBootID always writes a new boot UUID and returns it.
+// Kept for store tests; agent startup uses SetBootID with the OS boot id.
 func (s *Store) RotateBootID(ctx context.Context) (string, error) {
 	id, err := newUUID()
 	if err != nil {
@@ -50,7 +51,15 @@ func (s *Store) RotateBootID(ctx context.Context) (string, error) {
 	return id, nil
 }
 
-// GetBootID returns the current boot UUID, or "" if none has been rotated yet.
+// SetBootID persists the OS boot identity (or any explicit boot id string).
+func (s *Store) SetBootID(ctx context.Context, id string) error {
+	if err := s.putMeta(ctx, keyBootID, id); err != nil {
+		return fmt.Errorf("set boot_id: %w", err)
+	}
+	return nil
+}
+
+// GetBootID returns the current boot id, or "" if none has been set yet.
 func (s *Store) GetBootID(ctx context.Context) (string, error) {
 	id, err := s.getMeta(ctx, keyBootID)
 	if errors.Is(err, sql.ErrNoRows) {
