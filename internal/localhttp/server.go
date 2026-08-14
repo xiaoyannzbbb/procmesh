@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/logmgr"
@@ -445,6 +446,8 @@ func specToDTO(s process.ProcessSpec) ProcessSpec {
 	return ProcessSpec{
 		ProcessID:        s.ProcessID,
 		Name:             s.Name,
+		OwnerAgentID:     s.OwnerAgentID,
+		Group:            s.Group,
 		Command:          s.Command,
 		Args:             s.Args,
 		WorkingDirectory: s.WorkingDirectory,
@@ -454,7 +457,47 @@ func specToDTO(s process.ProcessSpec) ProcessSpec {
 		Autostart:        s.Autostart,
 		StopSignal:       s.StopSignal,
 		KillSignal:       s.KillSignal,
-		LatestRevision:   s.LatestRevision,
+		StopTimeoutMs:    durationMS(s.StopTimeout),
+		StartupPriority:  s.StartupPriority,
+		Restart: RestartPolicyDTO{
+			Mode:          string(s.Restart.Mode),
+			MaxRetries:    s.Restart.MaxRetries,
+			RetryWindowMs: durationMS(s.Restart.RetryWindow),
+			Backoff: BackoffDTO{
+				InitialMs:  durationMS(s.Restart.Backoff.Initial),
+				MaxMs:      durationMS(s.Restart.Backoff.Max),
+				Multiplier: s.Restart.Backoff.Multiplier,
+			},
+		},
+		Health: HealthCheckDTO{
+			Type:              s.Health.Type,
+			URL:               s.Health.URL,
+			Method:            s.Health.Method,
+			Address:           s.Health.Address,
+			Command:           s.Health.Command,
+			ExpectedStatus:    s.Health.ExpectedStatus,
+			Args:              s.Health.Args,
+			InitialDelayMs:    durationMS(s.Health.InitialDelay),
+			IntervalMs:        durationMS(s.Health.Interval),
+			TimeoutMs:         durationMS(s.Health.Timeout),
+			FailureThreshold:  s.Health.FailureThreshold,
+			SuccessThreshold:  s.Health.SuccessThreshold,
+			RestartOnFailure:  s.Health.RestartOnFailure,
+			RestartCooldownMs: durationMS(s.Health.RestartCooldown),
+		},
+		Log: LogPolicyDTO{
+			MaxSize:       s.Log.MaxSize,
+			MaxFiles:      s.Log.MaxFiles,
+			MaxAgeSeconds: durationSeconds(s.Log.MaxAge),
+			Compress:      s.Log.Compress,
+		},
+		Resources: ResourceLimitDTO{
+			CPUQuotaMillis: s.Resources.CPUQuotaMillis,
+			MemoryBytes:    s.Resources.MemoryBytes,
+			OpenFiles:      s.Resources.OpenFiles,
+		},
+		Dependencies:   depsToDTO(s.Dependencies),
+		LatestRevision: s.LatestRevision,
 	}
 }
 
@@ -462,6 +505,8 @@ func dtoToSpec(s ProcessSpec) process.ProcessSpec {
 	return process.ProcessSpec{
 		ProcessID:        s.ProcessID,
 		Name:             s.Name,
+		OwnerAgentID:     s.OwnerAgentID,
+		Group:            s.Group,
 		Command:          s.Command,
 		Args:             s.Args,
 		WorkingDirectory: s.WorkingDirectory,
@@ -471,5 +516,76 @@ func dtoToSpec(s ProcessSpec) process.ProcessSpec {
 		Autostart:        s.Autostart,
 		StopSignal:       s.StopSignal,
 		KillSignal:       s.KillSignal,
+		StopTimeout:      fromMS(s.StopTimeoutMs),
+		StartupPriority:  s.StartupPriority,
+		Restart: process.RestartPolicy{
+			Mode:        process.RestartMode(s.Restart.Mode),
+			MaxRetries:  s.Restart.MaxRetries,
+			RetryWindow: fromMS(s.Restart.RetryWindowMs),
+			Backoff: process.Backoff{
+				Initial:    fromMS(s.Restart.Backoff.InitialMs),
+				Max:        fromMS(s.Restart.Backoff.MaxMs),
+				Multiplier: s.Restart.Backoff.Multiplier,
+			},
+		},
+		Health: process.HealthCheckSpec{
+			Type:             s.Health.Type,
+			URL:              s.Health.URL,
+			Method:           s.Health.Method,
+			Address:          s.Health.Address,
+			Command:          s.Health.Command,
+			ExpectedStatus:   s.Health.ExpectedStatus,
+			Args:             s.Health.Args,
+			InitialDelay:     fromMS(s.Health.InitialDelayMs),
+			Interval:         fromMS(s.Health.IntervalMs),
+			Timeout:          fromMS(s.Health.TimeoutMs),
+			FailureThreshold: s.Health.FailureThreshold,
+			SuccessThreshold: s.Health.SuccessThreshold,
+			RestartOnFailure: s.Health.RestartOnFailure,
+			RestartCooldown:  fromMS(s.Health.RestartCooldownMs),
+		},
+		Log: process.LogPolicy{
+			MaxSize:  s.Log.MaxSize,
+			MaxFiles: s.Log.MaxFiles,
+			MaxAge:   fromSeconds(s.Log.MaxAgeSeconds),
+			Compress: s.Log.Compress,
+		},
+		Resources: process.ResourceLimit{
+			CPUQuotaMillis: s.Resources.CPUQuotaMillis,
+			MemoryBytes:    s.Resources.MemoryBytes,
+			OpenFiles:      s.Resources.OpenFiles,
+		},
+		Dependencies:   depsFromDTO(s.Dependencies),
+		LatestRevision: s.LatestRevision,
 	}
 }
+
+func depsToDTO(in []process.Dependency) []DependencyDTO {
+	if in == nil {
+		return nil
+	}
+	out := make([]DependencyDTO, len(in))
+	for i, d := range in {
+		out[i] = DependencyDTO{ProcessName: d.ProcessName, Condition: string(d.Condition)}
+	}
+	return out
+}
+
+func depsFromDTO(in []DependencyDTO) []process.Dependency {
+	if in == nil {
+		return nil
+	}
+	out := make([]process.Dependency, len(in))
+	for i, d := range in {
+		out[i] = process.Dependency{ProcessName: d.ProcessName, Condition: process.DepCondition(d.Condition)}
+	}
+	return out
+}
+
+func durationMS(d time.Duration) int64 { return d.Milliseconds() }
+
+func fromMS(ms int64) time.Duration { return time.Duration(ms) * time.Millisecond }
+
+func durationSeconds(d time.Duration) int64 { return int64(d / time.Second) }
+
+func fromSeconds(sec int64) time.Duration { return time.Duration(sec) * time.Second }

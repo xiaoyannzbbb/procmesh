@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,89 @@ import (
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/store"
 )
+
+func TestLocalHTTP_CreateEchoesHealthAndRestart(t *testing.T) {
+	srv := startTestAgent(t)
+	body := `{"operation_id":"op-c","operator":"t","expected_revision":0,"spec":{"name":"web","command":"/bin/sleep","args":["2"],"restart":{"mode":"always","max_retries":3,"retry_window_ms":60000},"health":{"type":"alive","interval_ms":1000},"log":{"max_size":1048576,"max_files":5,"max_age_seconds":3600,"compress":false},"resources":{"cpu_quota_millis":500,"memory_bytes":67108864,"open_files":1024}}}`
+	res, err := http.Post(srv+"/v1/processes", "application/json", strings.NewReader(body))
+	if err != nil || res.StatusCode != 200 {
+		t.Fatalf("create %v %v", err, statusOf(res))
+	}
+	res, err = http.Get(srv + "/v1/processes")
+	if err != nil || res.StatusCode != 200 {
+		t.Fatalf("list %v %v", err, statusOf(res))
+	}
+	var listed ListProcessesResponse
+	if err := json.NewDecoder(res.Body).Decode(&listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Processes) != 1 {
+		t.Fatalf("list %+v", listed)
+	}
+	spec := listed.Processes[0].Spec
+	if spec.Restart.Mode != "always" || spec.Restart.MaxRetries != 3 || spec.Restart.RetryWindowMs != 60000 {
+		t.Fatalf("restart %+v", spec.Restart)
+	}
+	if spec.Health.Type != "alive" || spec.Health.IntervalMs != 1000 {
+		t.Fatalf("health %+v", spec.Health)
+	}
+	if spec.Log.MaxSize != 1048576 || spec.Log.MaxFiles != 5 || spec.Log.MaxAgeSeconds != 3600 || spec.Log.Compress {
+		t.Fatalf("log %+v", spec.Log)
+	}
+	if spec.Resources.CPUQuotaMillis != 500 || spec.Resources.MemoryBytes != 67108864 || spec.Resources.OpenFiles != 1024 {
+		t.Fatalf("resources %+v", spec.Resources)
+	}
+}
+
+func TestSpecDTO_Inverse(t *testing.T) {
+	in := ProcessSpec{
+		ProcessID:        "p1",
+		Name:             "web",
+		OwnerAgentID:     "agent-1",
+		Group:            "g1",
+		Command:          "/bin/sleep",
+		Args:             []string{"2"},
+		WorkingDirectory: "/tmp",
+		RunAsUser:        "nobody",
+		Environment:      map[string]string{"A": "1"},
+		Instances:        2,
+		Autostart:        true,
+		StopSignal:       "SIGTERM",
+		KillSignal:       "SIGKILL",
+		StopTimeoutMs:    15000,
+		StartupPriority:  10,
+		Restart: RestartPolicyDTO{
+			Mode:          "always",
+			MaxRetries:    3,
+			RetryWindowMs: 60000,
+			Backoff:       BackoffDTO{InitialMs: 1000, MaxMs: 30000, Multiplier: 2},
+		},
+		Health: HealthCheckDTO{
+			Type:              "alive",
+			URL:               "http://127.0.0.1/h",
+			Method:            "GET",
+			Address:           "127.0.0.1:80",
+			Command:           "/bin/true",
+			ExpectedStatus:    200,
+			Args:              []string{"-x"},
+			InitialDelayMs:    100,
+			IntervalMs:        1000,
+			TimeoutMs:         500,
+			FailureThreshold:  3,
+			SuccessThreshold:  1,
+			RestartOnFailure:  true,
+			RestartCooldownMs: 2000,
+		},
+		Log:            LogPolicyDTO{MaxSize: 1048576, MaxFiles: 5, MaxAgeSeconds: 3600, Compress: true},
+		Resources:      ResourceLimitDTO{CPUQuotaMillis: 500, MemoryBytes: 67108864, OpenFiles: 1024},
+		Dependencies:   []DependencyDTO{{ProcessName: "db", Condition: "STARTED"}},
+		LatestRevision: 4,
+	}
+	got := specToDTO(dtoToSpec(in))
+	if !reflect.DeepEqual(got, in) {
+		t.Fatalf("dto roundtrip\n got %+v\nwant %+v", got, in)
+	}
+}
 
 func TestLocalHTTP_CreateStartAndConflict(t *testing.T) {
 	srv := startTestAgent(t)
