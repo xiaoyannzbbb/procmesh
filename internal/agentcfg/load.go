@@ -1,0 +1,83 @@
+package agentcfg
+
+import (
+	"os"
+	"path/filepath"
+	"runtime"
+
+	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/logmgr"
+	"gopkg.in/yaml.v3"
+)
+
+type file struct {
+	Disk *diskFile `yaml:"disk"`
+}
+
+type diskFile struct {
+	WarnPercent         *int  `yaml:"warn_percent"`
+	CleanupPercent      *int  `yaml:"cleanup_percent"`
+	EmergencyPercent    *int  `yaml:"emergency_percent"`
+	AutoDelete          *bool `yaml:"auto_delete"`
+	EmergencyStopWrites *bool `yaml:"emergency_stop_writes"`
+}
+
+func DefaultPath() string {
+	if runtime.GOOS == "darwin" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			// Unexpanded ~ so Load(..., false) treats it as missing.
+			return "~/.config/procmesh/agent.yaml"
+		}
+		return filepath.Join(home, ".config/procmesh/agent.yaml")
+	}
+	return "/etc/procmesh/agent.yaml"
+}
+
+func Load(path string, required bool) (logmgr.Policy, error) {
+	if path == "" {
+		if required {
+			return logmgr.Policy{}, errcode.E(errcode.INVALID, "config file not found")
+		}
+		return logmgr.DefaultPolicy(), nil
+	}
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			if required {
+				return logmgr.Policy{}, errcode.E(errcode.INVALID, "config file not found")
+			}
+			return logmgr.DefaultPolicy(), nil
+		}
+		return logmgr.Policy{}, err
+	}
+
+	var f file
+	if err := yaml.Unmarshal(b, &f); err != nil {
+		return logmgr.Policy{}, err
+	}
+
+	p := logmgr.DefaultPolicy()
+	if d := f.Disk; d != nil {
+		if d.WarnPercent != nil {
+			p.WarnPercent = *d.WarnPercent
+		}
+		if d.CleanupPercent != nil {
+			p.CleanupPercent = *d.CleanupPercent
+		}
+		if d.EmergencyPercent != nil {
+			p.EmergencyPercent = *d.EmergencyPercent
+		}
+		if d.AutoDelete != nil {
+			p.AutoDelete = *d.AutoDelete
+		}
+		if d.EmergencyStopWrites != nil {
+			p.EmergencyStopWrites = *d.EmergencyStopWrites
+		}
+	}
+	if err := p.Validate(); err != nil {
+		return logmgr.Policy{}, err
+	}
+	return p, nil
+}
