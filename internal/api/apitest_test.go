@@ -83,13 +83,33 @@ func newConfigClients(t *testing.T) (procmeshv1connect.ProcessServiceClient, pro
 
 func newServiceClientsWith(t *testing.T, m *process.Manager, revs RevisionStore, degraded func() bool) (procmeshv1connect.ProcessServiceClient, procmeshv1connect.ConfigServiceClient) {
 	t.Helper()
+	proc, cfg, _ := newServiceClientsFull(t, m, revs, degraded)
+	return proc, cfg
+}
+
+func newLogClients(t *testing.T) (procmeshv1connect.ProcessServiceClient, procmeshv1connect.LogServiceClient, *process.Manager, paths.Layout) {
+	t.Helper()
+	m, _, layout := newTestManager(t)
+	proc, _, logs := newServiceClientsFull(t, m, nil, nil)
+	return proc, logs, m, layout
+}
+
+func newServiceClientsFull(t *testing.T, m *process.Manager, revs RevisionStore, degraded func() bool) (
+	procmeshv1connect.ProcessServiceClient,
+	procmeshv1connect.ConfigServiceClient,
+	procmeshv1connect.LogServiceClient,
+) {
+	t.Helper()
 	mux := http.NewServeMux()
 	pp, ph := procmeshv1connect.NewProcessServiceHandler(&ProcessAPI{Mgr: m, Degraded: degraded})
 	mux.Handle(pp, ph)
 	cp, ch := procmeshv1connect.NewConfigServiceHandler(&ConfigAPI{Mgr: m, Revs: revs, Degraded: degraded})
 	mux.Handle(cp, ch)
+	lp, lh := procmeshv1connect.NewLogServiceHandler(&LogAPI{Mgr: m})
+	mux.Handle(lp, lh)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return procmeshv1connect.NewProcessServiceClient(srv.Client(), srv.URL),
-		procmeshv1connect.NewConfigServiceClient(srv.Client(), srv.URL)
+		procmeshv1connect.NewConfigServiceClient(srv.Client(), srv.URL),
+		procmeshv1connect.NewLogServiceClient(srv.Client(), srv.URL)
 }
