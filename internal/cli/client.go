@@ -19,6 +19,8 @@ type client struct {
 	proc     procmeshv1connect.ProcessServiceClient
 	cfg      procmeshv1connect.ConfigServiceClient
 	logs     procmeshv1connect.LogServiceClient
+	node     procmeshv1connect.NodeServiceClient
+	cluster  procmeshv1connect.ClusterServiceClient
 	opID     string
 	operator string
 }
@@ -32,6 +34,8 @@ func newClient(server, opID, operator string) *client {
 		proc:     procmeshv1connect.NewProcessServiceClient(hc, base),
 		cfg:      procmeshv1connect.NewConfigServiceClient(hc, base),
 		logs:     procmeshv1connect.NewLogServiceClient(hc, base),
+		node:     procmeshv1connect.NewNodeServiceClient(hc, base),
+		cluster:  procmeshv1connect.NewClusterServiceClient(hc, base),
 		opID:     opID,
 		operator: operator,
 	}

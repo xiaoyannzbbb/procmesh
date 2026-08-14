@@ -11,9 +11,11 @@ import (
 	"time"
 
 	"github.com/qleelulu/procmesh/internal/api"
+	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/paths"
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/store"
+	"github.com/qleelulu/procmesh/internal/version"
 )
 
 func TestCLI_ApplyAndList(t *testing.T) {
@@ -91,6 +93,137 @@ func TestCLI_UnknownCommand(t *testing.T) {
 	}
 }
 
+func TestCLI_ClusterInitAndNodeList(t *testing.T) {
+	url := newClusterTestServer(t)
+	code, out, errb := runCLI("--server", url, "cluster", "init")
+	if code != 0 {
+		t.Fatalf("init exit=%d stderr=%q stdout=%q", code, errb, out)
+	}
+	if !strings.Contains(out, "cluster_id=") || !strings.Contains(out, "admin_password=") {
+		t.Fatalf("stdout=%q", out)
+	}
+	code, out, errb = runCLI("--server", url, "node", "list")
+	if code != 0 {
+		t.Fatalf("list exit=%d %q %q", code, errb, out)
+	}
+	if !strings.Contains(out, "ALIVE") && !strings.Contains(out, "JOINING") {
+		t.Fatalf("list=%q", out)
+	}
+}
+
+func TestCLI_TokenCreate(t *testing.T) {
+	url := newClusterTestServer(t)
+	if code, _, errb := runCLI("--server", url, "cluster", "init"); code != 0 {
+		t.Fatalf("init %s", errb)
+	}
+	code, out, errb := runCLI("--server", url, "node", "token", "create")
+	if code != 0 {
+		t.Fatalf("%d %q %q", code, errb, out)
+	}
+	if !strings.Contains(out, "token=pmj_") {
+		t.Fatalf("%q", out)
+	}
+}
+
+func TestCLI_UnknownStillUsage(t *testing.T) {
+	code, _, errb := runCLI("foobar")
+	if code != 2 || errb == "" {
+		t.Fatalf("%d %q", code, errb)
+	}
+}
+
+func TestCLI_TokenRevoke(t *testing.T) {
+	url := newClusterTestServer(t)
+	if code, _, errb := runCLI("--server", url, "cluster", "init"); code != 0 {
+		t.Fatalf("init %s", errb)
+	}
+	code, out, errb := runCLI("--server", url, "node", "token", "create")
+	if code != 0 {
+		t.Fatalf("create %d %q %q", code, errb, out)
+	}
+	id := kvField(out, "token_id")
+	if id == "" {
+		t.Fatalf("no token_id in %q", out)
+	}
+	code, _, errb = runCLI("--server", url, "node", "token", "revoke", id)
+	if code != 0 {
+		t.Fatalf("revoke exit=%d stderr=%q", code, errb)
+	}
+	code, _, errb = runCLI("--server", url, "node", "token", "revoke", "missing-token")
+	if code != 1 {
+		t.Fatalf("missing revoke exit=%d stderr=%q", code, errb)
+	}
+	if !strings.Contains(errb, "NOT_FOUND") {
+		t.Fatalf("stderr want NOT_FOUND: %q", errb)
+	}
+}
+
+func TestCLI_NodeStatus(t *testing.T) {
+	url := newClusterTestServer(t)
+	if code, _, errb := runCLI("--server", url, "cluster", "init"); code != 0 {
+		t.Fatalf("init %s", errb)
+	}
+	code, out, errb := runCLI("--server", url, "node", "list")
+	if code != 0 {
+		t.Fatalf("list exit=%d %q", code, errb)
+	}
+	fields := strings.Split(strings.TrimSpace(out), "\t")
+	if len(fields) < 1 || fields[0] == "" {
+		t.Fatalf("list=%q", out)
+	}
+	id := fields[0]
+	code, out, errb = runCLI("--server", url, "node", "status", id)
+	if code != 0 {
+		t.Fatalf("status exit=%d stderr=%q stdout=%q", code, errb, out)
+	}
+	if !strings.Contains(out, "ALIVE") && !strings.Contains(out, "JOINING") {
+		t.Fatalf("status=%q", out)
+	}
+	code, _, errb = runCLI("--server", url, "node", "status", "no-such-node")
+	if code != 1 {
+		t.Fatalf("missing status exit=%d stderr=%q", code, errb)
+	}
+	if !strings.Contains(errb, "NOT_FOUND") {
+		t.Fatalf("stderr want NOT_FOUND: %q", errb)
+	}
+}
+
+func TestCLI_ClusterInitAdminUser(t *testing.T) {
+	url := newClusterTestServer(t)
+	code, out, errb := runCLI("--server", url, "cluster", "init", "--admin-user", "root")
+	if code != 0 {
+		t.Fatalf("init exit=%d stderr=%q stdout=%q", code, errb, out)
+	}
+	if !strings.Contains(out, "admin_user=root") {
+		t.Fatalf("stdout=%q", out)
+	}
+}
+
+func TestCLI_AgentJoinRequiresFlags(t *testing.T) {
+	url := newClusterTestServer(t)
+	code, _, errb := runCLI("--server", url, "agent", "join")
+	if code != 2 {
+		t.Fatalf("missing flags exit=%d stderr=%q", code, errb)
+	}
+	if !strings.Contains(errb, "--seed") && !strings.Contains(errb, "--token") {
+		t.Fatalf("stderr=%q", errb)
+	}
+}
+
+func TestCLI_AgentJoinAlreadyInited(t *testing.T) {
+	url := newClusterTestServer(t)
+	if code, _, errb := runCLI("--server", url, "cluster", "init"); code != 0 {
+		t.Fatalf("init %s", errb)
+	}
+	code, _, errb := runCLI("--server", url, "agent", "join", "--seed", url, "--token", "pmj_x")
+	if code != 1 {
+		t.Fatalf("join exit=%d stderr=%q", code, errb)
+	}
+	if !strings.Contains(errb, "CONFLICT") {
+		t.Fatalf("stderr want CONFLICT: %q", errb)
+	}
+}
+
 func TestClient_HTTPTimeout(t *testing.T) {
 	c := newClient("127.0.0.1:9000", "op", "t")
 	if c.http == nil {
@@ -120,7 +253,27 @@ func writeSpec(t *testing.T, name string) string {
 	return path
 }
 
+func kvField(out, key string) string {
+	prefix := key + "="
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimPrefix(line, prefix)
+		}
+	}
+	return ""
+}
+
 func newTestServer(t *testing.T) string {
+	t.Helper()
+	return startTestServer(t, false)
+}
+
+func newClusterTestServer(t *testing.T) string {
+	t.Helper()
+	return startTestServer(t, true)
+}
+
+func startTestServer(t *testing.T, withCluster bool) string {
 	t.Helper()
 	root := t.TempDir()
 	st, err := store.Open(filepath.Join(root, "store.db"))
@@ -128,7 +281,8 @@ func newTestServer(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	if _, err := st.GetOrCreateNodeID(context.Background()); err != nil {
+	nodeID, err := st.GetOrCreateNodeID(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
 	boot, err := st.GetBootID(context.Background())
@@ -136,7 +290,8 @@ func newTestServer(t *testing.T) string {
 		t.Fatal(err)
 	}
 	if boot == "" {
-		if _, err := st.RotateBootID(context.Background()); err != nil {
+		boot, err = st.RotateBootID(context.Background())
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -145,7 +300,36 @@ func newTestServer(t *testing.T) string {
 		t.Fatal(err)
 	}
 	mgr := process.NewManager(process.Deps{Store: st, Layout: layout, Now: time.Now})
-	srv, err := api.NewServer(api.Options{Mgr: mgr, Store: st, Started: time.Now()})
+	opts := api.Options{Mgr: mgr, Store: st, Started: time.Now()}
+	if withCluster {
+		opts.Cluster = api.ClusterDeps{
+			Dir:   layout.ClusterDir,
+			Store: st,
+			Local: func() cluster.NodeSummary {
+				cid := ""
+				if id, err := st.GetClusterID(context.Background()); err == nil {
+					cid = id
+				}
+				return cluster.NodeSummary{
+					NodeID:          nodeID,
+					ClusterID:       cid,
+					Hostname:        "test-host",
+					BootID:          boot,
+					State:           cluster.StateAlive,
+					ProtocolVersion: version.Protocol,
+					APIAddress:      "127.0.0.1:9000",
+					GossipAddress:   "127.0.0.1:7946",
+				}
+			},
+			GossipAddr: func() string { return "127.0.0.1:7946" },
+			Now:        time.Now,
+			NodeID:     nodeID,
+			Hostname:   "test-host",
+			BootID:     boot,
+			APIAddr:    "127.0.0.1:9000",
+		}
+	}
+	srv, err := api.NewServer(opts)
 	if err != nil {
 		t.Fatal(err)
 	}

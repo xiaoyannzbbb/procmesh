@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const defaultServer = "127.0.0.1:9000"
@@ -35,6 +36,12 @@ commands:
   process reset-failure <id-or-name>
   process adopt <instance-id> --pid N
   start|stop|restart|logs <id-or-name>
+  cluster init [--admin-user NAME]
+  agent join --seed HOST:PORT --token TOKEN
+  node list
+  node status [id-or-hostname]
+  node token create [--ttl DURATION] [--uses N]
+  node token revoke TOKEN_ID
 `
 
 type usageError string
@@ -58,6 +65,12 @@ type options struct {
 	toSet            bool
 	pid              int32
 	pidSet           bool
+
+	adminUser string
+	seed      string
+	token     string
+	ttl       time.Duration
+	uses      int32
 
 	args []string
 }
@@ -107,6 +120,21 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		runErr = runProcess(c, rest[0], rest[1:], opt, stdout)
 	case "start", "stop", "restart", "logs":
 		runErr = runProcess(c, cmd, rest, opt, stdout)
+	case "cluster":
+		if len(rest) == 0 {
+			return printUsage(stderr, usageError("missing cluster subcommand"))
+		}
+		runErr = runCluster(c, rest[0], rest[1:], opt, stdout)
+	case "agent":
+		if len(rest) == 0 {
+			return printUsage(stderr, usageError("missing agent subcommand"))
+		}
+		runErr = runAgent(c, rest[0], rest[1:], opt, stdout)
+	case "node":
+		if len(rest) == 0 {
+			return printUsage(stderr, usageError("missing node subcommand"))
+		}
+		runErr = runNode(c, rest[0], rest[1:], opt, stdout)
 	default:
 		return printUsage(stderr, usageError("unknown command"))
 	}
@@ -129,7 +157,7 @@ func printUsage(stderr io.Writer, err error) int {
 }
 
 func parseArgs(args []string) (options, error) {
-	opt := options{server: defaultServer}
+	opt := options{server: defaultServer, ttl: time.Hour, uses: 1}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		name, val, hasVal, isFlag := splitFlag(a)
@@ -213,6 +241,24 @@ func applyFlag(opt *options, name, val string) error {
 		}
 		opt.pid = int32(n)
 		opt.pidSet = true
+	case "admin-user":
+		opt.adminUser = val
+	case "seed":
+		opt.seed = val
+	case "token":
+		opt.token = val
+	case "ttl":
+		d, err := time.ParseDuration(val)
+		if err != nil {
+			return usageError("invalid --ttl")
+		}
+		opt.ttl = d
+	case "uses":
+		n, err := strconv.ParseInt(val, 10, 32)
+		if err != nil {
+			return usageError("invalid --uses")
+		}
+		opt.uses = int32(n)
 	default:
 		return usageError("unknown flag --" + name)
 	}
