@@ -47,6 +47,47 @@ func TestApplySpec_CreatesInstancesAndIdempotentOp(t *testing.T) {
 	}
 }
 
+func TestApplySpec_GeneratesProcessID(t *testing.T) {
+	ctx := context.Background()
+	m, _, _ := newTestManager(t)
+	got, err := m.ApplySpec(ctx, process.ProcessSpec{Name: "n", Command: "/bin/true"}, 0, "op", "t", "")
+	if err != nil || got.ProcessID == "" {
+		t.Fatalf("%+v %v", got, err)
+	}
+}
+
+func TestApplySpec_ScaleDownDeletesStoppedExtra(t *testing.T) {
+	ctx := context.Background()
+	m, st, _ := newTestManager(t)
+	spec := process.ProcessSpec{ProcessID: "p1", Name: "n", Command: "/bin/true", Instances: 2}
+	got, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	insts, err := st.ListInstances(ctx, "p1")
+	if err != nil || len(insts) != 2 {
+		t.Fatalf("create insts=%d err=%v", len(insts), err)
+	}
+	extra := insts[1]
+	extra.Desired = process.DesiredStopped
+	extra.Observed = process.ObservedStopped
+	extra.PID = 0
+	if err := st.PutInstance(ctx, extra); err != nil {
+		t.Fatal(err)
+	}
+	spec.Instances = 1
+	if _, err := m.ApplySpec(ctx, spec, got.LatestRevision, "op-scale", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	insts, err = st.ListInstances(ctx, "p1")
+	if err != nil || len(insts) != 1 {
+		t.Fatalf("scale-down insts=%d err=%v", len(insts), err)
+	}
+	if insts[0].Ordinal != 0 {
+		t.Fatalf("want ordinal 0 got %+v", insts[0])
+	}
+}
+
 func TestApplySpec_RejectsEmptyOperationID(t *testing.T) {
 	m, _, _ := newTestManager(t)
 	_, err := m.ApplySpec(context.Background(), process.ProcessSpec{ProcessID: "p1", Name: "n", Command: "/bin/true", Instances: 1}, 0, "", "t", "")

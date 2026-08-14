@@ -8,6 +8,14 @@ import (
 	"github.com/qleelulu/procmesh/internal/process"
 )
 
+func TestApplyDefaults_InstancesOne(t *testing.T) {
+	s := process.ProcessSpec{Name: "n", Command: "/bin/true"}
+	process.ApplyDefaults(&s)
+	if s.Instances != 1 || s.StopSignal != "SIGTERM" || s.Restart.Mode != process.RestartOnFailure {
+		t.Fatalf("%+v", s)
+	}
+}
+
 func TestValidateSpec_RejectsEmptyNameAndZeroInstances(t *testing.T) {
 	err := process.ValidateSpec(process.ProcessSpec{Command: "/bin/true"})
 	if !errcode.Is(err, errcode.INVALID) {

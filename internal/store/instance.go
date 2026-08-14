@@ -56,6 +56,25 @@ func (s *Store) GetInstance(ctx context.Context, instanceID string) (process.Ins
 	`, instanceID))
 }
 
+// DeleteInstance removes a runtime instance row by instance_id.
+func (s *Store) DeleteInstance(ctx context.Context, instanceID string) error {
+	if instanceID == "" {
+		return errcode.E(errcode.INVALID, "instance_id required")
+	}
+	res, err := s.db.ExecContext(ctx, `DELETE FROM process_instances WHERE instance_id=?`, instanceID)
+	if err != nil {
+		return fmt.Errorf("delete instance: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("delete instance rows: %w", err)
+	}
+	if n == 0 {
+		return errcode.E(errcode.NOT_FOUND, "instance")
+	}
+	return nil
+}
+
 // ListInstances returns instances for processID ordered by ordinal.
 func (s *Store) ListInstances(ctx context.Context, processID string) ([]process.Instance, error) {
 	rows, err := s.db.QueryContext(ctx, `

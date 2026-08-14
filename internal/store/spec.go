@@ -28,6 +28,7 @@ type Revision struct {
 
 // PutSpec creates (expectedRevision==0) or updates a spec with CAS on LatestRevision.
 func (s *Store) PutSpec(ctx context.Context, spec process.ProcessSpec, expectedRevision int64, operator, comment string) (process.ProcessSpec, error) {
+	process.ApplyDefaults(&spec)
 	if err := process.ValidateSpec(spec); err != nil {
 		return process.ProcessSpec{}, err
 	}

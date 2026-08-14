@@ -2,7 +2,9 @@ package process
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"os"
 	"sync"
 	"time"
@@ -24,6 +26,7 @@ type StateStore interface {
 	PutInstance(ctx context.Context, inst Instance) error
 	GetInstance(ctx context.Context, instanceID string) (Instance, error)
 	ListInstances(ctx context.Context, processID string) ([]Instance, error)
+	DeleteInstance(ctx context.Context, instanceID string) error
 	GetBootID(ctx context.Context) (string, error)
 	StartOp(ctx context.Context, opID, operator, typ, target string, payload []byte) (duplicate bool, status, errMsg string, err error)
 	FinishOperation(ctx context.Context, operationID, status string, result []byte, errMsg string) error
@@ -78,7 +81,14 @@ func NewManager(d Deps) *Manager {
 func (m *Manager) ApplySpec(ctx context.Context, spec ProcessSpec, expectedRevision int64, opID, operator, comment string) (ProcessSpec, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	applyDefaults(&spec)
+	ApplyDefaults(&spec)
+	if expectedRevision == 0 && spec.ProcessID == "" {
+		id, err := newProcessID()
+		if err != nil {
+			return ProcessSpec{}, err
+		}
+		spec.ProcessID = id
+	}
 	if err := ValidateSpec(spec); err != nil {
 		return ProcessSpec{}, err
 	}
@@ -383,14 +393,43 @@ func (m *Manager) ensureInstances(ctx context.Context, spec ProcessSpec) error {
 		return err
 	}
 	for _, inst := range insts {
-		if inst.Ordinal >= spec.Instances && inst.Desired != DesiredStopped {
+		if inst.Ordinal < spec.Instances {
+			continue
+		}
+		if inst.Desired != DesiredStopped {
 			inst.Desired = DesiredStopped
 			if err := m.deps.Store.PutInstance(ctx, inst); err != nil {
 				return err
 			}
 		}
+		if extraInstanceDeletable(inst) {
+			if err := m.deps.Store.DeleteInstance(ctx, inst.InstanceID); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
+}
+
+func extraInstanceDeletable(inst Instance) bool {
+	switch inst.Observed {
+	case ObservedStopped, ObservedFatal, ObservedUnknown:
+	default:
+		return false
+	}
+	return !pidAlive(inst.PID)
+}
+
+// newProcessID returns a UUID in the same format as store.newUUID:
+// xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+func newProcessID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("generate process_id: %w", err)
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:]), nil
 }
 
 func (m *Manager) beginOp(ctx context.Context, opID, operator, typ, target string, payload []byte) (bool, opResult, error) {
@@ -438,22 +477,6 @@ func (m *Manager) now() time.Time {
 
 func sameBoot(instBoot, current string) bool {
 	return instBoot != "" && instBoot == current
-}
-
-func applyDefaults(spec *ProcessSpec) {
-	if spec.StopSignal == "" {
-		spec.StopSignal = "SIGTERM"
-	}
-	if spec.KillSignal == "" {
-		spec.KillSignal = "SIGKILL"
-	}
-	if spec.StopTimeout == 0 {
-		spec.StopTimeout = 10 * time.Second
-	}
-	if spec.Restart.Mode == "" {
-		spec.Restart.Mode = RestartOnFailure
-	}
-	spec.Log = spec.Log.WithDefaults()
 }
 
 func socketExists(path string) bool {

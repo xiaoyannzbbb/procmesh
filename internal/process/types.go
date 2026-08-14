@@ -36,6 +36,30 @@ type ProcessSpec struct {
 	UpdatedAt        time.Time
 }
 
+// ApplyDefaults fills empty spec fields. ValidateSpec still rejects explicit Instances=0
+// if this is not called first.
+func ApplyDefaults(s *ProcessSpec) {
+	if s == nil {
+		return
+	}
+	if s.Instances == 0 {
+		s.Instances = 1
+	}
+	if s.StopSignal == "" {
+		s.StopSignal = "SIGTERM"
+	}
+	if s.KillSignal == "" {
+		s.KillSignal = "SIGKILL"
+	}
+	if s.StopTimeout == 0 {
+		s.StopTimeout = 10 * time.Second
+	}
+	if s.Restart.Mode == "" {
+		s.Restart.Mode = RestartOnFailure
+	}
+	s.Log = s.Log.WithDefaults()
+}
+
 type RestartPolicy struct {
 	Mode        RestartMode
 	MaxRetries  int

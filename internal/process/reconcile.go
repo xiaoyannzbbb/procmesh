@@ -47,6 +47,9 @@ func (m *Manager) reconcileLocked(ctx context.Context) error {
 					// record and continue; do not abort the StartupOrder pass
 					continue
 				}
+				if extraInstanceDeletable(inst) {
+					_ = m.deps.Store.DeleteInstance(ctx, inst.InstanceID)
+				}
 				continue
 			}
 			if err := m.reconcileInstance(ctx, spec, &inst, byName); err != nil {

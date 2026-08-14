@@ -98,6 +98,28 @@ func TestPutGetListInstance(t *testing.T) {
 	}
 }
 
+func TestDeleteInstance(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	inst := process.Instance{
+		InstanceID: process.MakeInstanceID("p1", 0),
+		ProcessID:  "p1",
+		Ordinal:    0,
+		Desired:    process.DesiredStopped,
+		Observed:   process.ObservedStopped,
+		Health:     process.HealthUnknown,
+	}
+	if err := s.PutInstance(ctx, inst); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteInstance(ctx, inst.InstanceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetInstance(ctx, inst.InstanceID); !errcode.Is(err, errcode.NOT_FOUND) {
+		t.Fatalf("want NOT_FOUND got %v", err)
+	}
+}
+
 func TestGetInstance_NotFound(t *testing.T) {
 	s := openStore(t)
 	_, err := s.GetInstance(context.Background(), "missing")
@@ -314,6 +336,9 @@ func TestRuntimeMethods_ErrorAfterClose(t *testing.T) {
 	}
 	if _, err := s.ListInstances(ctx, "p1"); err == nil {
 		t.Fatal("ListInstances")
+	}
+	if err := s.DeleteInstance(ctx, "p1:0"); err == nil {
+		t.Fatal("DeleteInstance")
 	}
 	op := store.Operation{OperationID: "op-1", Type: "start", Target: "p1", Status: store.OpPending}
 	if _, _, err := s.BeginOperation(ctx, op); err == nil {
