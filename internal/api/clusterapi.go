@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -106,9 +107,6 @@ func (s *ClusterAPI) Join(ctx context.Context, req *connect.Request[procmeshv1.J
 		return nil, ToConnect(err)
 	}
 	now := s.Deps.now()
-	if err := control.ConsumeToken(s.Deps.Dir, req.Msg.GetToken(), now); err != nil {
-		return nil, ToConnect(err)
-	}
 	meta, err := control.LoadMeta(s.Deps.Dir)
 	if err != nil {
 		return nil, ToConnect(err)
@@ -120,6 +118,14 @@ func (s *ClusterAPI) Join(ctx context.Context, req *connect.Request[procmeshv1.J
 	certPEM, err := control.SignCSR(bundle.CACertPEM, bundle.CAKeyPEM, req.Msg.GetCsrPem(), meta.ClusterID, req.Msg.GetNodeId(), now)
 	if err != nil {
 		return nil, ToConnect(err)
+	}
+	if err := control.ConsumeToken(s.Deps.Dir, req.Msg.GetToken(), now); err != nil {
+		return nil, ToConnect(err)
+	}
+	if gossip := req.Msg.GetGossipAddress(); gossip != "" {
+		if err := control.AppendGossipSeed(s.Deps.Dir, gossip); err != nil {
+			fmt.Fprintf(os.Stderr, "persist gossip seed: %v\n", err)
+		}
 	}
 	return connect.NewResponse(&procmeshv1.JoinClusterResponse{
 		ClusterId:     meta.ClusterID,
@@ -192,7 +198,7 @@ func (s *ClusterAPI) RequestJoin(ctx context.Context, req *connect.Request[procm
 	if j, ok := s.Deps.Mesh.(meshJoiner); ok {
 		if gossip := joined.Msg.GetGossipAddress(); gossip != "" {
 			if _, err := j.Join([]string{gossip}); err != nil {
-				return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "mesh join failed"))
+				fmt.Fprintf(os.Stderr, "mesh join: %v\n", err)
 			}
 		}
 	}
@@ -227,6 +233,23 @@ func requireCluster(d ClusterDeps) error {
 func requireInited(dir string) error {
 	if !control.AlreadyInited(dir) {
 		return ToConnect(errcode.E(errcode.INVALID, "cluster not initialized"))
+	}
+	return nil
+}
+
+func requireCanIssueTokens(dir string) error {
+	if err := requireInited(dir); err != nil {
+		return err
+	}
+	meta, err := control.LoadMeta(dir)
+	if err != nil {
+		return ToConnect(err)
+	}
+	if !meta.ControlMember {
+		return ToConnect(errcode.E(errcode.DENIED, "not a control member"))
+	}
+	if _, err := os.Stat(filepath.Join(dir, "ca.key")); err != nil {
+		return ToConnect(errcode.E(errcode.DENIED, "cluster CA key not available"))
 	}
 	return nil
 }

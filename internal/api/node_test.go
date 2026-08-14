@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -49,6 +51,49 @@ func TestGetNode_NotFound(t *testing.T) {
 	code, detail := connectDetail(t, err)
 	if code != connect.CodeNotFound || detail != "NOT_FOUND" {
 		t.Fatalf("code=%v detail=%s err=%v", code, detail, err)
+	}
+}
+
+func TestCreateJoinToken_JoinerDenied(t *testing.T) {
+	ctx := context.Background()
+	seed := newClusterEnv(t)
+	seed.init(t)
+	tok, err := seed.node.CreateJoinToken(ctx, connect.NewRequest(&procmeshv1.CreateJoinTokenRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-tok", Operator: "t"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	joiner := newClusterEnv(t)
+	if _, err := joiner.cluster.RequestJoin(ctx, connect.NewRequest(&procmeshv1.RequestJoinRequest{
+		Meta:       &procmeshv1.MutationMeta{OperationId: "op-rjoin", Operator: "t"},
+		SeedServer: seed.url,
+		Token:      tok.Msg.GetToken(),
+	})); err != nil {
+		t.Fatal(err)
+	}
+	_, err = joiner.node.CreateJoinToken(ctx, connect.NewRequest(&procmeshv1.CreateJoinTokenRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-tok-joiner", Operator: "t"},
+	}))
+	code, detail := connectDetail(t, err)
+	if code != connect.CodePermissionDenied || detail != "DENIED" {
+		t.Fatalf("joiner token code=%v detail=%s err=%v", code, detail, err)
+	}
+}
+
+func TestCreateJoinToken_NoCAKey(t *testing.T) {
+	ctx := context.Background()
+	e := newClusterEnv(t)
+	e.init(t)
+	if err := os.Remove(filepath.Join(e.dir, "ca.key")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := e.node.CreateJoinToken(ctx, connect.NewRequest(&procmeshv1.CreateJoinTokenRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-tok", Operator: "t"},
+	}))
+	code, detail := connectDetail(t, err)
+	if code != connect.CodePermissionDenied || detail != "DENIED" {
+		t.Fatalf("no ca.key code=%v detail=%s err=%v", code, detail, err)
 	}
 }
 

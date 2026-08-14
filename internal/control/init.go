@@ -135,6 +135,33 @@ func LoadMeta(dir string) (Meta, error) {
 	return m, nil
 }
 
+// SaveMeta rewrites cluster.json.
+func SaveMeta(dir string, meta Meta) error {
+	metaDoc, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal cluster meta: %w", err)
+	}
+	return writeFile(filepath.Join(dir, metaFileName), append(metaDoc, '\n'), metaFileMode)
+}
+
+// AppendGossipSeed adds addr to cluster.json gossip_seeds if it is not already present.
+func AppendGossipSeed(dir, addr string) error {
+	if addr == "" {
+		return nil
+	}
+	meta, err := LoadMeta(dir)
+	if err != nil {
+		return err
+	}
+	for _, s := range meta.GossipSeeds {
+		if s == addr {
+			return nil
+		}
+	}
+	meta.GossipSeeds = append(meta.GossipSeeds, addr)
+	return SaveMeta(dir, meta)
+}
+
 // AlreadyInited reports whether cluster.json exists under dir.
 func AlreadyInited(dir string) bool {
 	st, err := os.Stat(filepath.Join(dir, metaFileName))

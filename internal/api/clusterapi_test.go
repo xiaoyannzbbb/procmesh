@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -21,10 +22,13 @@ import (
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
 
+var errMeshJoin = errors.New("mesh join failed")
+
 type staticMesh struct {
 	mu      sync.Mutex
 	members []cluster.NodeSummary
 	joins   [][]string
+	joinErr error
 }
 
 func (m *staticMesh) Members() []cluster.NodeSummary {
@@ -41,6 +45,9 @@ func (m *staticMesh) Join(seeds []string) (int, error) {
 	cp := make([]string, len(seeds))
 	copy(cp, seeds)
 	m.joins = append(m.joins, cp)
+	if m.joinErr != nil {
+		return 0, m.joinErr
+	}
 	return len(seeds), nil
 }
 
@@ -258,6 +265,132 @@ func TestJoin_SignsCSRVerifyAgent(t *testing.T) {
 	if cid != inited.GetClusterId() || nid != joinerID {
 		t.Fatalf("uri %s/%s", cid, nid)
 	}
+	seedMeta, err := control.LoadMeta(e.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seedMeta.GossipSeeds) != 1 || seedMeta.GossipSeeds[0] != "127.0.0.1:7947" {
+		t.Fatalf("seed gossip seeds=%v", seedMeta.GossipSeeds)
+	}
+}
+
+func TestJoin_BadCSRDoesNotConsumeToken(t *testing.T) {
+	ctx := context.Background()
+	e := newClusterEnv(t)
+	e.init(t)
+	tok, err := e.node.CreateJoinToken(ctx, connect.NewRequest(&procmeshv1.CreateJoinTokenRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-tok", Operator: "t"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.cluster.Join(ctx, connect.NewRequest(&procmeshv1.JoinClusterRequest{
+		Meta:            &procmeshv1.MutationMeta{OperationId: "op-join-bad", Operator: "t"},
+		Token:           tok.Msg.GetToken(),
+		NodeId:          "n1",
+		BootId:          "boot-n1",
+		ProtocolVersion: int32(version.Protocol),
+		CsrPem:          []byte("not-a-csr"),
+	}))
+	code, detail := connectDetail(t, err)
+	if code != connect.CodeInvalidArgument || detail != "INVALID" {
+		t.Fatalf("bad csr code=%v detail=%s err=%v", code, detail, err)
+	}
+	csr, _, err := control.NewCSR("join", "n1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.cluster.Join(ctx, connect.NewRequest(&procmeshv1.JoinClusterRequest{
+		Meta:            &procmeshv1.MutationMeta{OperationId: "op-join-ok", Operator: "t"},
+		Token:           tok.Msg.GetToken(),
+		NodeId:          "n1",
+		BootId:          "boot-n1",
+		ProtocolVersion: int32(version.Protocol),
+		GossipAddress:   "127.0.0.1:7947",
+		CsrPem:          csr,
+	})); err != nil {
+		t.Fatalf("same token after bad csr: %v", err)
+	}
+}
+
+func TestJoin_MissingCADoesNotConsumeToken(t *testing.T) {
+	ctx := context.Background()
+	e := newClusterEnv(t)
+	e.init(t)
+	tok, err := e.node.CreateJoinToken(ctx, connect.NewRequest(&procmeshv1.CreateJoinTokenRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-tok", Operator: "t"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	caKey := filepath.Join(e.dir, "ca.key")
+	saved, err := os.ReadFile(caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(caKey); err != nil {
+		t.Fatal(err)
+	}
+	csr, _, err := control.NewCSR("join", "n1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joinReq := connect.NewRequest(&procmeshv1.JoinClusterRequest{
+		Meta:            &procmeshv1.MutationMeta{OperationId: "op-join", Operator: "t"},
+		Token:           tok.Msg.GetToken(),
+		NodeId:          "n1",
+		BootId:          "boot-n1",
+		ProtocolVersion: int32(version.Protocol),
+		GossipAddress:   "127.0.0.1:7947",
+		CsrPem:          csr,
+	})
+	if _, err := e.cluster.Join(ctx, joinReq); err == nil {
+		t.Fatal("join without ca.key succeeded")
+	}
+	if err := os.WriteFile(caKey, saved, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	joinReq.Msg.Meta.OperationId = "op-join-retry"
+	if _, err := e.cluster.Join(ctx, joinReq); err != nil {
+		t.Fatalf("same token after restoring ca.key: %v", err)
+	}
+}
+
+func TestJoin_GossipSeedDeduped(t *testing.T) {
+	ctx := context.Background()
+	e := newClusterEnv(t)
+	e.init(t)
+	const gossip = "127.0.0.1:7947"
+	for i, nodeID := range []string{"n1", "n2"} {
+		tok, err := e.node.CreateJoinToken(ctx, connect.NewRequest(&procmeshv1.CreateJoinTokenRequest{
+			Meta: &procmeshv1.MutationMeta{OperationId: "op-tok-" + nodeID, Operator: "t"},
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		csr, _, err := control.NewCSR("join", nodeID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.cluster.Join(ctx, connect.NewRequest(&procmeshv1.JoinClusterRequest{
+			Meta:            &procmeshv1.MutationMeta{OperationId: "op-join-" + nodeID, Operator: "t"},
+			Token:           tok.Msg.GetToken(),
+			NodeId:          nodeID,
+			BootId:          "boot-" + nodeID,
+			ProtocolVersion: int32(version.Protocol),
+			GossipAddress:   gossip,
+			CsrPem:          csr,
+		})); err != nil {
+			t.Fatalf("join %d: %v", i, err)
+		}
+	}
+	meta, err := control.LoadMeta(e.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(meta.GossipSeeds) != 1 || meta.GossipSeeds[0] != gossip {
+		t.Fatalf("seeds=%v", meta.GossipSeeds)
+	}
 }
 
 func TestJoin_SecondTokenDenied(t *testing.T) {
@@ -421,6 +554,51 @@ func TestRequestJoin_JoinerPersistsBundle(t *testing.T) {
 	joiner.mesh.mu.Unlock()
 	if len(joins) != 1 || len(joins[0]) != 1 || joins[0][0] != seed.local.GossipAddress {
 		t.Fatalf("mesh join seeds=%v want [%q]", joins, seed.local.GossipAddress)
+	}
+	seedMeta, err := control.LoadMeta(seed.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seedMeta.GossipSeeds) != 1 || seedMeta.GossipSeeds[0] != joiner.local.GossipAddress {
+		t.Fatalf("seed gossip seeds=%v want [%q]", seedMeta.GossipSeeds, joiner.local.GossipAddress)
+	}
+}
+
+func TestRequestJoin_MeshJoinFailureStillSucceeds(t *testing.T) {
+	ctx := context.Background()
+	seed := newClusterEnv(t)
+	inited := seed.init(t)
+	tok, err := seed.node.CreateJoinToken(ctx, connect.NewRequest(&procmeshv1.CreateJoinTokenRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-tok", Operator: "t"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	joiner := newClusterEnv(t)
+	joiner.mesh.joinErr = errMeshJoin
+	resp, err := joiner.cluster.RequestJoin(ctx, connect.NewRequest(&procmeshv1.RequestJoinRequest{
+		Meta:       &procmeshv1.MutationMeta{OperationId: "op-rjoin", Operator: "t"},
+		SeedServer: seed.url,
+		Token:      tok.Msg.GetToken(),
+	}))
+	if err != nil {
+		t.Fatalf("mesh join failure should not fail RequestJoin: %v", err)
+	}
+	if resp.Msg.GetClusterId() != inited.GetClusterId() {
+		t.Fatalf("cluster_id=%q want %q", resp.Msg.GetClusterId(), inited.GetClusterId())
+	}
+	if !control.AlreadyInited(joiner.dir) {
+		t.Fatal("joiner cluster.json missing after persist")
+	}
+	_, err = joiner.cluster.RequestJoin(ctx, connect.NewRequest(&procmeshv1.RequestJoinRequest{
+		Meta:       &procmeshv1.MutationMeta{OperationId: "op-rjoin-2", Operator: "t"},
+		SeedServer: seed.url,
+		Token:      tok.Msg.GetToken(),
+	}))
+	code, detail := connectDetail(t, err)
+	if code != connect.CodeFailedPrecondition || detail != "CONFLICT" {
+		t.Fatalf("retry code=%v detail=%s err=%v", code, detail, err)
 	}
 }
 

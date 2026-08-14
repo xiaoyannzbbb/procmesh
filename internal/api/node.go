@@ -46,7 +46,7 @@ func (s *NodeAPI) CreateJoinToken(_ context.Context, req *connect.Request[procme
 	if err := requireCluster(s.Deps); err != nil {
 		return nil, err
 	}
-	if err := requireInited(s.Deps.Dir); err != nil {
+	if err := requireCanIssueTokens(s.Deps.Dir); err != nil {
 		return nil, err
 	}
 	ttl := time.Duration(req.Msg.GetTtlSeconds()) * time.Second
