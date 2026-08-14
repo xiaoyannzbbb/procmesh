@@ -22,11 +22,6 @@ const (
 	dirMode  = 0o750
 	fileMode = 0o640
 
-	warnPct      = 85
-	cleanupPct   = 90
-	emergencyPct = 95
-	targetPct    = 85
-
 	defaultTailLines = 1000
 	maxTailLines     = 10000
 	tailChunk        = 32 * 1024
@@ -47,9 +42,10 @@ const (
 
 // Manager enforces log file paths and disk protection on Root.
 type Manager struct {
-	Root  string
-	Usage DiskUsage
-	Now   func() time.Time
+	Root   string
+	Usage  DiskUsage
+	Now    func() time.Time
+	Policy Policy // 零值在 Protect 前视为 DefaultPolicy()
 
 	mu      sync.Mutex
 	blocked bool
@@ -336,8 +332,9 @@ func Prepare(paths ...string) error {
 	return nil
 }
 
-// Protect classifies disk usage and, at Cleanup/Emergency, deletes oldest logs
-// under logs/ until used ≤ 85 or no log files remain.
+// Protect classifies disk usage using Policy. AutoDelete deletes oldest logs
+// under logs/ until used ≤ WarnPercent; EmergencyStopWrites blocks writes
+// until used ≤ CleanupPercent.
 func (m *Manager) Protect(ctx context.Context) (Level, error) {
 	if m == nil {
 		return OK, nil
@@ -349,9 +346,10 @@ func (m *Manager) Protect(ctx context.Context) (Level, error) {
 	if err != nil {
 		return 0, err
 	}
-	level := classify(used)
-	if level >= Cleanup {
-		used, err = m.deleteOldestLogs(ctx, targetPct)
+	p := m.policy()
+	level := classify(p, used)
+	if p.AutoDelete && level >= Cleanup {
+		used, err = m.deleteOldestLogs(ctx, float64(p.WarnPercent))
 		if err != nil {
 			return level, err
 		}
@@ -359,16 +357,23 @@ func (m *Manager) Protect(ctx context.Context) (Level, error) {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if level == Emergency {
+	if p.EmergencyStopWrites && level == Emergency {
 		m.blocked = true
 	}
-	if m.blocked && used <= cleanupPct {
+	if m.blocked && used <= float64(p.CleanupPercent) {
 		m.blocked = false
 	}
 	return level, nil
 }
 
-// WritesAllowed is false after Emergency until used ≤ 90.
+func (m *Manager) policy() Policy {
+	if m.Policy.WarnPercent == 0 && m.Policy.CleanupPercent == 0 && m.Policy.EmergencyPercent == 0 {
+		return DefaultPolicy()
+	}
+	return m.Policy
+}
+
+// WritesAllowed is false after Emergency until used ≤ CleanupPercent.
 func (m *Manager) WritesAllowed() bool {
 	if m == nil {
 		return true
@@ -445,13 +450,13 @@ func (m *Manager) usedPercent() (float64, error) {
 	return fn(m.Root)
 }
 
-func classify(used float64) Level {
+func classify(p Policy, used float64) Level {
 	switch {
-	case used > emergencyPct:
+	case used > float64(p.EmergencyPercent):
 		return Emergency
-	case used > cleanupPct:
+	case used > float64(p.CleanupPercent):
 		return Cleanup
-	case used > warnPct:
+	case used > float64(p.WarnPercent):
 		return Warn
 	default:
 		return OK

@@ -16,10 +16,13 @@ import (
 func TestProtect_Over95PercentDisablesWritesRegardlessOfFreeSpace(t *testing.T) {
 	root := t.TempDir()
 	logPath := writeLog(t, root, "p", "i", "stdout.log", "keep", time.Now())
+	pol := logmgr.DefaultPolicy()
+	pol.AutoDelete = true
 	m := &logmgr.Manager{
-		Root:  root,
-		Usage: func(string) (float64, error) { return 97, nil },
-		Now:   time.Now,
+		Root:   root,
+		Usage:  func(string) (float64, error) { return 97, nil },
+		Now:    time.Now,
+		Policy: pol,
 	}
 	lvl, err := m.Protect(context.Background())
 	if err != nil {
@@ -46,7 +49,9 @@ func TestProtect_EmergencyStopsWrites(t *testing.T) {
 	if err := os.WriteFile(old, []byte("x"), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	m := &logmgr.Manager{Root: root, Usage: func(string) (float64, error) { return 96, nil }, Now: time.Now}
+	pol := logmgr.DefaultPolicy()
+	pol.AutoDelete = true
+	m := &logmgr.Manager{Root: root, Usage: func(string) (float64, error) { return 96, nil }, Now: time.Now, Policy: pol}
 	lvl, err := m.Protect(context.Background())
 	if err != nil || lvl != logmgr.Emergency || m.WritesAllowed() {
 		t.Fatalf("lvl=%v allowed=%v err=%v", lvl, m.WritesAllowed(), err)
@@ -88,6 +93,8 @@ func TestProtect_CleanupDeletesOldestUntil85(t *testing.T) {
 	newest := writeLog(t, root, "p", "i", "new.log", "c", time.Now().Add(-time.Hour))
 	gz := writeLog(t, root, "p", "i", "old.log.gz", "z", time.Now().Add(-4*time.Hour))
 
+	pol := logmgr.DefaultPolicy()
+	pol.AutoDelete = true
 	m := &logmgr.Manager{
 		Root: root,
 		Usage: func(string) (float64, error) {
@@ -100,7 +107,8 @@ func TestProtect_CleanupDeletesOldestUntil85(t *testing.T) {
 				return 84, nil
 			}
 		},
-		Now: time.Now,
+		Now:    time.Now,
+		Policy: pol,
 	}
 	lvl, err := m.Protect(context.Background())
 	if err != nil || lvl != logmgr.Cleanup {
@@ -143,7 +151,9 @@ func TestProtect_NeverDeletesProtectedPaths(t *testing.T) {
 		}
 	}
 	logPath := writeLog(t, root, "p", "i", "stdout.log", "x", time.Now())
-	m := &logmgr.Manager{Root: root, Usage: func(string) (float64, error) { return 96, nil }, Now: time.Now}
+	pol := logmgr.DefaultPolicy()
+	pol.AutoDelete = true
+	m := &logmgr.Manager{Root: root, Usage: func(string) (float64, error) { return 96, nil }, Now: time.Now, Policy: pol}
 	if _, err := m.Protect(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -413,6 +423,8 @@ func TestProtect_DeletesRotatedArchives(t *testing.T) {
 	arch := writeLog(t, root, "p", "i", "stdout.log.1", "a", time.Now().Add(-2*time.Hour))
 	cur := writeLog(t, root, "p", "i", "stdout.log", "c", time.Now())
 
+	pol := logmgr.DefaultPolicy()
+	pol.AutoDelete = true
 	m := &logmgr.Manager{
 		Root: root,
 		Usage: func(string) (float64, error) {
@@ -425,7 +437,8 @@ func TestProtect_DeletesRotatedArchives(t *testing.T) {
 				return 84, nil
 			}
 		},
-		Now: time.Now,
+		Now:    time.Now,
+		Policy: pol,
 	}
 	lvl, err := m.Protect(context.Background())
 	if err != nil || lvl != logmgr.Emergency {
@@ -539,4 +552,66 @@ func countLogs(t *testing.T, root string) int {
 		t.Fatal(err)
 	}
 	return n
+}
+
+func TestDefaultPolicy_DoesNotAutoDelete(t *testing.T) {
+	p := logmgr.DefaultPolicy()
+	if p.WarnPercent != 85 || p.CleanupPercent != 90 || p.EmergencyPercent != 95 {
+		t.Fatalf("%+v", p)
+	}
+	if p.AutoDelete || !p.EmergencyStopWrites {
+		t.Fatalf("%+v", p)
+	}
+}
+
+func TestProtect_AutoDeleteFalseKeepsLogsAt91(t *testing.T) {
+	root := t.TempDir()
+	logPath := writeLog(t, root, "p", "i", "stdout.log", "keep", time.Now())
+	m := &logmgr.Manager{
+		Root:   root,
+		Usage:  func(string) (float64, error) { return 91, nil },
+		Policy: logmgr.DefaultPolicy(), // AutoDelete=false
+		Now:    time.Now,
+	}
+	lvl, err := m.Protect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lvl != logmgr.Cleanup {
+		t.Fatalf("lvl=%v", lvl)
+	}
+	if _, err := os.Stat(logPath); err != nil {
+		t.Fatal("auto_delete false must keep logs")
+	}
+}
+
+func TestProtect_EmergencyStopWritesFalseAllowsWritesAt96(t *testing.T) {
+	root := t.TempDir()
+	p := logmgr.DefaultPolicy()
+	p.EmergencyStopWrites = false
+	m := &logmgr.Manager{
+		Root:   root,
+		Usage:  func(string) (float64, error) { return 96, nil },
+		Policy: p,
+		Now:    time.Now,
+	}
+	lvl, err := m.Protect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lvl != logmgr.Emergency {
+		t.Fatalf("lvl=%v", lvl)
+	}
+	if !m.WritesAllowed() {
+		t.Fatal("emergency_stop_writes false must allow writes")
+	}
+}
+
+func TestPolicy_ValidateOrder(t *testing.T) {
+	p := logmgr.DefaultPolicy()
+	p.WarnPercent = 90
+	p.CleanupPercent = 85
+	if err := p.Validate(); err == nil {
+		t.Fatal("expected invalid order")
+	}
 }
