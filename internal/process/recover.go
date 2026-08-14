@@ -109,11 +109,11 @@ func (m *Manager) recoverInstance(ctx context.Context, spec ProcessSpec, inst In
 		return m.markOrphan(ctx, inst, livePID)
 	}
 
+	// Recover never launches. Reconcile owns start so StartupOrder and DepsReady apply.
 	inst.PID = 0
 	inst.ShimPID = 0
-	hostReboot := !sameBoot(inst.BootID, boot)
-	if inst.Desired == DesiredRunning && (!hostReboot || spec.Autostart) {
-		return m.startInstance(ctx, spec, &inst, boot)
+	if !sameBoot(inst.BootID, boot) && !spec.Autostart {
+		inst.Desired = DesiredStopped
 	}
 	if inst.Observed != ObservedStopped && inst.Observed != ObservedFatal {
 		inst.Observed = ObservedStopped

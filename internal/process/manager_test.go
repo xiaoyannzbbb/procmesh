@@ -211,6 +211,35 @@ func TestDeleteSpec_RequiresStoppedNoLivePID(t *testing.T) {
 	if _, err := st.GetSpec(ctx, "p1"); !errcode.Is(err, errcode.NOT_FOUND) {
 		t.Fatalf("want gone got %v", err)
 	}
+	if _, err := st.GetInstance(ctx, process.MakeInstanceID("p1", 0)); !errcode.Is(err, errcode.NOT_FOUND) {
+		t.Fatalf("instance row must be gone got %v", err)
+	}
+}
+
+func TestDeleteSpec_RemovesInstanceRows(t *testing.T) {
+	ctx := context.Background()
+	m, st, _ := newTestManager(t)
+	spec := process.ProcessSpec{ProcessID: "p1", Name: "true", Command: "/bin/true", Instances: 2}
+	got, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id0 := process.MakeInstanceID("p1", 0)
+	id1 := process.MakeInstanceID("p1", 1)
+	process.SeedInstanceMemory(m, id0)
+	process.SeedInstanceMemory(m, id1)
+	if err := m.DeleteSpec(ctx, "p1", got.LatestRevision, "op-del", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.GetInstance(ctx, id0); !errcode.Is(err, errcode.NOT_FOUND) {
+		t.Fatalf("instance 0 want NOT_FOUND got %v", err)
+	}
+	if _, err := st.GetInstance(ctx, id1); !errcode.Is(err, errcode.NOT_FOUND) {
+		t.Fatalf("instance 1 want NOT_FOUND got %v", err)
+	}
+	if process.InstanceMemoryHeld(m, id0) || process.InstanceMemoryHeld(m, id1) {
+		t.Fatal("DeleteSpec must forget instance memory")
+	}
 }
 
 func TestAdopt_RecordsLivePIDWithoutLaunch(t *testing.T) {

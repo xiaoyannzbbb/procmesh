@@ -85,6 +85,9 @@ func Run(ctx context.Context, opt Options) error {
 	if err := mgr.Recover(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "recover failed: %v\n", err)
 	}
+	if err := mgr.Reconcile(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "reconcile: %v\n", err)
+	}
 
 	ready := func() error {
 		if err := st.IntegrityCheck(context.Background()); err != nil {

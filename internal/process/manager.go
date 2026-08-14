@@ -161,6 +161,13 @@ func (m *Manager) DeleteSpec(ctx context.Context, processID string, expectedRevi
 		_ = m.finishOp(ctx, opID, opFailed, nil, err.Error())
 		return err
 	}
+	for _, inst := range insts {
+		if err := m.deps.Store.DeleteInstance(ctx, inst.InstanceID); err != nil && !errcode.Is(err, errcode.NOT_FOUND) {
+			_ = m.finishOp(ctx, opID, opFailed, nil, err.Error())
+			return err
+		}
+		m.forgetInstance(inst.InstanceID)
+	}
 	m.audit(ctx, processID, "process.delete", opID, operator, "SUCCESS")
 	return m.finishOp(ctx, opID, opSuccess, nil, "")
 }

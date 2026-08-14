@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/qleelulu/procmesh/internal/errcode"
@@ -13,6 +14,8 @@ import (
 	"github.com/qleelulu/procmesh/internal/shim"
 	shimpb "github.com/qleelulu/procmesh/proto/shim/v1"
 )
+
+const adoptRequiredMsg = "adopt required"
 
 func (m *Manager) Reconcile(ctx context.Context) error {
 	m.mu.Lock()
@@ -33,6 +36,12 @@ func (m *Manager) reconcileLocked(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	var first error
+	note := func(err error) {
+		if first == nil && isAdoptRequired(err) {
+			first = err
+		}
+	}
 	for _, pid := range order {
 		spec, ok := m.getSpecByID(specs, pid)
 		if !ok {
@@ -46,6 +55,7 @@ func (m *Manager) reconcileLocked(ctx context.Context) error {
 			if inst.Ordinal >= spec.Instances {
 				if err := m.stopInstance(ctx, spec, &inst); err != nil {
 					// record and continue; do not abort the StartupOrder pass
+					note(err)
 					continue
 				}
 				if extraInstanceDeletable(inst) {
@@ -58,12 +68,17 @@ func (m *Manager) reconcileLocked(ctx context.Context) error {
 			}
 			if err := m.reconcileInstance(ctx, spec, &inst, byName); err != nil {
 				// one startInstance failure must not abort later processes
+				note(err)
 				continue
 			}
 		}
 	}
 	m.closeAll()
-	return nil
+	return first
+}
+
+func isAdoptRequired(err error) bool {
+	return err != nil && errcode.Is(err, errcode.INVALID) && strings.Contains(err.Error(), adoptRequiredMsg)
 }
 
 func (m *Manager) getSpecByID(specs []ProcessSpec, pid string) (ProcessSpec, bool) {
@@ -95,7 +110,14 @@ func (m *Manager) reconcileInstance(ctx context.Context, spec ProcessSpec, inst 
 
 	// FATAL stays FATAL until ResetFailure. UNKNOWN stays UNKNOWN until Adopt
 	// (or a later reconnect finds a live shim). Never auto-start either.
-	if inst.Observed == ObservedUnknown || inst.Observed == ObservedFatal {
+	// Stopping an UNKNOWN live pid must fail with adopt required — do not fake STOPPED.
+	if inst.Observed == ObservedUnknown {
+		if inst.Desired == DesiredStopped {
+			return m.stopInstance(ctx, spec, inst)
+		}
+		return nil
+	}
+	if inst.Observed == ObservedFatal {
 		return nil
 	}
 
@@ -183,6 +205,10 @@ func (m *Manager) refresh(ctx context.Context, inst *Instance) error {
 	}
 	defer m.closeConn(client, inst.InstanceID)
 	if st != nil && st.GetAlive() {
+		if !sameBoot(inst.BootID, m.bootID(ctx)) {
+			// Previous-boot leftover: do not adopt the old PID as RUNNING.
+			return m.refreshNoSocket(ctx, inst)
+		}
 		inst.PID = int(st.GetPid())
 		if inst.Observed != ObservedRunning {
 			if next, err := ApplyObserved(inst.Observed, EvStartOK); err == nil {
@@ -285,8 +311,15 @@ func (m *Manager) startInstance(ctx context.Context, spec ProcessSpec, inst *Ins
 		if err == nil {
 			client, st = c, status
 			if status != nil && status.GetAlive() {
-				defer m.closeConn(c, inst.InstanceID)
-				return m.applyRunning(ctx, inst, int(status.GetPid()), boot)
+				if sameBoot(inst.BootID, boot) || inst.BootID == "" {
+					defer m.closeConn(c, inst.InstanceID)
+					return m.applyRunning(ctx, inst, int(status.GetPid()), boot)
+				}
+				// Previous-boot leftover: do not adopt the old PID.
+				if c != nil {
+					_ = c.Close()
+				}
+				return nil
 			}
 		}
 	}
@@ -396,7 +429,7 @@ func (m *Manager) applyRunning(ctx context.Context, inst *Instance, pid int, boo
 
 func (m *Manager) stopInstance(ctx context.Context, spec ProcessSpec, inst *Instance) error {
 	if inst.Observed == ObservedUnknown && pidAlive(inst.PID) && sameBoot(inst.BootID, m.bootID(ctx)) {
-		return nil
+		return errcode.E(errcode.INVALID, adoptRequiredMsg)
 	}
 	m.closeClient(inst.InstanceID)
 	sock := m.deps.Layout.ShimSocket(inst.InstanceID)
