@@ -91,6 +91,19 @@ func TestCLI_UnknownCommand(t *testing.T) {
 	}
 }
 
+func TestClient_HTTPTimeout(t *testing.T) {
+	c := newClient("127.0.0.1:9000", "op", "t")
+	if c.http == nil {
+		t.Fatal("nil http client")
+	}
+	if c.http.Timeout != httpTimeout {
+		t.Fatalf("timeout=%v want %v", c.http.Timeout, httpTimeout)
+	}
+	if httpTimeout != 5*time.Second {
+		t.Fatalf("httpTimeout=%v want 5s", httpTimeout)
+	}
+}
+
 func runCLI(args ...string) (int, string, string) {
 	var stdout, stderr bytes.Buffer
 	code := Main(args, bytes.NewReader(nil), &stdout, &stderr)

@@ -134,6 +134,24 @@ func TestConfig_DiffMissingRevision(t *testing.T) {
 	}
 }
 
+func TestConfig_DiffNilRevsReturnsDegraded(t *testing.T) {
+	ctx := context.Background()
+	m, st, _ := newTestManager(t)
+	proc, _ := newServiceClientsWith(t, m, st, nil)
+	seedWebV1V2(t, proc)
+
+	_, cfg := newServiceClientsWith(t, m, nil, nil)
+	_, err := cfg.Diff(ctx, connect.NewRequest(&procmeshv1.DiffRequest{
+		IdOrName:     "web",
+		FromRevision: 1,
+		ToRevision:   2,
+	}))
+	code, detail := connectDetail(t, err)
+	if code != connect.CodeUnavailable || detail != "DEGRADED" {
+		t.Fatalf("code=%v detail=%s err=%v", code, detail, err)
+	}
+}
+
 func TestConfig_MissingOperationID(t *testing.T) {
 	ctx := context.Background()
 	_, cfg := newConfigClients(t)

@@ -87,6 +87,9 @@ func (s *ConfigAPI) Diff(ctx context.Context, req *connect.Request[procmeshv1.Di
 	if err := requireMgr(s.Mgr); err != nil {
 		return nil, err
 	}
+	if s.Revs == nil {
+		return nil, ToConnect(errcode.E(errcode.DEGRADED, "diff unavailable"))
+	}
 	spec, err := s.Mgr.Resolve(ctx, req.Msg.GetIdOrName())
 	if err != nil {
 		return nil, ToConnect(err)

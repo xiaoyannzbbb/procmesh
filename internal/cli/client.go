@@ -4,11 +4,14 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"connectrpc.com/connect"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
+
+const httpTimeout = 5 * time.Second
 
 type client struct {
 	base     string
@@ -22,7 +25,7 @@ type client struct {
 
 func newClient(server, opID, operator string) *client {
 	base := normalizeServer(server)
-	hc := http.DefaultClient
+	hc := &http.Client{Timeout: httpTimeout}
 	return &client{
 		base:     base,
 		http:     hc,
