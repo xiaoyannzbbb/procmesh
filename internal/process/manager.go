@@ -341,6 +341,11 @@ func (m *Manager) Adopt(ctx context.Context, instanceID string, pid int, opID, o
 	inst.Observed = ObservedRunning
 	inst.Health = HealthUnknown
 	inst.BootID = boot
+	// So InitialDelay applies on the next health check pass.
+	if inst.StartedAt == nil {
+		now := m.now()
+		inst.StartedAt = &now
+	}
 	if err := writeRuntime(m.deps.Layout, inst); err != nil {
 		_ = m.finishOp(ctx, opID, opFailed, nil, err.Error())
 		return err

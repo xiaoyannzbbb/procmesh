@@ -158,7 +158,9 @@ func checkTCP(ctx context.Context, spec HealthCheckSpec) error {
 	if err != nil {
 		return err
 	}
-	return conn.Close()
+	// Dial success means healthy; Close errors are ignored.
+	_ = conn.Close()
+	return nil
 }
 
 func checkExec(ctx context.Context, spec HealthCheckSpec) error {
@@ -220,4 +222,20 @@ func (t *Tracker) Observe(err error, now time.Time) HealthState {
 		t.state = HealthHealthy
 	}
 	return t.state
+}
+
+// SameThresholds reports whether t was built for spec's failure/success thresholds.
+func (t *Tracker) SameThresholds(spec HealthCheckSpec) bool {
+	if t == nil {
+		return false
+	}
+	failNeed := spec.FailureThreshold
+	if failNeed <= 0 {
+		failNeed = 1
+	}
+	okNeed := spec.SuccessThreshold
+	if okNeed <= 0 {
+		okNeed = 1
+	}
+	return t.failNeed == failNeed && t.okNeed == okNeed
 }

@@ -204,3 +204,32 @@ func TestCheck_UnknownType(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestCheck_TCPCloseErrorStillHealthy(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			// Close server side immediately so client Close may see an error.
+			if tc, ok := c.(*net.TCPConn); ok {
+				_ = tc.SetLinger(0)
+			}
+			_ = c.Close()
+		}
+	}()
+	// Dial succeeds ⇒ healthy even if conn.Close returns an error.
+	if err := health.Check(context.Background(), process.HealthCheckSpec{
+		Type:    "tcp",
+		Address: ln.Addr().String(),
+		Timeout: time.Second,
+	}, 0); err != nil {
+		t.Fatal(err)
+	}
+}

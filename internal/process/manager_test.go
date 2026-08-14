@@ -704,3 +704,193 @@ func TestReconcile_UnhealthyWithoutRestartKeepsProcess(t *testing.T) {
 		t.Fatalf("pid changed %d -> %d", inst.PID, got.PID)
 	}
 }
+
+func TestReconcile_BackoffTicksDoNotCountAsFailures(t *testing.T) {
+	ctx := context.Background()
+	now := time.Unix(1_700_000_000, 0)
+	m, st, _ := newTestManagerNow(t, func() time.Time { return now })
+	t.Cleanup(func() { killManaged(t, st, "p1") })
+	const delay = 5 * time.Second
+	spec := process.ProcessSpec{
+		ProcessID: "p1",
+		Name:      "fail",
+		Command:   "/bin/sh",
+		Args:      []string{"-c", "exit 1"},
+		Instances: 1,
+		Restart: process.RestartPolicy{
+			Mode:        process.RestartOnFailure,
+			MaxRetries:  3,
+			RetryWindow: time.Minute,
+			Backoff:     process.Backoff{Initial: delay, Max: time.Minute, Multiplier: 2},
+		},
+	}
+	if _, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetDesired(ctx, "p1", process.DesiredRunning, "op-s", "t"); err != nil {
+		t.Fatal(err)
+	}
+	// Drive until first crash is observed (EXITED/BACKOFF), without advancing fake time.
+	deadline := time.Now().Add(3 * time.Second)
+	id := process.MakeInstanceID("p1", 0)
+	for {
+		if err := m.Reconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
+		got, err := st.GetInstance(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Observed == process.ObservedExited || got.Observed == process.ObservedBackoff {
+			break
+		}
+		if got.Observed == process.ObservedFatal {
+			t.Fatalf("FATAL before backoff ticks: %+v", got)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timeout waiting for first crash: %+v", got)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	// Advance 1s per Reconcile, 4 times — still inside Initial backoff; must not FATAL.
+	var got process.Instance
+	for i := 0; i < 4; i++ {
+		now = now.Add(time.Second)
+		if err := m.Reconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
+		var err error
+		got, err = st.GetInstance(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Observed == process.ObservedFatal {
+			t.Fatalf("tick %d: backoff ticks must not exhaust MaxRetries, got FATAL", i)
+		}
+	}
+	if got.Observed != process.ObservedExited && got.Observed != process.ObservedBackoff &&
+		got.Observed != process.ObservedStarting {
+		t.Fatalf("want BACKOFF/EXITED/STARTING, got %s", got.Observed)
+	}
+}
+
+func TestReconcile_HonorsBackoffBeforeRestart(t *testing.T) {
+	ctx := context.Background()
+	now := time.Unix(1_700_000_000, 0)
+	m, st, _ := newTestManagerNow(t, func() time.Time { return now })
+	const delay = 5 * time.Second
+	spec := process.ProcessSpec{
+		ProcessID: "p1",
+		Name:      "sleep",
+		Command:   "/bin/sleep",
+		Args:      []string{"60"},
+		Instances: 1,
+		Restart: process.RestartPolicy{
+			Mode:        process.RestartOnFailure,
+			MaxRetries:  10,
+			RetryWindow: time.Minute,
+			// Multiplier 1 keeps Delay == Initial after the first recorded failure.
+			Backoff: process.Backoff{Initial: delay, Max: time.Minute, Multiplier: 1},
+		},
+	}
+	inst := startSleep(t, m, st, spec)
+	oldPID := inst.PID
+	if err := unix.Kill(oldPID, unix.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	waitPIDGone(t, oldPID)
+
+	// Crash observation at T+0 must not start a replacement yet.
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetInstance(ctx, inst.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Observed == process.ObservedRunning || got.PID > 0 {
+		t.Fatalf("must not restart before Delay: %+v", got)
+	}
+	if got.Observed != process.ObservedExited && got.Observed != process.ObservedBackoff {
+		t.Fatalf("want EXITED/BACKOFF after crash, got %+v", got)
+	}
+
+	// T+Delay: restart is due.
+	now = now.Add(delay)
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err = st.GetInstance(ctx, inst.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Observed != process.ObservedRunning || got.PID <= 0 || got.PID == oldPID {
+		t.Fatalf("want new running pid after Delay, got %+v", got)
+	}
+}
+
+func waitPIDGone(t *testing.T, pid int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := unix.Kill(pid, 0); err != nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("pid %d still alive", pid)
+}
+
+func TestAdopt_RespectsInitialDelay(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now()
+	m, st, _ := newTestManagerNow(t, func() time.Time { return now })
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(200)
+	}))
+	t.Cleanup(srv.Close)
+	spec := process.ProcessSpec{
+		ProcessID: "p1",
+		Name:      "sleep",
+		Command:   "/bin/sleep",
+		Args:      []string{"60"},
+		Instances: 1,
+		Health: process.HealthCheckSpec{
+			Type:             "http",
+			URL:              srv.URL,
+			ExpectedStatus:   200,
+			Timeout:          time.Second,
+			InitialDelay:     time.Hour,
+			FailureThreshold: 1,
+			SuccessThreshold: 1,
+		},
+	}
+	inst := startSleep(t, m, st, spec)
+	// Simulate pre-fix Adopt: clear StartedAt then re-Adopt the live PID.
+	inst.StartedAt = nil
+	if err := st.PutInstance(ctx, inst); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Adopt(ctx, inst.InstanceID, inst.PID, "op-a", "t"); err != nil {
+		t.Fatal(err)
+	}
+	adopted, err := st.GetInstance(ctx, inst.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adopted.StartedAt == nil {
+		t.Fatal("Adopt must set StartedAt when nil")
+	}
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetInstance(ctx, inst.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hits != 0 || got.Health != process.HealthUnknown {
+		t.Fatalf("InitialDelay must skip Check: hits=%d health=%s", hits, got.Health)
+	}
+}

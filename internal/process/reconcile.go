@@ -88,9 +88,12 @@ func (m *Manager) reconcileInstance(ctx context.Context, spec ProcessSpec, inst 
 		}
 
 		if inst.Observed == ObservedExited || inst.Observed == ObservedBackoff {
-			m.recordFailure(inst.InstanceID)
-			dec := DecideRestart(spec.Restart, inst.Desired, inst.Observed, exitCode(inst), m.failures[inst.InstanceID], m.now())
+			// Failures are recorded only on real EvExit / EvStartFail / health-restart,
+			// never on a skipped backoff tick.
+			now := m.now()
+			dec := DecideRestart(spec.Restart, inst.Desired, inst.Observed, exitCode(inst), m.failures[inst.InstanceID], now)
 			if dec.Fatal {
+				delete(m.nextTry, inst.InstanceID)
 				if next, err := ApplyObserved(inst.Observed, EvRetriesExhausted); err == nil {
 					inst.Observed = next
 				} else {
@@ -99,16 +102,19 @@ func (m *Manager) reconcileInstance(ctx context.Context, spec ProcessSpec, inst 
 				return m.deps.Store.PutInstance(ctx, *inst)
 			}
 			if dec.Restart {
-				// Honor backoff Delay via nextTry; skip start until due.
-				if t, ok := m.nextTry[inst.InstanceID]; ok && !t.IsZero() && m.now().Before(t) {
+				// Set nextTry when deciding to restart; start only when now >= nextTry.
+				if t, ok := m.nextTry[inst.InstanceID]; !ok || t.IsZero() {
+					m.nextTry[inst.InstanceID] = now.Add(dec.Delay)
+				}
+				if now.Before(m.nextTry[inst.InstanceID]) {
 					return nil
 				}
+				delete(m.nextTry, inst.InstanceID)
 				if next, err := ApplyObserved(inst.Observed, EvRetry); err == nil {
 					inst.Observed = next
 				} else {
 					inst.Observed = ObservedStarting
 				}
-				m.nextTry[inst.InstanceID] = m.now().Add(dec.Delay)
 				return m.startInstance(ctx, spec, inst, m.bootID(ctx))
 			}
 			// DecideRestart said neither restart nor fatal (never / clean on-failure).
@@ -205,6 +211,8 @@ func (m *Manager) refreshNoSocket(ctx context.Context, inst *Instance) error {
 }
 
 func (m *Manager) handleExit(ctx context.Context, inst *Instance, st *shimpb.StatusResponse) {
+	// Count only the transition into EXITED, not repeated refresh of a dead child.
+	shouldCount := inst.Observed == ObservedRunning || inst.Observed == ObservedStarting || inst.Observed == ObservedStopping
 	now := m.now()
 	inst.ExitAt = &now
 	inst.PID = 0
@@ -220,6 +228,11 @@ func (m *Manager) handleExit(ctx context.Context, inst *Instance, st *shimpb.Sta
 		inst.Observed = ObservedExited
 	}
 	inst.Health = HealthUnknown
+	if shouldCount {
+		m.recordFailure(inst.InstanceID)
+		// Clear any prior nextTry so the next DecideRestart arms a fresh Delay.
+		delete(m.nextTry, inst.InstanceID)
+	}
 	_ = m.deps.Store.PutInstance(ctx, *inst)
 }
 
@@ -444,7 +457,7 @@ func (m *Manager) resetAllHealth() {
 }
 
 func (m *Manager) tracker(id string, spec HealthCheckSpec) *health.Tracker {
-	if tr := m.healthTrackers[id]; tr != nil {
+	if tr := m.healthTrackers[id]; tr != nil && tr.SameThresholds(spec) {
 		return tr
 	}
 	tr := health.NewTracker(spec)
@@ -461,8 +474,28 @@ func (m *Manager) applyHealth(ctx context.Context, spec ProcessSpec, inst *Insta
 		return nil
 	}
 
-	err := health.Check(ctx, spec.Health, inst.PID)
-	state := m.tracker(inst.InstanceID, spec.Health).Observe(err, now)
+	// Snapshot and run Check without holding m.mu (HTTP/TCP probes can block).
+	hspec := spec.Health
+	pid := inst.PID
+	id := inst.InstanceID
+	var checkErr error
+	func() {
+		m.mu.Unlock()
+		defer m.mu.Lock()
+		checkErr = health.Check(ctx, hspec, pid)
+	}()
+
+	// Re-validate instance still matches the snapshot after re-lock.
+	fresh, err := m.deps.Store.GetInstance(ctx, id)
+	if err != nil {
+		return err
+	}
+	*inst = fresh
+	if inst.Observed != ObservedRunning || inst.PID != pid {
+		return nil
+	}
+
+	state := m.tracker(inst.InstanceID, spec.Health).Observe(checkErr, now)
 	m.lastHealthCheck[inst.InstanceID] = now
 
 	if inst.Health != state {

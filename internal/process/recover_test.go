@@ -403,7 +403,8 @@ func TestReconcile_DeadChildWithoutSocketRestarts(t *testing.T) {
 	if err := layout.Ensure(); err != nil {
 		t.Fatal(err)
 	}
-	m := process.NewManager(process.Deps{Store: st, Layout: layout, ShimBin: testShimBin, Now: time.Now})
+	now := time.Now()
+	m := process.NewManager(process.Deps{Store: st, Layout: layout, ShimBin: testShimBin, Now: func() time.Time { return now }})
 	spec := process.ProcessSpec{
 		ProcessID: "p1",
 		Name:      "sleep",
@@ -445,6 +446,11 @@ func TestReconcile_DeadChildWithoutSocketRestarts(t *testing.T) {
 	}
 	_ = os.Remove(layout.ShimSocket(insts[0].InstanceID))
 
+	// Crash observation arms backoff nextTry; restart only after Delay.
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(5 * time.Second)
 	if err := m.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
