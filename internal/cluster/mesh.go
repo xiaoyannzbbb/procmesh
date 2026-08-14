@@ -34,8 +34,9 @@ type Mesh struct {
 	list      *memberlist.Memberlist
 	leaving   atomic.Bool
 
-	mu   sync.RWMutex
-	view map[string]NodeSummary
+	mu        sync.RWMutex
+	view      map[string]NodeSummary
+	conflicts map[string]struct{}
 }
 
 func Start(cfg Config) (*Mesh, error) {
@@ -64,6 +65,7 @@ func Start(cfg Config) (*Mesh, error) {
 		cfg:       cfg,
 		localName: localName,
 		view:      make(map[string]NodeSummary),
+		conflicts: make(map[string]struct{}),
 	}
 
 	conf := memberlist.DefaultLANConfig()
@@ -209,6 +211,23 @@ func (m *Mesh) MergeRemoteState(buf []byte, join bool) {
 	m.store(s)
 }
 
+// MergeForTest applies the same merge path as MergeRemoteState.
+func (m *Mesh) MergeForTest(buf []byte) {
+	m.MergeRemoteState(buf, false)
+}
+
+// DuplicateConflicts returns node_ids whose remote boot_id collided with local.
+func (m *Mesh) DuplicateConflicts() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]string, 0, len(m.conflicts))
+	for id := range m.conflicts {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (m *Mesh) NotifyJoin(n *memberlist.Node) {
 	if n == nil || n.Name == m.localName {
 		return
@@ -227,6 +246,9 @@ func (m *Mesh) NotifyLeave(n *memberlist.Node) {
 	s := summaryFromNode(n)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.rejectLocalCloneLocked(s) {
+		return
+	}
 	prev := m.view[s.NodeID]
 	s = mergePreserved(s, prev)
 	// Do not trust n.State: memberlist v0.5.3 never assigns Node.State.
@@ -272,9 +294,25 @@ func (m *Mesh) localSummary() NodeSummary {
 	return s
 }
 
+// rejectLocalCloneLocked drops a remote with the local node_id.
+// A different boot_id is recorded as a duplicate conflict.
+func (m *Mesh) rejectLocalCloneLocked(s NodeSummary) bool {
+	local := m.localSummary()
+	if s.NodeID != local.NodeID {
+		return false
+	}
+	if s.BootID != local.BootID {
+		m.conflicts[s.NodeID] = struct{}{}
+	}
+	return true
+}
+
 func (m *Mesh) store(s NodeSummary) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.rejectLocalCloneLocked(s) {
+		return
+	}
 	if prev, ok := m.view[s.NodeID]; ok && keepTerminal(prev.State, s.State) {
 		return
 	}
@@ -287,6 +325,9 @@ func (m *Mesh) upsertMeta(s NodeSummary, revive bool) {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.rejectLocalCloneLocked(s) {
+		return
+	}
 	if prev, ok := m.view[s.NodeID]; ok {
 		s = mergePreserved(s, prev)
 		if !revive && keepTerminal(prev.State, s.State) {
