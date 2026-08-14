@@ -764,7 +764,55 @@ func TestReconcile_LiveSocketBootMismatchDoesNotAdopt(t *testing.T) {
 	}
 }
 
-func TestReconcile_OrphanStopRequiresAdopt(t *testing.T) {
+func TestRecoverThenReconcile_EmptyBootIDKeepsDesiredRunning(t *testing.T) {
+	ctx := context.Background()
+	root := shortRoot(t)
+	st := openStoreAt(t, filepath.Join(root, "store.db"))
+	layout := paths.New(root)
+	if err := layout.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	m := process.NewManager(process.Deps{Store: st, Layout: layout, ShimBin: testShimBin, Now: time.Now})
+	t.Cleanup(func() { killManaged(t, st, "p1") })
+	spec := process.ProcessSpec{ProcessID: "p1", Name: "sleep", Command: "/bin/sleep", Args: []string{"60"}, Instances: 1}
+	if _, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetDesired(ctx, "p1", process.DesiredRunning, "op-s", "t"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetInstance(ctx, process.MakeInstanceID("p1", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.BootID != "" {
+		t.Fatalf("precondition: empty BootID, got %q", got.BootID)
+	}
+
+	m2 := process.NewManager(process.Deps{Store: st, Layout: layout, ShimBin: testShimBin, Now: time.Now})
+	if err := m2.Recover(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err = st.GetInstance(ctx, got.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Desired != process.DesiredRunning {
+		t.Fatalf("empty BootID is not a host reboot, desired must stay RUNNING: %+v", got)
+	}
+	if err := m2.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err = st.GetInstance(ctx, got.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PID <= 0 || got.Observed != process.ObservedRunning {
+		t.Fatalf("agent-crash before first start must still launch: %+v", got)
+	}
+}
+
+func TestSetDesired_OrphanStopRequiresAdopt(t *testing.T) {
 	ctx, _, st, layout, inst := startSleepAt(t, process.ProcessSpec{
 		ProcessID: "p1", Name: "sleep", Command: "/bin/sleep", Args: []string{"60"}, Instances: 1, Autostart: true,
 	})
@@ -780,16 +828,16 @@ func TestReconcile_OrphanStopRequiresAdopt(t *testing.T) {
 	if err := m2.Recover(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := m2.SetDesired(ctx, "p1", process.DesiredStopped, "op-stop-orphan", "t"); err != nil {
-		t.Fatal(err)
-	}
-	err := m2.Reconcile(ctx)
+	err := m2.SetDesired(ctx, "p1", process.DesiredStopped, "op-stop-orphan", "t")
 	if !errcode.Is(err, errcode.INVALID) || !strings.Contains(err.Error(), "adopt required") {
 		t.Fatalf("want INVALID adopt required, got %v", err)
 	}
 	got, err := st.GetInstance(ctx, inst.InstanceID)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if got.Desired != process.DesiredRunning {
+		t.Fatalf("refused stop must not flip desired: %+v", got)
 	}
 	if got.Observed != process.ObservedUnknown {
 		t.Fatalf("observed %s want UNKNOWN", got.Observed)
@@ -799,5 +847,61 @@ func TestReconcile_OrphanStopRequiresAdopt(t *testing.T) {
 	}
 	if err := unix.Kill(oldPID, 0); err != nil {
 		t.Fatalf("orphan pid must stay alive: %v", err)
+	}
+}
+
+func TestReconcile_AdoptRequiredDoesNotBlockOtherProcess(t *testing.T) {
+	ctx, _, st, layout, orphan := startSleepAt(t, process.ProcessSpec{
+		ProcessID: "orphan", Name: "orphan", Command: "/bin/sleep", Args: []string{"60"}, Instances: 1,
+	})
+	shimPID := orphan.ShimPID
+	if err := unix.Kill(shimPID, unix.SIGKILL); err != nil {
+		t.Fatalf("kill shim: %v", err)
+	}
+	waitPIDGone(t, shimPID)
+	_ = os.Remove(layout.ShimSocket(orphan.InstanceID))
+
+	okSpec := process.ProcessSpec{ProcessID: "ok", Name: "ok", Command: "/bin/sleep", Args: []string{"60"}, Instances: 1}
+	m := process.NewManager(process.Deps{Store: st, Layout: layout, ShimBin: testShimBin, Now: time.Now})
+	t.Cleanup(func() { killManaged(t, st, "ok") })
+	if _, err := m.ApplySpec(ctx, okSpec, 0, "op-ok", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	m2 := process.NewManager(process.Deps{Store: st, Layout: layout, ShimBin: testShimBin, Now: time.Now})
+	if err := m2.Recover(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Leftover desired STOPPED on the orphan must not fail the whole pass.
+	row, err := st.GetInstance(ctx, orphan.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row.Desired = process.DesiredStopped
+	if err := st.PutInstance(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	if err := m2.SetDesired(ctx, "ok", process.DesiredRunning, "op-ok-start", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m2.Reconcile(ctx); err != nil {
+		t.Fatalf("orphan adopt-required must not fail Reconcile: %v", err)
+	}
+	got, err := st.GetInstance(ctx, process.MakeInstanceID("ok", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PID <= 0 || got.Observed != process.ObservedRunning {
+		t.Fatalf("ok process should start: %+v", got)
+	}
+	still, err := st.GetInstance(ctx, orphan.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if still.Observed != process.ObservedUnknown {
+		t.Fatalf("orphan must stay UNKNOWN: %+v", still)
+	}
+	if err := unix.Kill(orphan.PID, 0); err != nil {
+		t.Fatalf("orphan must stay alive: %v", err)
 	}
 }

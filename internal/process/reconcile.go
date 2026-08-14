@@ -36,12 +36,6 @@ func (m *Manager) reconcileLocked(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	var first error
-	note := func(err error) {
-		if first == nil && isAdoptRequired(err) {
-			first = err
-		}
-	}
 	for _, pid := range order {
 		spec, ok := m.getSpecByID(specs, pid)
 		if !ok {
@@ -55,7 +49,6 @@ func (m *Manager) reconcileLocked(ctx context.Context) error {
 			if inst.Ordinal >= spec.Instances {
 				if err := m.stopInstance(ctx, spec, &inst); err != nil {
 					// record and continue; do not abort the StartupOrder pass
-					note(err)
 					continue
 				}
 				if extraInstanceDeletable(inst) {
@@ -68,13 +61,12 @@ func (m *Manager) reconcileLocked(ctx context.Context) error {
 			}
 			if err := m.reconcileInstance(ctx, spec, &inst, byName); err != nil {
 				// one startInstance failure must not abort later processes
-				note(err)
 				continue
 			}
 		}
 	}
 	m.closeAll()
-	return first
+	return nil
 }
 
 func isAdoptRequired(err error) bool {
@@ -113,7 +105,12 @@ func (m *Manager) reconcileInstance(ctx context.Context, spec ProcessSpec, inst 
 	// Stopping an UNKNOWN live pid must fail with adopt required — do not fake STOPPED.
 	if inst.Observed == ObservedUnknown {
 		if inst.Desired == DesiredStopped {
-			return m.stopInstance(ctx, spec, inst)
+			if err := m.stopInstance(ctx, spec, inst); isAdoptRequired(err) {
+				// Leave UNKNOWN; do not fail the whole Reconcile pass.
+				return nil
+			} else if err != nil {
+				return err
+			}
 		}
 		return nil
 	}

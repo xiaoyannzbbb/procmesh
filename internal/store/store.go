@@ -28,7 +28,7 @@ type Store struct {
 // Open creates or opens a SQLite database at path, applies schema, and
 // records schema_version in local_meta when missing.
 func Open(path string) (*Store, error) {
-	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)"
+	dsn := "file:" + path + "?_busy_timeout=5000&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite %s: %w", path, err)
@@ -37,6 +37,13 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping sqlite %s: %w", path, err)
 	}
+	if _, err := db.Exec(`PRAGMA busy_timeout=5000`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("busy_timeout: %w", err)
+	}
+	// One connection: concurrent writers queue instead of SQLITE_BUSY on
+	// deferred-tx upgrade (CAS PutSpec). Agent is local-first; this is fine.
+	db.SetMaxOpenConns(1)
 	if err := applySchema(db); err != nil {
 		_ = db.Close()
 		return nil, err

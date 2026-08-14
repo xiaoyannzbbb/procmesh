@@ -2,8 +2,10 @@ package store_test
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/qleelulu/procmesh/internal/errcode"
@@ -41,6 +43,44 @@ func TestPutSpec_CASConflict(t *testing.T) {
 	cur, err := s.GetSpec(ctx, "p1")
 	if err != nil || cur.Command != "/bin/nginx" || cur.LatestRevision != 2 {
 		t.Fatalf("lost update: %+v %v", cur, err)
+	}
+}
+
+func TestPutSpec_ConcurrentCASNoBusy(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	spec := process.ProcessSpec{ProcessID: "p1", Name: "n", Command: "v1", Instances: 1}
+	if _, err := s.PutSpec(ctx, spec, 0, "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			sp := spec
+			sp.Command = fmt.Sprintf("v-%d", i)
+			_, err := s.PutSpec(ctx, sp, 1, "t", "")
+			errs <- err
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	var conflicts, oks int
+	for err := range errs {
+		if err == nil {
+			oks++
+			continue
+		}
+		if errcode.Is(err, errcode.CONFLICT) {
+			conflicts++
+			continue
+		}
+		t.Fatalf("unexpected %v", err)
+	}
+	if oks != 1 || conflicts != 1 {
+		t.Fatalf("oks=%d conflicts=%d", oks, conflicts)
 	}
 }
 

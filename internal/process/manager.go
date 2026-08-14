@@ -194,6 +194,12 @@ func (m *Manager) SetDesired(ctx context.Context, processID string, desired Desi
 		_ = m.finishOp(ctx, opID, opFailed, nil, err.Error())
 		return err
 	}
+	if desired == DesiredStopped {
+		if err := m.rejectLiveOrphanStop(ctx, insts); err != nil {
+			_ = m.finishOp(ctx, opID, opFailed, nil, err.Error())
+			return err
+		}
+	}
 	for _, inst := range insts {
 		inst.Desired = desired
 		if err := m.deps.Store.PutInstance(ctx, inst); err != nil {
@@ -308,6 +314,10 @@ func (m *Manager) Restart(ctx context.Context, processID, opID, operator string)
 	}
 	insts, err := m.deps.Store.ListInstances(ctx, processID)
 	if err != nil {
+		_ = m.finishOp(ctx, opID, opFailed, nil, err.Error())
+		return err
+	}
+	if err := m.rejectLiveOrphanStop(ctx, insts); err != nil {
 		_ = m.finishOp(ctx, opID, opFailed, nil, err.Error())
 		return err
 	}
@@ -545,6 +555,20 @@ func (m *Manager) now() time.Time {
 
 func sameBoot(instBoot, current string) bool {
 	return instBoot != "" && instBoot == current
+}
+
+func hostRebooted(instBoot, current string) bool {
+	return instBoot != "" && instBoot != current
+}
+
+func (m *Manager) rejectLiveOrphanStop(ctx context.Context, insts []Instance) error {
+	boot, _ := m.deps.Store.GetBootID(ctx)
+	for _, inst := range insts {
+		if inst.Observed == ObservedUnknown && pidAlive(inst.PID) && sameBoot(inst.BootID, boot) {
+			return errcode.E(errcode.INVALID, adoptRequiredMsg)
+		}
+	}
+	return nil
 }
 
 func socketExists(path string) bool {
