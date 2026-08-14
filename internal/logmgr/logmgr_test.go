@@ -13,27 +13,26 @@ import (
 	"github.com/qleelulu/procmesh/internal/paths"
 )
 
-func TestProtect_HighPercentWithFreeSpaceDoesNotDisableWrites(t *testing.T) {
+func TestProtect_Over95PercentDisablesWritesRegardlessOfFreeSpace(t *testing.T) {
 	root := t.TempDir()
 	logPath := writeLog(t, root, "p", "i", "stdout.log", "keep", time.Now())
 	m := &logmgr.Manager{
-		Root:       root,
-		Usage:      func(string) (float64, error) { return 97, nil },
-		AvailBytes: func() uint64 { return 13 << 30 },
-		Now:        time.Now,
+		Root:  root,
+		Usage: func(string) (float64, error) { return 97, nil },
+		Now:   time.Now,
 	}
 	lvl, err := m.Protect(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if lvl != logmgr.Warn {
-		t.Fatalf("lvl=%v want Warn when 97%% used but 13GiB free", lvl)
+	if lvl != logmgr.Emergency {
+		t.Fatalf("lvl=%v want Emergency when used>95%% even if 13GiB free", lvl)
 	}
-	if !m.WritesAllowed() {
-		t.Fatal("must allow writes when plenty of space remains")
+	if m.WritesAllowed() {
+		t.Fatal("must disable writes above 95% regardless of remaining bytes")
 	}
-	if _, err := os.Stat(logPath); err != nil {
-		t.Fatal("must not delete logs when free space is plentiful")
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+		t.Fatal("emergency must still delete old logs")
 	}
 }
 
