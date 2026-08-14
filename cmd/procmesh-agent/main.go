@@ -16,6 +16,7 @@ func main() {
 	listen := flag.String("listen", "127.0.0.1:9000", "HTTP listen address")
 	shimBin := flag.String("shim-bin", "", "path to procmesh-shim binary")
 	insecure := flag.Bool("insecure-listen", false, "allow non-loopback listen (logs a warning)")
+	config := flag.String("config", "", "agent.yaml path (optional)")
 	flag.Parse()
 
 	if *dataDir == "" {
@@ -31,6 +32,7 @@ func main() {
 		Listen:         *listen,
 		ShimBin:        *shimBin,
 		InsecureListen: *insecure,
+		ConfigPath:     *config,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

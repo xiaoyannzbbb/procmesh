@@ -423,6 +423,8 @@ V1.0 页面：
 - \>90% 积极删旧日志
 - \>95% 停止新日志与 metrics 写入，保住 config / journal / audit / store / raft
 
+V1.0 阈值与开关见 `agent.yaml` 的 `disk`（`docs/superpowers/specs/2026-08-14-disk-protect-config-design.md`）。默认 85/90/95、`auto_delete: false`、`emergency_stop_writes: true`。
+
 Local DB 损坏：DEGRADED，停高风险写，不杀业务进程。
 
 网络分区：两侧本地 Process 继续；跨区操作 TIMEOUT/UNAVAILABLE；**禁止**因对端 FAILED 而在本机创建对方的进程。愈合后只收敛 membership 与 summary，不得用旧缓存覆盖 Owner 权威数据。

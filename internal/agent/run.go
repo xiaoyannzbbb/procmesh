@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/qleelulu/procmesh/internal/agentcfg"
 	"github.com/qleelulu/procmesh/internal/api"
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/logmgr"
@@ -25,6 +26,7 @@ type Options struct {
 	ShimBin        string
 	InsecureListen bool
 	OnListen       func(addr string)
+	ConfigPath     string
 }
 
 // Run owns the agent lifecycle and blocks until ctx is cancelled.
@@ -73,7 +75,16 @@ func Run(ctx context.Context, opt Options) error {
 		return fmt.Errorf("set boot id: %w", err)
 	}
 
-	logs := &logmgr.Manager{Root: layout.Root, Now: time.Now}
+	path := opt.ConfigPath
+	required := path != ""
+	if path == "" {
+		path = agentcfg.DefaultPath()
+	}
+	pol, err := agentcfg.Load(path, required)
+	if err != nil {
+		return err
+	}
+	logs := &logmgr.Manager{Root: layout.Root, Now: time.Now, Policy: pol}
 	mgr := process.NewManager(process.Deps{
 		Store:    st,
 		Layout:   layout,
