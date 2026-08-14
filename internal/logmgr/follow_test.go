@@ -62,6 +62,59 @@ func TestFollow_FromEndSkipsExisting(t *testing.T) {
 	}
 }
 
+func TestFollow_ReopensAfterRenameRotate(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "stdout.log")
+	if err := os.WriteFile(p, []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch, errCh := Follow(ctx, p, false)
+	got := readOne(t, ch, errCh)
+	if !bytes.Contains(got, []byte("old\n")) {
+		t.Fatalf("%q", got)
+	}
+	if err := Rotate(p, RotatePolicy{MaxSize: 1, MaxFiles: 2}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got = readOne(t, ch, errCh)
+	if !bytes.Contains(got, []byte("new\n")) {
+		t.Fatalf("want new after rotate, got %q", got)
+	}
+	if bytes.Contains(got, []byte("old\n")) {
+		t.Fatalf("replayed rotated content: %q", got)
+	}
+}
+
+func TestFollow_FromEndReopensAfterRenameRotate(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "stdout.log")
+	if err := os.WriteFile(p, []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch, errCh := Follow(ctx, p, true)
+	time.Sleep(100 * time.Millisecond)
+	if err := Rotate(p, RotatePolicy{MaxSize: 1, MaxFiles: 2}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := readOne(t, ch, errCh)
+	if !bytes.Contains(got, []byte("new\n")) {
+		t.Fatalf("want new after rotate, got %q", got)
+	}
+	if bytes.Contains(got, []byte("old\n")) {
+		t.Fatalf("replayed rotated content: %q", got)
+	}
+}
+
 func TestFollow_CancelClosesChannels(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "stdout.log")

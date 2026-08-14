@@ -181,7 +181,7 @@ func TestLog_StreamRequiresInstanceWhenMany(t *testing.T) {
 }
 
 func TestLog_StreamTooManyUnavailable(t *testing.T) {
-	proc, logs, _, layout := newLogClients(t)
+	proc, logs, _, layout, api := newLogClientsAPI(t)
 	processID, instID := seedProcess(t, proc, "web", 1)
 	writeInstanceLog(t, layout, processID, instID, "stdout", "ready\n")
 
@@ -200,9 +200,11 @@ func TestLog_StreamTooManyUnavailable(t *testing.T) {
 			}
 		}()
 	}
-	time.Sleep(150 * time.Millisecond)
+	waitHeldStreams(t, api, MaxConcurrentStreams)
 
-	extra, err := logs.StreamLogs(ctx, connect.NewRequest(&procmeshv1.StreamLogsRequest{
+	extraCtx, extraCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer extraCancel()
+	extra, err := logs.StreamLogs(extraCtx, connect.NewRequest(&procmeshv1.StreamLogsRequest{
 		IdOrName:   "web",
 		InstanceId: instID,
 	}))
@@ -219,6 +221,44 @@ func TestLog_StreamTooManyUnavailable(t *testing.T) {
 	code, detail := connectDetail(t, extra.Err())
 	if code != connect.CodeUnavailable || detail != "UNAVAILABLE" {
 		t.Fatalf("code=%v detail=%s err=%v", code, detail, extra.Err())
+	}
+}
+
+func TestLog_DownloadRequiresInstanceWhenMany(t *testing.T) {
+	ctx := context.Background()
+	proc, logs, _, _ := newLogClients(t)
+	seedProcess(t, proc, "web", 2)
+	stream, err := logs.DownloadLogs(ctx, connect.NewRequest(&procmeshv1.DownloadLogsRequest{IdOrName: "web"}))
+	if err != nil {
+		code, detail := connectDetail(t, err)
+		if code != connect.CodeInvalidArgument || detail != "INVALID" {
+			t.Fatalf("code=%v detail=%s err=%v", code, detail, err)
+		}
+		return
+	}
+	if stream.Receive() {
+		t.Fatalf("unexpected chunk %+v", stream.Msg())
+	}
+	code, detail := connectDetail(t, stream.Err())
+	if code != connect.CodeInvalidArgument || detail != "INVALID" {
+		t.Fatalf("code=%v detail=%s err=%v", code, detail, stream.Err())
+	}
+	if !strings.Contains(stream.Err().Error(), "instance_id required") {
+		t.Fatalf("err=%v", stream.Err())
+	}
+}
+
+func TestLog_TailUnknownInstance(t *testing.T) {
+	ctx := context.Background()
+	proc, logs, _, _ := newLogClients(t)
+	seedProcess(t, proc, "web", 1)
+	_, err := logs.TailLogs(ctx, connect.NewRequest(&procmeshv1.TailLogsRequest{
+		IdOrName:   "web",
+		InstanceId: "other:0",
+	}))
+	code, detail := connectDetail(t, err)
+	if code != connect.CodeNotFound || detail != "NOT_FOUND" {
+		t.Fatalf("code=%v detail=%s err=%v", code, detail, err)
 	}
 }
 
@@ -267,6 +307,18 @@ func writeInstanceLog(t *testing.T, layout paths.Layout, processID, instanceID, 
 	if err := os.WriteFile(path, []byte(body), 0o640); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func waitHeldStreams(t *testing.T, api *LogAPI, n int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if api.heldStreams() >= n {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("held %d want %d", api.heldStreams(), n)
 }
 
 func numberedLines(n int) string {

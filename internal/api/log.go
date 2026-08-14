@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"sync"
@@ -100,7 +101,7 @@ func (s *LogAPI) StreamLogs(ctx context.Context, req *connect.Request[procmeshv1
 	for ch != nil || errCh != nil {
 		select {
 		case <-ctx.Done():
-			if ctx.Err() == context.DeadlineExceeded {
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				return stream.Send(&procmeshv1.LogChunk{Eof: true})
 			}
 			return nil
@@ -154,7 +155,7 @@ func (s *LogAPI) DownloadLogs(ctx context.Context, req *connect.Request[procmesh
 	var total int64
 	for {
 		if err := ctx.Err(); err != nil {
-			return err
+			return ToConnect(err)
 		}
 		remain := int64(MaxDownloadSize) - total
 		if remain <= 0 {
@@ -189,6 +190,13 @@ func (s *LogAPI) DownloadLogs(ctx context.Context, req *connect.Request[procmesh
 
 func (s *LogAPI) instanceIDs(ctx context.Context, processID, instanceID string, requireSingle bool) ([]string, error) {
 	if instanceID != "" {
+		inst, err := s.Mgr.GetInstance(ctx, instanceID)
+		if err != nil {
+			return nil, err
+		}
+		if inst.ProcessID != processID {
+			return nil, errcode.E(errcode.NOT_FOUND, "instance")
+		}
 		return []string{instanceID}, nil
 	}
 	insts, err := s.Mgr.ListInstances(ctx, processID)
@@ -203,6 +211,12 @@ func (s *LogAPI) instanceIDs(ctx context.Context, processID, instanceID string, 
 		ids = append(ids, inst.InstanceID)
 	}
 	return ids, nil
+}
+
+func (s *LogAPI) heldStreams() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.streams
 }
 
 func (s *LogAPI) acquireStream() error {

@@ -77,25 +77,14 @@ func follow(ctx context.Context, path string, fromEnd bool, dataCh chan<- []byte
 			}
 		}
 		if err == io.EOF {
-			st, statErr := os.Stat(path)
-			if statErr != nil {
-				if os.IsNotExist(statErr) {
-					_ = f.Close()
-					f = nil
-					off = 0
-					if err := sleepPoll(ctx); err != nil {
-						return err
-					}
-					continue
-				}
-				return statErr
+			switched, switchErr := reopenIfRotated(f, path, &off)
+			if switchErr != nil {
+				return switchErr
 			}
-			if st.Size() < off {
-				off = 0
-				if _, seekErr := f.Seek(0, io.SeekStart); seekErr != nil {
-					_ = f.Close()
-					f = nil
-				}
+			if switched {
+				_ = f.Close()
+				f = nil
+				continue
 			}
 			if err := sleepPoll(ctx); err != nil {
 				return err
@@ -106,6 +95,34 @@ func follow(ctx context.Context, path string, fromEnd bool, dataCh chan<- []byte
 			return err
 		}
 	}
+}
+
+// reopenIfRotated reports whether the caller must close f and reopen path.
+// Rotate renames the inode at path; an in-place truncate stays on the same fd.
+func reopenIfRotated(f *os.File, path string, off *int64) (bool, error) {
+	st, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			*off = 0
+			return true, nil
+		}
+		return false, err
+	}
+	cur, err := f.Stat()
+	if err != nil {
+		return false, err
+	}
+	if !os.SameFile(st, cur) {
+		*off = 0
+		return true, nil
+	}
+	if st.Size() < *off {
+		*off = 0
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func sleepPoll(ctx context.Context) error {
