@@ -70,7 +70,7 @@ type RotatePolicy struct {
 	Compress bool
 }
 
-// Rotate enforces pol on path: size-shift, compress closed archives, cap files, drop aged.
+// Rotate enforces pol on path: size-shift, delaycompress path.2+, cap files, drop aged.
 // Never touches store.db, raft/, cluster/, or runtime/.
 func Rotate(path string, pol RotatePolicy, now time.Time) error {
 	if path == "" || rotateProtected(path) {
@@ -162,7 +162,8 @@ func compressArchives(path string) error {
 		return err
 	}
 	for _, a := range archs {
-		if a.gz {
+		// delaycompress: child may still hold the just-renamed path.1 inode.
+		if a.gz || a.index < 2 {
 			continue
 		}
 		if err := gzipFile(a.path); err != nil {
@@ -502,8 +503,7 @@ func listDeletableLogs(root string) ([]logFile, error) {
 		if info.IsDir() {
 			return nil
 		}
-		name := info.Name()
-		if !strings.HasSuffix(name, ".log") && !strings.HasSuffix(name, ".log.gz") {
+		if !deletableLogName(info.Name()) {
 			return nil
 		}
 		if protectedPath(root, path) {
@@ -522,6 +522,19 @@ func listDeletableLogs(root string) ([]logFile, error) {
 		return files[i].path < files[j].path
 	})
 	return files, nil
+}
+
+func deletableLogName(name string) bool {
+	if strings.HasSuffix(name, ".log") || strings.HasSuffix(name, ".log.gz") {
+		return true
+	}
+	trimmed := strings.TrimSuffix(name, ".gz")
+	i := strings.LastIndex(trimmed, ".")
+	if i < 0 || !strings.HasSuffix(trimmed[:i], ".log") {
+		return false
+	}
+	n, err := strconv.Atoi(trimmed[i+1:])
+	return err == nil && n >= 1
 }
 
 func protectedPath(root, path string) bool {

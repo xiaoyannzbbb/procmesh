@@ -350,18 +350,72 @@ func TestRotate_MaxAgeDeletes(t *testing.T) {
 func TestRotate_Compress(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "stdout.log")
+	pol := logmgr.RotatePolicy{MaxSize: 32, MaxFiles: 2, Compress: true}
 	if err := os.WriteFile(p, bytes.Repeat([]byte("x"), 64), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	pol := logmgr.RotatePolicy{MaxSize: 32, MaxFiles: 2, Compress: true}
 	if err := logmgr.Rotate(p, pol, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(p + ".1.gz"); err != nil {
+	if _, err := os.Stat(p + ".1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(p + ".1"); !os.IsNotExist(err) {
-		t.Fatal("expected uncompressed archive removed")
+	if _, err := os.Stat(p + ".1.gz"); !os.IsNotExist(err) {
+		t.Fatal("delaycompress: path.1 must stay uncompressed")
+	}
+
+	if err := os.WriteFile(p, bytes.Repeat([]byte("y"), 64), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := logmgr.Rotate(p, pol, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(p + ".2.gz"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(p + ".2"); !os.IsNotExist(err) {
+		t.Fatal("closed path.2 should be gzipped")
+	}
+	if _, err := os.Stat(p + ".1"); err != nil {
+		t.Fatal("path.1 must stay uncompressed")
+	}
+	if _, err := os.Stat(p + ".1.gz"); !os.IsNotExist(err) {
+		t.Fatal("path.1 must not be gzipped this round")
+	}
+}
+
+func TestProtect_DeletesRotatedArchives(t *testing.T) {
+	root := t.TempDir()
+	gz := writeLog(t, root, "p", "i", "stdout.log.2.gz", "z", time.Now().Add(-3*time.Hour))
+	arch := writeLog(t, root, "p", "i", "stdout.log.1", "a", time.Now().Add(-2*time.Hour))
+	cur := writeLog(t, root, "p", "i", "stdout.log", "c", time.Now())
+
+	m := &logmgr.Manager{
+		Root: root,
+		Usage: func(string) (float64, error) {
+			switch countLogs(t, root) {
+			case 3:
+				return 96, nil
+			case 2:
+				return 91, nil
+			default:
+				return 84, nil
+			}
+		},
+		Now: time.Now,
+	}
+	lvl, err := m.Protect(context.Background())
+	if err != nil || lvl != logmgr.Emergency {
+		t.Fatalf("lvl=%v err=%v", lvl, err)
+	}
+	if _, err := os.Stat(gz); !os.IsNotExist(err) {
+		t.Fatal("expected stdout.log.2.gz removed")
+	}
+	if _, err := os.Stat(arch); !os.IsNotExist(err) {
+		t.Fatal("expected stdout.log.1 removed")
+	}
+	if _, err := os.Stat(cur); err != nil {
+		t.Fatal("current log should remain once used<=85")
 	}
 }
 
@@ -409,6 +463,27 @@ func TestRotate_NeverTouchesProtectedPaths(t *testing.T) {
 	}
 }
 
+func isLogOrArchive(name string) bool {
+	if strings.HasSuffix(name, ".log") || strings.HasSuffix(name, ".log.gz") {
+		return true
+	}
+	trimmed := strings.TrimSuffix(name, ".gz")
+	i := strings.LastIndex(trimmed, ".")
+	if i < 0 || !strings.HasSuffix(trimmed[:i], ".log") {
+		return false
+	}
+	rest := trimmed[i+1:]
+	if rest == "" {
+		return false
+	}
+	for _, c := range rest {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func writeLog(t *testing.T, root, processID, instanceID, name, body string, mtime time.Time) string {
 	t.Helper()
 	dir := filepath.Join(root, "logs", processID, instanceID)
@@ -432,7 +507,7 @@ func countLogs(t *testing.T, root string) int {
 		if err != nil || info.IsDir() {
 			return err
 		}
-		if strings.HasSuffix(info.Name(), ".log") || strings.HasSuffix(info.Name(), ".log.gz") {
+		if isLogOrArchive(info.Name()) {
 			n++
 		}
 		return nil
