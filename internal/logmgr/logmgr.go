@@ -27,6 +27,12 @@ const (
 	emergencyPct = 95
 	targetPct    = 85
 
+	// Cleanup/Emergency also require free space below these floors.
+	// APFS often reports ~97% used while many GiB remain; percent-only
+	// thresholds then send new process logs to /dev/null.
+	minAvailCleanup   = 2 << 30
+	minAvailEmergency = 1 << 30
+
 	defaultTailLines = 1000
 	maxTailLines     = 10000
 	tailChunk        = 32 * 1024
@@ -49,7 +55,10 @@ const (
 type Manager struct {
 	Root  string
 	Usage DiskUsage
-	Now   func() time.Time
+	// AvailBytes, when set, supplies free space for classify. Tests that
+	// only stub Usage leave this nil, which is treated as 0 (tight disk).
+	AvailBytes func() uint64
+	Now        func() time.Time
 
 	mu      sync.Mutex
 	blocked bool
@@ -345,11 +354,11 @@ func (m *Manager) Protect(ctx context.Context) (Level, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	used, err := m.usedPercent()
+	used, avail, err := m.usedAndAvail()
 	if err != nil {
 		return 0, err
 	}
-	level := classify(used)
+	level := classify(used, avail)
 	if level >= Cleanup {
 		used, err = m.deleteOldestLogs(ctx, targetPct)
 		if err != nil {
@@ -438,18 +447,27 @@ func Tail(path string, maxLines int) ([]string, error) {
 }
 
 func (m *Manager) usedPercent() (float64, error) {
-	fn := m.Usage
-	if fn == nil {
-		fn = defaultUsage
-	}
-	return fn(m.Root)
+	used, _, err := m.usedAndAvail()
+	return used, err
 }
 
-func classify(used float64) Level {
+func (m *Manager) usedAndAvail() (float64, uint64, error) {
+	if m.Usage != nil {
+		used, err := m.Usage(m.Root)
+		var avail uint64
+		if m.AvailBytes != nil {
+			avail = m.AvailBytes()
+		}
+		return used, avail, err
+	}
+	return defaultUsage(m.Root)
+}
+
+func classify(used float64, avail uint64) Level {
 	switch {
-	case used > emergencyPct:
+	case used > emergencyPct && avail < minAvailEmergency:
 		return Emergency
-	case used > cleanupPct:
+	case used > cleanupPct && avail < minAvailCleanup:
 		return Cleanup
 	case used > warnPct:
 		return Warn
@@ -554,14 +572,15 @@ func protectedPath(root, path string) bool {
 	return false
 }
 
-func defaultUsage(root string) (float64, error) {
+func defaultUsage(root string) (float64, uint64, error) {
 	var st unix.Statfs_t
 	if err := unix.Statfs(root, &st); err != nil {
-		return 0, fmt.Errorf("statfs: %w", err)
+		return 0, 0, fmt.Errorf("statfs: %w", err)
 	}
+	avail := uint64(st.Bavail) * uint64(st.Bsize)
 	if st.Blocks == 0 || st.Bfree >= st.Blocks {
-		return 0, nil
+		return 0, avail, nil
 	}
 	used := st.Blocks - st.Bfree
-	return 100 * float64(used) / float64(st.Blocks), nil
+	return 100 * float64(used) / float64(st.Blocks), avail, nil
 }
