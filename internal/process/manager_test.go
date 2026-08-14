@@ -1,6 +1,7 @@
 package process_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -272,6 +273,62 @@ func TestApplySpec_AppliesLogDefaults(t *testing.T) {
 	}
 	if got.Log.MaxSize != 100<<20 || got.Log.MaxFiles != 10 || got.Log.MaxAge != 7*24*time.Hour || !got.Log.Compress {
 		t.Fatalf("log defaults %+v", got.Log)
+	}
+}
+
+func TestRotateLogs_UsesSpecPolicyAndLogNow(t *testing.T) {
+	ctx := context.Background()
+	root := shortRoot(t)
+	st := openStoreAt(t, filepath.Join(root, "store.db"))
+	layout := paths.New(root)
+	if err := layout.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	fixed := time.Unix(2_000_000, 0)
+	lm := &logmgr.Manager{Root: root, Now: func() time.Time { return fixed }}
+	m := process.NewManager(process.Deps{Store: st, Layout: layout, ShimBin: testShimBin, Now: time.Now, Logs: lm})
+	spec := process.ProcessSpec{
+		ProcessID: "p1",
+		Name:      "n",
+		Command:   "/bin/true",
+		Instances: 1,
+		Log:       process.LogPolicy{MaxSize: 32, MaxFiles: 2, MaxAge: time.Second, Compress: false},
+	}
+	if _, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr := logmgr.InstancePaths(layout, "p1", process.MakeInstanceID("p1", 0))
+	if err := os.MkdirAll(filepath.Dir(stdout), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stdout, bytes.Repeat([]byte("x"), 64), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stderr, []byte("e"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	old := fixed.Add(-2 * time.Second)
+	if err := os.WriteFile(stdout+".1", []byte("old"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(stdout+".1", old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RotateLogs(ctx); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(stdout)
+	if err != nil || info.Size() != 0 {
+		t.Fatalf("stdout should be truncated, size err=%v", err)
+	}
+	if _, err := os.Stat(stdout + ".1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stdout + ".2"); !os.IsNotExist(err) {
+		t.Fatal("aged archive should be deleted via Logs.Now")
+	}
+	if b, err := os.ReadFile(stderr); err != nil || string(b) != "e" {
+		t.Fatalf("stderr under MaxSize must stay: %q %v", b, err)
 	}
 }
 

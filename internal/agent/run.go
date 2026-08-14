@@ -112,6 +112,7 @@ func Run(ctx context.Context, opt Options) error {
 				if _, err := logs.Protect(ctx); err != nil {
 					fmt.Fprintf(os.Stderr, "protect: %v\n", err)
 				}
+				_ = mgr.RotateLogs(ctx)
 			}
 		}
 	}()

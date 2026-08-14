@@ -223,6 +223,55 @@ func (m *Manager) ListInstances(ctx context.Context, processID string) ([]Instan
 	return m.deps.Store.ListInstances(ctx, processID)
 }
 
+// RotateLogs applies each spec's Log policy to that process's stdout/stderr files.
+// Age checks use logmgr.Manager.Now when set.
+func (m *Manager) RotateLogs(ctx context.Context) error {
+	if m == nil {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	specs, err := m.deps.Store.ListSpecs(ctx)
+	if err != nil {
+		return err
+	}
+	now := m.now()
+	if m.deps.Logs != nil && m.deps.Logs.Now != nil {
+		now = m.deps.Logs.Now()
+	}
+	var first error
+	for _, spec := range specs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		insts, err := m.deps.Store.ListInstances(ctx, spec.ProcessID)
+		if err != nil {
+			if first == nil {
+				first = err
+			}
+			continue
+		}
+		lp := spec.Log.WithDefaults()
+		pol := logmgr.RotatePolicy{
+			MaxSize:  lp.MaxSize,
+			MaxFiles: lp.MaxFiles,
+			MaxAge:   lp.MaxAge,
+			Compress: lp.Compress,
+		}
+		for _, inst := range insts {
+			stdout, stderr := logmgr.InstancePaths(m.deps.Layout, spec.ProcessID, inst.InstanceID)
+			if err := logmgr.Rotate(stdout, pol, now); err != nil && first == nil {
+				first = err
+			}
+			if err := logmgr.Rotate(stderr, pol, now); err != nil && first == nil {
+				first = err
+			}
+		}
+	}
+	return first
+}
+
 // GetInstance returns one instance row.
 func (m *Manager) GetInstance(ctx context.Context, instanceID string) (Instance, error) {
 	return m.deps.Store.GetInstance(ctx, instanceID)

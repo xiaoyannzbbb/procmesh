@@ -2,12 +2,14 @@ package logmgr
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -57,6 +59,260 @@ type Manager struct {
 func InstancePaths(layout paths.Layout, processID, instanceID string) (stdout, stderr string) {
 	dir := filepath.Join(layout.LogDir, processID, instanceID)
 	return filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log")
+}
+
+// RotatePolicy is size/age/file/compress limits for a single log path.
+// Fields mirror process.LogPolicy without importing process (cycle).
+type RotatePolicy struct {
+	MaxSize  int64
+	MaxFiles int
+	MaxAge   time.Duration
+	Compress bool
+}
+
+// Rotate enforces pol on path: size-shift, compress closed archives, cap files, drop aged.
+// Never touches store.db, raft/, cluster/, or runtime/.
+func Rotate(path string, pol RotatePolicy, now time.Time) error {
+	if path == "" || rotateProtected(path) {
+		return nil
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if err := rotateBySize(path, pol); err != nil {
+		return err
+	}
+	if pol.Compress {
+		if err := compressArchives(path); err != nil {
+			return err
+		}
+	}
+	if err := pruneExcessArchives(path, pol.MaxFiles); err != nil {
+		return err
+	}
+	return pruneAgedArchives(path, pol.MaxAge, now)
+}
+
+func rotateAll(paths []string, pol RotatePolicy, now time.Time) error {
+	for _, p := range paths {
+		if err := Rotate(p, pol, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func rotateBySize(path string, pol RotatePolicy) error {
+	st, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if pol.MaxSize <= 0 || st.Size() <= pol.MaxSize {
+		return nil
+	}
+	maxFiles := pol.MaxFiles
+	if maxFiles < 0 {
+		maxFiles = 0
+	}
+	for i := maxFiles; i >= 1; i-- {
+		for _, suf := range []string{"", ".gz"} {
+			src := fmt.Sprintf("%s.%d%s", path, i, suf)
+			if _, err := os.Stat(src); err != nil {
+				continue
+			}
+			if i >= maxFiles {
+				if err := os.Remove(src); err != nil && !os.IsNotExist(err) {
+					return fmt.Errorf("rotate remove: %w", err)
+				}
+				continue
+			}
+			dst := fmt.Sprintf("%s.%d%s", path, i+1, suf)
+			if err := os.Rename(src, dst); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("rotate shift: %w", err)
+			}
+		}
+	}
+	if maxFiles < 1 {
+		return recreateEmpty(path)
+	}
+	if err := os.Rename(path, path+".1"); err != nil {
+		return fmt.Errorf("rotate rename: %w", err)
+	}
+	return recreateEmpty(path)
+}
+
+func recreateEmpty(path string) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fileMode)
+	if err != nil {
+		return fmt.Errorf("recreate log: %w", err)
+	}
+	if err := f.Chmod(fileMode); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+func compressArchives(path string) error {
+	archs, err := listArchives(path)
+	if err != nil {
+		return err
+	}
+	for _, a := range archs {
+		if a.gz {
+			continue
+		}
+		if err := gzipFile(a.path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func gzipFile(src string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	defer in.Close()
+
+	dst := src + ".gz"
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fileMode)
+	if err != nil {
+		return err
+	}
+	gw := gzip.NewWriter(out)
+	if _, err := io.Copy(gw, in); err != nil {
+		_ = gw.Close()
+		_ = out.Close()
+		_ = os.Remove(dst)
+		return err
+	}
+	if err := gw.Close(); err != nil {
+		_ = out.Close()
+		_ = os.Remove(dst)
+		return err
+	}
+	if err := out.Chmod(fileMode); err != nil {
+		_ = out.Close()
+		_ = os.Remove(dst)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		_ = os.Remove(dst)
+		return err
+	}
+	if err := os.Remove(src); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func pruneExcessArchives(path string, maxFiles int) error {
+	if maxFiles < 0 {
+		maxFiles = 0
+	}
+	archs, err := listArchives(path)
+	if err != nil {
+		return err
+	}
+	for _, a := range archs {
+		if a.index <= maxFiles {
+			continue
+		}
+		if err := os.Remove(a.path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("prune archive: %w", err)
+		}
+	}
+	return nil
+}
+
+func pruneAgedArchives(path string, maxAge time.Duration, now time.Time) error {
+	if maxAge <= 0 {
+		return nil
+	}
+	archs, err := listArchives(path)
+	if err != nil {
+		return err
+	}
+	for _, a := range archs {
+		st, err := os.Stat(a.path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		if now.Sub(st.ModTime()) <= maxAge {
+			continue
+		}
+		if err := os.Remove(a.path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("age archive: %w", err)
+		}
+	}
+	return nil
+}
+
+type archive struct {
+	path  string
+	index int
+	gz    bool
+}
+
+func listArchives(path string) ([]archive, error) {
+	dir := filepath.Dir(path)
+	base := filepath.Base(path)
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	prefix := base + "."
+	var out []archive
+	for _, e := range ents {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(name, prefix)
+		gz := false
+		if strings.HasSuffix(rest, ".gz") {
+			gz = true
+			rest = strings.TrimSuffix(rest, ".gz")
+		}
+		n, err := strconv.Atoi(rest)
+		if err != nil || n < 1 {
+			continue
+		}
+		out = append(out, archive{path: filepath.Join(dir, name), index: n, gz: gz})
+	}
+	return out, nil
+}
+
+func rotateProtected(path string) bool {
+	clean := filepath.ToSlash(filepath.Clean(path))
+	// Process logs live under logs/<processID>/... and may reuse those names.
+	if strings.Contains(clean, "/logs/") || strings.HasPrefix(clean, "logs/") {
+		return false
+	}
+	for _, part := range strings.Split(clean, "/") {
+		switch part {
+		case "store.db", "raft", "cluster", "runtime":
+			return true
+		}
+	}
+	return false
 }
 
 // Prepare creates parent directories and empty log files without truncating existing ones.

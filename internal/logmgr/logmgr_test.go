@@ -1,6 +1,7 @@
 package logmgr_test
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -268,6 +269,143 @@ func TestDefaultUsage_Statfs(t *testing.T) {
 	}
 	if lvl < logmgr.OK || lvl > logmgr.Emergency {
 		t.Fatalf("unexpected level %v", lvl)
+	}
+}
+
+func TestRotate_BySizeAndMaxFiles(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "stdout.log")
+	if err := os.WriteFile(p, bytes.Repeat([]byte("x"), 64), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	pol := logmgr.RotatePolicy{MaxSize: 32, MaxFiles: 2, Compress: false}
+	if err := logmgr.Rotate(p, pol, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := os.Stat(p); st.Size() != 0 {
+		t.Fatalf("current log should be truncated, size=%d", st.Size())
+	}
+	if _, err := os.Stat(p + ".1"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(p, bytes.Repeat([]byte("y"), 64), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := logmgr.Rotate(p, pol, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(p + ".1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(p + ".2"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(p, bytes.Repeat([]byte("z"), 64), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := logmgr.Rotate(p, pol, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(p + ".3"); !os.IsNotExist(err) {
+		t.Fatal("MaxFiles=2 must drop path.3")
+	}
+	b1, err := os.ReadFile(p + ".1")
+	if err != nil || string(b1) != strings.Repeat("z", 64) {
+		t.Fatalf("path.1 want newest archive: %q %v", b1, err)
+	}
+	b2, err := os.ReadFile(p + ".2")
+	if err != nil || string(b2) != strings.Repeat("y", 64) {
+		t.Fatalf("path.2 want previous archive: %q %v", b2, err)
+	}
+}
+
+func TestRotate_MaxAgeDeletes(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "stdout.log")
+	if err := os.WriteFile(p, []byte("cur"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Unix(1_000_000, 0)
+	arch := p + ".1"
+	if err := os.WriteFile(arch, []byte("old"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(arch, old, old); err != nil {
+		t.Fatal(err)
+	}
+	pol := logmgr.RotatePolicy{MaxSize: 32, MaxFiles: 2, MaxAge: time.Second, Compress: false}
+	if err := logmgr.Rotate(p, pol, old.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(arch); !os.IsNotExist(err) {
+		t.Fatal("expected aged archive removed")
+	}
+	if _, err := os.Stat(p); err != nil {
+		t.Fatal("current log must remain")
+	}
+}
+
+func TestRotate_Compress(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "stdout.log")
+	if err := os.WriteFile(p, bytes.Repeat([]byte("x"), 64), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	pol := logmgr.RotatePolicy{MaxSize: 32, MaxFiles: 2, Compress: true}
+	if err := logmgr.Rotate(p, pol, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(p + ".1.gz"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(p + ".1"); !os.IsNotExist(err) {
+		t.Fatal("expected uncompressed archive removed")
+	}
+}
+
+func TestRotate_NeverTouchesProtectedPaths(t *testing.T) {
+	root := t.TempDir()
+	protected := []string{
+		filepath.Join(root, "store.db"),
+		filepath.Join(root, "raft", "meta.log"),
+		filepath.Join(root, "cluster", "ca.log"),
+		filepath.Join(root, "runtime", "p1_0.log"),
+	}
+	pol := logmgr.RotatePolicy{MaxSize: 1, MaxFiles: 2, Compress: false}
+	body := bytes.Repeat([]byte("x"), 64)
+	for _, p := range protected {
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, body, 0o640); err != nil {
+			t.Fatal(err)
+		}
+		if err := logmgr.Rotate(p, pol, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		got, err := os.ReadFile(p)
+		if err != nil || !bytes.Equal(got, body) {
+			t.Fatalf("protected path mutated: %s", p)
+		}
+		if _, err := os.Stat(p + ".1"); !os.IsNotExist(err) {
+			t.Fatalf("protected path rotated: %s", p)
+		}
+	}
+	// processID "runtime" lives under logs/, not data-root runtime/.
+	logPath := filepath.Join(root, "logs", "runtime", "i", "stdout.log")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath, body, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := logmgr.Rotate(logPath, pol, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := os.Stat(logPath); err != nil || st.Size() != 0 {
+		t.Fatalf("logs/runtime must still rotate, size err=%v", err)
 	}
 }
 
