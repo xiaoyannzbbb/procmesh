@@ -21,12 +21,36 @@ func ResourceLimitSet(r ResourceLimit) bool {
 	return r.CPUQuotaMillis != 0 || r.MemoryBytes != 0 || r.OpenFiles != 0
 }
 
-// ApplyResourceLimit applies r to pid via cgroup v2 on Linux.
+// NofileLimit returns RLIMIT_NOFILE soft/hard values for n open files.
+func NofileLimit(n int64) (cur, max uint64) {
+	if n < 0 {
+		n = 0
+	}
+	u := uint64(n)
+	return u, u
+}
+
+// ApplyResourceLimit applies r to pid via cgroup v2 and prlimit on Linux.
 // Non-Linux or any apply error returns INVALID; P0 callers must not fail start.
 func ApplyResourceLimit(pid int, r ResourceLimit) error {
 	if runtime.GOOS != "linux" || pid <= 0 {
 		return errcode.E(errcode.INVALID, "resource_limit")
 	}
+	var first error
+	if r.MemoryBytes > 0 || r.CPUQuotaMillis > 0 {
+		if err := applyCgroupLimit(pid, r); err != nil && first == nil {
+			first = err
+		}
+	}
+	if r.OpenFiles > 0 {
+		if err := applyOpenFiles(pid, r.OpenFiles); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
+func applyCgroupLimit(pid int, r ResourceLimit) error {
 	dir := filepath.Join(cgroupParent, strconv.Itoa(pid))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return errcode.E(errcode.INVALID, "resource_limit")

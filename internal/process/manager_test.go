@@ -92,6 +92,32 @@ func TestApplySpec_EmptyProcessIDReplayKeepsSameID(t *testing.T) {
 	}
 }
 
+func TestApplySpec_ScaleUpInheritsDesiredRunning(t *testing.T) {
+	ctx := context.Background()
+	m, st, _ := newTestManager(t)
+	spec := process.ProcessSpec{ProcessID: "p1", Name: "n", Command: "/bin/true", Instances: 1}
+	got, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetDesired(ctx, "p1", process.DesiredRunning, "op-s", "t"); err != nil {
+		t.Fatal(err)
+	}
+	spec.Instances = 2
+	if _, err := m.ApplySpec(ctx, spec, got.LatestRevision, "op-up", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	insts, err := st.ListInstances(ctx, "p1")
+	if err != nil || len(insts) != 2 {
+		t.Fatalf("insts=%d err=%v", len(insts), err)
+	}
+	for _, inst := range insts {
+		if inst.Desired != process.DesiredRunning {
+			t.Fatalf("scale-up must inherit RUNNING: %+v", inst)
+		}
+	}
+}
+
 func TestApplySpec_ScaleDownDeletesStoppedExtra(t *testing.T) {
 	ctx := context.Background()
 	m, st, _ := newTestManager(t)
@@ -164,6 +190,68 @@ func TestApplySpec_RejectsEmptyOperationID(t *testing.T) {
 	_, err := m.ApplySpec(context.Background(), process.ProcessSpec{ProcessID: "p1", Name: "n", Command: "/bin/true", Instances: 1}, 0, "", "t", "")
 	if !errcode.Is(err, errcode.INVALID) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestApplySpec_RejectsCircularDependency(t *testing.T) {
+	ctx := context.Background()
+	m, st, _ := newTestManager(t)
+	a := process.ProcessSpec{
+		ProcessID: "pa", Name: "a", Command: "/bin/true", Instances: 1,
+		Dependencies: []process.Dependency{{ProcessName: "b"}},
+	}
+	if _, err := m.ApplySpec(ctx, a, 0, "op-a", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	b := process.ProcessSpec{
+		ProcessID: "pb", Name: "b", Command: "/bin/true", Instances: 1,
+		Dependencies: []process.Dependency{{ProcessName: "a"}},
+	}
+	_, err := m.ApplySpec(ctx, b, 0, "op-b", "t", "")
+	if !errcode.Is(err, errcode.INVALID) || !strings.Contains(err.Error(), "circular dependency") {
+		t.Fatalf("want circular INVALID, got %v", err)
+	}
+	if _, err := st.GetSpec(ctx, "pb"); !errcode.Is(err, errcode.NOT_FOUND) {
+		t.Fatalf("cycle must not persist: %v", err)
+	}
+}
+
+func TestApplySpec_AllowsMissingDependencyOnCreate(t *testing.T) {
+	ctx := context.Background()
+	m, _, _ := newTestManager(t)
+	api := process.ProcessSpec{
+		ProcessID: "api", Name: "api", Command: "/bin/true", Instances: 1,
+		Dependencies: []process.Dependency{{ProcessName: "mysql"}},
+	}
+	if _, err := m.ApplySpec(ctx, api, 0, "op-api", "t", ""); err != nil {
+		t.Fatalf("forward-ref dep must save: %v", err)
+	}
+}
+
+func TestApplySpec_UpdateCreatesCycle(t *testing.T) {
+	ctx := context.Background()
+	m, st, _ := newTestManager(t)
+	a := process.ProcessSpec{
+		ProcessID: "pa", Name: "a", Command: "/bin/true", Instances: 1,
+		Dependencies: []process.Dependency{{ProcessName: "b"}},
+	}
+	b := process.ProcessSpec{ProcessID: "pb", Name: "b", Command: "/bin/true", Instances: 1}
+	gotA, err := m.ApplySpec(ctx, a, 0, "op-a", "t", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotB, err := m.ApplySpec(ctx, b, 0, "op-b", "t", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Dependencies = []process.Dependency{{ProcessName: "a"}}
+	_, err = m.ApplySpec(ctx, b, gotB.LatestRevision, "op-cycle", "t", "")
+	if !errcode.Is(err, errcode.INVALID) || !strings.Contains(err.Error(), "circular dependency") {
+		t.Fatalf("want circular INVALID, got %v", err)
+	}
+	cur, err := st.GetSpec(ctx, "pb")
+	if err != nil || len(cur.Dependencies) != 0 || cur.LatestRevision != gotB.LatestRevision {
+		t.Fatalf("update must not persist: %+v %v (a rev %d)", cur, err, gotA.LatestRevision)
 	}
 }
 
@@ -969,6 +1057,64 @@ func TestReconcile_BackoffTicksDoNotCountAsFailures(t *testing.T) {
 	if got.Observed != process.ObservedExited && got.Observed != process.ObservedBackoff &&
 		got.Observed != process.ObservedStarting {
 		t.Fatalf("want BACKOFF/EXITED/STARTING, got %s", got.Observed)
+	}
+}
+
+func TestReconcile_OnFailureCleanExitClearsPriorExitCode(t *testing.T) {
+	ctx := context.Background()
+	m, st, _ := newTestManager(t)
+	spec := process.ProcessSpec{
+		ProcessID: "p1",
+		Name:      "once",
+		Command:   "/bin/sleep",
+		Args:      []string{"0.3"},
+		Instances: 1,
+		Restart: process.RestartPolicy{
+			Mode:    process.RestartOnFailure,
+			Backoff: process.Backoff{Initial: time.Hour, Max: time.Hour, Multiplier: 1},
+		},
+	}
+	inst := startSleep(t, m, st, spec)
+	prior := 1
+	inst.ExitCode = &prior
+	if err := st.PutInstance(ctx, inst); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	var clean process.Instance
+	for {
+		if err := m.Reconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
+		var err error
+		clean, err = st.GetInstance(ctx, inst.InstanceID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if clean.PID == 0 && clean.Observed != process.ObservedRunning && clean.Observed != process.ObservedStarting {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timeout waiting for sleep to exit: %+v", clean)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if clean.ExitCode == nil || *clean.ExitCode != 0 {
+		code := any(nil)
+		if clean.ExitCode != nil {
+			code = *clean.ExitCode
+		}
+		t.Fatalf("clean exit must store 0, got %v inst=%+v", code, clean)
+	}
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	after, err := st.GetInstance(ctx, inst.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.PID != 0 || after.Observed == process.ObservedRunning || after.Observed == process.ObservedStarting {
+		t.Fatalf("on-failure must not restart clean exit: %+v", after)
 	}
 }
 

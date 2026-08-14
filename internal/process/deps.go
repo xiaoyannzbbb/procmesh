@@ -79,6 +79,32 @@ func effectiveCondition(c DepCondition) DepCondition {
 	return c
 }
 
+// RejectCycle reports INVALID "circular dependency" if the specs form a
+// cycle among names that are present. Edges to unknown names are ignored
+// so specs can be saved before their dependencies exist.
+func RejectCycle(specs []ProcessSpec) error {
+	names := make(map[string]struct{}, len(specs))
+	for _, s := range specs {
+		names[s.Name] = struct{}{}
+	}
+	filtered := make([]ProcessSpec, len(specs))
+	for i, s := range specs {
+		filtered[i] = s
+		if len(s.Dependencies) == 0 {
+			continue
+		}
+		deps := make([]Dependency, 0, len(s.Dependencies))
+		for _, d := range s.Dependencies {
+			if _, ok := names[d.ProcessName]; ok {
+				deps = append(deps, d)
+			}
+		}
+		filtered[i].Dependencies = deps
+	}
+	_, err := StartupOrder(filtered)
+	return err
+}
+
 // DepsReady reports whether every declared dependency currently satisfies
 // its condition. byName is keyed by spec Name, not process ID.
 func DepsReady(spec ProcessSpec, byName map[string][]Instance) bool {

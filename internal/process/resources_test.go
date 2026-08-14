@@ -40,3 +40,10 @@ func TestApplyResourceLimit_InvalidPID(t *testing.T) {
 		t.Fatalf("want INVALID got %v", err)
 	}
 }
+
+func TestNofileLimit(t *testing.T) {
+	cur, max := process.NofileLimit(256)
+	if cur != 256 || max != 256 {
+		t.Fatalf("got cur=%d max=%d", cur, max)
+	}
+}

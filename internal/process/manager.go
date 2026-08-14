@@ -92,6 +92,10 @@ func (m *Manager) ApplySpec(ctx context.Context, spec ProcessSpec, expectedRevis
 	if done {
 		return m.replayApplySpec(ctx, spec.ProcessID, opID, existing)
 	}
+	if err := m.rejectDependencyCycle(ctx, spec); err != nil {
+		_ = m.finishOp(ctx, opID, opFailed, nil, err.Error())
+		return ProcessSpec{}, err
+	}
 	if expectedRevision == 0 && spec.ProcessID == "" {
 		id, err := newProcessID()
 		if err != nil {
@@ -428,7 +432,31 @@ func (m *Manager) Adopt(ctx context.Context, instanceID string, pid int, opID, o
 	return m.finishOp(ctx, opID, opSuccess, nil, "")
 }
 
+func (m *Manager) rejectDependencyCycle(ctx context.Context, spec ProcessSpec) error {
+	specs, err := m.deps.Store.ListSpecs(ctx)
+	if err != nil {
+		return err
+	}
+	merged := false
+	for i, s := range specs {
+		if spec.ProcessID != "" && s.ProcessID == spec.ProcessID {
+			specs[i] = spec
+			merged = true
+			break
+		}
+	}
+	if !merged {
+		specs = append(specs, spec)
+	}
+	return RejectCycle(specs)
+}
+
 func (m *Manager) ensureInstances(ctx context.Context, spec ProcessSpec) error {
+	insts, err := m.deps.Store.ListInstances(ctx, spec.ProcessID)
+	if err != nil {
+		return err
+	}
+	desired := inheritProcessDesired(insts, spec.Instances)
 	for i := 0; i < spec.Instances; i++ {
 		id := MakeInstanceID(spec.ProcessID, i)
 		if _, err := m.deps.Store.GetInstance(ctx, id); err == nil {
@@ -440,7 +468,7 @@ func (m *Manager) ensureInstances(ctx context.Context, spec ProcessSpec) error {
 			InstanceID: id,
 			ProcessID:  spec.ProcessID,
 			Ordinal:    i,
-			Desired:    DesiredStopped,
+			Desired:    desired,
 			Observed:   ObservedStopped,
 			Health:     HealthUnknown,
 		}
@@ -448,7 +476,7 @@ func (m *Manager) ensureInstances(ctx context.Context, spec ProcessSpec) error {
 			return err
 		}
 	}
-	insts, err := m.deps.Store.ListInstances(ctx, spec.ProcessID)
+	insts, err = m.deps.Store.ListInstances(ctx, spec.ProcessID)
 	if err != nil {
 		return err
 	}
@@ -487,6 +515,15 @@ func (m *Manager) replayApplySpec(ctx context.Context, processID, opID string, e
 		return ProcessSpec{}, errcode.E(errcode.NOT_FOUND, "process")
 	}
 	return m.deps.Store.GetSpec(ctx, processID)
+}
+
+func inheritProcessDesired(insts []Instance, instances int) DesiredState {
+	for _, inst := range insts {
+		if inst.Ordinal < instances && inst.Desired == DesiredRunning {
+			return DesiredRunning
+		}
+	}
+	return DesiredStopped
 }
 
 func extraInstanceDeletable(inst Instance) bool {

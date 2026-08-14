@@ -812,6 +812,51 @@ func TestRecoverThenReconcile_EmptyBootIDKeepsDesiredRunning(t *testing.T) {
 	}
 }
 
+func TestReconcile_EmptyBootIDDoesNotAdoptLiveLeftover(t *testing.T) {
+	ctx, _, st, layout, inst := startSleepAt(t, process.ProcessSpec{
+		ProcessID: "p1", Name: "sleep", Command: "/bin/sleep", Args: []string{"60"}, Instances: 1,
+	})
+	leftover := inst.PID
+	shimPID := inst.ShimPID
+	t.Cleanup(func() {
+		if leftover > 0 {
+			_ = unix.Kill(leftover, unix.SIGKILL)
+		}
+		if shimPID > 0 {
+			_ = unix.Kill(shimPID, unix.SIGKILL)
+		}
+	})
+
+	inst.BootID = ""
+	inst.PID = 0
+	inst.ShimPID = 0
+	inst.Observed = process.ObservedStopped
+	if err := st.PutInstance(ctx, inst); err != nil {
+		t.Fatal(err)
+	}
+
+	m2 := process.NewManager(process.Deps{Store: st, Layout: layout, ShimBin: testShimBin, Now: time.Now})
+	if err := m2.Recover(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := m2.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetInstance(ctx, inst.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PID == leftover {
+		t.Fatalf("empty boot_id must not adopt leftover pid: %+v", got)
+	}
+	if got.PID > 0 {
+		t.Fatalf("must not start a second copy while leftover is alive: %+v", got)
+	}
+	if err := unix.Kill(leftover, 0); err != nil {
+		t.Fatalf("leftover child must stay alive: %v", err)
+	}
+}
+
 func TestSetDesired_OrphanStopRequiresAdopt(t *testing.T) {
 	ctx, _, st, layout, inst := startSleepAt(t, process.ProcessSpec{
 		ProcessID: "p1", Name: "sleep", Command: "/bin/sleep", Args: []string{"60"}, Instances: 1, Autostart: true,

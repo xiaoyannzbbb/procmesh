@@ -270,10 +270,8 @@ func (m *Manager) handleExit(ctx context.Context, inst *Instance, st *shimpb.Sta
 	inst.ExitAt = &now
 	inst.PID = 0
 	if st != nil {
-		if ec := st.GetExitCode(); ec != 0 {
-			code := int(ec)
-			inst.ExitCode = &code
-		}
+		code := int(st.GetExitCode())
+		inst.ExitCode = &code
 	}
 	if next, err := ApplyObserved(inst.Observed, EvExit); err == nil {
 		inst.Observed = next
@@ -308,7 +306,7 @@ func (m *Manager) startInstance(ctx context.Context, spec ProcessSpec, inst *Ins
 		if err == nil {
 			client, st = c, status
 			if status != nil && status.GetAlive() {
-				if sameBoot(inst.BootID, boot) || inst.BootID == "" {
+				if sameBoot(inst.BootID, boot) {
 					defer m.closeConn(c, inst.InstanceID)
 					return m.applyRunning(ctx, inst, int(status.GetPid()), boot)
 				}
