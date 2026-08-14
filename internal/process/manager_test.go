@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -1083,6 +1085,47 @@ func TestReconcile_WaitsForDepHealthy(t *testing.T) {
 	}
 	if gotAPI.Observed != process.ObservedStopped || gotAPI.PID != 0 {
 		t.Fatalf("api must wait for mysql HEALTHY, got %+v", gotAPI)
+	}
+}
+
+func TestStart_ResourceLimitUnsupportedAudits(t *testing.T) {
+	ctx := context.Background()
+	m, st, _ := newTestManager(t)
+	spec := process.ProcessSpec{
+		ProcessID: "p1",
+		Name:      "sleep",
+		Command:   "/bin/sleep",
+		Args:      []string{"60"},
+		Instances: 1,
+		Resources: process.ResourceLimit{MemoryBytes: 1 << 20},
+	}
+	inst := startSleep(t, m, st, spec)
+	if inst.PID <= 0 || inst.Observed != process.ObservedRunning {
+		t.Fatalf("start must not fail: %+v", inst)
+	}
+	evs, err := st.ListAudit(ctx, "p1", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, ev := range evs {
+		if ev.Action == "RESOURCE_LIMIT_UNSUPPORTED" {
+			found = true
+			break
+		}
+	}
+	if runtime.GOOS != "linux" {
+		if !found {
+			t.Fatalf("missing RESOURCE_LIMIT_UNSUPPORTED audit: %+v", evs)
+		}
+		return
+	}
+	if !found {
+		// Linux: apply succeeded, or the kernel accepted the cgroup write.
+		dir := filepath.Join("/sys/fs/cgroup/procmesh", strconv.Itoa(inst.PID))
+		if _, err := os.Stat(dir); err != nil {
+			t.Fatalf("linux: want apply or audit, no cgroup at %s, audit=%+v", dir, evs)
+		}
 	}
 }
 

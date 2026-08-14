@@ -157,7 +157,11 @@ func (p LogPolicy) WithDefaults() LogPolicy {
 	return p
 }
 
-type ResourceLimit struct{}
+type ResourceLimit struct {
+	CPUQuotaMillis int64
+	MemoryBytes    int64
+	OpenFiles      int64
+}
 
 type Dependency struct {
 	ProcessName string

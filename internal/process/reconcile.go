@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
 	"time"
 
 	"github.com/qleelulu/procmesh/internal/errcode"
@@ -363,6 +364,9 @@ func (m *Manager) startInstance(ctx context.Context, spec ProcessSpec, inst *Ins
 		inst.Observed = next
 	} else {
 		inst.Observed = ObservedRunning
+	}
+	if ResourceLimitSet(spec.Resources) && (runtime.GOOS != "linux" || ApplyResourceLimit(inst.PID, spec.Resources) != nil) {
+		m.audit(ctx, inst.ProcessID, "RESOURCE_LIMIT_UNSUPPORTED", "", "", "")
 	}
 	if err := writeRuntime(m.deps.Layout, *inst); err != nil {
 		return err

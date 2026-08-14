@@ -3,11 +3,41 @@ package agent
 import (
 	"context"
 	"net/http"
+	"os"
+	"os/user"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/qleelulu/procmesh/internal/errcode"
 )
+
+func TestLookUser_RejectsOtherUserWithoutRoot(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("running as root")
+	}
+	me := os.Getuid()
+	var name string
+	for _, cand := range []string{"nobody", "daemon", "www-data"} {
+		u, err := user.Lookup(cand)
+		if err != nil {
+			continue
+		}
+		uid, err := strconv.Atoi(u.Uid)
+		if err != nil || uid == me {
+			continue
+		}
+		name = cand
+		break
+	}
+	if name == "" {
+		t.Skip("no other existing user")
+	}
+	err := lookupUser(name)
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("LookUser(%q) want INVALID, got %v", name, err)
+	}
+}
 
 func TestCheckListen_LoopbackOK(t *testing.T) {
 	if err := CheckListen("127.0.0.1:9000", false); err != nil {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/user"
+	"strconv"
 	"time"
 
 	"github.com/qleelulu/procmesh/internal/errcode"
@@ -165,9 +166,16 @@ func lookupUser(name string) error {
 	if name == "" {
 		return nil
 	}
-	if _, err := user.Lookup(name); err != nil {
+	u, err := user.Lookup(name)
+	if err != nil {
+		return errcode.E(errcode.INVALID, "run_as_user")
+	}
+	uid, err := strconv.Atoi(u.Uid)
+	if err != nil {
+		return errcode.E(errcode.INVALID, "run_as_user")
+	}
+	if uid != os.Getuid() && os.Getuid() != 0 {
 		return errcode.E(errcode.INVALID, "run_as_user")
 	}
 	return nil
 }
-
