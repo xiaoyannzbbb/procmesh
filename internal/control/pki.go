@@ -174,6 +174,15 @@ func SignCSR(caCertPEM, caKeyPEM, csrPEM []byte, clusterID, nodeID string, now t
 	return encodeCertPEM(cert)
 }
 
+// CertSerial returns the certificate serial as uppercase hex.
+func CertSerial(certPEM []byte) (string, error) {
+	cert, err := parseCertPEM(certPEM)
+	if err != nil {
+		return "", err
+	}
+	return strings.ToUpper(cert.SerialNumber.Text(16)), nil
+}
+
 // ParseIDs reads cluster and node IDs from an agent cert URI SAN.
 func ParseIDs(certPEM []byte) (clusterID, nodeID string, err error) {
 	cert, err := parseCertPEM(certPEM)

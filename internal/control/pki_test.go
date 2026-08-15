@@ -152,3 +152,10 @@ func TestLoadAgentCreds_MissingCert(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestCertSerial_InvalidPEM(t *testing.T) {
+	_, err := control.CertSerial([]byte("not-a-cert"))
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("got %v", err)
+	}
+}

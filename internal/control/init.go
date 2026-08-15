@@ -119,6 +119,22 @@ func Init(dir, nodeID, adminUser string, now time.Time) (InitResult, error) {
 	}, nil
 }
 
+// LoadAdminBootstrap reads dir/admin.bootstrap. Missing file returns errcode.NOT_FOUND.
+func LoadAdminBootstrap(dir string) (username, passwordHash string, err error) {
+	raw, err := os.ReadFile(filepath.Join(dir, adminFileName))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", "", errcode.E(errcode.NOT_FOUND, "admin bootstrap not found")
+		}
+		return "", "", fmt.Errorf("read admin bootstrap: %w", err)
+	}
+	var doc adminBootstrap
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return "", "", fmt.Errorf("parse admin bootstrap: %w", err)
+	}
+	return doc.Username, doc.PasswordHash, nil
+}
+
 // LoadMeta reads cluster.json. Missing file returns errcode.NOT_FOUND.
 func LoadMeta(dir string) (Meta, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, metaFileName))

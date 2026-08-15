@@ -1,7 +1,6 @@
 package control_test
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -84,6 +83,17 @@ func TestLoadMeta_NotFound(t *testing.T) {
 	}
 }
 
+func TestLoadAdminBootstrap_InvalidJSON(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "admin.bootstrap"), []byte("not-json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := control.LoadAdminBootstrap(dir)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+}
+
 func TestAppendGossipSeed_Dedupe(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now()
@@ -120,20 +130,14 @@ func TestAppendGossipSeed_Dedupe(t *testing.T) {
 
 func mustReadHash(t *testing.T, dir string) string {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(dir, "admin.bootstrap"))
+	_, hash, err := control.LoadAdminBootstrap(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var doc struct {
-		PasswordHash string `json:"password_hash"`
-	}
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatal(err)
-	}
-	if doc.PasswordHash == "" {
+	if hash == "" {
 		t.Fatal("empty password_hash")
 	}
-	return doc.PasswordHash
+	return hash
 }
 
 var uuidRE = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
