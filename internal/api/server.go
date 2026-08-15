@@ -75,23 +75,23 @@ func NewServer(opts Options) (*Server, error) {
 	degraded := s.isDegraded
 	intercept := connect.WithInterceptors(AuthInterceptor(opts.Auth, s.clusterInited))
 	pp, ph := procmeshv1connect.NewProcessServiceHandler(&ProcessAPI{
-		Mgr: opts.Mgr, Degraded: degraded,
+		Mgr: opts.Mgr, Auth: opts.Auth, Degraded: degraded,
 		LocalOnly: opts.LocalOnly, LocalID: opts.LocalID, Router: opts.Router, Forward: opts.Forward,
 	}, intercept)
 	mountConnect(engine, pp, ph)
 	cp, ch := procmeshv1connect.NewConfigServiceHandler(&ConfigAPI{
-		Mgr: opts.Mgr, Revs: opts.Store, Degraded: degraded,
+		Mgr: opts.Mgr, Auth: opts.Auth, Revs: opts.Store, Degraded: degraded,
 		LocalOnly: opts.LocalOnly, LocalID: opts.LocalID, Router: opts.Router, Forward: opts.Forward,
 	}, intercept)
 	mountConnect(engine, cp, ch)
 	lp, lh := procmeshv1connect.NewLogServiceHandler(&LogAPI{
-		Mgr:       opts.Mgr,
+		Mgr: opts.Mgr, Auth: opts.Auth,
 		LocalOnly: opts.LocalOnly, LocalID: opts.LocalID, Router: opts.Router, Forward: opts.Forward,
 	}, intercept)
 	mountConnect(engine, lp, lh)
-	np, nh := procmeshv1connect.NewNodeServiceHandler(&NodeAPI{Deps: opts.Cluster, Degraded: degraded}, intercept)
+	np, nh := procmeshv1connect.NewNodeServiceHandler(&NodeAPI{Deps: opts.Cluster, Auth: opts.Auth, Degraded: degraded}, intercept)
 	mountConnect(engine, np, nh)
-	clp, clh := procmeshv1connect.NewClusterServiceHandler(&ClusterAPI{Deps: opts.Cluster, Degraded: degraded}, intercept)
+	clp, clh := procmeshv1connect.NewClusterServiceHandler(&ClusterAPI{Deps: opts.Cluster, Auth: opts.Auth, Degraded: degraded}, intercept)
 	mountConnect(engine, clp, clh)
 	ap, ah := procmeshv1connect.NewAuthServiceHandler(&AuthAPI{Auth: opts.Auth}, intercept)
 	mountConnect(engine, ap, ah)

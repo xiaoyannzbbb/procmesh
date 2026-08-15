@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/logmgr"
 	"github.com/qleelulu/procmesh/internal/paths"
@@ -33,6 +34,7 @@ var _ procmeshv1connect.LogServiceHandler = (*LogAPI)(nil)
 
 type LogAPI struct {
 	Mgr       *process.Manager
+	Auth      *auth.Service
 	LocalOnly bool
 	LocalID   string
 	Router    *Router
@@ -62,6 +64,9 @@ func (s *LogAPI) TailLogs(ctx context.Context, req *connect.Request[procmeshv1.T
 	local, rt, err := s.hop(ctx, req.Header(), req.Msg.GetIdOrName(), "")
 	if err != nil {
 		return nil, ToConnect(err)
+	}
+	if err := requirePerm(ctx, s.Auth, auth.PermProcessLogsRead, hopTarget(local, rt, s.LocalID), false); err != nil {
+		return nil, err
 	}
 	if !local {
 		cli, err := s.remoteLog(ctx, rt, req.Header())
@@ -117,6 +122,9 @@ func (s *LogAPI) StreamLogs(ctx context.Context, req *connect.Request[procmeshv1
 	local, rt, err := s.hop(ctx, req.Header(), req.Msg.GetIdOrName(), "")
 	if err != nil {
 		return ToConnect(err)
+	}
+	if err := requirePerm(ctx, s.Auth, auth.PermProcessLogsRead, hopTarget(local, rt, s.LocalID), false); err != nil {
+		return err
 	}
 	if !local {
 		return s.forwardChunks(ctx, rt, req.Header(), stream, func(cli procmeshv1connect.LogServiceClient) (*connect.ServerStreamForClient[procmeshv1.LogChunk], error) {
@@ -182,6 +190,9 @@ func (s *LogAPI) DownloadLogs(ctx context.Context, req *connect.Request[procmesh
 	local, rt, err := s.hop(ctx, req.Header(), req.Msg.GetIdOrName(), "")
 	if err != nil {
 		return ToConnect(err)
+	}
+	if err := requirePerm(ctx, s.Auth, auth.PermProcessLogsDownload, hopTarget(local, rt, s.LocalID), false); err != nil {
+		return err
 	}
 	if !local {
 		return s.forwardChunks(ctx, rt, req.Header(), stream, func(cli procmeshv1connect.LogServiceClient) (*connect.ServerStreamForClient[procmeshv1.LogChunk], error) {

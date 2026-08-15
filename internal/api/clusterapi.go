@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/errcode"
@@ -53,6 +54,7 @@ type meshJoiner interface {
 
 type ClusterAPI struct {
 	Deps     ClusterDeps
+	Auth     *auth.Service
 	Degraded func() bool
 }
 
@@ -212,6 +214,9 @@ func (s *ClusterAPI) RequestJoin(ctx context.Context, req *connect.Request[procm
 }
 
 func (s *ClusterAPI) Overview(ctx context.Context, _ *connect.Request[procmeshv1.ClusterOverviewRequest]) (*connect.Response[procmeshv1.ClusterOverviewResponse], error) {
+	if err := requirePerm(ctx, s.Auth, auth.PermClusterRead, "", false); err != nil {
+		return nil, err
+	}
 	members := s.Deps.members()
 	var alive int32
 	for _, n := range members {

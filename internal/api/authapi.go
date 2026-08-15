@@ -61,6 +61,9 @@ func (s *AuthAPI) CreateAPIToken(ctx context.Context, req *connect.Request[procm
 	if s.Auth == nil {
 		return nil, unimplemented()
 	}
+	if err := requirePerm(ctx, s.Auth, auth.PermUserUpdate, "", true); err != nil {
+		return nil, err
+	}
 	p, ok := PrincipalFrom(ctx)
 	if !ok {
 		return nil, ToConnect(errcode.E(errcode.DENIED, "authentication required"))
@@ -84,6 +87,9 @@ func (s *AuthAPI) CreateAPIToken(ctx context.Context, req *connect.Request[procm
 func (s *AuthAPI) RevokeAPIToken(ctx context.Context, req *connect.Request[procmeshv1.RevokeAPITokenRequest]) (*connect.Response[procmeshv1.RevokeAPITokenResponse], error) {
 	if s.Auth == nil {
 		return nil, unimplemented()
+	}
+	if err := requirePerm(ctx, s.Auth, auth.PermUserUpdate, "", true); err != nil {
+		return nil, err
 	}
 	if _, ok := PrincipalFrom(ctx); !ok {
 		return nil, ToConnect(errcode.E(errcode.DENIED, "authentication required"))

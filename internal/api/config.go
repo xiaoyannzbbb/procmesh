@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"connectrpc.com/connect"
+	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/rpc"
@@ -21,6 +22,7 @@ type RevisionStore interface {
 
 type ConfigAPI struct {
 	Mgr       *process.Manager
+	Auth      *auth.Service
 	Revs      RevisionStore
 	Degraded  func() bool
 	LocalOnly bool
@@ -50,6 +52,9 @@ func (s *ConfigAPI) GetConfig(ctx context.Context, req *connect.Request[procmesh
 	if err != nil {
 		return nil, ToConnect(err)
 	}
+	if err := requirePerm(ctx, s.Auth, auth.PermProcessConfigRead, hopTarget(local, rt, s.LocalID), false); err != nil {
+		return nil, err
+	}
 	if !local {
 		cli, err := s.remoteConfig(ctx, rt, req.Header())
 		if err != nil {
@@ -75,6 +80,9 @@ func (s *ConfigAPI) UpdateConfig(ctx context.Context, req *connect.Request[procm
 	local, rt, err := s.hop(ctx, req.Header(), req.Msg.GetIdOrName(), "")
 	if err != nil {
 		return nil, ToConnect(err)
+	}
+	if err := requirePerm(ctx, s.Auth, auth.PermProcessConfigUpdate, hopTarget(local, rt, s.LocalID), true); err != nil {
+		return nil, err
 	}
 	if !local {
 		cli, err := s.remoteConfig(ctx, rt, req.Header())
@@ -114,6 +122,9 @@ func (s *ConfigAPI) History(ctx context.Context, req *connect.Request[procmeshv1
 	local, rt, err := s.hop(ctx, req.Header(), req.Msg.GetIdOrName(), "")
 	if err != nil {
 		return nil, ToConnect(err)
+	}
+	if err := requirePerm(ctx, s.Auth, auth.PermProcessConfigRead, hopTarget(local, rt, s.LocalID), false); err != nil {
+		return nil, err
 	}
 	if !local {
 		cli, err := s.remoteConfig(ctx, rt, req.Header())
@@ -155,6 +166,9 @@ func (s *ConfigAPI) Diff(ctx context.Context, req *connect.Request[procmeshv1.Di
 	if err != nil {
 		return nil, ToConnect(err)
 	}
+	if err := requirePerm(ctx, s.Auth, auth.PermProcessConfigRead, hopTarget(local, rt, s.LocalID), false); err != nil {
+		return nil, err
+	}
 	if !local {
 		cli, err := s.remoteConfig(ctx, rt, req.Header())
 		if err != nil {
@@ -191,6 +205,9 @@ func (s *ConfigAPI) Rollback(ctx context.Context, req *connect.Request[procmeshv
 	local, rt, err := s.hop(ctx, req.Header(), req.Msg.GetIdOrName(), "")
 	if err != nil {
 		return nil, ToConnect(err)
+	}
+	if err := requirePerm(ctx, s.Auth, auth.PermProcessConfigUpdate, hopTarget(local, rt, s.LocalID), true); err != nil {
+		return nil, err
 	}
 	if !local {
 		cli, err := s.remoteConfig(ctx, rt, req.Header())

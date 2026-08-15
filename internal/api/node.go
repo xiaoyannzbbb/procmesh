@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/errcode"
@@ -16,10 +17,14 @@ var _ procmeshv1connect.NodeServiceHandler = (*NodeAPI)(nil)
 
 type NodeAPI struct {
 	Deps     ClusterDeps
+	Auth     *auth.Service
 	Degraded func() bool
 }
 
-func (s *NodeAPI) ListNodes(_ context.Context, _ *connect.Request[procmeshv1.ListNodesRequest]) (*connect.Response[procmeshv1.ListNodesResponse], error) {
+func (s *NodeAPI) ListNodes(ctx context.Context, _ *connect.Request[procmeshv1.ListNodesRequest]) (*connect.Response[procmeshv1.ListNodesResponse], error) {
+	if err := requirePerm(ctx, s.Auth, auth.PermNodeRead, "", false); err != nil {
+		return nil, err
+	}
 	members := s.Deps.members()
 	out := &procmeshv1.ListNodesResponse{Nodes: make([]*procmeshv1.Node, 0, len(members))}
 	for _, n := range members {
@@ -28,7 +33,10 @@ func (s *NodeAPI) ListNodes(_ context.Context, _ *connect.Request[procmeshv1.Lis
 	return connect.NewResponse(out), nil
 }
 
-func (s *NodeAPI) GetNode(_ context.Context, req *connect.Request[procmeshv1.GetNodeRequest]) (*connect.Response[procmeshv1.GetNodeResponse], error) {
+func (s *NodeAPI) GetNode(ctx context.Context, req *connect.Request[procmeshv1.GetNodeRequest]) (*connect.Response[procmeshv1.GetNodeResponse], error) {
+	if err := requirePerm(ctx, s.Auth, auth.PermNodeRead, "", false); err != nil {
+		return nil, err
+	}
 	n, ok := findNode(s.Deps.members(), req.Msg.GetIdOrHostname())
 	if !ok {
 		return nil, ToConnect(errcode.E(errcode.NOT_FOUND, "node not found"))
@@ -36,7 +44,10 @@ func (s *NodeAPI) GetNode(_ context.Context, req *connect.Request[procmeshv1.Get
 	return connect.NewResponse(&procmeshv1.GetNodeResponse{Node: nodeToProto(n)}), nil
 }
 
-func (s *NodeAPI) CreateJoinToken(_ context.Context, req *connect.Request[procmeshv1.CreateJoinTokenRequest]) (*connect.Response[procmeshv1.CreateJoinTokenResponse], error) {
+func (s *NodeAPI) CreateJoinToken(ctx context.Context, req *connect.Request[procmeshv1.CreateJoinTokenRequest]) (*connect.Response[procmeshv1.CreateJoinTokenResponse], error) {
+	if err := requirePerm(ctx, s.Auth, auth.PermNodeManage, "", true); err != nil {
+		return nil, err
+	}
 	if err := rejectDegraded(s.Degraded); err != nil {
 		return nil, err
 	}
@@ -62,7 +73,10 @@ func (s *NodeAPI) CreateJoinToken(_ context.Context, req *connect.Request[procme
 	}), nil
 }
 
-func (s *NodeAPI) RevokeJoinToken(_ context.Context, req *connect.Request[procmeshv1.RevokeJoinTokenRequest]) (*connect.Response[procmeshv1.RevokeJoinTokenResponse], error) {
+func (s *NodeAPI) RevokeJoinToken(ctx context.Context, req *connect.Request[procmeshv1.RevokeJoinTokenRequest]) (*connect.Response[procmeshv1.RevokeJoinTokenResponse], error) {
+	if err := requirePerm(ctx, s.Auth, auth.PermNodeManage, "", true); err != nil {
+		return nil, err
+	}
 	if err := rejectDegraded(s.Degraded); err != nil {
 		return nil, err
 	}
@@ -81,11 +95,17 @@ func (s *NodeAPI) RevokeJoinToken(_ context.Context, req *connect.Request[procme
 	return connect.NewResponse(&procmeshv1.RevokeJoinTokenResponse{}), nil
 }
 
-func (s *NodeAPI) RemoveNode(_ context.Context, _ *connect.Request[procmeshv1.RemoveNodeRequest]) (*connect.Response[procmeshv1.RemoveNodeResponse], error) {
+func (s *NodeAPI) RemoveNode(ctx context.Context, req *connect.Request[procmeshv1.RemoveNodeRequest]) (*connect.Response[procmeshv1.RemoveNodeResponse], error) {
+	if err := requirePerm(ctx, s.Auth, auth.PermNodeRemove, req.Msg.GetNodeId(), true); err != nil {
+		return nil, err
+	}
 	return nil, unimplemented()
 }
 
-func (s *NodeAPI) PromoteNode(_ context.Context, _ *connect.Request[procmeshv1.PromoteNodeRequest]) (*connect.Response[procmeshv1.PromoteNodeResponse], error) {
+func (s *NodeAPI) PromoteNode(ctx context.Context, req *connect.Request[procmeshv1.PromoteNodeRequest]) (*connect.Response[procmeshv1.PromoteNodeResponse], error) {
+	if err := requirePerm(ctx, s.Auth, auth.PermClusterManage, req.Msg.GetNodeId(), true); err != nil {
+		return nil, err
+	}
 	return nil, unimplemented()
 }
 

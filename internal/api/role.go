@@ -19,8 +19,11 @@ type RoleAPI struct {
 	Auth *auth.Service
 }
 
-func (s *RoleAPI) ListRoles(_ context.Context, _ *connect.Request[procmeshv1.ListRolesRequest]) (*connect.Response[procmeshv1.ListRolesResponse], error) {
+func (s *RoleAPI) ListRoles(ctx context.Context, _ *connect.Request[procmeshv1.ListRolesRequest]) (*connect.Response[procmeshv1.ListRolesResponse], error) {
 	if err := requireAuthConfigured(s.Auth); err != nil {
+		return nil, err
+	}
+	if err := requirePerm(ctx, s.Auth, auth.PermRoleRead, "", false); err != nil {
 		return nil, err
 	}
 	st := s.Auth.Store.View()
@@ -42,8 +45,11 @@ func (s *RoleAPI) ListRoles(_ context.Context, _ *connect.Request[procmeshv1.Lis
 	return connect.NewResponse(out), nil
 }
 
-func (s *RoleAPI) CreateRole(_ context.Context, req *connect.Request[procmeshv1.CreateRoleRequest]) (*connect.Response[procmeshv1.CreateRoleResponse], error) {
+func (s *RoleAPI) CreateRole(ctx context.Context, req *connect.Request[procmeshv1.CreateRoleRequest]) (*connect.Response[procmeshv1.CreateRoleResponse], error) {
 	if err := requireAuthConfigured(s.Auth); err != nil {
+		return nil, err
+	}
+	if err := requirePerm(ctx, s.Auth, auth.PermRoleManage, "", true); err != nil {
 		return nil, err
 	}
 	if _, _, err := metaOf(req.Msg.GetMeta()); err != nil {
@@ -77,8 +83,11 @@ func (s *RoleAPI) CreateRole(_ context.Context, req *connect.Request[procmeshv1.
 	return connect.NewResponse(&procmeshv1.CreateRoleResponse{Role: roleToProto(role)}), nil
 }
 
-func (s *RoleAPI) GrantRole(_ context.Context, req *connect.Request[procmeshv1.GrantRoleRequest]) (*connect.Response[procmeshv1.GrantRoleResponse], error) {
+func (s *RoleAPI) GrantRole(ctx context.Context, req *connect.Request[procmeshv1.GrantRoleRequest]) (*connect.Response[procmeshv1.GrantRoleResponse], error) {
 	if err := requireAuthConfigured(s.Auth); err != nil {
+		return nil, err
+	}
+	if err := requirePerm(ctx, s.Auth, auth.PermRoleManage, "", true); err != nil {
 		return nil, err
 	}
 	if _, _, err := metaOf(req.Msg.GetMeta()); err != nil {

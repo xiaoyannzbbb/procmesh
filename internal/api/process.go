@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"connectrpc.com/connect"
+	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/rpc"
@@ -24,6 +25,7 @@ type Forwarder interface {
 
 type ProcessAPI struct {
 	Mgr       *process.Manager
+	Auth      *auth.Service
 	Degraded  func() bool
 	LocalOnly bool
 	LocalID   string
@@ -79,6 +81,9 @@ func (s *ProcessAPI) ListProcesses(ctx context.Context, req *connect.Request[pro
 	if err != nil {
 		return nil, ToConnect(err)
 	}
+	if err := requirePerm(ctx, s.Auth, auth.PermProcessRead, hopTarget(local, rt, s.LocalID), false); err != nil {
+		return nil, err
+	}
 	if !local {
 		cli, err := s.remoteProcess(ctx, rt, req.Header())
 		if err != nil {
@@ -115,6 +120,9 @@ func (s *ProcessAPI) GetProcess(ctx context.Context, req *connect.Request[procme
 	if err != nil {
 		return nil, ToConnect(err)
 	}
+	if err := requirePerm(ctx, s.Auth, auth.PermProcessRead, hopTarget(local, rt, s.LocalID), false); err != nil {
+		return nil, err
+	}
 	if !local {
 		cli, err := s.remoteProcess(ctx, rt, req.Header())
 		if err != nil {
@@ -145,6 +153,13 @@ func (s *ProcessAPI) ApplyProcess(ctx context.Context, req *connect.Request[proc
 	local, rt, err := s.hop(ctx, req.Header(), idOrName, owner)
 	if err != nil {
 		return nil, ToConnect(err)
+	}
+	perm := auth.PermProcessCreate
+	if req.Msg.GetExpectedRevision() != 0 || s.processExists(ctx, idOrName) {
+		perm = auth.PermProcessUpdate
+	}
+	if err := requirePerm(ctx, s.Auth, perm, hopTarget(local, rt, s.LocalID), true); err != nil {
+		return nil, err
 	}
 	if !local {
 		cli, err := s.remoteProcess(ctx, rt, req.Header())
@@ -200,6 +215,9 @@ func (s *ProcessAPI) DeleteProcess(ctx context.Context, req *connect.Request[pro
 	if err != nil {
 		return nil, ToConnect(err)
 	}
+	if err := requirePerm(ctx, s.Auth, auth.PermProcessDelete, hopTarget(local, rt, s.LocalID), true); err != nil {
+		return nil, err
+	}
 	if !local {
 		cli, err := s.remoteProcess(ctx, rt, req.Header())
 		if err != nil {
@@ -236,7 +254,7 @@ func (s *ProcessAPI) DeleteProcess(ctx context.Context, req *connect.Request[pro
 }
 
 func (s *ProcessAPI) StartProcess(ctx context.Context, req *connect.Request[procmeshv1.ProcessRefRequest]) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
-	return s.mutateRef(ctx, req, func(cli procmeshv1connect.ProcessServiceClient) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
+	return s.mutateRef(ctx, req, auth.PermProcessStart, func(cli procmeshv1connect.ProcessServiceClient) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
 		return cli.StartProcess(ctx, req)
 	}, func(ctx context.Context, processID, opID, operator string) error {
 		if err := s.Mgr.SetDesired(ctx, processID, process.DesiredRunning, opID, operator); err != nil {
@@ -247,7 +265,7 @@ func (s *ProcessAPI) StartProcess(ctx context.Context, req *connect.Request[proc
 }
 
 func (s *ProcessAPI) StopProcess(ctx context.Context, req *connect.Request[procmeshv1.ProcessRefRequest]) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
-	return s.mutateRef(ctx, req, func(cli procmeshv1connect.ProcessServiceClient) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
+	return s.mutateRef(ctx, req, auth.PermProcessStop, func(cli procmeshv1connect.ProcessServiceClient) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
 		return cli.StopProcess(ctx, req)
 	}, func(ctx context.Context, processID, opID, operator string) error {
 		if err := s.Mgr.SetDesired(ctx, processID, process.DesiredStopped, opID, operator); err != nil {
@@ -258,7 +276,7 @@ func (s *ProcessAPI) StopProcess(ctx context.Context, req *connect.Request[procm
 }
 
 func (s *ProcessAPI) RestartProcess(ctx context.Context, req *connect.Request[procmeshv1.ProcessRefRequest]) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
-	return s.mutateRef(ctx, req, func(cli procmeshv1connect.ProcessServiceClient) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
+	return s.mutateRef(ctx, req, auth.PermProcessRestart, func(cli procmeshv1connect.ProcessServiceClient) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
 		return cli.RestartProcess(ctx, req)
 	}, func(ctx context.Context, processID, opID, operator string) error {
 		if err := s.Mgr.Restart(ctx, processID, opID, operator); err != nil {
@@ -269,7 +287,7 @@ func (s *ProcessAPI) RestartProcess(ctx context.Context, req *connect.Request[pr
 }
 
 func (s *ProcessAPI) KillProcess(ctx context.Context, req *connect.Request[procmeshv1.ProcessRefRequest]) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
-	return s.mutateRef(ctx, req, func(cli procmeshv1connect.ProcessServiceClient) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
+	return s.mutateRef(ctx, req, auth.PermProcessStop, func(cli procmeshv1connect.ProcessServiceClient) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
 		return cli.KillProcess(ctx, req)
 	}, func(ctx context.Context, processID, opID, operator string) error {
 		return s.Mgr.Kill(ctx, processID, opID, operator)
@@ -277,7 +295,7 @@ func (s *ProcessAPI) KillProcess(ctx context.Context, req *connect.Request[procm
 }
 
 func (s *ProcessAPI) ResetFailure(ctx context.Context, req *connect.Request[procmeshv1.ProcessRefRequest]) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
-	return s.mutateRef(ctx, req, func(cli procmeshv1connect.ProcessServiceClient) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
+	return s.mutateRef(ctx, req, auth.PermProcessUpdate, func(cli procmeshv1connect.ProcessServiceClient) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
 		return cli.ResetFailure(ctx, req)
 	}, func(ctx context.Context, processID, opID, operator string) error {
 		return s.Mgr.ResetFailure(ctx, processID, opID, operator)
@@ -288,6 +306,9 @@ func (s *ProcessAPI) AdoptInstance(ctx context.Context, req *connect.Request[pro
 	local, rt, err := s.hop(ctx, req.Header(), req.Msg.GetInstanceId(), "")
 	if err != nil {
 		return nil, ToConnect(err)
+	}
+	if err := requirePerm(ctx, s.Auth, auth.PermProcessUpdate, hopTarget(local, rt, s.LocalID), true); err != nil {
+		return nil, err
 	}
 	if !local {
 		cli, err := s.remoteProcess(ctx, rt, req.Header())
@@ -331,10 +352,13 @@ func (s *ProcessAPI) AdoptInstance(ctx context.Context, req *connect.Request[pro
 	return connect.NewResponse(&procmeshv1.AdoptResponse{Process: view}), nil
 }
 
-func (s *ProcessAPI) mutateRef(ctx context.Context, req *connect.Request[procmeshv1.ProcessRefRequest], remote func(procmeshv1connect.ProcessServiceClient) (*connect.Response[procmeshv1.ProcessRefResponse], error), fn func(ctx context.Context, processID, opID, operator string) error) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
+func (s *ProcessAPI) mutateRef(ctx context.Context, req *connect.Request[procmeshv1.ProcessRefRequest], perm string, remote func(procmeshv1connect.ProcessServiceClient) (*connect.Response[procmeshv1.ProcessRefResponse], error), fn func(ctx context.Context, processID, opID, operator string) error) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
 	local, rt, err := s.hop(ctx, req.Header(), req.Msg.GetIdOrName(), "")
 	if err != nil {
 		return nil, ToConnect(err)
+	}
+	if err := requirePerm(ctx, s.Auth, perm, hopTarget(local, rt, s.LocalID), true); err != nil {
+		return nil, err
 	}
 	if !local {
 		cli, err := s.remoteProcess(ctx, rt, req.Header())
@@ -376,6 +400,14 @@ func (s *ProcessAPI) mutateRef(ctx context.Context, req *connect.Request[procmes
 		return nil, err
 	}
 	return connect.NewResponse(&procmeshv1.ProcessRefResponse{Process: view}), nil
+}
+
+func (s *ProcessAPI) processExists(ctx context.Context, idOrName string) bool {
+	if s.Mgr == nil || idOrName == "" {
+		return false
+	}
+	_, err := s.Mgr.Resolve(ctx, idOrName)
+	return err == nil
 }
 
 func applyIdentity(spec *procmeshv1.ProcessSpec) (idOrName, owner string) {

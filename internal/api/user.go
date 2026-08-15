@@ -23,8 +23,11 @@ type UserAPI struct {
 	Auth *auth.Service
 }
 
-func (s *UserAPI) ListUsers(_ context.Context, _ *connect.Request[procmeshv1.ListUsersRequest]) (*connect.Response[procmeshv1.ListUsersResponse], error) {
+func (s *UserAPI) ListUsers(ctx context.Context, _ *connect.Request[procmeshv1.ListUsersRequest]) (*connect.Response[procmeshv1.ListUsersResponse], error) {
 	if err := requireAuthConfigured(s.Auth); err != nil {
+		return nil, err
+	}
+	if err := requirePerm(ctx, s.Auth, auth.PermUserRead, "", false); err != nil {
 		return nil, err
 	}
 	st := s.Auth.Store.View()
@@ -40,8 +43,11 @@ func (s *UserAPI) ListUsers(_ context.Context, _ *connect.Request[procmeshv1.Lis
 	return connect.NewResponse(out), nil
 }
 
-func (s *UserAPI) CreateUser(_ context.Context, req *connect.Request[procmeshv1.CreateUserRequest]) (*connect.Response[procmeshv1.CreateUserResponse], error) {
+func (s *UserAPI) CreateUser(ctx context.Context, req *connect.Request[procmeshv1.CreateUserRequest]) (*connect.Response[procmeshv1.CreateUserResponse], error) {
 	if err := requireAuthConfigured(s.Auth); err != nil {
+		return nil, err
+	}
+	if err := requirePerm(ctx, s.Auth, auth.PermUserCreate, "", true); err != nil {
 		return nil, err
 	}
 	if _, _, err := metaOf(req.Msg.GetMeta()); err != nil {
@@ -78,8 +84,11 @@ func (s *UserAPI) CreateUser(_ context.Context, req *connect.Request[procmeshv1.
 	return connect.NewResponse(&procmeshv1.CreateUserResponse{User: userToProto(u)}), nil
 }
 
-func (s *UserAPI) DisableUser(_ context.Context, req *connect.Request[procmeshv1.DisableUserRequest]) (*connect.Response[procmeshv1.DisableUserResponse], error) {
+func (s *UserAPI) DisableUser(ctx context.Context, req *connect.Request[procmeshv1.DisableUserRequest]) (*connect.Response[procmeshv1.DisableUserResponse], error) {
 	if err := requireAuthConfigured(s.Auth); err != nil {
+		return nil, err
+	}
+	if err := requirePerm(ctx, s.Auth, auth.PermUserUpdate, "", true); err != nil {
 		return nil, err
 	}
 	if _, _, err := metaOf(req.Msg.GetMeta()); err != nil {
