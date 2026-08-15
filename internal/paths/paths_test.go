@@ -36,6 +36,9 @@ func TestNew_LayoutFields(t *testing.T) {
 	if l.ClusterDir != "/data/cluster" {
 		t.Fatalf("ClusterDir=%q", l.ClusterDir)
 	}
+	if l.RaftDir != "/data/raft" {
+		t.Fatalf("RaftDir=%q", l.RaftDir)
+	}
 }
 
 func TestEnsure_CreatesDirs0750(t *testing.T) {
@@ -45,7 +48,7 @@ func TestEnsure_CreatesDirs0750(t *testing.T) {
 	if err := l.Ensure(); err != nil {
 		t.Fatal(err)
 	}
-	for _, dir := range []string{l.Root, l.ShimDir, l.LogDir, l.RuntimeDir, l.ClusterDir} {
+	for _, dir := range []string{l.Root, l.ShimDir, l.LogDir, l.RuntimeDir, l.ClusterDir, l.RaftDir} {
 		st, err := os.Stat(dir)
 		if err != nil {
 			t.Fatalf("stat %s: %v", dir, err)

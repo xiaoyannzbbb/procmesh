@@ -7,6 +7,8 @@ require (
 	github.com/gin-gonic/gin v1.10.1
 	github.com/hashicorp/memberlist v0.5.3
 	github.com/hashicorp/raft v1.7.3
+	github.com/hashicorp/raft-boltdb/v2 v2.3.1
+	go.etcd.io/bbolt v1.3.5
 	golang.org/x/crypto v0.32.0
 	golang.org/x/sys v0.34.0
 	google.golang.org/protobuf v1.36.12
@@ -16,6 +18,7 @@ require (
 
 require (
 	github.com/armon/go-metrics v0.4.1 // indirect
+	github.com/boltdb/bolt v1.3.1 // indirect
 	github.com/bytedance/sonic v1.11.6 // indirect
 	github.com/bytedance/sonic/loader v0.1.1 // indirect
 	github.com/cloudwego/base64x v0.1.4 // indirect

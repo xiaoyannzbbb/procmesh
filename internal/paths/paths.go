@@ -17,6 +17,7 @@ type Layout struct {
 	LogDir     string
 	RuntimeDir string
 	ClusterDir string
+	RaftDir    string
 }
 
 // New returns the standard layout under root.
@@ -28,6 +29,7 @@ func New(root string) Layout {
 		LogDir:     filepath.Join(root, "logs"),
 		RuntimeDir: filepath.Join(root, "runtime"),
 		ClusterDir: filepath.Join(root, "cluster"),
+		RaftDir:    filepath.Join(root, "raft"),
 	}
 }
 
@@ -44,7 +46,7 @@ func (l Layout) BootIDFile() string { return filepath.Join(l.Root, "boot_id") }
 
 // Ensure creates layout directories with mode 0750.
 func (l Layout) Ensure() error {
-	for _, dir := range []string{l.Root, l.ShimDir, l.LogDir, l.RuntimeDir, l.ClusterDir} {
+	for _, dir := range []string{l.Root, l.ShimDir, l.LogDir, l.RuntimeDir, l.ClusterDir, l.RaftDir} {
 		if dir == "" {
 			continue
 		}
