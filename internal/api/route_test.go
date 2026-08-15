@@ -161,3 +161,46 @@ func TestRouter_LocalHostnameIsLocal(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 }
+
+func TestRouter_RemoteSameHostnameAsLocalHostStillChecked(t *testing.T) {
+	// LocalHost is set; a different node_id shares that hostname but is FAILED.
+	// Routing by remote node_id must not skip reachability just because Hostname == LocalHost.
+	r := Router{
+		LocalID:   "aaa",
+		LocalHost: "shared-host",
+		Members: func() []cluster.NodeSummary {
+			return []cluster.NodeSummary{{
+				NodeID: "ccc", Hostname: "shared-host", State: cluster.StateFailed,
+				RPCAddress: "127.0.0.1:9003", ProtocolVersion: version.Protocol,
+			}}
+		},
+	}
+	got, err := r.Resolve(context.Background(), "ccc", "", "")
+	if !errcode.Is(err, errcode.UNAVAILABLE) {
+		t.Fatalf("err=%v route=%+v", err, got)
+	}
+	if got.Local {
+		t.Fatalf("expected non-local on unreachable remote: %+v", got)
+	}
+}
+
+func TestRouter_GossipFailedOwnerUnavailable(t *testing.T) {
+	r := Router{
+		LocalID: "aaa",
+		Members: func() []cluster.NodeSummary {
+			return []cluster.NodeSummary{{
+				NodeID: "ccc", State: cluster.StateFailed, RPCAddress: "127.0.0.1:9003",
+				ProtocolVersion: version.Protocol,
+				Processes:       []cluster.ProcessSummary{{Name: "nginx"}},
+			}}
+		},
+		LocalHasName: func(context.Context, string) bool { return false },
+	}
+	_, err := r.Resolve(context.Background(), "", "nginx", "")
+	if !errcode.Is(err, errcode.UNAVAILABLE) {
+		t.Fatalf("%v", err)
+	}
+	if err.Error() != "UNAVAILABLE: owner unreachable" {
+		t.Fatalf("want owner unreachable, got %v", err)
+	}
+}

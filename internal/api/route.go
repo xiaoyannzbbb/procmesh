@@ -88,7 +88,9 @@ func (r Router) Resolve(ctx context.Context, targetHint, idOrName, ownerAgentID 
 }
 
 func (r Router) routeForNode(n cluster.NodeSummary) (Route, error) {
-	if n.NodeID == r.LocalID || (r.LocalHost != "" && n.Hostname == r.LocalHost) {
+	// Local only by NodeID. Hostname-as-local is handled on the hint/owner string
+	// via isLocalIdentity so a remote that shares LocalHost still gets reachability checks.
+	if n.NodeID == r.LocalID {
 		return r.localRoute(), nil
 	}
 	if n.State == cluster.StateFailed || n.RPCAddress == "" {
