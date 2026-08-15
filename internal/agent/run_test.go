@@ -1,14 +1,17 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +21,57 @@ import (
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/store"
 )
+
+func TestRun_LogsLifecycle(t *testing.T) {
+	var out bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&out, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	ctx, cancel := context.WithCancel(context.Background())
+	dir := t.TempDir()
+	listened := make(chan string, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Run(ctx, Options{
+			DataDir:       dir,
+			Listen:        "127.0.0.1:0",
+			GossipListen:  "127.0.0.1:0",
+			RPCListen:     "127.0.0.1:0",
+			ControlListen: "127.0.0.1:0",
+			Logger:        logger,
+			OnListen:      func(addr string) { listened <- addr },
+		})
+	}()
+	var httpAddr string
+	select {
+	case httpAddr = <-listened:
+	case err := <-errCh:
+		t.Fatalf("Run exited early: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for listen")
+	}
+	cancel()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+	got := out.String()
+	for _, want := range []string{
+		"agent starting",
+		"gossip listening",
+		"http listening",
+		"agent started",
+		"agent stopping",
+		"agent stopped",
+		httpAddr,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in %q", want, got)
+		}
+	}
+}
 
 func TestLookUser_RejectsOtherUserWithoutRoot(t *testing.T) {
 	if os.Getuid() == 0 {

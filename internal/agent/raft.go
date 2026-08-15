@@ -144,6 +144,7 @@ func (r *rpcRuntime) startRaft(bootstrap bool) error {
 		if onListen != nil {
 			onListen(adv)
 		}
+		r.logger.With("component", "raft").Info("raft control listening", "address", adv)
 	} else {
 		r.mu.Unlock()
 	}

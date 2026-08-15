@@ -3,9 +3,9 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
@@ -43,6 +43,7 @@ type rpcRuntime struct {
 	controlAdv  string
 	knownLeader string
 	started     time.Time
+	logger      *slog.Logger
 }
 
 func (r *rpcRuntime) startRPC() error {
@@ -99,7 +100,7 @@ func (r *rpcRuntime) startRPCLocked() error {
 	}
 	go func() {
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-			fmt.Fprintf(os.Stderr, "rpc serve: %v\n", err)
+			r.logger.With("component", "rpc").Error("rpc serve failed", "error", err)
 		}
 	}()
 	addr := advertiseRPC(r.opt.RPCAdvertise, ln.Addr().String())
@@ -115,6 +116,7 @@ func (r *rpcRuntime) startRPCLocked() error {
 	if r.opt.OnRPCListen != nil {
 		r.opt.OnRPCListen(addr)
 	}
+	r.logger.With("component", "rpc").Info("rpc listening", "address", addr)
 	return nil
 }
 

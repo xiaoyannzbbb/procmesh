@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -54,12 +55,19 @@ func Run(ctx context.Context, opt Options) error {
 	if opt.DataDir == "" {
 		return fmt.Errorf("data-dir required")
 	}
+	logger := opt.Logger
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	opt.Logger = logger
+	logger.Info("agent starting", "data_dir", opt.DataDir)
 	if opt.Listen == "" {
 		opt.Listen = "127.0.0.1:9000"
 	}
 	if err := CheckListen(opt.Listen, opt.InsecureListen); err != nil {
 		return err
 	}
+	logInsecureListen(logger, opt.Listen, opt.InsecureListen)
 
 	layout := paths.New(opt.DataDir)
 	if err := layout.Ensure(); err != nil {
@@ -71,13 +79,13 @@ func Run(ctx context.Context, opt Options) error {
 	if err != nil {
 		quarantine := layout.Store + ".corrupt-" + strconv.FormatInt(time.Now().Unix(), 10)
 		if rerr := os.Rename(layout.Store, quarantine); rerr != nil {
-			fmt.Fprintf(os.Stderr, "quarantine store: %v (open: %v)\n", rerr, err)
+			logger.Warn("store quarantine failed", "error", rerr, "open_error", err)
 		} else {
-			fmt.Fprintf(os.Stderr, "quarantined corrupt store to %s: %v\n", quarantine, err)
+			logger.Warn("store quarantined", "path", quarantine, "error", err)
 		}
 		st, err = store.Open(layout.Store)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "reopen store after quarantine: %v\n", err)
+			logger.Warn("store reopen failed", "error", err)
 			return serveHTTP(ctx, opt, nil, nil, nil, true, func() error {
 				return errcode.E(errcode.DEGRADED, "store unavailable")
 			}, nil, nil, api.ClusterDeps{})
@@ -88,7 +96,7 @@ func Run(ctx context.Context, opt Options) error {
 
 	if err := st.IntegrityCheck(ctx); err != nil {
 		degraded = true
-		fmt.Fprintf(os.Stderr, "integrity check: %v\n", err)
+		logger.Warn("store integrity check failed", "error", err)
 	}
 
 	hostBoot := opt.BootID
@@ -121,10 +129,10 @@ func Run(ctx context.Context, opt Options) error {
 		Logs:     logs,
 	})
 	if err := mgr.Recover(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "recover failed: %v\n", err)
+		logger.Warn("process recovery failed", "error", err)
 	}
 	if err := mgr.Reconcile(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "reconcile: %v\n", err)
+		logger.Warn("process reconcile failed", "error", err)
 	}
 
 	gossipListen := opt.GossipListen
@@ -141,6 +149,7 @@ func Run(ctx context.Context, opt Options) error {
 	if err := CheckListen(gossipListen, opt.InsecureListen); err != nil {
 		return err
 	}
+	logInsecureListen(logger, gossipListen, opt.InsecureListen)
 	if opt.RPCListen == "" {
 		opt.RPCListen = cfg.RPC.Listen
 	}
@@ -153,6 +162,7 @@ func Run(ctx context.Context, opt Options) error {
 	if err := CheckListen(opt.RPCListen, opt.InsecureListen); err != nil {
 		return err
 	}
+	logInsecureListen(logger, opt.RPCListen, opt.InsecureListen)
 	if opt.ControlListen == "" {
 		opt.ControlListen = cfg.Control.Listen
 	}
@@ -165,6 +175,7 @@ func Run(ctx context.Context, opt Options) error {
 	if err := CheckListen(opt.ControlListen, opt.InsecureListen); err != nil {
 		return err
 	}
+	logInsecureListen(logger, opt.ControlListen, opt.InsecureListen)
 	bindCtrl, advCtrl, err := resolveControlAddr(opt.ControlListen, opt.ControlAdvertise)
 	if err != nil {
 		return fmt.Errorf("control address: %w", err)
@@ -193,7 +204,7 @@ func Run(ctx context.Context, opt Options) error {
 		// Joiners persist agent.crt without ca.key; skip LoadBundle unless the seed CA key is present.
 		if _, err := os.Stat(filepath.Join(layout.ClusterDir, "ca.key")); err == nil {
 			if _, err := control.LoadBundle(layout.ClusterDir); err != nil {
-				fmt.Fprintf(os.Stderr, "load cluster bundle: %v\n", err)
+				logger.Warn("cluster bundle load failed", "error", err)
 			}
 		}
 	}
@@ -211,9 +222,13 @@ func Run(ctx context.Context, opt Options) error {
 		return fmt.Errorf("start mesh: %w", err)
 	}
 	src.setGossip(mesh.LocalAddr())
+	logger.With("component", "gossip").Info("gossip listening", "address", mesh.LocalAddr())
 	if meta, err := control.LoadMeta(layout.ClusterDir); err == nil && len(meta.GossipSeeds) > 0 {
-		if _, err := mesh.Join(meta.GossipSeeds); err != nil {
-			fmt.Fprintf(os.Stderr, "rejoin gossip: %v\n", err)
+		members, err := mesh.Join(meta.GossipSeeds)
+		if err != nil {
+			logger.Warn("gossip rejoin failed", "error", err)
+		} else {
+			logger.Info("gossip rejoined", "members", members, "seeds", len(meta.GossipSeeds))
 		}
 	}
 
@@ -281,6 +296,7 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		controlBind: opt.ControlListen,
 		controlAdv:  opt.ControlAdvertise,
 		started:     started,
+		logger:      opt.Logger,
 	}
 	if control.AlreadyInited(clusterDeps.Dir) {
 		if err := rt.startRaft(false); err != nil {
@@ -364,6 +380,8 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		return fmt.Errorf("new server: %w", err)
 	}
 
+	opt.Logger.With("component", "http").Info("http listening", "address", apiAddr)
+	opt.Logger.Info("agent started")
 	if opt.OnListen != nil {
 		opt.OnListen(apiAddr)
 	}
@@ -378,11 +396,11 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 					return
 				case <-ticker.C:
 					if err := mgr.Reconcile(ctx); err != nil {
-						fmt.Fprintf(os.Stderr, "reconcile: %v\n", err)
+						opt.Logger.Warn("process reconcile failed", "error", err)
 					}
 					if logs != nil {
 						if _, err := logs.Protect(ctx); err != nil {
-							fmt.Fprintf(os.Stderr, "protect: %v\n", err)
+							opt.Logger.Warn("disk protection failed", "error", err)
 						}
 					}
 					_ = mgr.RotateLogs(ctx)
@@ -405,11 +423,13 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 
 	select {
 	case <-ctx.Done():
+		opt.Logger.Info("agent stopping", "reason", ctx.Err().Error())
 		shutCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shutCtx)
 		rt.shutdown(shutCtx)
 		shutdownMesh(mesh)
+		opt.Logger.Info("agent stopped")
 		return nil
 	case err := <-errCh:
 		shutCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -456,7 +476,6 @@ func CheckListen(addr string, insecure bool) error {
 		if !insecure {
 			return errcode.E(errcode.INVALID, "non-loopback listen requires --insecure-listen")
 		}
-		fmt.Fprintln(os.Stderr, "warning: listening on all interfaces (--insecure-listen)")
 		return nil
 	}
 	ip := net.ParseIP(host)
@@ -467,8 +486,22 @@ func CheckListen(addr string, insecure bool) error {
 	if !insecure {
 		return errcode.E(errcode.INVALID, "non-loopback listen requires --insecure-listen")
 	}
-	fmt.Fprintf(os.Stderr, "warning: insecure listen on %s\n", addr)
 	return nil
+}
+
+func logInsecureListen(logger *slog.Logger, addr string, insecure bool) {
+	if !insecure {
+		return
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return
+	}
+	ip := net.ParseIP(host)
+	if host == "localhost" || (ip != nil && ip.IsLoopback()) {
+		return
+	}
+	logger.Warn("insecure listen", "address", addr)
 }
 
 func lookupUser(name string) error {
