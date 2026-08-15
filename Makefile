@@ -1,4 +1,4 @@
-.PHONY: test proto
+.PHONY: test proto proto-ts web
 test:
 	go test ./...
 proto:
@@ -7,3 +7,5 @@ proto:
 		--connect-go_out=. --connect-go_opt=module=github.com/qleelulu/procmesh \
 		proto/shim/v1/shim.proto \
 		proto/procmesh/v1/api.proto
+proto-ts:
+	@echo "web/ not yet"

@@ -95,6 +95,7 @@ message Instance {
   int32 restart_count = 8;
   int32 exit_code = 9;
   bool has_exit_code = 10;
+  int64 started_unix_ms = 11;
 }
 
 message ProcessView {
@@ -339,6 +340,23 @@ message ClusterOverviewResponse {
   int32 alive = 3;
   bool control_quorum = 4;
   string control_leader = 5;
+  int32 suspect = 6;
+  int32 failed = 7;
+  int32 process_total = 8;
+  int32 process_running = 9;
+  int32 process_unhealthy = 10;
+  int32 process_fatal = 11;
+  int32 cpu_percent = 12;     // ALIVE 成员平均值；无 ALIVE = 0 且 overview_freshness=UNKNOWN
+  int32 memory_percent = 13;
+  int32 disk_percent = 14;
+  bool gossip_healthy = 15;
+  bool rpc_healthy = 16;
+  bool agent_degraded = 17;
+  int64 cert_expires_unix = 18;
+  int64 ca_expires_unix = 19;
+  int64 view_unix_ms = 20;
+  string platform_note = 21;  // 非 linux 必须非空
+  map<string, int32> version_counts = 22;
 }
 
 message RequestJoinRequest {
@@ -390,11 +408,21 @@ message RevokeAPITokenRequest {
 }
 message RevokeAPITokenResponse {}
 
+message GetMeRequest {}
+message GetMeResponse {
+  string user_id = 1;
+  string username = 2;
+  string csrf_token = 3;
+  int64 expires_unix = 4;
+  repeated string permissions = 5;
+}
+
 service AuthService {
   rpc Login(LoginRequest) returns (LoginResponse);
   rpc Logout(LogoutRequest) returns (LogoutResponse);
   rpc CreateAPIToken(CreateAPITokenRequest) returns (CreateAPITokenResponse);
   rpc RevokeAPIToken(RevokeAPITokenRequest) returns (RevokeAPITokenResponse);
+  rpc GetMe(GetMeRequest) returns (GetMeResponse);
 }
 
 message User {
@@ -470,4 +498,67 @@ service RoleService {
   rpc ListRoles(ListRolesRequest) returns (ListRolesResponse);
   rpc CreateRole(CreateRoleRequest) returns (CreateRoleResponse);
   rpc GrantRole(GrantRoleRequest) returns (GrantRoleResponse);
+}
+
+message AuditEvent {
+  string audit_id = 1;
+  int64 timestamp_unix_ms = 2;
+  string user_id = 3;
+  string username = 4;
+  string source_ip = 5;
+  string source_agent = 6;
+  string target_agent = 7;
+  string resource = 8;
+  string action = 9;
+  string operation_id = 10;
+  string result = 11;
+  string metadata_json = 12;
+}
+
+message AuditEntry {
+  AuditEvent event = 1;
+  string source_node = 2;
+  string freshness = 3; // LIVE | STALE | UNKNOWN
+  int64 last_updated_unix_ms = 4;
+}
+
+message ListAuditRequest {
+  string resource = 1;     // 空 = 全部
+  int32 limit = 2;         // 0 = 50；封顶 200
+  string target_node = 3;  // 空 = 聚合；非空 = 只查该 node
+}
+message ListAuditResponse { repeated AuditEntry entries = 1; }
+
+service AuditService {
+  rpc ListAudit(ListAuditRequest) returns (ListAuditResponse);
+}
+
+message GetAgentMetricsRequest {}
+message AgentMetrics {
+  double uptime_seconds = 1;
+  int32 process_running = 2;
+  int32 members = 3;
+  int32 alive = 4;
+  bool control_quorum = 5;
+  ResourceSummary resources = 6;
+}
+message GetAgentMetricsResponse { AgentMetrics metrics = 1; }
+
+message GetProcessMetricsRequest {
+  string id_or_name = 1;
+  string instance_id = 2;
+}
+message ProcessMetrics {
+  string instance_id = 1;
+  int32 pid = 2;
+  int64 uptime_seconds = 3;
+  int32 cpu_percent = 4;   // -1 = unknown
+  int64 memory_bytes = 5;  // -1 = unknown
+  string note = 6;
+}
+message GetProcessMetricsResponse { repeated ProcessMetrics metrics = 1; }
+
+service MetricsService {
+  rpc GetAgentMetrics(GetAgentMetricsRequest) returns (GetAgentMetricsResponse);
+  rpc GetProcessMetrics(GetProcessMetricsRequest) returns (GetProcessMetricsResponse);
 }

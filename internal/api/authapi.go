@@ -84,6 +84,21 @@ func (s *AuthAPI) CreateAPIToken(ctx context.Context, req *connect.Request[procm
 	}), nil
 }
 
+func (s *AuthAPI) GetMe(ctx context.Context, _ *connect.Request[procmeshv1.GetMeRequest]) (*connect.Response[procmeshv1.GetMeResponse], error) {
+	if s.Auth == nil {
+		return nil, unimplemented()
+	}
+	p, ok := PrincipalFrom(ctx)
+	if !ok {
+		return nil, ToConnect(errcode.E(errcode.DENIED, "authentication required"))
+	}
+	return connect.NewResponse(&procmeshv1.GetMeResponse{
+		UserId:    p.UserID,
+		Username:  p.Username,
+		CsrfToken: p.CSRF,
+	}), nil
+}
+
 func (s *AuthAPI) RevokeAPIToken(ctx context.Context, req *connect.Request[procmeshv1.RevokeAPITokenRequest]) (*connect.Response[procmeshv1.RevokeAPITokenResponse], error) {
 	if s.Auth == nil {
 		return nil, unimplemented()

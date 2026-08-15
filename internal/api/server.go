@@ -100,6 +100,10 @@ func NewServer(opts Options) (*Server, error) {
 	mountConnect(engine, up, uh)
 	rp, rh := procmeshv1connect.NewRoleServiceHandler(&RoleAPI{Auth: opts.Auth}, intercept)
 	mountConnect(engine, rp, rh)
+	adp, adh := procmeshv1connect.NewAuditServiceHandler(&AuditAPI{}, intercept)
+	mountConnect(engine, adp, adh)
+	mp, mh := procmeshv1connect.NewMetricsServiceHandler(&MetricsAPI{}, intercept)
+	mountConnect(engine, mp, mh)
 
 	legacy, err := localhttp.NewServerOpts(opts.Mgr, opts.Logs, opts.Addr, opts.Degraded, opts.Ready)
 	if err != nil {
