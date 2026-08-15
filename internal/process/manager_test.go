@@ -610,6 +610,79 @@ func waitFileContains(t *testing.T, path, want string) {
 	t.Fatalf("log %s missing %q, got %q", path, want, last)
 }
 
+func TestNewTestManager_CleanupKillsForgottenShim(t *testing.T) {
+	if testing.Short() {
+		t.Skip("shim")
+	}
+	var childPID, shimPID int
+	t.Run("start_without_killManaged", func(t *testing.T) {
+		ctx := context.Background()
+		m, st, _ := newTestManager(t)
+		spec := process.ProcessSpec{ProcessID: "p1", Name: "sleep", Command: "/bin/sleep", Args: []string{"60"}, Instances: 1}
+		if _, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.SetDesired(ctx, "p1", process.DesiredRunning, "op-s", "t"); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.Reconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
+		inst, err := st.GetInstance(ctx, process.MakeInstanceID("p1", 0))
+		if err != nil || inst.PID <= 0 || inst.ShimPID <= 0 {
+			t.Fatalf("start %+v %v", inst, err)
+		}
+		childPID = inst.PID
+		shimPID = inst.ShimPID
+	})
+	if pidAlive(shimPID) {
+		_ = unix.Kill(shimPID, unix.SIGKILL)
+		t.Fatalf("shim pid %d leaked after newTestManager cleanup", shimPID)
+	}
+	if pidAlive(childPID) {
+		_ = unix.Kill(childPID, unix.SIGKILL)
+		t.Fatalf("child pid %d leaked after newTestManager cleanup", childPID)
+	}
+}
+
+func TestNewTestManager_CleanupKillsScaledDownShim(t *testing.T) {
+	if testing.Short() {
+		t.Skip("shim")
+	}
+	var extraShim int
+	t.Run("scale_down", func(t *testing.T) {
+		ctx := context.Background()
+		m, st, _ := newTestManager(t)
+		spec := process.ProcessSpec{ProcessID: "p1", Name: "sleep", Command: "/bin/sleep", Args: []string{"60"}, Instances: 2}
+		got, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := m.SetDesired(ctx, "p1", process.DesiredRunning, "op-s", "t"); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.Reconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
+		extra, err := st.GetInstance(ctx, process.MakeInstanceID("p1", 1))
+		if err != nil || extra.ShimPID <= 0 {
+			t.Fatalf("extra %+v %v", extra, err)
+		}
+		extraShim = extra.ShimPID
+		spec.Instances = 1
+		if _, err := m.ApplySpec(ctx, spec, got.LatestRevision, "op-scale", "t", ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.Reconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if pidAlive(extraShim) {
+		_ = unix.Kill(extraShim, unix.SIGKILL)
+		t.Fatalf("scaled-down shim pid %d leaked after newTestManager cleanup", extraShim)
+	}
+}
+
 func newTestManager(t *testing.T) (*process.Manager, *store.Store, paths.Layout) {
 	t.Helper()
 	return newTestManagerNow(t, time.Now)
@@ -623,6 +696,7 @@ func newTestManagerNow(t *testing.T, now func() time.Time) (*process.Manager, *s
 	if err := layout.Ensure(); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { killTestLayout(st, layout) })
 	return process.NewManager(process.Deps{Store: st, Layout: layout, ShimBin: testShimBin, Now: now}), st, layout
 }
 

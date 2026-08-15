@@ -6,13 +6,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/qleelulu/procmesh/internal/cli"
-	"golang.org/x/sys/unix"
 )
 
 func TestP1_CLIAgainstLiveAgent(t *testing.T) {
@@ -122,12 +120,12 @@ func startLiveAgent(t *testing.T) string {
 		t.Fatal("agent listen timeout")
 	}
 	t.Cleanup(func() {
-		killListedPIDs(addr)
 		cancel()
 		select {
 		case <-errCh:
 		case <-time.After(5 * time.Second):
 		}
+		cleanupDataDir(root)
 	})
 	return addr
 }
@@ -174,19 +172,4 @@ func listDesiredStopped(out, name string) bool {
 		}
 	}
 	return false
-}
-
-func killListedPIDs(addr string) {
-	_, out, _ := runP1CLI("--server", addr, "process", "list")
-	for _, line := range strings.Split(out, "\n") {
-		fields := strings.Split(line, "\t")
-		if len(fields) < 6 {
-			continue
-		}
-		pid, err := strconv.Atoi(fields[5])
-		if err != nil || pid <= 0 {
-			continue
-		}
-		_ = unix.Kill(pid, unix.SIGKILL)
-	}
 }

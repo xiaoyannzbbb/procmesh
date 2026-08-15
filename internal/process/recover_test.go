@@ -2,6 +2,7 @@ package process_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,19 +65,94 @@ func shortRoot(t *testing.T) string {
 }
 
 func killManaged(t *testing.T, st *store.Store, processID string) {
-	t.Helper()
+	if t != nil {
+		t.Helper()
+	}
+	if st == nil {
+		return
+	}
 	insts, err := st.ListInstances(context.Background(), processID)
 	if err != nil {
 		return
 	}
 	for _, inst := range insts {
-		if inst.PID > 0 {
-			_ = unix.Kill(inst.PID, unix.SIGKILL)
-		}
-		if inst.ShimPID > 0 {
-			_ = unix.Kill(inst.ShimPID, unix.SIGKILL)
+		killPIDs(inst.PID, inst.ShimPID)
+	}
+}
+
+func killTestLayout(st *store.Store, layout paths.Layout) {
+	if st != nil {
+		specs, err := st.ListSpecs(context.Background())
+		if err == nil {
+			for _, spec := range specs {
+				killManaged(nil, st, spec.ProcessID)
+			}
 		}
 	}
+	killRuntimeFiles(layout)
+}
+
+func killRuntimeFiles(layout paths.Layout) {
+	entries, err := os.ReadDir(layout.RuntimeDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(layout.RuntimeDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		var snap struct {
+			PID     int `json:"pid"`
+			ShimPID int `json:"shim_pid"`
+		}
+		if json.Unmarshal(data, &snap) != nil {
+			continue
+		}
+		killPIDs(snap.PID, snap.ShimPID)
+	}
+}
+
+func killPIDs(pid, shimPID int) {
+	self := os.Getpid()
+	killOne := func(p int) {
+		if p <= 1 || p == self {
+			return
+		}
+		_ = unix.Kill(p, unix.SIGKILL)
+	}
+	killOne(pid)
+	killOne(shimPID)
+}
+
+func TestReapTestShims_KillsMatchingBinary(t *testing.T) {
+	dir := shortRoot(t)
+	bin := filepath.Join(dir, "procmesh-shim")
+	data, err := os.ReadFile(testShimBin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bin, data, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sock := filepath.Join(dir, "x.sock")
+	pid, err := shim.Launch(context.Background(), bin, sock, "reap:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reapTestShims(bin)
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if unix.Kill(pid, 0) != nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	_ = unix.Kill(pid, unix.SIGKILL)
+	t.Fatalf("reaper left shim %d", pid)
 }
 
 func TestRecover_LeftoverUnknownSocketLeftAlone(t *testing.T) {

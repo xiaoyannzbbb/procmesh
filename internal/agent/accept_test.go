@@ -154,6 +154,7 @@ func TestCase10_DiskEmergencyNullsNewLogs(t *testing.T) {
 	if lm.WritesAllowed() {
 		t.Fatal("writes should be blocked")
 	}
+	t.Cleanup(func() { cleanupDataDir(root) })
 	m := process.NewManager(process.Deps{Store: st, Layout: layout, ShimBin: testShimBin, Now: time.Now, Logs: lm})
 	spec := process.ProcessSpec{ProcessID: "p1", Name: "echo", Command: "/bin/echo", Args: []string{"hi"}, Instances: 1}
 	if _, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", ""); err != nil {
@@ -171,10 +172,31 @@ func TestCase10_DiskEmergencyNullsNewLogs(t *testing.T) {
 	}
 }
 
+func TestStartSleepAgent_CleanupKillsShimAndChild(t *testing.T) {
+	var child, shim int
+	t.Run("start", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		_, child = startSleepAgent(t, ctx)
+		t.Cleanup(cancel)
+		shim = runtimePID(t, testAgentRoot(t), "p1:0", true)
+		if shim <= 0 {
+			t.Fatal("expected shim pid in runtime file")
+		}
+	})
+	if child > 0 && unix.Kill(child, 0) == nil {
+		_ = unix.Kill(child, unix.SIGKILL)
+		t.Fatalf("child pid %d leaked after startSleepAgent cleanup", child)
+	}
+	if shim > 0 && unix.Kill(shim, 0) == nil {
+		_ = unix.Kill(shim, unix.SIGKILL)
+		t.Fatalf("shim pid %d leaked after startSleepAgent cleanup", shim)
+	}
+}
+
 func TestCase11_CorruptDBDoesNotKillProcess(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
 	base, pid := startSleepAgent(t, ctx)
+	t.Cleanup(cancel)
 	db := filepath.Join(testAgentRoot(t), "store.db")
 	if err := os.WriteFile(db, []byte("not-a-sqlite-file"), 0o600); err != nil {
 		t.Fatal(err)
@@ -201,6 +223,7 @@ func startSleepAgent(t *testing.T, ctx context.Context) (string, int) {
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	agentRoots.Store(t, root)
 	t.Cleanup(func() { agentRoots.Delete(t) })
+	t.Cleanup(func() { cleanupDataDir(root) })
 
 	got := make(chan string, 1)
 	errCh := make(chan error, 1)
@@ -265,6 +288,83 @@ func testAgentRoot(t *testing.T) string {
 		t.Fatal("no agent root")
 	}
 	return v.(string)
+}
+
+func cleanupDataDir(root string) {
+	if root == "" {
+		return
+	}
+	layout := paths.New(root)
+	entries, err := os.ReadDir(layout.RuntimeDir)
+	if err == nil {
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(layout.RuntimeDir, e.Name()))
+			if err != nil {
+				continue
+			}
+			var snap struct {
+				PID     int `json:"pid"`
+				ShimPID int `json:"shim_pid"`
+			}
+			if json.Unmarshal(data, &snap) != nil {
+				continue
+			}
+			killAgentPIDs(snap.PID, snap.ShimPID)
+		}
+	}
+	st, err := store.Open(layout.Store)
+	if err != nil {
+		return
+	}
+	defer func() { _ = st.Close() }()
+	specs, err := st.ListSpecs(context.Background())
+	if err != nil {
+		return
+	}
+	for _, spec := range specs {
+		insts, err := st.ListInstances(context.Background(), spec.ProcessID)
+		if err != nil {
+			continue
+		}
+		for _, inst := range insts {
+			killAgentPIDs(inst.PID, inst.ShimPID)
+		}
+	}
+}
+
+func killAgentPIDs(pid, shimPID int) {
+	self := os.Getpid()
+	killOne := func(p int) {
+		if p <= 1 || p == self {
+			return
+		}
+		_ = unix.Kill(p, unix.SIGKILL)
+	}
+	killOne(pid)
+	killOne(shimPID)
+}
+
+func runtimePID(t *testing.T, root, instanceID string, shim bool) int {
+	t.Helper()
+	name := strings.ReplaceAll(instanceID, ":", "_") + ".json"
+	data, err := os.ReadFile(filepath.Join(root, "runtime", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snap struct {
+		PID     int `json:"pid"`
+		ShimPID int `json:"shim_pid"`
+	}
+	if err := json.Unmarshal(data, &snap); err != nil {
+		t.Fatal(err)
+	}
+	if shim {
+		return snap.ShimPID
+	}
+	return snap.PID
 }
 
 func openStoreAt(t *testing.T, path string) *store.Store {

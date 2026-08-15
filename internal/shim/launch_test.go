@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -36,7 +38,36 @@ func run(m *testing.M) int {
 		return 1
 	}
 	testShimBin = bin
-	return m.Run()
+	code := m.Run()
+	reapTestShims(testShimBin)
+	return code
+}
+
+func reapTestShims(bin string) {
+	if bin == "" {
+		return
+	}
+	out, err := exec.Command("pgrep", "-f", bin).Output()
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		pid, err := strconv.Atoi(line)
+		if err != nil || pid <= 1 || pid == os.Getpid() {
+			continue
+		}
+		if kids, err := exec.Command("pgrep", "-P", strconv.Itoa(pid)).Output(); err == nil {
+			for _, kline := range strings.Split(string(kids), "\n") {
+				kpid, kerr := strconv.Atoi(strings.TrimSpace(kline))
+				if kerr != nil || kpid <= 1 {
+					continue
+				}
+				_ = unix.Kill(kpid, unix.SIGKILL)
+			}
+		}
+		_ = unix.Kill(pid, unix.SIGKILL)
+	}
 }
 
 func TestLaunch_ThenReconnectAfterClientDrop(t *testing.T) {

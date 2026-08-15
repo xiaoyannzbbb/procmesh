@@ -168,6 +168,7 @@ func startClusterAgentAt(t *testing.T, root, bootID string) string {
 		case <-errCh:
 		case <-time.After(5 * time.Second):
 		}
+		cleanupDataDir(root)
 	})
 	return addr
 }

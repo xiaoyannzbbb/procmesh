@@ -17,7 +17,6 @@ import (
 	"github.com/qleelulu/procmesh/internal/paths"
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/store"
-	"golang.org/x/sys/unix"
 )
 
 func TestLookUser_RejectsOtherUserWithoutRoot(t *testing.T) {
@@ -200,7 +199,7 @@ func TestRun_ReconcilesImmediatelyAfterRecover(t *testing.T) {
 	if pid <= 0 {
 		t.Fatalf("Run must Reconcile before ticker, got %+v", listed)
 	}
-	t.Cleanup(func() { _ = unix.Kill(pid, unix.SIGKILL) })
+	t.Cleanup(func() { cleanupDataDir(root) })
 	cancel()
 	select {
 	case err := <-errCh:
