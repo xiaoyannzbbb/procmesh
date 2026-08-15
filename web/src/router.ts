@@ -3,6 +3,9 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from "vue-router"
 import AppShell from "./components/AppShell.vue";
 import { loadSession } from "./lib/session";
 import LoginPage from "./pages/LoginPage.vue";
+import NodeDetailPage from "./pages/NodeDetailPage.vue";
+import NodesPage from "./pages/NodesPage.vue";
+import OverviewPage from "./pages/OverviewPage.vue";
 
 const PlaceholderPage = defineComponent({
   name: "PlaceholderPage",
@@ -17,9 +20,9 @@ const routes: RouteRecordRaw[] = [
     path: "/",
     component: AppShell,
     children: [
-      { path: "", component: PlaceholderPage },
-      { path: "nodes", component: PlaceholderPage },
-      { path: "nodes/:id", component: PlaceholderPage },
+      { path: "", component: OverviewPage },
+      { path: "nodes", component: NodesPage },
+      { path: "nodes/:id", component: NodeDetailPage },
       { path: "processes", component: PlaceholderPage },
       { path: "processes/:idOrName", component: PlaceholderPage },
       { path: "users", component: PlaceholderPage },
