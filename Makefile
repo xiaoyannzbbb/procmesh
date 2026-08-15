@@ -9,3 +9,5 @@ proto:
 		proto/procmesh/v1/api.proto
 proto-ts:
 	@echo "web/ not yet"
+web:
+	cd web && npm ci && npm run build

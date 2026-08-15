@@ -19,6 +19,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/logmgr"
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/store"
+	"github.com/qleelulu/procmesh/internal/web"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
 
@@ -132,6 +133,14 @@ func NewServer(opts Options) (*Server, error) {
 		return nil, err
 	}
 	engine.Any("/v1/*path", gin.WrapH(wrapLegacyV1(legacy.Handler, s.clusterInited, s.blockLegacyMutations)))
+
+	engine.NoRoute(func(c *gin.Context) {
+		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		web.Handler().ServeHTTP(c.Writer, c.Request)
+	})
 
 	return s, nil
 }
