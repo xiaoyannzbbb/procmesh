@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -23,7 +24,8 @@ type Server struct {
 	Engine *gin.Engine
 	HTTP   *http.Server
 
-	opts Options
+	opts            Options
+	rpcForwardTotal *atomic.Uint64
 }
 
 type Options struct {
@@ -49,11 +51,15 @@ func NewServer(opts Options) (*Server, error) {
 		opts.Started = time.Now()
 	}
 
+	rpcForwardTotal := &atomic.Uint64{}
+	opts.Forward = wrapForwarder(opts.Forward, rpcForwardTotal)
+
 	engine := gin.New()
 	s := &Server{
-		Engine: engine,
-		HTTP:   &http.Server{Addr: opts.Addr, Handler: engine},
-		opts:   opts,
+		Engine:          engine,
+		HTTP:            &http.Server{Addr: opts.Addr, Handler: engine},
+		opts:            opts,
+		rpcForwardTotal: rpcForwardTotal,
 	}
 
 	engine.GET("/healthz", s.healthz)
@@ -112,7 +118,17 @@ func (s *Server) readyz(c *gin.Context) {
 
 func (s *Server) metrics(c *gin.Context) {
 	members, alive := clusterMemberCounts(s.opts.Cluster)
-	c.Data(http.StatusOK, prometheusContentType, renderMetrics(time.Since(s.opts.Started).Seconds(), runningInstances(s.opts.Mgr), members, alive))
+	var rpcForward uint64
+	if s.rpcForwardTotal != nil {
+		rpcForward = s.rpcForwardTotal.Load()
+	}
+	c.Data(http.StatusOK, prometheusContentType, renderMetrics(
+		time.Since(s.opts.Started).Seconds(),
+		runningInstances(s.opts.Mgr),
+		members,
+		alive,
+		rpcForward,
+	))
 }
 
 func clusterMemberCounts(d ClusterDeps) (members, alive int) {
