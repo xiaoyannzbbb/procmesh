@@ -492,7 +492,7 @@ func (s *State) Check(userID, perm, targetNodeID string) bool {
 		case ScopeCluster:
 			return true
 		case ScopeAgent:
-			if b.ScopeID == targetNodeID || targetNodeID == "" {
+			if targetNodeID != "" && b.ScopeID == targetNodeID {
 				return true
 			}
 		}

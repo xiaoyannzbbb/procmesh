@@ -3,20 +3,27 @@ package auth
 import "github.com/qleelulu/procmesh/internal/errcode"
 
 func (s *Service) Allow(p Principal, perm, targetNodeID string) error {
-	st := s.Store.View()
-	if !st.Check(p.UserID, perm, targetNodeID) {
+	st, err := s.storeOrErr()
+	if err != nil {
+		return err
+	}
+	view := st.View()
+	if !view.Check(p.UserID, perm, targetNodeID) {
 		return errcode.E(errcode.DENIED, "permission denied")
 	}
 	return nil
 }
 
-func (s *Service) AllowWrite(p Principal, perm, targetNodeID string) error {
-	if isControlPlaneWrite(perm) && !s.Store.HasQuorum() {
+func (s *Service) AllowWrite(p Principal, perm, targetNodeID string, local bool) error {
+	st, err := s.storeOrErr()
+	if err != nil {
+		return err
+	}
+	if isControlPlaneWrite(perm) && !st.HasQuorum() {
 		return errcode.E(errcode.UNAVAILABLE, "control quorum lost")
 	}
-	if isMutation(perm) && !s.Store.HasQuorum() {
-		st := s.Store.View()
-		if !s.Store.CacheFresh(st.Policy.RBACCacheTTL) {
+	if !local && isMutation(perm) && !st.HasQuorum() {
+		if !st.CacheFresh(st.View().Policy.RBACCacheTTL) {
 			return errcode.E(errcode.DENIED, "rbac cache expired")
 		}
 	}

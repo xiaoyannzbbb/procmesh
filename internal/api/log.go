@@ -66,7 +66,7 @@ func (s *LogAPI) TailLogs(ctx context.Context, req *connect.Request[procmeshv1.T
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	if err := requirePerm(ctx, s.Auth, auth.PermProcessLogsRead, hopTarget(local, rt, s.LocalID), false); err != nil {
+	if err := requireRoutePerm(ctx, s.Auth, auth.PermProcessLogsRead, local, rt, s.LocalID, false); err != nil {
 		return nil, err
 	}
 	if !local {
@@ -124,7 +124,7 @@ func (s *LogAPI) StreamLogs(ctx context.Context, req *connect.Request[procmeshv1
 	if err != nil {
 		return ToConnect(err)
 	}
-	if err := requirePerm(ctx, s.Auth, auth.PermProcessLogsRead, hopTarget(local, rt, s.LocalID), false); err != nil {
+	if err := requireRoutePerm(ctx, s.Auth, auth.PermProcessLogsRead, local, rt, s.LocalID, false); err != nil {
 		return err
 	}
 	if !local {
@@ -192,7 +192,7 @@ func (s *LogAPI) DownloadLogs(ctx context.Context, req *connect.Request[procmesh
 	if err != nil {
 		return ToConnect(err)
 	}
-	if err := requirePerm(ctx, s.Auth, auth.PermProcessLogsDownload, hopTarget(local, rt, s.LocalID), false); err != nil {
+	if err := requireRoutePerm(ctx, s.Auth, auth.PermProcessLogsDownload, local, rt, s.LocalID, false); err != nil {
 		return err
 	}
 	if !local {

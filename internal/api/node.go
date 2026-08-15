@@ -23,7 +23,7 @@ type NodeAPI struct {
 }
 
 func (s *NodeAPI) ListNodes(ctx context.Context, _ *connect.Request[procmeshv1.ListNodesRequest]) (*connect.Response[procmeshv1.ListNodesResponse], error) {
-	if err := requirePerm(ctx, s.Auth, auth.PermNodeRead, "", false); err != nil {
+	if err := requirePerm(ctx, s.Auth, auth.PermNodeRead, "", false, true); err != nil {
 		return nil, err
 	}
 	members := s.Deps.members()
@@ -35,7 +35,7 @@ func (s *NodeAPI) ListNodes(ctx context.Context, _ *connect.Request[procmeshv1.L
 }
 
 func (s *NodeAPI) GetNode(ctx context.Context, req *connect.Request[procmeshv1.GetNodeRequest]) (*connect.Response[procmeshv1.GetNodeResponse], error) {
-	if err := requirePerm(ctx, s.Auth, auth.PermNodeRead, "", false); err != nil {
+	if err := requirePerm(ctx, s.Auth, auth.PermNodeRead, "", false, true); err != nil {
 		return nil, err
 	}
 	n, ok := findNode(s.Deps.members(), req.Msg.GetIdOrHostname())
@@ -46,7 +46,7 @@ func (s *NodeAPI) GetNode(ctx context.Context, req *connect.Request[procmeshv1.G
 }
 
 func (s *NodeAPI) CreateJoinToken(ctx context.Context, req *connect.Request[procmeshv1.CreateJoinTokenRequest]) (*connect.Response[procmeshv1.CreateJoinTokenResponse], error) {
-	if err := requirePerm(ctx, s.Auth, auth.PermNodeManage, "", true); err != nil {
+	if err := requirePerm(ctx, s.Auth, auth.PermNodeManage, "", true, true); err != nil {
 		return nil, err
 	}
 	if err := rejectDegraded(s.Degraded); err != nil {
@@ -85,7 +85,7 @@ func (s *NodeAPI) CreateJoinToken(ctx context.Context, req *connect.Request[proc
 }
 
 func (s *NodeAPI) RevokeJoinToken(ctx context.Context, req *connect.Request[procmeshv1.RevokeJoinTokenRequest]) (*connect.Response[procmeshv1.RevokeJoinTokenResponse], error) {
-	if err := requirePerm(ctx, s.Auth, auth.PermNodeManage, "", true); err != nil {
+	if err := requirePerm(ctx, s.Auth, auth.PermNodeManage, "", true, true); err != nil {
 		return nil, err
 	}
 	if err := rejectDegraded(s.Degraded); err != nil {
@@ -114,7 +114,7 @@ func (s *NodeAPI) RevokeJoinToken(ctx context.Context, req *connect.Request[proc
 }
 
 func (s *NodeAPI) RemoveNode(ctx context.Context, req *connect.Request[procmeshv1.RemoveNodeRequest]) (*connect.Response[procmeshv1.RemoveNodeResponse], error) {
-	if err := requirePerm(ctx, s.Auth, auth.PermNodeRemove, req.Msg.GetNodeId(), true); err != nil {
+	if err := requirePerm(ctx, s.Auth, auth.PermNodeRemove, req.Msg.GetNodeId(), true, true); err != nil {
 		return nil, err
 	}
 	if err := rejectDegraded(s.Degraded); err != nil {
@@ -155,7 +155,7 @@ func (s *NodeAPI) RemoveNode(ctx context.Context, req *connect.Request[procmeshv
 }
 
 func (s *NodeAPI) PromoteNode(ctx context.Context, req *connect.Request[procmeshv1.PromoteNodeRequest]) (*connect.Response[procmeshv1.PromoteNodeResponse], error) {
-	if err := requirePerm(ctx, s.Auth, auth.PermClusterManage, req.Msg.GetNodeId(), true); err != nil {
+	if err := requirePerm(ctx, s.Auth, auth.PermClusterManage, req.Msg.GetNodeId(), true, true); err != nil {
 		return nil, err
 	}
 	if err := rejectDegraded(s.Degraded); err != nil {

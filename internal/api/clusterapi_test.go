@@ -485,8 +485,16 @@ func TestJoin_MissingCADoesNotConsumeToken(t *testing.T) {
 		GossipAddress:   "127.0.0.1:7947",
 		CsrPem:          csr,
 	})
-	if _, err := e.cluster.Join(ctx, joinReq); err == nil {
+	_, err = e.cluster.Join(ctx, joinReq)
+	if err == nil {
 		t.Fatal("join without ca.key succeeded")
+	}
+	code, detail := connectDetail(t, err)
+	if code != connect.CodeUnavailable || detail != "UNAVAILABLE" {
+		t.Fatalf("no ca.key code=%v detail=%s err=%v", code, detail, err)
+	}
+	if !strings.Contains(err.Error(), "ca key not available") {
+		t.Fatalf("want ca key not available: %v", err)
 	}
 	if err := os.WriteFile(caKey, saved, 0o600); err != nil {
 		t.Fatal(err)
@@ -494,6 +502,130 @@ func TestJoin_MissingCADoesNotConsumeToken(t *testing.T) {
 	joinReq.Msg.Meta.OperationId = "op-join-retry"
 	if _, err := e.cluster.Join(ctx, joinReq); err != nil {
 		t.Fatalf("same token after restoring ca.key: %v", err)
+	}
+}
+
+func TestJoin_FSMMissingCADoesNotConsumeToken(t *testing.T) {
+	ctx := context.Background()
+	raftNode := startTestRaft(t, "seed")
+	e := newClusterEnvFull(t, clusterEnvCfg{withMesh: true, control: raftNode})
+	e.init(t)
+	tok, err := e.node.CreateJoinToken(ctx, connect.NewRequest(&procmeshv1.CreateJoinTokenRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-tok-fsm-ca", Operator: "t"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	caKey := filepath.Join(e.dir, "ca.key")
+	saved, err := os.ReadFile(caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(caKey); err != nil {
+		t.Fatal(err)
+	}
+	csr, _, err := control.NewCSR("join", "n-fsm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.cluster.Join(ctx, connect.NewRequest(&procmeshv1.JoinClusterRequest{
+		Meta:            &procmeshv1.MutationMeta{OperationId: "op-join-fsm-noca", Operator: "t"},
+		Token:           tok.Msg.GetToken(),
+		NodeId:          "n-fsm",
+		BootId:          "boot-n-fsm",
+		ProtocolVersion: int32(version.Protocol),
+		CsrPem:          csr,
+	}))
+	code, detail := connectDetail(t, err)
+	if code != connect.CodeUnavailable || detail != "UNAVAILABLE" {
+		t.Fatalf("no ca.key code=%v detail=%s err=%v", code, detail, err)
+	}
+	if !strings.Contains(err.Error(), "ca key not available") {
+		t.Fatalf("want ca key not available: %v", err)
+	}
+	if err := os.WriteFile(caKey, saved, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.cluster.Join(ctx, connect.NewRequest(&procmeshv1.JoinClusterRequest{
+		Meta:            &procmeshv1.MutationMeta{OperationId: "op-join-fsm-retry", Operator: "t"},
+		Token:           tok.Msg.GetToken(),
+		NodeId:          "n-fsm",
+		BootId:          "boot-n-fsm",
+		ProtocolVersion: int32(version.Protocol),
+		CsrPem:          csr,
+	})); err != nil {
+		t.Fatalf("same token after restoring ca.key: %v", err)
+	}
+}
+
+func TestJoin_FSMBadCSRDoesNotConsumeToken(t *testing.T) {
+	ctx := context.Background()
+	raftNode := startTestRaft(t, "seed")
+	e := newClusterEnvFull(t, clusterEnvCfg{withMesh: true, control: raftNode})
+	e.init(t)
+	tok, err := e.node.CreateJoinToken(ctx, connect.NewRequest(&procmeshv1.CreateJoinTokenRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-tok-fsm-csr", Operator: "t"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.cluster.Join(ctx, connect.NewRequest(&procmeshv1.JoinClusterRequest{
+		Meta:            &procmeshv1.MutationMeta{OperationId: "op-join-fsm-bad", Operator: "t"},
+		Token:           tok.Msg.GetToken(),
+		NodeId:          "n-bad",
+		BootId:          "boot-n-bad",
+		ProtocolVersion: int32(version.Protocol),
+		CsrPem:          []byte("not-a-csr"),
+	}))
+	code, detail := connectDetail(t, err)
+	if code != connect.CodeInvalidArgument || detail != "INVALID" {
+		t.Fatalf("bad csr code=%v detail=%s err=%v", code, detail, err)
+	}
+	csr, _, err := control.NewCSR("join", "n-bad")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.cluster.Join(ctx, connect.NewRequest(&procmeshv1.JoinClusterRequest{
+		Meta:            &procmeshv1.MutationMeta{OperationId: "op-join-fsm-ok", Operator: "t"},
+		Token:           tok.Msg.GetToken(),
+		NodeId:          "n-bad",
+		BootId:          "boot-n-bad",
+		ProtocolVersion: int32(version.Protocol),
+		CsrPem:          csr,
+	})); err != nil {
+		t.Fatalf("same token after bad csr: %v", err)
+	}
+}
+
+func TestInit_OnReadyBeforeSetClusterID(t *testing.T) {
+	ctx := context.Background()
+	var storeRef *store.Store
+	var called bool
+	e := newClusterEnvReady(t, false, true, func() error {
+		called = true
+		if storeRef == nil {
+			t.Fatal("store not set")
+		}
+		id, err := storeRef.GetClusterID(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if id != "" {
+			t.Fatalf("SetClusterID ran before OnReady: %q", id)
+		}
+		return errors.New("rpc listen failed")
+	})
+	storeRef = e.store
+	got := e.init(t)
+	if !called {
+		t.Fatal("OnReady not called")
+	}
+	if got.GetClusterId() == "" {
+		t.Fatal("init should succeed even if OnReady fails")
+	}
+	id, err := e.store.GetClusterID(ctx)
+	if err != nil || id != got.GetClusterId() {
+		t.Fatalf("cluster id after init=%q err=%v", id, err)
 	}
 }
 

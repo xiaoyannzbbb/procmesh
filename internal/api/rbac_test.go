@@ -44,7 +44,7 @@ func applyAuthCmd(t *testing.T, svc *auth.Service, typ string, body any) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.Store.Apply(cmd, authApplyTimeout); err != nil {
+	if err := svc.Store().Apply(cmd, authApplyTimeout); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -91,6 +91,33 @@ func TestRBAC_ViewerDeniedWrites(t *testing.T) {
 
 	_, err = e.node.CreateJoinToken(ctx, bearerReq(sid, &procmeshv1.CreateJoinTokenRequest{
 		Meta: &procmeshv1.MutationMeta{OperationId: "op-view-tok", Operator: "viewer"},
+	}))
+	assertDenied(t, err)
+}
+
+func TestRBAC_AgentScopeDeniedOnClusterAPI(t *testing.T) {
+	ctx := context.Background()
+	e := newRBACEnv(t)
+	applyAuthCmd(t, e.svc, control.CmdUserPut, control.UserPutBody{
+		ID: "user-agent", Username: "agentop", PasswordHash: testAdminHash(t),
+	})
+	applyAuthCmd(t, e.svc, control.CmdBindPut, control.BindPutBody{
+		UserID: "user-agent", RoleID: "super_admin", Scope: control.ScopeAgent, ScopeID: "node-c",
+	})
+	sid := e.loginAs(t, "agentop", testAdminPass)
+
+	_, err := e.user.CreateUser(ctx, bearerReq(sid, &procmeshv1.CreateUserRequest{
+		Meta:     &procmeshv1.MutationMeta{OperationId: "op-agent-user", Operator: "agentop"},
+		Username: "eve",
+		Password: "eve-pass-ok",
+	}))
+	assertDenied(t, err)
+
+	_, err = e.cluster.Overview(ctx, bearerReq(sid, &procmeshv1.ClusterOverviewRequest{}))
+	assertDenied(t, err)
+
+	_, err = e.node.CreateJoinToken(ctx, bearerReq(sid, &procmeshv1.CreateJoinTokenRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-agent-tok", Operator: "agentop"},
 	}))
 	assertDenied(t, err)
 }

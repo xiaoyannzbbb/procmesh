@@ -136,7 +136,7 @@ func (r *rpcRuntime) startRaft(bootstrap bool) error {
 		}
 		r.node = n
 		if r.auth != nil {
-			r.auth.Store = n
+			r.auth.SetStore(n)
 		}
 		adv := n.Advertise()
 		onListen := r.opt.OnControlListen

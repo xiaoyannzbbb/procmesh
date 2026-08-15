@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/auth"
@@ -66,9 +65,7 @@ func stampIdentity(h http.Header, ctx context.Context) {
 		}
 	}
 	rpc.CopyIdentity(h, src)
-	if b := bearerToken(h); strings.HasPrefix(b, "pmt_") {
-		h.Del("Authorization")
-	}
+	h.Del("Authorization")
 }
 
 func mapForwardErr(err error) error {
@@ -100,7 +97,7 @@ func (s *ProcessAPI) ListProcesses(ctx context.Context, req *connect.Request[pro
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	if err := requirePerm(ctx, s.Auth, auth.PermProcessRead, hopTarget(local, rt, s.LocalID), false); err != nil {
+	if err := requireRoutePerm(ctx, s.Auth, auth.PermProcessRead, local, rt, s.LocalID, false); err != nil {
 		return nil, err
 	}
 	if !local {
@@ -139,7 +136,7 @@ func (s *ProcessAPI) GetProcess(ctx context.Context, req *connect.Request[procme
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	if err := requirePerm(ctx, s.Auth, auth.PermProcessRead, hopTarget(local, rt, s.LocalID), false); err != nil {
+	if err := requireRoutePerm(ctx, s.Auth, auth.PermProcessRead, local, rt, s.LocalID, false); err != nil {
 		return nil, err
 	}
 	if !local {
@@ -177,7 +174,7 @@ func (s *ProcessAPI) ApplyProcess(ctx context.Context, req *connect.Request[proc
 	if req.Msg.GetExpectedRevision() != 0 || s.processExists(ctx, idOrName) {
 		perm = auth.PermProcessUpdate
 	}
-	if err := requirePerm(ctx, s.Auth, perm, hopTarget(local, rt, s.LocalID), true); err != nil {
+	if err := requireRoutePerm(ctx, s.Auth, perm, local, rt, s.LocalID, true); err != nil {
 		return nil, err
 	}
 	if !local {
@@ -234,7 +231,7 @@ func (s *ProcessAPI) DeleteProcess(ctx context.Context, req *connect.Request[pro
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	if err := requirePerm(ctx, s.Auth, auth.PermProcessDelete, hopTarget(local, rt, s.LocalID), true); err != nil {
+	if err := requireRoutePerm(ctx, s.Auth, auth.PermProcessDelete, local, rt, s.LocalID, true); err != nil {
 		return nil, err
 	}
 	if !local {
@@ -326,7 +323,7 @@ func (s *ProcessAPI) AdoptInstance(ctx context.Context, req *connect.Request[pro
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	if err := requirePerm(ctx, s.Auth, auth.PermProcessUpdate, hopTarget(local, rt, s.LocalID), true); err != nil {
+	if err := requireRoutePerm(ctx, s.Auth, auth.PermProcessUpdate, local, rt, s.LocalID, true); err != nil {
 		return nil, err
 	}
 	if !local {
@@ -376,7 +373,7 @@ func (s *ProcessAPI) mutateRef(ctx context.Context, req *connect.Request[procmes
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	if err := requirePerm(ctx, s.Auth, perm, hopTarget(local, rt, s.LocalID), true); err != nil {
+	if err := requireRoutePerm(ctx, s.Auth, perm, local, rt, s.LocalID, true); err != nil {
 		return nil, err
 	}
 	if !local {

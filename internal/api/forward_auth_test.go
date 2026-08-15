@@ -109,8 +109,55 @@ func TestForward_SetsTokenIDHeader(t *testing.T) {
 	if rpc.SessionIDOf(h) != "" {
 		t.Fatalf("session=%q", rpc.SessionIDOf(h))
 	}
-	if auth := h.Get("Authorization"); strings.Contains(auth, "pmt_") || strings.Contains(auth, plain) {
-		t.Fatalf("plaintext leaked in Authorization: %q", auth)
+	if auth := h.Get("Authorization"); auth != "" {
+		t.Fatalf("hop must not carry Authorization: %q", auth)
+	}
+	if strings.Contains(rpc.TokenIDOf(h), "pmt_") || strings.Contains(rpc.TokenIDOf(h), plain) {
+		t.Fatalf("plaintext leaked in token header: %q", rpc.TokenIDOf(h))
+	}
+}
+
+func TestForward_StripsSessionAuthorization(t *testing.T) {
+	ctx := context.Background()
+	m, _, _ := newTestManager(t)
+	svc := newTestAuthService(t)
+	sid, _, _, _, err := svc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fakeCli := &fakeProcessClient{
+		restartResp: connect.NewResponse(&procmeshv1.ProcessRefResponse{
+			Process: &procmeshv1.ProcessView{
+				ProcessId: "nginx-1",
+				Spec:      &procmeshv1.ProcessSpec{Name: "nginx"},
+			},
+		}),
+	}
+	fwd := &fakeForwarder{proc: fakeCli}
+	c := serveProcessAPI(t, &ProcessAPI{
+		Mgr:     m,
+		Auth:    svc,
+		LocalID: "aaa",
+		Router:  remoteOwnerRouter("aaa", "ccc", "nginx"),
+		Forward: fwd,
+	}, AuthInterceptor(svc, func() bool { return true }))
+
+	if _, err := c.RestartProcess(ctx, bearerReq(sid, &procmeshv1.ProcessRefRequest{
+		Meta:     &procmeshv1.MutationMeta{OperationId: "op-fwd-pms", Operator: "admin"},
+		IdOrName: "nginx",
+	})); err != nil {
+		t.Fatal(err)
+	}
+	restarts := fakeCli.restartReqs()
+	if len(restarts) != 1 {
+		t.Fatalf("RestartProcess calls=%d", len(restarts))
+	}
+	h := restarts[0].Header()
+	if auth := h.Get("Authorization"); auth != "" {
+		t.Fatalf("session hop must not carry Authorization: %q", auth)
+	}
+	if rpc.SessionIDOf(h) != sid {
+		t.Fatalf("session=%q want %q", rpc.SessionIDOf(h), sid)
 	}
 }
 

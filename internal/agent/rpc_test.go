@@ -52,6 +52,6 @@ func testForwarder(t *testing.T) *agentForwarder {
 		CACertPEM:    b.CACertPEM,
 		AgentCertPEM: b.AgentCertPEM,
 		AgentKeyPEM:  b.AgentKeyPEM,
-	}, "cid")
+	}, "cid", nil)
 	return f
 }

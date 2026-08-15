@@ -86,7 +86,9 @@ func newBootstrappedAuth(t *testing.T) (*memAuthStore, *auth.Service) {
 		t.Fatal(err)
 	}
 	mem := &memAuthStore{state: st, now: func() time.Time { return now }, quorum: true, fresh: true}
-	return mem, &auth.Service{Store: mem, Now: func() time.Time { return now }}
+	svc := &auth.Service{Now: func() time.Time { return now }}
+	svc.SetStore(mem)
+	return mem, svc
 }
 
 type authnEnv struct {

@@ -61,7 +61,7 @@ func (s *AuthAPI) CreateAPIToken(ctx context.Context, req *connect.Request[procm
 	if s.Auth == nil {
 		return nil, unimplemented()
 	}
-	if err := requirePerm(ctx, s.Auth, auth.PermUserUpdate, "", true); err != nil {
+	if err := requirePerm(ctx, s.Auth, auth.PermUserUpdate, "", true, true); err != nil {
 		return nil, err
 	}
 	p, ok := PrincipalFrom(ctx)
@@ -88,7 +88,7 @@ func (s *AuthAPI) RevokeAPIToken(ctx context.Context, req *connect.Request[procm
 	if s.Auth == nil {
 		return nil, unimplemented()
 	}
-	if err := requirePerm(ctx, s.Auth, auth.PermUserUpdate, "", true); err != nil {
+	if err := requirePerm(ctx, s.Auth, auth.PermUserUpdate, "", true, true); err != nil {
 		return nil, err
 	}
 	if _, ok := PrincipalFrom(ctx); !ok {

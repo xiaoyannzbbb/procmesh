@@ -90,7 +90,7 @@ func credsOf(b control.Bundle) control.AgentCreds {
 
 func mustClientTLS(t *testing.T, b control.Bundle, clusterID, expectNodeID string) *tls.Config {
 	t.Helper()
-	cfg, err := rpc.ClientTLS(credsOf(b), clusterID, expectNodeID)
+	cfg, err := rpc.ClientTLS(credsOf(b), clusterID, expectNodeID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

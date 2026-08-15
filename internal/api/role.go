@@ -23,10 +23,10 @@ func (s *RoleAPI) ListRoles(ctx context.Context, _ *connect.Request[procmeshv1.L
 	if err := requireAuthConfigured(s.Auth); err != nil {
 		return nil, err
 	}
-	if err := requirePerm(ctx, s.Auth, auth.PermRoleRead, "", false); err != nil {
+	if err := requirePerm(ctx, s.Auth, auth.PermRoleRead, "", false, true); err != nil {
 		return nil, err
 	}
-	st := s.Auth.Store.View()
+	st := s.Auth.Store().View()
 	ids := make([]string, 0, len(st.Roles))
 	for id := range st.Roles {
 		ids = append(ids, id)
@@ -49,7 +49,7 @@ func (s *RoleAPI) CreateRole(ctx context.Context, req *connect.Request[procmeshv
 	if err := requireAuthConfigured(s.Auth); err != nil {
 		return nil, err
 	}
-	if err := requirePerm(ctx, s.Auth, auth.PermRoleManage, "", true); err != nil {
+	if err := requirePerm(ctx, s.Auth, auth.PermRoleManage, "", true, true); err != nil {
 		return nil, err
 	}
 	if _, _, err := metaOf(req.Msg.GetMeta()); err != nil {
@@ -76,7 +76,7 @@ func (s *RoleAPI) CreateRole(ctx context.Context, req *connect.Request[procmeshv
 	}); err != nil {
 		return nil, err
 	}
-	role, ok := s.Auth.Store.View().Roles[id]
+	role, ok := s.Auth.Store().View().Roles[id]
 	if !ok {
 		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "role not found after create"))
 	}
@@ -87,7 +87,7 @@ func (s *RoleAPI) GrantRole(ctx context.Context, req *connect.Request[procmeshv1
 	if err := requireAuthConfigured(s.Auth); err != nil {
 		return nil, err
 	}
-	if err := requirePerm(ctx, s.Auth, auth.PermRoleManage, "", true); err != nil {
+	if err := requirePerm(ctx, s.Auth, auth.PermRoleManage, "", true, true); err != nil {
 		return nil, err
 	}
 	if _, _, err := metaOf(req.Msg.GetMeta()); err != nil {
@@ -102,7 +102,7 @@ func (s *RoleAPI) GrantRole(ctx context.Context, req *connect.Request[procmeshv1
 	if err != nil {
 		return nil, err
 	}
-	st := s.Auth.Store.View()
+	st := s.Auth.Store().View()
 	if _, ok := userFromState(st, userID); !ok {
 		return nil, ToConnect(errcode.E(errcode.NOT_FOUND, "user not found"))
 	}

@@ -26,6 +26,9 @@ const (
 	snapRetain   = 3
 	membershipTO = 10 * time.Second
 	notLeaderMsg = "not raft leader"
+	// QuorumContactProd is a short heartbeat window, separate from DefaultRBACCacheTTL.
+	QuorumContactProd = 10 * time.Second
+	QuorumContactTest = 2 * time.Second
 )
 
 type RaftConfig struct {
@@ -37,11 +40,12 @@ type RaftConfig struct {
 }
 
 type Node struct {
-	raft      *raft.Raft
-	fsm       *FSM
-	advertise string
-	id        string
-	clusterID string
+	raft          *raft.Raft
+	fsm           *FSM
+	advertise     string
+	id            string
+	clusterID     string
+	quorumContact time.Duration
 
 	closers   []io.Closer
 	closeOnce sync.Once
@@ -99,12 +103,13 @@ func Start(cfg RaftConfig) (*Node, error) {
 	}
 
 	return &Node{
-		raft:      r,
-		fsm:       fsm,
-		advertise: adv,
-		id:        cfg.NodeID,
-		clusterID: cfg.ClusterID,
-		closers:   []io.Closer{trans, snaps, store},
+		raft:          r,
+		fsm:           fsm,
+		advertise:     adv,
+		id:            cfg.NodeID,
+		clusterID:     cfg.ClusterID,
+		quorumContact: QuorumContactProd,
+		closers:       []io.Closer{trans, snaps, store},
 	}, nil
 }
 
@@ -127,10 +132,11 @@ func StartInmem(nodeID string, fsm *FSM, trans raft.Transport) (*Node, error) {
 		return nil, err
 	}
 	return &Node{
-		raft:      r,
-		fsm:       fsm,
-		advertise: string(trans.LocalAddr()),
-		id:        nodeID,
+		raft:          r,
+		fsm:           fsm,
+		advertise:     string(trans.LocalAddr()),
+		id:            nodeID,
+		quorumContact: QuorumContactTest,
 	}, nil
 }
 
@@ -172,7 +178,18 @@ func (n *Node) HasQuorum() bool {
 	if n.IsLeader() {
 		return n.raft.VerifyLeader().Error() == nil
 	}
-	return n.LeaderAddr() != ""
+	if n.LeaderAddr() == "" {
+		return false
+	}
+	last := n.LastContact()
+	if last.IsZero() {
+		return false
+	}
+	window := n.quorumContact
+	if window <= 0 {
+		window = QuorumContactProd
+	}
+	return time.Since(last) < window
 }
 
 func (n *Node) IsLeader() bool {

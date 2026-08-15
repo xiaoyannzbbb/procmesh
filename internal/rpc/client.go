@@ -23,6 +23,7 @@ type DialConfig struct {
 	ExpectNodeID string
 	Address      string
 	Timeout      time.Duration
+	Revoked      func(serial string) bool
 }
 
 // Dial builds an mTLS HTTP client and https base URL for the given address.
@@ -30,7 +31,7 @@ type DialConfig struct {
 // Timeout 0 means no client-wide timeout (context cancellation still applies).
 // Unary hops should set UnaryTimeout or MutationTimeout; Stream/Download must use 0.
 func Dial(cfg DialConfig) (*http.Client, string, error) {
-	tlsCfg, err := ClientTLS(cfg.Creds, cfg.ClusterID, cfg.ExpectNodeID)
+	tlsCfg, err := ClientTLS(cfg.Creds, cfg.ClusterID, cfg.ExpectNodeID, cfg.Revoked)
 	if err != nil {
 		return nil, "", err
 	}

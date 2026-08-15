@@ -150,8 +150,9 @@ func TestServer_LegacyMutationRejectedWhenClusterInited(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertLegacyMutationRejected(t, srv)
-	assertLegacyGETAllowed(t, srv)
+	assertLegacyV1Denied(t, srv, http.MethodPost, "/v1/processes")
+	assertLegacyV1Denied(t, srv, http.MethodGet, "/v1/processes")
+	assertLegacyV1Denied(t, srv, http.MethodGet, "/v1/instances/x")
 }
 
 func TestServer_LegacyMutationAllowedWhenRouterWiredUnclustered(t *testing.T) {
@@ -200,6 +201,27 @@ func assertLegacyGETAllowed(t *testing.T, srv *Server) {
 	srv.Engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/processes", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /v1/processes %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func assertLegacyV1Denied(t *testing.T, srv *Server, method, path string) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	var body *strings.Reader
+	if method != http.MethodGet && method != http.MethodHead {
+		body = strings.NewReader(`{"operation_id":"op-c","operator":"t","expected_revision":0,"spec":{"process_id":"p1","name":"true","command":"/bin/true","instances":1}}`)
+		srv.Engine.ServeHTTP(rec, httptest.NewRequest(method, path, body))
+	} else {
+		srv.Engine.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("%s %s %d %s", method, path, rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "DENIED") {
+		t.Fatalf("missing DENIED: %q", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "use connect rpc") {
+		t.Fatalf("body %q", rec.Body.String())
 	}
 }
 

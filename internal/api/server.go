@@ -105,16 +105,28 @@ func NewServer(opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	engine.Any("/v1/*path", gin.WrapH(wrapLegacyV1(legacy.Handler, s.blockLegacyMutations)))
+	engine.Any("/v1/*path", gin.WrapH(wrapLegacyV1(legacy.Handler, s.clusterInited, s.blockLegacyMutations)))
 
 	return s, nil
 }
 
-const legacyMutationMsg = "use connect rpc for remote mutations"
+const (
+	legacyMutationMsg = "use connect rpc for remote mutations"
+	legacyDeniedMsg   = "use connect rpc"
+)
 
-func wrapLegacyV1(next http.Handler, block func() bool) http.Handler {
+func wrapLegacyV1(next http.Handler, inited, blockMutations func() bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if block() && isLegacyProcessMutation(r) {
+		if inited != nil && inited() {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(localhttp.APIError{
+				Code:    string(errcode.DENIED),
+				Message: legacyDeniedMsg,
+			})
+			return
+		}
+		if blockMutations != nil && blockMutations() && isLegacyProcessMutation(r) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_ = json.NewEncoder(w).Encode(localhttp.APIError{
@@ -203,8 +215,10 @@ func (s *Server) controlQuorum() int {
 	if n := s.opts.Cluster.controlNode(); n != nil && n.HasQuorum() {
 		return 1
 	}
-	if s.opts.Auth != nil && s.opts.Auth.Store != nil && s.opts.Auth.Store.HasQuorum() {
-		return 1
+	if s.opts.Auth != nil {
+		if st := s.opts.Auth.Store(); st != nil && st.HasQuorum() {
+			return 1
+		}
 	}
 	return 0
 }

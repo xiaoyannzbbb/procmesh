@@ -35,7 +35,7 @@ func ServerTLS(creds control.AgentCreds, clusterID string, revoked func(serial s
 // ClientTLS builds a client-side mTLS config.
 // InsecureSkipVerify is required because Agent certs have URI SAN only (no DNS SAN);
 // VerifyPeerCertificate performs CA + identity checks instead.
-func ClientTLS(creds control.AgentCreds, clusterID, expectNodeID string) (*tls.Config, error) {
+func ClientTLS(creds control.AgentCreds, clusterID, expectNodeID string, revoked func(serial string) bool) (*tls.Config, error) {
 	cert, pool, err := loadCreds(creds)
 	if err != nil {
 		return nil, err
@@ -46,7 +46,7 @@ func ClientTLS(creds control.AgentCreds, clusterID, expectNodeID string) (*tls.C
 		InsecureSkipVerify: true, //nolint:gosec // hostname N/A; VerifyPeerCertificate enforces identity
 		MinVersion:         tls.VersionTLS12,
 		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-			return verifyPeer(rawCerts, pool, clusterID, expectNodeID, nil)
+			return verifyPeer(rawCerts, pool, clusterID, expectNodeID, revoked)
 		},
 	}, nil
 }

@@ -110,6 +110,15 @@ func TestP4_Case8_RemoveThenRejoinDenied(t *testing.T) {
 		t.Fatalf("node remove exit=%d stderr=%q stdout=%q", code, errb, out)
 	}
 
+	code, out, errb = runP1CLI("--server", addrA, "--node", idB, "process", "restart", "sleep")
+	if code == 0 {
+		t.Fatalf("restart --node removed must not hop, stdout=%q", out)
+	}
+	blob := errb + out
+	if !strings.Contains(blob, "UNAVAILABLE") {
+		t.Fatalf("removed node hop want UNAVAILABLE, stdout=%q stderr=%q", out, errb)
+	}
+
 	token := createJoinToken(t, addrA)
 
 	// B 仍在 gossip 时，用同一 node_id、新 boot 再加入必须 DENIED，不能先撞 DUPLICATE_NODE_ID。
@@ -133,7 +142,7 @@ func TestP4_Case8_RemoveThenRejoinDenied(t *testing.T) {
 	code, out, errb = runP1CLI("--server", addrB, "agent", "join", "--seed", addrA, "--token", token2)
 	assertRejoinDenied(t, code, out, errb)
 
-	tlsCfg, err := rpc.ClientTLS(credsB, clusterID, idA)
+	tlsCfg, err := rpc.ClientTLS(credsB, clusterID, idA, nil)
 	if err != nil {
 		t.Fatalf("client tls: %v", err)
 	}

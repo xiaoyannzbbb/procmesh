@@ -53,7 +53,7 @@ func (s *ConfigAPI) GetConfig(ctx context.Context, req *connect.Request[procmesh
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	if err := requirePerm(ctx, s.Auth, auth.PermProcessConfigRead, hopTarget(local, rt, s.LocalID), false); err != nil {
+	if err := requireRoutePerm(ctx, s.Auth, auth.PermProcessConfigRead, local, rt, s.LocalID, false); err != nil {
 		return nil, err
 	}
 	if !local {
@@ -82,7 +82,7 @@ func (s *ConfigAPI) UpdateConfig(ctx context.Context, req *connect.Request[procm
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	if err := requirePerm(ctx, s.Auth, auth.PermProcessConfigUpdate, hopTarget(local, rt, s.LocalID), true); err != nil {
+	if err := requireRoutePerm(ctx, s.Auth, auth.PermProcessConfigUpdate, local, rt, s.LocalID, true); err != nil {
 		return nil, err
 	}
 	if !local {
@@ -124,7 +124,7 @@ func (s *ConfigAPI) History(ctx context.Context, req *connect.Request[procmeshv1
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	if err := requirePerm(ctx, s.Auth, auth.PermProcessConfigRead, hopTarget(local, rt, s.LocalID), false); err != nil {
+	if err := requireRoutePerm(ctx, s.Auth, auth.PermProcessConfigRead, local, rt, s.LocalID, false); err != nil {
 		return nil, err
 	}
 	if !local {
@@ -167,7 +167,7 @@ func (s *ConfigAPI) Diff(ctx context.Context, req *connect.Request[procmeshv1.Di
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	if err := requirePerm(ctx, s.Auth, auth.PermProcessConfigRead, hopTarget(local, rt, s.LocalID), false); err != nil {
+	if err := requireRoutePerm(ctx, s.Auth, auth.PermProcessConfigRead, local, rt, s.LocalID, false); err != nil {
 		return nil, err
 	}
 	if !local {
@@ -207,7 +207,7 @@ func (s *ConfigAPI) Rollback(ctx context.Context, req *connect.Request[procmeshv
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	if err := requirePerm(ctx, s.Auth, auth.PermProcessConfigUpdate, hopTarget(local, rt, s.LocalID), true); err != nil {
+	if err := requireRoutePerm(ctx, s.Auth, auth.PermProcessConfigUpdate, local, rt, s.LocalID, true); err != nil {
 		return nil, err
 	}
 	if !local {

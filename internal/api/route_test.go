@@ -184,6 +184,46 @@ func TestRouter_RemoteSameHostnameAsLocalHostStillChecked(t *testing.T) {
 	}
 }
 
+func TestRouter_RevokedGossipUnavailable(t *testing.T) {
+	for _, st := range []cluster.State{cluster.StateRevoked, cluster.StateRemoved} {
+		r := Router{
+			LocalID: "aaa",
+			Members: func() []cluster.NodeSummary {
+				return []cluster.NodeSummary{{
+					NodeID: "ccc", State: st, RPCAddress: "127.0.0.1:9003",
+					ProtocolVersion: version.Protocol,
+				}}
+			},
+		}
+		_, err := r.Resolve(context.Background(), "ccc", "", "")
+		if !errcode.Is(err, errcode.UNAVAILABLE) {
+			t.Fatalf("state=%s err=%v", st, err)
+		}
+	}
+}
+
+func TestRouter_ControlRevokedUnavailable(t *testing.T) {
+	r := Router{
+		LocalID: "aaa",
+		Members: func() []cluster.NodeSummary {
+			return []cluster.NodeSummary{{
+				NodeID: "ccc", State: cluster.StateAlive, RPCAddress: "127.0.0.1:9003",
+				ProtocolVersion: version.Protocol,
+			}}
+		},
+		ControlStatus: func(nodeID string) (string, bool) {
+			if nodeID == "ccc" {
+				return "REVOKED", true
+			}
+			return "", false
+		},
+	}
+	_, err := r.Resolve(context.Background(), "ccc", "", "")
+	if !errcode.Is(err, errcode.UNAVAILABLE) {
+		t.Fatalf("%v", err)
+	}
+}
+
 func TestRouter_GossipFailedOwnerUnavailable(t *testing.T) {
 	r := Router{
 		LocalID: "aaa",

@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/qleelulu/procmesh/internal/control"
@@ -34,10 +35,38 @@ type Store interface {
 	CacheFresh(ttl time.Duration) bool
 }
 
+type storeBox struct{ s Store }
+
 type Service struct {
-	Store Store
-	Now   Clock // nil → time.Now
+	store atomic.Value // storeBox
+	Now   Clock        // nil → time.Now
 	limit loginLimiter
+}
+
+func (s *Service) Store() Store {
+	if s == nil {
+		return nil
+	}
+	v := s.store.Load()
+	if v == nil {
+		return nil
+	}
+	return v.(storeBox).s
+}
+
+func (s *Service) SetStore(st Store) {
+	if s == nil {
+		return
+	}
+	s.store.Store(storeBox{s: st})
+}
+
+func (s *Service) storeOrErr() (Store, error) {
+	st := s.Store()
+	if st == nil {
+		return nil, errcode.E(errcode.UNAVAILABLE, "auth store not ready")
+	}
+	return st, nil
 }
 
 func (s *Service) now() time.Time {
@@ -63,7 +92,11 @@ func (s *Service) Login(username, password string) (sessionID, csrf, userID stri
 		return "", "", "", time.Time{}, errcode.E(errcode.DENIED, "login rate limited")
 	}
 
-	st := s.Store.View()
+	stStore, err := s.storeOrErr()
+	if err != nil {
+		return "", "", "", time.Time{}, err
+	}
+	st := stStore.View()
 	u, ok := st.Users[username]
 	if !ok || !control.VerifyPassword(u.PasswordHash, password) {
 		if ok {
@@ -159,7 +192,11 @@ func (s *Service) RevokeAPIToken(tokenID string) error {
 }
 
 func (s *Service) sessionPrincipal(sessionID string) (Principal, error) {
-	st := s.Store.View()
+	stStore, err := s.storeOrErr()
+	if err != nil {
+		return Principal{}, err
+	}
+	st := stStore.View()
 	sess, ok := st.SessionByID(sessionID)
 	if !ok {
 		return Principal{}, errcode.E(errcode.DENIED, "invalid session")
@@ -183,7 +220,11 @@ func (s *Service) AuthenticateTokenID(tokenID string) (Principal, error) {
 	if tokenID == "" {
 		return Principal{}, errcode.E(errcode.DENIED, "invalid token")
 	}
-	st := s.Store.View()
+	stStore, err := s.storeOrErr()
+	if err != nil {
+		return Principal{}, err
+	}
+	st := stStore.View()
 	tok, ok := st.APITokens[tokenID]
 	if !ok {
 		return Principal{}, errcode.E(errcode.DENIED, "invalid token")
@@ -192,7 +233,11 @@ func (s *Service) AuthenticateTokenID(tokenID string) (Principal, error) {
 }
 
 func (s *Service) tokenPrincipal(plain string) (Principal, error) {
-	st := s.Store.View()
+	stStore, err := s.storeOrErr()
+	if err != nil {
+		return Principal{}, err
+	}
+	st := stStore.View()
 	tok, ok := st.TokenByPlain(plain)
 	if !ok {
 		return Principal{}, errcode.E(errcode.DENIED, "invalid token")
@@ -223,7 +268,11 @@ func (s *Service) apply(typ string, body any) error {
 	if err != nil {
 		return err
 	}
-	return s.Store.Apply(cmd, applyTimeout)
+	st, err := s.storeOrErr()
+	if err != nil {
+		return err
+	}
+	return st.Apply(cmd, applyTimeout)
 }
 
 func userByID(st control.State, id string) (control.User, bool) {

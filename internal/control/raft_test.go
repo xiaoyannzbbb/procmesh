@@ -161,6 +161,54 @@ func TestRaft_FollowerApplyRejected(t *testing.T) {
 	}
 }
 
+func TestRaft_HasQuorumFalseAfterVoterDown(t *testing.T) {
+	addr0, trans0 := raft.NewInmemTransport("")
+	addr1, trans1 := raft.NewInmemTransport("")
+	trans0.Connect(addr1, trans1)
+	trans1.Connect(addr0, trans0)
+
+	voter, err := control.StartInmem("voter", control.NewFSM(), trans0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = voter.Shutdown() })
+	nv, err := control.StartInmem("nv-1", control.NewFSM(), trans1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = nv.Shutdown() })
+
+	if err := voter.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	waitLeader(t, []*control.Node{voter}, 10*time.Second)
+	if err := voter.AddNonvoter("nv-1", string(addr1)); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for !nv.HasQuorum() || nv.LeaderAddr() == "" {
+		if time.Now().After(deadline) {
+			t.Fatalf("nonvoter never saw quorum leader=%q has=%v", nv.LeaderAddr(), nv.HasQuorum())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if err := voter.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(10 * time.Second)
+	for nv.HasQuorum() {
+		if time.Now().After(deadline) {
+			t.Fatal("HasQuorum()==true after voter down")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if nv.HasQuorum() {
+		t.Fatal("remaining nonvoter must not report quorum")
+	}
+}
+
 func TestRaft_CacheFreshAfterPartition(t *testing.T) {
 	dir := t.TempDir()
 	n, err := control.Start(control.RaftConfig{

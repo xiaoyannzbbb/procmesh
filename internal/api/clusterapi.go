@@ -35,7 +35,7 @@ type ClusterDeps struct {
 	BootID        string
 	APIAddr       string
 	HTTPClient    *http.Client
-	OnReady       func() error // called after Init/RequestJoin persist certs; failure is logged only
+	OnReady       func() error // called after Init/RequestJoin persist certs and before SetClusterID; failure is logged, Store must be attached
 	Control       *control.Node
 	ControlFn     func() *control.Node                // 晚绑定；优先于 Control
 	OnAdmit       func(nodeID, raftAddr string) error // leader AddNonvoter；nil 忽略
@@ -82,12 +82,14 @@ func (s *ClusterAPI) Init(ctx context.Context, req *connect.Request[procmeshv1.I
 	if err != nil {
 		return nil, ToConnect(err)
 	}
+	if err := s.callOnReady(); err != nil {
+		fmt.Fprintf(os.Stderr, "cluster ready: %v\n", err)
+	}
 	if s.Deps.Store != nil {
 		if err := s.Deps.Store.SetClusterID(ctx, result.ClusterID); err != nil {
 			return nil, ToConnect(err)
 		}
 	}
-	s.callOnReady()
 	return connect.NewResponse(&procmeshv1.InitClusterResponse{
 		ClusterId:     result.ClusterID,
 		NodeId:        result.NodeID,
@@ -131,17 +133,19 @@ func (s *ClusterAPI) Join(ctx context.Context, req *connect.Request[procmeshv1.J
 	if err != nil {
 		return nil, ToConnect(err)
 	}
+	if err := requireCAKey(s.Deps.Dir); err != nil {
+		return nil, err
+	}
 	bundle, err := control.LoadBundle(s.Deps.Dir)
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	var certPEM []byte
+	certPEM, err := control.SignCSR(bundle.CACertPEM, bundle.CAKeyPEM, req.Msg.GetCsrPem(), meta.ClusterID, req.Msg.GetNodeId(), now)
+	if err != nil {
+		return nil, ToConnect(err)
+	}
 	if adm != nil {
 		if err := adm.ConsumeToken(req.Msg.GetToken(), now); err != nil {
-			return nil, ToConnect(err)
-		}
-		certPEM, err = control.SignCSR(bundle.CACertPEM, bundle.CAKeyPEM, req.Msg.GetCsrPem(), meta.ClusterID, req.Msg.GetNodeId(), now)
-		if err != nil {
 			return nil, ToConnect(err)
 		}
 		serial, err := control.CertSerial(certPEM)
@@ -165,10 +169,6 @@ func (s *ClusterAPI) Join(ctx context.Context, req *connect.Request[procmeshv1.J
 			}
 		}
 	} else {
-		certPEM, err = control.SignCSR(bundle.CACertPEM, bundle.CAKeyPEM, req.Msg.GetCsrPem(), meta.ClusterID, req.Msg.GetNodeId(), now)
-		if err != nil {
-			return nil, ToConnect(err)
-		}
 		if err := control.ConsumeToken(s.Deps.Dir, req.Msg.GetToken(), now); err != nil {
 			return nil, ToConnect(err)
 		}
@@ -246,6 +246,9 @@ func (s *ClusterAPI) RequestJoin(ctx context.Context, req *connect.Request[procm
 	if err := writeJoinerBundle(s.Deps.Dir, joined.Msg.GetCaPem(), joined.Msg.GetCertPem(), keyPEM, meta); err != nil {
 		return nil, ToConnect(err)
 	}
+	if err := s.callOnReady(); err != nil {
+		fmt.Fprintf(os.Stderr, "cluster ready: %v\n", err)
+	}
 	if s.Deps.Store != nil {
 		if err := s.Deps.Store.SetClusterID(ctx, joined.Msg.GetClusterId()); err != nil {
 			return nil, ToConnect(err)
@@ -254,7 +257,6 @@ func (s *ClusterAPI) RequestJoin(ctx context.Context, req *connect.Request[procm
 	if s.Deps.SetRaftLeader != nil {
 		s.Deps.SetRaftLeader(joined.Msg.GetRaftLeader())
 	}
-	s.callOnReady()
 	if j, ok := s.Deps.Mesh.(meshJoiner); ok {
 		if gossip := joined.Msg.GetGossipAddress(); gossip != "" {
 			if _, err := j.Join([]string{gossip}); err != nil {
@@ -269,7 +271,7 @@ func (s *ClusterAPI) RequestJoin(ctx context.Context, req *connect.Request[procm
 }
 
 func (s *ClusterAPI) Overview(ctx context.Context, _ *connect.Request[procmeshv1.ClusterOverviewRequest]) (*connect.Response[procmeshv1.ClusterOverviewResponse], error) {
-	if err := requirePerm(ctx, s.Auth, auth.PermClusterRead, "", false); err != nil {
+	if err := requirePerm(ctx, s.Auth, auth.PermClusterRead, "", false, true); err != nil {
 		return nil, err
 	}
 	members := s.Deps.members()
@@ -294,13 +296,11 @@ func (s *ClusterAPI) Overview(ctx context.Context, _ *connect.Request[procmeshv1
 	}), nil
 }
 
-func (s *ClusterAPI) callOnReady() {
+func (s *ClusterAPI) callOnReady() error {
 	if s.Deps.OnReady == nil {
-		return
+		return nil
 	}
-	if err := s.Deps.OnReady(); err != nil {
-		fmt.Fprintf(os.Stderr, "cluster ready: %v\n", err)
-	}
+	return s.Deps.OnReady()
 }
 
 func requireCluster(d ClusterDeps) error {
@@ -313,6 +313,13 @@ func requireCluster(d ClusterDeps) error {
 func requireInited(dir string) error {
 	if !control.AlreadyInited(dir) {
 		return ToConnect(errcode.E(errcode.INVALID, "cluster not initialized"))
+	}
+	return nil
+}
+
+func requireCAKey(dir string) error {
+	if _, err := os.Stat(filepath.Join(dir, "ca.key")); err != nil {
+		return ToConnect(errcode.E(errcode.UNAVAILABLE, "ca key not available"))
 	}
 	return nil
 }

@@ -27,6 +27,8 @@ type Router struct {
 	LocalHost    string
 	Members      func() []cluster.NodeSummary
 	LocalHasName func(ctx context.Context, idOrName string) bool
+	// ControlStatus reports FSM membership (ADMITTED/REMOVED/REVOKED). ok=false if unknown.
+	ControlStatus func(nodeID string) (status string, ok bool)
 }
 
 // Resolve picks the owner route without issuing RPC.
@@ -93,6 +95,9 @@ func (r Router) routeForNode(n cluster.NodeSummary) (Route, error) {
 	if n.NodeID == r.LocalID {
 		return r.localRoute(), nil
 	}
+	if ownerForbidden(n, r.ControlStatus) {
+		return Route{}, errcode.E(errcode.UNAVAILABLE, "owner unreachable")
+	}
 	if n.State == cluster.StateFailed || n.RPCAddress == "" {
 		return Route{}, errcode.E(errcode.UNAVAILABLE, "owner unreachable")
 	}
@@ -128,6 +133,20 @@ func (r Router) localHasName(ctx context.Context, idOrName string) bool {
 		return false
 	}
 	return r.LocalHasName(ctx, idOrName)
+}
+
+func ownerForbidden(n cluster.NodeSummary, statusOf func(string) (string, bool)) bool {
+	if n.State == cluster.StateRevoked || n.State == cluster.StateRemoved {
+		return true
+	}
+	if statusOf == nil {
+		return false
+	}
+	st, ok := statusOf(n.NodeID)
+	if !ok {
+		return false
+	}
+	return st == string(cluster.StateRevoked) || st == string(cluster.StateRemoved)
 }
 
 func findMemberByNodeID(members []cluster.NodeSummary, nodeID string) (cluster.NodeSummary, bool) {

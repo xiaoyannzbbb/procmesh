@@ -270,6 +270,12 @@ func TestFSM_CheckAgentScope(t *testing.T) {
 	if s.Check("u-op", "process.restart", "node-a") {
 		t.Fatal("agent scope must not allow other node")
 	}
+	if s.Check("u-op", "process.restart", "") {
+		t.Fatal("empty target must not match AGENT binding")
+	}
+	if s.Check("u-op", "user.create", "") {
+		t.Fatal("cluster API with empty target must not match AGENT binding")
+	}
 }
 
 func TestFSM_SnapshotRestore(t *testing.T) {

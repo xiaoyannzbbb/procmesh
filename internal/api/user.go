@@ -27,10 +27,10 @@ func (s *UserAPI) ListUsers(ctx context.Context, _ *connect.Request[procmeshv1.L
 	if err := requireAuthConfigured(s.Auth); err != nil {
 		return nil, err
 	}
-	if err := requirePerm(ctx, s.Auth, auth.PermUserRead, "", false); err != nil {
+	if err := requirePerm(ctx, s.Auth, auth.PermUserRead, "", false, true); err != nil {
 		return nil, err
 	}
-	st := s.Auth.Store.View()
+	st := s.Auth.Store().View()
 	names := make([]string, 0, len(st.Users))
 	for name := range st.Users {
 		names = append(names, name)
@@ -47,7 +47,7 @@ func (s *UserAPI) CreateUser(ctx context.Context, req *connect.Request[procmeshv
 	if err := requireAuthConfigured(s.Auth); err != nil {
 		return nil, err
 	}
-	if err := requirePerm(ctx, s.Auth, auth.PermUserCreate, "", true); err != nil {
+	if err := requirePerm(ctx, s.Auth, auth.PermUserCreate, "", true, true); err != nil {
 		return nil, err
 	}
 	if _, _, err := metaOf(req.Msg.GetMeta()); err != nil {
@@ -77,7 +77,7 @@ func (s *UserAPI) CreateUser(ctx context.Context, req *connect.Request[procmeshv
 	}); err != nil {
 		return nil, err
 	}
-	u, ok := s.Auth.Store.View().Users[username]
+	u, ok := s.Auth.Store().View().Users[username]
 	if !ok {
 		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "user not found after create"))
 	}
@@ -88,7 +88,7 @@ func (s *UserAPI) DisableUser(ctx context.Context, req *connect.Request[procmesh
 	if err := requireAuthConfigured(s.Auth); err != nil {
 		return nil, err
 	}
-	if err := requirePerm(ctx, s.Auth, auth.PermUserUpdate, "", true); err != nil {
+	if err := requirePerm(ctx, s.Auth, auth.PermUserUpdate, "", true, true); err != nil {
 		return nil, err
 	}
 	if _, _, err := metaOf(req.Msg.GetMeta()); err != nil {
@@ -101,7 +101,7 @@ func (s *UserAPI) DisableUser(ctx context.Context, req *connect.Request[procmesh
 	if err := applyAuth(s.Auth, control.CmdUserDisable, control.UserDisableBody{UserID: id}); err != nil {
 		return nil, err
 	}
-	u, ok := userFromState(s.Auth.Store.View(), id)
+	u, ok := userFromState(s.Auth.Store().View(), id)
 	if !ok {
 		return nil, ToConnect(errcode.E(errcode.NOT_FOUND, "user not found"))
 	}
@@ -112,6 +112,9 @@ func requireAuthConfigured(svc *auth.Service) error {
 	if svc == nil {
 		return ToConnect(errcode.E(errcode.UNAVAILABLE, "auth not configured"))
 	}
+	if svc.Store() == nil {
+		return ToConnect(errcode.E(errcode.UNAVAILABLE, "auth store not ready"))
+	}
 	return nil
 }
 
@@ -120,7 +123,7 @@ func applyAuth(svc *auth.Service, typ string, body any) error {
 	if err != nil {
 		return ToConnect(err)
 	}
-	if err := svc.Store.Apply(cmd, authApplyTimeout); err != nil {
+	if err := svc.Store().Apply(cmd, authApplyTimeout); err != nil {
 		return ToConnect(err)
 	}
 	return nil

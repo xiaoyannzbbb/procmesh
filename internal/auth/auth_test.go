@@ -89,7 +89,8 @@ func newTestSvc(t *testing.T) (*auth.Service, *fakeStore, *clock) {
 		t.Fatal(err)
 	}
 	store := &fakeStore{state: st, quorum: true, fresh: true, now: clk.Now}
-	svc := &auth.Service{Store: store, Now: clk.Now}
+	svc := &auth.Service{Now: clk.Now}
+	svc.SetStore(store)
 	return svc, store, clk
 }
 
@@ -464,6 +465,38 @@ func TestAuthenticate_ExpiredAndInactive(t *testing.T) {
 	requireCode(t, err, errcode.DENIED, "")
 }
 
+func TestService_SetStoreConcurrentWithLogin(t *testing.T) {
+	svc, store, _ := newTestSvc(t)
+	svc.SetStore(nil)
+	_, _, _, _, err := svc.Login("admin", adminPass)
+	requireCode(t, err, errcode.UNAVAILABLE, "auth store not ready")
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 200; i++ {
+			svc.SetStore(store)
+			svc.SetStore(store)
+		}
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	var last error
+	for time.Now().Before(deadline) {
+		_, _, _, _, last = svc.Login("admin", adminPass)
+		if last == nil {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	<-done
+	if last != nil {
+		t.Fatalf("login after SetStore: %v", last)
+	}
+	if svc.Store() == nil {
+		t.Fatal("Store() nil after SetStore")
+	}
+}
+
 func TestService_NilClockAndConstants(t *testing.T) {
 	if auth.CookieName != "procmesh_session" {
 		t.Fatalf("cookie=%q", auth.CookieName)
@@ -472,7 +505,8 @@ func TestService_NilClockAndConstants(t *testing.T) {
 		t.Fatalf("csrf header=%q", auth.HeaderCSRF)
 	}
 	_, store, _ := newTestSvc(t)
-	svc := &auth.Service{Store: store}
+	svc := &auth.Service{}
+	svc.SetStore(store)
 	sid, _, _, exp, err := svc.Login("admin", adminPass)
 	if err != nil {
 		t.Fatal(err)

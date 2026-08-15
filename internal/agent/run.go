@@ -311,6 +311,18 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		LocalHost:    clusterDeps.Hostname,
 		Members:      members,
 		LocalHasName: localHasNameFn(mgr),
+		ControlStatus: func(nodeID string) (string, bool) {
+			n := rt.control()
+			if n == nil {
+				return "", false
+			}
+			view := n.View()
+			m, ok := view.Member(nodeID)
+			if !ok {
+				return "", false
+			}
+			return string(m.Status), true
+		},
 	}
 
 	var revs api.RevisionStore

@@ -38,19 +38,19 @@ func TestAllowWrite_NoQuorumBlocksUserCreate(t *testing.T) {
 	svc, store, _ := newTestSvc(t)
 	store.quorum = false
 	admin := auth.Principal{UserID: "user-admin", Username: "admin"}
-	err := svc.AllowWrite(admin, auth.PermUserCreate, "")
+	err := svc.AllowWrite(admin, auth.PermUserCreate, "", true)
 	requireCode(t, err, errcode.UNAVAILABLE, "control quorum lost")
-	err = svc.AllowWrite(admin, auth.PermUserUpdate, "")
+	err = svc.AllowWrite(admin, auth.PermUserUpdate, "", true)
 	requireCode(t, err, errcode.UNAVAILABLE, "control quorum lost")
-	err = svc.AllowWrite(admin, auth.PermUserDelete, "")
+	err = svc.AllowWrite(admin, auth.PermUserDelete, "", true)
 	requireCode(t, err, errcode.UNAVAILABLE, "control quorum lost")
-	err = svc.AllowWrite(admin, auth.PermRoleManage, "")
+	err = svc.AllowWrite(admin, auth.PermRoleManage, "", true)
 	requireCode(t, err, errcode.UNAVAILABLE, "control quorum lost")
-	err = svc.AllowWrite(admin, auth.PermNodeRemove, "")
+	err = svc.AllowWrite(admin, auth.PermNodeRemove, "", true)
 	requireCode(t, err, errcode.UNAVAILABLE, "control quorum lost")
-	err = svc.AllowWrite(admin, auth.PermNodeManage, "")
+	err = svc.AllowWrite(admin, auth.PermNodeManage, "", true)
 	requireCode(t, err, errcode.UNAVAILABLE, "control quorum lost")
-	err = svc.AllowWrite(admin, auth.PermClusterManage, "")
+	err = svc.AllowWrite(admin, auth.PermClusterManage, "", true)
 	requireCode(t, err, errcode.UNAVAILABLE, "control quorum lost")
 }
 
@@ -59,10 +59,10 @@ func TestAllowWrite_NoQuorumAllowsProcessRead(t *testing.T) {
 	store.quorum = false
 	store.fresh = false
 	admin := auth.Principal{UserID: "user-admin", Username: "admin"}
-	if err := svc.AllowWrite(admin, auth.PermProcessRead, ""); err != nil {
+	if err := svc.AllowWrite(admin, auth.PermProcessRead, "", true); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.AllowWrite(admin, auth.PermClusterRead, ""); err != nil {
+	if err := svc.AllowWrite(admin, auth.PermClusterRead, "", false); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -72,17 +72,33 @@ func TestAllowWrite_StaleCacheBlocksRemoteMutation(t *testing.T) {
 	store.quorum = false
 	store.fresh = false
 	admin := auth.Principal{UserID: "user-admin", Username: "admin"}
-	err := svc.AllowWrite(admin, auth.PermProcessRestart, "node-a")
+	err := svc.AllowWrite(admin, auth.PermProcessRestart, "node-a", false)
 	requireCode(t, err, errcode.DENIED, "rbac cache expired")
 
 	store.fresh = true
-	if err := svc.AllowWrite(admin, auth.PermProcessRestart, "node-a"); err != nil {
+	if err := svc.AllowWrite(admin, auth.PermProcessRestart, "node-a", false); err != nil {
 		t.Fatal(err)
 	}
 
 	store.fresh = false
 	store.quorum = true
-	if err := svc.AllowWrite(admin, auth.PermProcessCreate, "node-a"); err != nil {
+	if err := svc.AllowWrite(admin, auth.PermProcessCreate, "node-a", false); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAllowWrite_NoQuorumAllowsLocalProcessMutation(t *testing.T) {
+	svc, store, _ := newTestSvc(t)
+	store.quorum = false
+	store.fresh = false
+	admin := auth.Principal{UserID: "user-admin", Username: "admin"}
+	if err := svc.AllowWrite(admin, auth.PermProcessRestart, "node-a", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.AllowWrite(admin, auth.PermProcessCreate, "node-a", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.AllowWrite(admin, auth.PermProcessUpdate, "", true); err != nil {
 		t.Fatal(err)
 	}
 }

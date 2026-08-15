@@ -8,7 +8,8 @@ import (
 )
 
 // requirePerm 在 svc==nil 或无 Principal 时放行（旧单测 / 未入群）。
-func requirePerm(ctx context.Context, svc *auth.Service, perm, targetNode string, write bool) error {
+// local 区分本机 process 读写与远程 Mutation：失 quorum 时本机只做 Allow，远程查 cache TTL。
+func requirePerm(ctx context.Context, svc *auth.Service, perm, targetNode string, write, local bool) error {
 	if svc == nil {
 		return nil
 	}
@@ -18,7 +19,7 @@ func requirePerm(ctx context.Context, svc *auth.Service, perm, targetNode string
 	}
 	var err error
 	if write {
-		err = svc.AllowWrite(p, perm, targetNode)
+		err = svc.AllowWrite(p, perm, targetNode, local)
 	} else {
 		err = svc.Allow(p, perm, targetNode)
 	}
@@ -35,12 +36,16 @@ func hopTarget(local bool, rt Route, localID string) string {
 	return localID
 }
 
+func requireRoutePerm(ctx context.Context, svc *auth.Service, perm string, local bool, rt Route, localID string, write bool) error {
+	return requirePerm(ctx, svc, perm, hopTarget(local, rt, localID), write, local)
+}
+
 func requireHopPerm(ctx context.Context, svc *auth.Service, procedure, localID string) error {
 	perm, write, ok := hopRPCPerm(procedure)
 	if !ok {
 		return nil
 	}
-	return requirePerm(ctx, svc, perm, localID, write)
+	return requirePerm(ctx, svc, perm, localID, write, true)
 }
 
 func hopRPCPerm(procedure string) (perm string, write bool, ok bool) {

@@ -28,7 +28,7 @@ func TestClientTLS_AcceptsSameCluster(t *testing.T) {
 		CACertPEM:    seed.CACertPEM,
 		AgentCertPEM: seed.AgentCertPEM,
 		AgentKeyPEM:  seed.AgentKeyPEM,
-	}, "cid", "owner")
+	}, "cid", "owner", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,13 +51,43 @@ func TestClientTLS_RejectsOtherCluster(t *testing.T) {
 		CACertPEM:    a.CACertPEM,
 		AgentCertPEM: a.AgentCertPEM,
 		AgentKeyPEM:  a.AgentKeyPEM,
-	}, "cid-a", "")
+	}, "cid-a", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	err = verifyLeaf(cfg, b.AgentCertPEM)
 	if !errcode.Is(err, errcode.DENIED) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestClientTLS_RevokedSerialDenied(t *testing.T) {
+	now := time.Now()
+	seed, err := control.NewBundle("cid", "seed", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	okPeer := signPeer(t, seed, "cid", "ok", now)
+	badPeer := signPeer(t, seed, "cid", "bad", now)
+	badSerial, err := control.CertSerial(badPeer.AgentCertPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := rpc.ClientTLS(credsOf(seed), "cid", "", func(s string) bool {
+		return s == badSerial
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = verifyLeaf(cfg, badPeer.AgentCertPEM)
+	if !errcode.Is(err, errcode.DENIED) {
+		t.Fatalf("verify: %v", err)
+	}
+	if !strings.Contains(err.Error(), "revoked") {
+		t.Fatalf("want revoked: %v", err)
+	}
+	if err := verifyLeaf(cfg, okPeer.AgentCertPEM); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -95,7 +95,7 @@ func (r *rpcRuntime) startRPCLocked() error {
 	addr := advertiseRPC(r.opt.RPCAdvertise, ln.Addr().String())
 	r.srv = srv
 	r.ln = ln
-	r.fwd.set(creds, clusterID)
+	r.fwd.set(creds, clusterID, r.serialRevoked)
 	if r.src != nil {
 		r.src.setRPC(addr)
 	}
@@ -106,6 +106,14 @@ func (r *rpcRuntime) startRPCLocked() error {
 		r.opt.OnRPCListen(addr)
 	}
 	return nil
+}
+
+func (r *rpcRuntime) serialRevoked(s string) bool {
+	n := r.control()
+	if n == nil {
+		return false
+	}
+	return n.View().SerialRevoked(s)
 }
 
 func (r *rpcRuntime) lookupClusterID(creds control.AgentCreds) string {
@@ -217,22 +225,24 @@ type agentForwarder struct {
 	mu        sync.RWMutex
 	creds     control.AgentCreds
 	clusterID string
+	revoked   func(serial string) bool
 }
 
-func (f *agentForwarder) set(creds control.AgentCreds, clusterID string) {
+func (f *agentForwarder) set(creds control.AgentCreds, clusterID string, revoked func(serial string) bool) {
 	if f == nil {
 		return
 	}
 	f.mu.Lock()
 	f.creds = creds
 	f.clusterID = clusterID
+	f.revoked = revoked
 	f.mu.Unlock()
 }
 
-func (f *agentForwarder) snapshot() (control.AgentCreds, string) {
+func (f *agentForwarder) snapshot() (control.AgentCreds, string, func(string) bool) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
-	return f.creds, f.clusterID
+	return f.creds, f.clusterID, f.revoked
 }
 
 const (
@@ -242,10 +252,10 @@ const (
 )
 
 func (f *agentForwarder) dial(rt api.Route, timeout time.Duration) (*http.Client, string, error) {
-	creds, clusterID := f.snapshot()
+	creds, clusterID, revoked := f.snapshot()
 	hc, base, err := rpc.Dial(rpc.DialConfig{
 		Creds: creds, ClusterID: clusterID, ExpectNodeID: rt.NodeID, Address: rt.RPC,
-		Timeout: timeout,
+		Timeout: timeout, Revoked: revoked,
 	})
 	if err != nil {
 		return nil, "", rpc.MapDialError(err)
