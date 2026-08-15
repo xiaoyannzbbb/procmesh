@@ -23,8 +23,12 @@ func ToConnect(err error) error {
 	if err == nil {
 		return nil
 	}
+	var ce *connect.Error
+	if errors.As(err, &ce) {
+		return ce
+	}
 	c := CodeOf(err)
-	ce := connect.NewError(toConnectCode(c), err)
+	ce = connect.NewError(toConnectCode(c), err)
 	detail, detailErr := connect.NewErrorDetail(&procmeshv1.ErrorInfo{
 		Code:    string(c),
 		Message: err.Error(),

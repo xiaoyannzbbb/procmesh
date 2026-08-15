@@ -3,22 +3,93 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/process"
+	"github.com/qleelulu/procmesh/internal/rpc"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
 
 var _ procmeshv1connect.ProcessServiceHandler = (*ProcessAPI)(nil)
 
-type ProcessAPI struct {
-	Mgr      *process.Manager
-	Degraded func() bool
+// Forwarder obtains Agent-to-Agent clients for a resolved owner route.
+type Forwarder interface {
+	Process(ctx context.Context, rt Route) (procmeshv1connect.ProcessServiceClient, error)
+	Config(ctx context.Context, rt Route) (procmeshv1connect.ConfigServiceClient, error)
+	Log(ctx context.Context, rt Route) (procmeshv1connect.LogServiceClient, error)
 }
 
-func (s *ProcessAPI) ListProcesses(ctx context.Context, _ *connect.Request[procmeshv1.ListProcessesRequest]) (*connect.Response[procmeshv1.ListProcessesResponse], error) {
+type ProcessAPI struct {
+	Mgr       *process.Manager
+	Degraded  func() bool
+	LocalOnly bool
+	LocalID   string
+	Router    *Router
+	Forward   Forwarder
+}
+
+func (s *ProcessAPI) hop(ctx context.Context, header http.Header, idOrName, ownerAgentID string) (local bool, rt Route, err error) {
+	return hopRoute(s.LocalOnly, s.LocalID, s.Router, ctx, header, idOrName, ownerAgentID)
+}
+
+func hopRoute(localOnly bool, localID string, router *Router, ctx context.Context, header http.Header, idOrName, ownerAgentID string) (bool, Route, error) {
+	if localOnly || router == nil {
+		return true, Route{Local: true, NodeID: localID}, nil
+	}
+	rt, err := router.Resolve(ctx, rpc.TargetOf(header), idOrName, ownerAgentID)
+	if err != nil {
+		return false, Route{}, err
+	}
+	return rt.Local, rt, nil
+}
+
+func stampHop(h http.Header, localID, target string) {
+	rpc.SetSource(h, localID)
+	rpc.SetTarget(h, target)
+}
+
+func mapForwardErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	return ToConnect(rpc.MapCallError(err))
+}
+
+func unavailableOwner() error {
+	return ToConnect(errcode.E(errcode.UNAVAILABLE, "owner unreachable"))
+}
+
+func (s *ProcessAPI) remoteProcess(ctx context.Context, rt Route, header http.Header) (procmeshv1connect.ProcessServiceClient, error) {
+	if s.Forward == nil {
+		return nil, unavailableOwner()
+	}
+	stampHop(header, s.LocalID, rt.NodeID)
+	cli, err := s.Forward.Process(ctx, rt)
+	if err != nil {
+		return nil, ToConnect(rpc.MapDialError(err))
+	}
+	return cli, nil
+}
+
+func (s *ProcessAPI) ListProcesses(ctx context.Context, req *connect.Request[procmeshv1.ListProcessesRequest]) (*connect.Response[procmeshv1.ListProcessesResponse], error) {
+	local, rt, err := s.hop(ctx, req.Header(), "", "")
+	if err != nil {
+		return nil, ToConnect(err)
+	}
+	if !local {
+		cli, err := s.remoteProcess(ctx, rt, req.Header())
+		if err != nil {
+			return nil, err
+		}
+		out, err := cli.ListProcesses(ctx, req)
+		if err != nil {
+			return nil, mapForwardErr(err)
+		}
+		return out, nil
+	}
 	if err := requireMgr(s.Mgr); err != nil {
 		return nil, err
 	}
@@ -40,6 +111,21 @@ func (s *ProcessAPI) ListProcesses(ctx context.Context, _ *connect.Request[procm
 }
 
 func (s *ProcessAPI) GetProcess(ctx context.Context, req *connect.Request[procmeshv1.GetProcessRequest]) (*connect.Response[procmeshv1.GetProcessResponse], error) {
+	local, rt, err := s.hop(ctx, req.Header(), req.Msg.GetIdOrName(), "")
+	if err != nil {
+		return nil, ToConnect(err)
+	}
+	if !local {
+		cli, err := s.remoteProcess(ctx, rt, req.Header())
+		if err != nil {
+			return nil, err
+		}
+		out, err := cli.GetProcess(ctx, req)
+		if err != nil {
+			return nil, mapForwardErr(err)
+		}
+		return out, nil
+	}
 	if err := requireMgr(s.Mgr); err != nil {
 		return nil, err
 	}
@@ -55,8 +141,27 @@ func (s *ProcessAPI) GetProcess(ctx context.Context, req *connect.Request[procme
 }
 
 func (s *ProcessAPI) ApplyProcess(ctx context.Context, req *connect.Request[procmeshv1.ApplyProcessRequest]) (*connect.Response[procmeshv1.ApplyProcessResponse], error) {
+	idOrName, owner := applyIdentity(req.Msg.GetSpec())
+	local, rt, err := s.hop(ctx, req.Header(), idOrName, owner)
+	if err != nil {
+		return nil, ToConnect(err)
+	}
+	if !local {
+		cli, err := s.remoteProcess(ctx, rt, req.Header())
+		if err != nil {
+			return nil, err
+		}
+		out, err := cli.ApplyProcess(ctx, req)
+		if err != nil {
+			return nil, mapForwardErr(err)
+		}
+		return out, nil
+	}
 	if err := s.rejectMutation(); err != nil {
 		return nil, err
+	}
+	if spec := req.Msg.GetSpec(); spec != nil && spec.GetOwnerAgentId() == "" && s.LocalID != "" {
+		spec.OwnerAgentId = s.LocalID
 	}
 	opID, operator, err := metaOf(req.Msg.GetMeta())
 	if err != nil {
@@ -91,6 +196,21 @@ func (s *ProcessAPI) ApplyProcess(ctx context.Context, req *connect.Request[proc
 }
 
 func (s *ProcessAPI) DeleteProcess(ctx context.Context, req *connect.Request[procmeshv1.DeleteProcessRequest]) (*connect.Response[procmeshv1.DeleteProcessResponse], error) {
+	local, rt, err := s.hop(ctx, req.Header(), req.Msg.GetIdOrName(), "")
+	if err != nil {
+		return nil, ToConnect(err)
+	}
+	if !local {
+		cli, err := s.remoteProcess(ctx, rt, req.Header())
+		if err != nil {
+			return nil, err
+		}
+		out, err := cli.DeleteProcess(ctx, req)
+		if err != nil {
+			return nil, mapForwardErr(err)
+		}
+		return out, nil
+	}
 	if err := s.rejectMutation(); err != nil {
 		return nil, err
 	}
@@ -116,7 +236,9 @@ func (s *ProcessAPI) DeleteProcess(ctx context.Context, req *connect.Request[pro
 }
 
 func (s *ProcessAPI) StartProcess(ctx context.Context, req *connect.Request[procmeshv1.ProcessRefRequest]) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
-	return s.mutateRef(ctx, req, func(ctx context.Context, processID, opID, operator string) error {
+	return s.mutateRef(ctx, req, func(cli procmeshv1connect.ProcessServiceClient) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
+		return cli.StartProcess(ctx, req)
+	}, func(ctx context.Context, processID, opID, operator string) error {
 		if err := s.Mgr.SetDesired(ctx, processID, process.DesiredRunning, opID, operator); err != nil {
 			return err
 		}
@@ -125,7 +247,9 @@ func (s *ProcessAPI) StartProcess(ctx context.Context, req *connect.Request[proc
 }
 
 func (s *ProcessAPI) StopProcess(ctx context.Context, req *connect.Request[procmeshv1.ProcessRefRequest]) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
-	return s.mutateRef(ctx, req, func(ctx context.Context, processID, opID, operator string) error {
+	return s.mutateRef(ctx, req, func(cli procmeshv1connect.ProcessServiceClient) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
+		return cli.StopProcess(ctx, req)
+	}, func(ctx context.Context, processID, opID, operator string) error {
 		if err := s.Mgr.SetDesired(ctx, processID, process.DesiredStopped, opID, operator); err != nil {
 			return err
 		}
@@ -134,7 +258,9 @@ func (s *ProcessAPI) StopProcess(ctx context.Context, req *connect.Request[procm
 }
 
 func (s *ProcessAPI) RestartProcess(ctx context.Context, req *connect.Request[procmeshv1.ProcessRefRequest]) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
-	return s.mutateRef(ctx, req, func(ctx context.Context, processID, opID, operator string) error {
+	return s.mutateRef(ctx, req, func(cli procmeshv1connect.ProcessServiceClient) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
+		return cli.RestartProcess(ctx, req)
+	}, func(ctx context.Context, processID, opID, operator string) error {
 		if err := s.Mgr.Restart(ctx, processID, opID, operator); err != nil {
 			return err
 		}
@@ -143,18 +269,37 @@ func (s *ProcessAPI) RestartProcess(ctx context.Context, req *connect.Request[pr
 }
 
 func (s *ProcessAPI) KillProcess(ctx context.Context, req *connect.Request[procmeshv1.ProcessRefRequest]) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
-	return s.mutateRef(ctx, req, func(ctx context.Context, processID, opID, operator string) error {
+	return s.mutateRef(ctx, req, func(cli procmeshv1connect.ProcessServiceClient) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
+		return cli.KillProcess(ctx, req)
+	}, func(ctx context.Context, processID, opID, operator string) error {
 		return s.Mgr.Kill(ctx, processID, opID, operator)
 	})
 }
 
 func (s *ProcessAPI) ResetFailure(ctx context.Context, req *connect.Request[procmeshv1.ProcessRefRequest]) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
-	return s.mutateRef(ctx, req, func(ctx context.Context, processID, opID, operator string) error {
+	return s.mutateRef(ctx, req, func(cli procmeshv1connect.ProcessServiceClient) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
+		return cli.ResetFailure(ctx, req)
+	}, func(ctx context.Context, processID, opID, operator string) error {
 		return s.Mgr.ResetFailure(ctx, processID, opID, operator)
 	})
 }
 
 func (s *ProcessAPI) AdoptInstance(ctx context.Context, req *connect.Request[procmeshv1.AdoptRequest]) (*connect.Response[procmeshv1.AdoptResponse], error) {
+	local, rt, err := s.hop(ctx, req.Header(), req.Msg.GetInstanceId(), "")
+	if err != nil {
+		return nil, ToConnect(err)
+	}
+	if !local {
+		cli, err := s.remoteProcess(ctx, rt, req.Header())
+		if err != nil {
+			return nil, err
+		}
+		out, err := cli.AdoptInstance(ctx, req)
+		if err != nil {
+			return nil, mapForwardErr(err)
+		}
+		return out, nil
+	}
 	if err := s.rejectMutation(); err != nil {
 		return nil, err
 	}
@@ -186,7 +331,22 @@ func (s *ProcessAPI) AdoptInstance(ctx context.Context, req *connect.Request[pro
 	return connect.NewResponse(&procmeshv1.AdoptResponse{Process: view}), nil
 }
 
-func (s *ProcessAPI) mutateRef(ctx context.Context, req *connect.Request[procmeshv1.ProcessRefRequest], fn func(ctx context.Context, processID, opID, operator string) error) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
+func (s *ProcessAPI) mutateRef(ctx context.Context, req *connect.Request[procmeshv1.ProcessRefRequest], remote func(procmeshv1connect.ProcessServiceClient) (*connect.Response[procmeshv1.ProcessRefResponse], error), fn func(ctx context.Context, processID, opID, operator string) error) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
+	local, rt, err := s.hop(ctx, req.Header(), req.Msg.GetIdOrName(), "")
+	if err != nil {
+		return nil, ToConnect(err)
+	}
+	if !local {
+		cli, err := s.remoteProcess(ctx, rt, req.Header())
+		if err != nil {
+			return nil, err
+		}
+		out, err := remote(cli)
+		if err != nil {
+			return nil, mapForwardErr(err)
+		}
+		return out, nil
+	}
 	if err := s.rejectMutation(); err != nil {
 		return nil, err
 	}
@@ -216,6 +376,17 @@ func (s *ProcessAPI) mutateRef(ctx context.Context, req *connect.Request[procmes
 		return nil, err
 	}
 	return connect.NewResponse(&procmeshv1.ProcessRefResponse{Process: view}), nil
+}
+
+func applyIdentity(spec *procmeshv1.ProcessSpec) (idOrName, owner string) {
+	if spec == nil {
+		return "", ""
+	}
+	idOrName = spec.GetProcessId()
+	if idOrName == "" {
+		idOrName = spec.GetName()
+	}
+	return idOrName, spec.GetOwnerAgentId()
 }
 
 func (s *ProcessAPI) rejectMutation() error {

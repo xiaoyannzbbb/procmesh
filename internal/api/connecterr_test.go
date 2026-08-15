@@ -6,6 +6,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/rpc"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"google.golang.org/protobuf/proto"
 )
@@ -70,5 +71,28 @@ func TestToConnect_PlainErrorUnknown(t *testing.T) {
 	var ce *connect.Error
 	if !errors.As(err, &ce) || ce.Code() != connect.CodeUnknown {
 		t.Fatalf("%v", err)
+	}
+}
+
+func TestToConnect_MapCallErrorPreservesOwnerConflict(t *testing.T) {
+	owner := ToConnect(errcode.E(errcode.CONFLICT, "revision mismatch"))
+	got := ToConnect(rpc.MapCallError(owner))
+	var ce *connect.Error
+	if !errors.As(got, &ce) {
+		t.Fatalf("%T", got)
+	}
+	if ce.Code() != connect.CodeFailedPrecondition {
+		t.Fatalf("code=%v", ce.Code())
+	}
+	if len(ce.Details()) == 0 {
+		t.Fatal("missing detail")
+	}
+	msg, err := ce.Details()[0].Value()
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, ok := msg.(*procmeshv1.ErrorInfo)
+	if !ok || info.GetCode() != "CONFLICT" {
+		t.Fatalf("%v", msg)
 	}
 }

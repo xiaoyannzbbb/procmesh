@@ -13,6 +13,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/logmgr"
 	"github.com/qleelulu/procmesh/internal/paths"
+	"github.com/qleelulu/procmesh/internal/rpc"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
@@ -259,6 +260,49 @@ func TestLog_TailUnknownInstance(t *testing.T) {
 	code, detail := connectDetail(t, err)
 	if code != connect.CodeNotFound || detail != "NOT_FOUND" {
 		t.Fatalf("code=%v detail=%s err=%v", code, detail, err)
+	}
+}
+
+func TestLog_TailForwardsToOwner(t *testing.T) {
+	ctx := context.Background()
+	m, _, _ := newTestManager(t)
+	fakeCli := &fakeLogClient{
+		tailOut: connect.NewResponse(&procmeshv1.TailLogsResponse{Lines: []string{"remote-line"}}),
+	}
+	fwd := &fakeForwarder{logs: fakeCli}
+	c := serveLogAPI(t, &LogAPI{
+		Mgr:     m,
+		LocalID: "aaa",
+		Router:  remoteOwnerRouter("aaa", "ccc", "nginx"),
+		Forward: fwd,
+	})
+
+	got, err := c.TailLogs(ctx, connect.NewRequest(&procmeshv1.TailLogsRequest{IdOrName: "nginx", Lines: 20}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Msg.GetLines()) != 1 || got.Msg.GetLines()[0] != "remote-line" {
+		t.Fatalf("lines=%q", got.Msg.GetLines())
+	}
+	if fwd.logCalls() != 1 {
+		t.Fatalf("forward Log calls=%d", fwd.logCalls())
+	}
+	tails := fakeCli.tailReqs()
+	if len(tails) != 1 {
+		t.Fatalf("TailLogs calls=%d", len(tails))
+	}
+	if tails[0].Msg.GetIdOrName() != "nginx" || tails[0].Msg.GetLines() != 20 {
+		t.Fatalf("req %+v", tails[0].Msg)
+	}
+	if rpc.SourceOf(tails[0].Header()) != "aaa" || rpc.TargetOf(tails[0].Header()) != "ccc" {
+		t.Fatalf("source=%q target=%q", rpc.SourceOf(tails[0].Header()), rpc.TargetOf(tails[0].Header()))
+	}
+	specs, err := m.ListSpecs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(specs) != 0 {
+		t.Fatalf("local specs %+v", specs)
 	}
 }
 

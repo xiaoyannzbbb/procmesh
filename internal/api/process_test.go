@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/process"
+	"github.com/qleelulu/procmesh/internal/rpc"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 )
 
@@ -223,6 +225,182 @@ func TestProcess_SpecConvertRoundtrip(t *testing.T) {
 	}})
 	if view.GetProcessId() != "p1" || len(view.GetInstances()) != 1 || view.GetInstances()[0].GetPid() != 42 {
 		t.Fatalf("view %+v", view)
+	}
+}
+
+func TestProcess_RestartForwardsToOwner(t *testing.T) {
+	ctx := context.Background()
+	m, _, _ := newTestManager(t)
+	fakeCli := &fakeProcessClient{
+		restartResp: connect.NewResponse(&procmeshv1.ProcessRefResponse{
+			Process: &procmeshv1.ProcessView{
+				ProcessId: "nginx-1",
+				Spec:      &procmeshv1.ProcessSpec{Name: "nginx"},
+			},
+		}),
+	}
+	fwd := &fakeForwarder{proc: fakeCli}
+	c := serveProcessAPI(t, &ProcessAPI{
+		Mgr:     m,
+		LocalID: "aaa",
+		Router:  remoteOwnerRouter("aaa", "ccc", "nginx"),
+		Forward: fwd,
+	})
+
+	got, err := c.RestartProcess(ctx, connect.NewRequest(&procmeshv1.ProcessRefRequest{
+		Meta:     &procmeshv1.MutationMeta{OperationId: "op-restart", Operator: "t"},
+		IdOrName: "nginx",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Msg.GetProcess().GetSpec().GetName() != "nginx" {
+		t.Fatalf("view %+v", got.Msg.GetProcess())
+	}
+	if fwd.processCalls() != 1 {
+		t.Fatalf("forward Process calls=%d", fwd.processCalls())
+	}
+	restarts := fakeCli.restartReqs()
+	if len(restarts) != 1 {
+		t.Fatalf("RestartProcess calls=%d", len(restarts))
+	}
+	if restarts[0].Msg.GetMeta().GetOperationId() != "op-restart" {
+		t.Fatalf("operation_id=%q", restarts[0].Msg.GetMeta().GetOperationId())
+	}
+	if rpc.SourceOf(restarts[0].Header()) != "aaa" {
+		t.Fatalf("source=%q", rpc.SourceOf(restarts[0].Header()))
+	}
+	if rpc.TargetOf(restarts[0].Header()) != "ccc" {
+		t.Fatalf("target=%q", rpc.TargetOf(restarts[0].Header()))
+	}
+
+	listed, err := c.ListProcesses(ctx, connect.NewRequest(&procmeshv1.ListProcessesRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Msg.GetProcesses()) != 0 {
+		t.Fatalf("local list %+v", listed.Msg.GetProcesses())
+	}
+}
+
+func TestProcess_ApplyDoesNotCreateLocalWhenOwnerRemote(t *testing.T) {
+	ctx := context.Background()
+	m, _, _ := newTestManager(t)
+	fakeCli := &fakeProcessClient{
+		applyResp: connect.NewResponse(&procmeshv1.ApplyProcessResponse{
+			Spec: &procmeshv1.ProcessSpec{ProcessId: "nginx-1", Name: "nginx", Command: "/bin/true", OwnerAgentId: "ccc"},
+		}),
+	}
+	fwd := &fakeForwarder{proc: fakeCli}
+	c := serveProcessAPI(t, &ProcessAPI{
+		Mgr:     m,
+		LocalID: "aaa",
+		Router:  remoteOwnerRouter("aaa", "ccc", ""),
+		Forward: fwd,
+	})
+
+	got, err := c.ApplyProcess(ctx, connect.NewRequest(&procmeshv1.ApplyProcessRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-apply", Operator: "t"},
+		Spec: &procmeshv1.ProcessSpec{Name: "nginx", Command: "/bin/true", OwnerAgentId: "ccc"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Msg.GetSpec().GetOwnerAgentId() != "ccc" {
+		t.Fatalf("spec %+v", got.Msg.GetSpec())
+	}
+	if fwd.processCalls() != 1 {
+		t.Fatalf("forward Process calls=%d", fwd.processCalls())
+	}
+	applies := fakeCli.applyReqs()
+	if len(applies) != 1 {
+		t.Fatalf("ApplyProcess calls=%d", len(applies))
+	}
+	if applies[0].Msg.GetMeta().GetOperationId() != "op-apply" {
+		t.Fatalf("operation_id=%q", applies[0].Msg.GetMeta().GetOperationId())
+	}
+
+	specs, err := m.ListSpecs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(specs) != 0 {
+		t.Fatalf("local specs %+v", specs)
+	}
+}
+
+func TestProcess_LocalOnlyIgnoresTargetHeader(t *testing.T) {
+	ctx := context.Background()
+	m, _, _ := newTestManager(t)
+	fwd := &fakeForwarder{proc: &fakeProcessClient{}}
+	c := serveProcessAPI(t, &ProcessAPI{
+		Mgr:       m,
+		LocalOnly: true,
+		LocalID:   "aaa",
+		Router:    remoteOwnerRouter("aaa", "ccc", "web"),
+		Forward:   fwd,
+	})
+	if _, err := c.ApplyProcess(ctx, connect.NewRequest(&procmeshv1.ApplyProcessRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-c", Operator: "t"},
+		Spec: &procmeshv1.ProcessSpec{Name: "web", Command: "/bin/true"},
+	})); err != nil {
+		t.Fatal(err)
+	}
+
+	req := connect.NewRequest(&procmeshv1.ProcessRefRequest{
+		Meta:     &procmeshv1.MutationMeta{OperationId: "op-restart", Operator: "t"},
+		IdOrName: "web",
+	})
+	rpc.SetTarget(req.Header(), "ccc")
+	got, err := c.RestartProcess(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Msg.GetProcess().GetSpec().GetName() != "web" {
+		t.Fatalf("view %+v", got.Msg.GetProcess())
+	}
+	if fwd.processCalls() != 0 {
+		t.Fatalf("forward Process calls=%d want 0", fwd.processCalls())
+	}
+}
+
+func TestProcess_ForwardedOwnerConflictRemainsConflict(t *testing.T) {
+	ctx := context.Background()
+	m, _, _ := newTestManager(t)
+	fakeCli := &fakeProcessClient{err: ToConnect(errcode.E(errcode.CONFLICT, "revision mismatch"))}
+	fwd := &fakeForwarder{proc: fakeCli}
+	c := serveProcessAPI(t, &ProcessAPI{
+		Mgr:     m,
+		LocalID: "aaa",
+		Router:  remoteOwnerRouter("aaa", "ccc", "nginx"),
+		Forward: fwd,
+	})
+
+	_, err := c.RestartProcess(ctx, connect.NewRequest(&procmeshv1.ProcessRefRequest{
+		Meta:     &procmeshv1.MutationMeta{OperationId: "op-restart", Operator: "t"},
+		IdOrName: "nginx",
+	}))
+	code, detail := connectDetail(t, err)
+	if code != connect.CodeFailedPrecondition || detail != "CONFLICT" {
+		t.Fatalf("code=%v detail=%s err=%v", code, detail, err)
+	}
+}
+
+func TestProcess_ForwardNilUnavailable(t *testing.T) {
+	ctx := context.Background()
+	m, _, _ := newTestManager(t)
+	c := serveProcessAPI(t, &ProcessAPI{
+		Mgr:     m,
+		LocalID: "aaa",
+		Router:  remoteOwnerRouter("aaa", "ccc", "nginx"),
+	})
+	_, err := c.RestartProcess(ctx, connect.NewRequest(&procmeshv1.ProcessRefRequest{
+		Meta:     &procmeshv1.MutationMeta{OperationId: "op-restart", Operator: "t"},
+		IdOrName: "nginx",
+	}))
+	code, detail := connectDetail(t, err)
+	if code != connect.CodeUnavailable || detail != "UNAVAILABLE" {
+		t.Fatalf("code=%v detail=%s err=%v", code, detail, err)
 	}
 }
 

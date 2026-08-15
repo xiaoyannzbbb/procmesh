@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 	"os"
 	"sync"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/logmgr"
 	"github.com/qleelulu/procmesh/internal/paths"
 	"github.com/qleelulu/procmesh/internal/process"
+	"github.com/qleelulu/procmesh/internal/rpc"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
@@ -30,13 +32,48 @@ const (
 var _ procmeshv1connect.LogServiceHandler = (*LogAPI)(nil)
 
 type LogAPI struct {
-	Mgr *process.Manager
+	Mgr       *process.Manager
+	LocalOnly bool
+	LocalID   string
+	Router    *Router
+	Forward   Forwarder
 
 	mu      sync.Mutex
 	streams int
 }
 
+func (s *LogAPI) hop(ctx context.Context, header http.Header, idOrName, ownerAgentID string) (local bool, rt Route, err error) {
+	return hopRoute(s.LocalOnly, s.LocalID, s.Router, ctx, header, idOrName, ownerAgentID)
+}
+
+func (s *LogAPI) remoteLog(ctx context.Context, rt Route, header http.Header) (procmeshv1connect.LogServiceClient, error) {
+	if s.Forward == nil {
+		return nil, unavailableOwner()
+	}
+	stampHop(header, s.LocalID, rt.NodeID)
+	cli, err := s.Forward.Log(ctx, rt)
+	if err != nil {
+		return nil, ToConnect(rpc.MapDialError(err))
+	}
+	return cli, nil
+}
+
 func (s *LogAPI) TailLogs(ctx context.Context, req *connect.Request[procmeshv1.TailLogsRequest]) (*connect.Response[procmeshv1.TailLogsResponse], error) {
+	local, rt, err := s.hop(ctx, req.Header(), req.Msg.GetIdOrName(), "")
+	if err != nil {
+		return nil, ToConnect(err)
+	}
+	if !local {
+		cli, err := s.remoteLog(ctx, rt, req.Header())
+		if err != nil {
+			return nil, err
+		}
+		out, err := cli.TailLogs(ctx, req)
+		if err != nil {
+			return nil, mapForwardErr(err)
+		}
+		return out, nil
+	}
 	if err := requireMgr(s.Mgr); err != nil {
 		return nil, err
 	}
@@ -77,6 +114,15 @@ func (s *LogAPI) TailLogs(ctx context.Context, req *connect.Request[procmeshv1.T
 }
 
 func (s *LogAPI) StreamLogs(ctx context.Context, req *connect.Request[procmeshv1.StreamLogsRequest], stream *connect.ServerStream[procmeshv1.LogChunk]) error {
+	local, rt, err := s.hop(ctx, req.Header(), req.Msg.GetIdOrName(), "")
+	if err != nil {
+		return ToConnect(err)
+	}
+	if !local {
+		return s.forwardChunks(ctx, rt, req.Header(), stream, func(cli procmeshv1connect.LogServiceClient) (*connect.ServerStreamForClient[procmeshv1.LogChunk], error) {
+			return cli.StreamLogs(ctx, req)
+		})
+	}
 	if err := requireMgr(s.Mgr); err != nil {
 		return err
 	}
@@ -133,6 +179,15 @@ func (s *LogAPI) StreamLogs(ctx context.Context, req *connect.Request[procmeshv1
 }
 
 func (s *LogAPI) DownloadLogs(ctx context.Context, req *connect.Request[procmeshv1.DownloadLogsRequest], stream *connect.ServerStream[procmeshv1.LogChunk]) error {
+	local, rt, err := s.hop(ctx, req.Header(), req.Msg.GetIdOrName(), "")
+	if err != nil {
+		return ToConnect(err)
+	}
+	if !local {
+		return s.forwardChunks(ctx, rt, req.Header(), stream, func(cli procmeshv1connect.LogServiceClient) (*connect.ServerStreamForClient[procmeshv1.LogChunk], error) {
+			return cli.DownloadLogs(ctx, req)
+		})
+	}
 	if err := requireMgr(s.Mgr); err != nil {
 		return err
 	}
@@ -195,6 +250,24 @@ func (s *LogAPI) DownloadLogs(ctx context.Context, req *connect.Request[procmesh
 			return ToConnect(err)
 		}
 	}
+}
+
+func (s *LogAPI) forwardChunks(ctx context.Context, rt Route, header http.Header, out *connect.ServerStream[procmeshv1.LogChunk], call func(procmeshv1connect.LogServiceClient) (*connect.ServerStreamForClient[procmeshv1.LogChunk], error)) error {
+	cli, err := s.remoteLog(ctx, rt, header)
+	if err != nil {
+		return err
+	}
+	in, err := call(cli)
+	if err != nil {
+		return mapForwardErr(err)
+	}
+	defer func() { _ = in.Close() }()
+	for in.Receive() {
+		if err := out.Send(in.Msg()); err != nil {
+			return err
+		}
+	}
+	return mapForwardErr(in.Err())
 }
 
 func (s *LogAPI) instanceIDs(ctx context.Context, processID, instanceID string, requireSingle bool) ([]string, error) {

@@ -27,14 +27,18 @@ type Server struct {
 }
 
 type Options struct {
-	Addr     string
-	Mgr      *process.Manager
-	Logs     *logmgr.Manager
-	Store    RevisionStore // 可为 *store.Store；nil 时 Config.Diff 不可用
-	Cluster  ClusterDeps   // 零值 = 未接线；Init/Join → UNAVAILABLE
-	Degraded bool
-	Ready    func() error
-	Started  time.Time
+	Addr      string
+	Mgr       *process.Manager
+	Logs      *logmgr.Manager
+	Store     RevisionStore // 可为 *store.Store；nil 时 Config.Diff 不可用
+	Cluster   ClusterDeps   // 零值 = 未接线；Init/Join → UNAVAILABLE
+	Degraded  bool
+	Ready     func() error
+	Started   time.Time
+	LocalOnly bool
+	LocalID   string
+	Router    *Router
+	Forward   Forwarder
 }
 
 func NewServer(opts Options) (*Server, error) {
@@ -57,11 +61,20 @@ func NewServer(opts Options) (*Server, error) {
 	engine.GET("/metrics", s.metrics)
 
 	degraded := s.isDegraded
-	pp, ph := procmeshv1connect.NewProcessServiceHandler(&ProcessAPI{Mgr: opts.Mgr, Degraded: degraded})
+	pp, ph := procmeshv1connect.NewProcessServiceHandler(&ProcessAPI{
+		Mgr: opts.Mgr, Degraded: degraded,
+		LocalOnly: opts.LocalOnly, LocalID: opts.LocalID, Router: opts.Router, Forward: opts.Forward,
+	})
 	mountConnect(engine, pp, ph)
-	cp, ch := procmeshv1connect.NewConfigServiceHandler(&ConfigAPI{Mgr: opts.Mgr, Revs: opts.Store, Degraded: degraded})
+	cp, ch := procmeshv1connect.NewConfigServiceHandler(&ConfigAPI{
+		Mgr: opts.Mgr, Revs: opts.Store, Degraded: degraded,
+		LocalOnly: opts.LocalOnly, LocalID: opts.LocalID, Router: opts.Router, Forward: opts.Forward,
+	})
 	mountConnect(engine, cp, ch)
-	lp, lh := procmeshv1connect.NewLogServiceHandler(&LogAPI{Mgr: opts.Mgr})
+	lp, lh := procmeshv1connect.NewLogServiceHandler(&LogAPI{
+		Mgr:       opts.Mgr,
+		LocalOnly: opts.LocalOnly, LocalID: opts.LocalID, Router: opts.Router, Forward: opts.Forward,
+	})
 	mountConnect(engine, lp, lh)
 	np, nh := procmeshv1connect.NewNodeServiceHandler(&NodeAPI{Deps: opts.Cluster, Degraded: degraded})
 	mountConnect(engine, np, nh)

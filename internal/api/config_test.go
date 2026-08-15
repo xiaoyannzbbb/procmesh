@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	"github.com/qleelulu/procmesh/internal/rpc"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
@@ -176,6 +177,103 @@ func TestConfig_MissingOperationID(t *testing.T) {
 	code, detail = connectDetail(t, err)
 	if code != connect.CodeInvalidArgument || detail != "INVALID" {
 		t.Fatalf("rollback code=%v detail=%s err=%v", code, detail, err)
+	}
+}
+
+func TestConfig_UpdateForwardsToOwner(t *testing.T) {
+	ctx := context.Background()
+	m, _, _ := newTestManager(t)
+	fakeCli := &fakeConfigClient{
+		updateResp: connect.NewResponse(&procmeshv1.UpdateConfigResponse{
+			Spec: &procmeshv1.ProcessSpec{Name: "nginx", Command: "/bin/true", LatestRevision: 2},
+		}),
+	}
+	fwd := &fakeForwarder{cfg: fakeCli}
+	c := serveConfigAPI(t, &ConfigAPI{
+		Mgr:     m,
+		LocalID: "aaa",
+		Router:  remoteOwnerRouter("aaa", "ccc", "nginx"),
+		Forward: fwd,
+	})
+
+	got, err := c.UpdateConfig(ctx, connect.NewRequest(&procmeshv1.UpdateConfigRequest{
+		Meta:             &procmeshv1.MutationMeta{OperationId: "op-upd", Operator: "t"},
+		IdOrName:         "nginx",
+		ExpectedRevision: 1,
+		Spec:             &procmeshv1.ProcessSpec{Name: "nginx", Command: "/bin/true"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Msg.GetSpec().GetName() != "nginx" {
+		t.Fatalf("spec %+v", got.Msg.GetSpec())
+	}
+	if fwd.configCalls() != 1 {
+		t.Fatalf("forward Config calls=%d", fwd.configCalls())
+	}
+	updates := fakeCli.updateReqs()
+	if len(updates) != 1 {
+		t.Fatalf("UpdateConfig calls=%d", len(updates))
+	}
+	if updates[0].Msg.GetMeta().GetOperationId() != "op-upd" {
+		t.Fatalf("operation_id=%q", updates[0].Msg.GetMeta().GetOperationId())
+	}
+	if rpc.SourceOf(updates[0].Header()) != "aaa" || rpc.TargetOf(updates[0].Header()) != "ccc" {
+		t.Fatalf("source=%q target=%q", rpc.SourceOf(updates[0].Header()), rpc.TargetOf(updates[0].Header()))
+	}
+	specs, err := m.ListSpecs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(specs) != 0 {
+		t.Fatalf("local specs %+v", specs)
+	}
+}
+
+func TestConfig_RollbackForwardsToOwner(t *testing.T) {
+	ctx := context.Background()
+	m, _, _ := newTestManager(t)
+	fakeCli := &fakeConfigClient{
+		rollbackResp: connect.NewResponse(&procmeshv1.RollbackResponse{
+			Spec: &procmeshv1.ProcessSpec{Name: "nginx", Command: "/bin/echo", LatestRevision: 3},
+		}),
+	}
+	fwd := &fakeForwarder{cfg: fakeCli}
+	c := serveConfigAPI(t, &ConfigAPI{
+		Mgr:     m,
+		LocalID: "aaa",
+		Router:  remoteOwnerRouter("aaa", "ccc", "nginx"),
+		Forward: fwd,
+	})
+
+	got, err := c.Rollback(ctx, connect.NewRequest(&procmeshv1.RollbackRequest{
+		Meta:             &procmeshv1.MutationMeta{OperationId: "op-rb", Operator: "t"},
+		IdOrName:         "nginx",
+		ToRevision:       1,
+		ExpectedRevision: 2,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Msg.GetSpec().GetLatestRevision() != 3 {
+		t.Fatalf("spec %+v", got.Msg.GetSpec())
+	}
+	if fwd.configCalls() != 1 {
+		t.Fatalf("forward Config calls=%d", fwd.configCalls())
+	}
+	rollbacks := fakeCli.rollbackReqs()
+	if len(rollbacks) != 1 {
+		t.Fatalf("Rollback calls=%d", len(rollbacks))
+	}
+	if rollbacks[0].Msg.GetMeta().GetOperationId() != "op-rb" {
+		t.Fatalf("operation_id=%q", rollbacks[0].Msg.GetMeta().GetOperationId())
+	}
+	specs, err := m.ListSpecs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(specs) != 0 {
+		t.Fatalf("local specs %+v", specs)
 	}
 }
 
