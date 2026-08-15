@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -37,6 +39,7 @@ type Server struct {
 
 type Options struct {
 	Addr          string
+	Logger        *slog.Logger
 	Mgr           *process.Manager
 	Logs          *logmgr.Manager
 	Store         RevisionStore // 可为 *store.Store；nil 时 Config.Diff 不可用
@@ -64,6 +67,9 @@ func NewServer(opts Options) (*Server, error) {
 	if opts.Started.IsZero() {
 		opts.Started = time.Now()
 	}
+	if opts.Logger == nil {
+		opts.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
 	if opts.Cluster.RPCHealthy == nil {
 		opts.Cluster.RPCHealthy = opts.RPCHealthy
 	}
@@ -81,6 +87,7 @@ func NewServer(opts Options) (*Server, error) {
 	opts.Forward = wrapForwarder(opts.Forward, rpcForwardTotal)
 
 	engine := gin.New()
+	engine.Use(accessLog(opts.Logger))
 	s := &Server{
 		Engine:          engine,
 		HTTP:            &http.Server{Addr: opts.Addr, Handler: engine},
@@ -143,6 +150,20 @@ func NewServer(opts Options) (*Server, error) {
 	})
 
 	return s, nil
+}
+
+func accessLog(logger *slog.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		started := time.Now()
+		c.Next()
+		logger.Debug("http request",
+			"method", c.Request.Method,
+			"path", c.Request.URL.Path,
+			"status", c.Writer.Status(),
+			"duration_ms", time.Since(started).Milliseconds(),
+			"remote_addr", c.Request.RemoteAddr,
+		)
+	}
 }
 
 const (

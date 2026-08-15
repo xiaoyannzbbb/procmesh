@@ -1,9 +1,12 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +17,45 @@ import (
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
+
+func TestServer_DebugLogsHTTPAccessWithoutQuery(t *testing.T) {
+	var out bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&out, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	srv, err := NewServer(Options{Started: time.Now(), Logger: logger})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/healthz?token=secret", nil)
+	req.RemoteAddr = "192.0.2.1:4321"
+	rec := httptest.NewRecorder()
+	srv.Engine.ServeHTTP(rec, req)
+	var got map[string]any
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["msg"] != "http request" || got["method"] != "GET" || got["path"] != "/healthz" || got["status"] != float64(200) || got["remote_addr"] != "192.0.2.1:4321" {
+		t.Fatalf("access log = %#v", got)
+	}
+	if _, ok := got["duration_ms"].(float64); !ok {
+		t.Fatalf("duration_ms = %#v", got["duration_ms"])
+	}
+	if strings.Contains(out.String(), "secret") {
+		t.Fatalf("query leaked: %q", out.String())
+	}
+}
+
+func TestServer_InfoSuppressesHTTPAccess(t *testing.T) {
+	var out bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&out, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	srv, err := NewServer(Options{Started: time.Now(), Logger: logger})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Engine.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if out.Len() != 0 {
+		t.Fatalf("INFO access output = %q", out.String())
+	}
+}
 
 func TestServer_Root(t *testing.T) {
 	srv, err := NewServer(Options{Started: time.Now()})

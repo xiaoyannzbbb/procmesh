@@ -351,6 +351,7 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 	}
 	srv, err := api.NewServer(api.Options{
 		Addr:      opt.Listen,
+		Logger:    opt.Logger.With("component", "http"),
 		Mgr:       mgr,
 		Logs:      logs,
 		Store:     revs,
