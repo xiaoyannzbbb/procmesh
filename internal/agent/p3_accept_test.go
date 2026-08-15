@@ -69,19 +69,29 @@ func TestP3_SameOperationIDDoesNotReplay(t *testing.T) {
 	}
 	waitObserved(t, addrC, "sleep", "RUNNING")
 	waitGossipName(t, addrA, "sleep")
+	beforePID := waitProcessPID(t, addrC, "sleep")
 
 	op := "op-p3-restart-once"
 	if code, _, errb := runP1CLI("--server", addrA, "--node", idC, "--operation-id", op, "process", "restart", "sleep"); code != 0 {
 		t.Fatal(errb)
 	}
-	// 读 C 上 restart_count（process get 输出或 list）；再重放同一 operation_id
-	first := restartCount(t, addrC, "sleep")
+	waitObserved(t, addrC, "sleep", "RUNNING")
+	firstPID := waitProcessPID(t, addrC, "sleep")
+	if firstPID == beforePID {
+		t.Fatalf("first restart did not replace pid %d", beforePID)
+	}
+	firstCount := restartCount(t, addrC, "sleep")
 	if code, _, errb := runP1CLI("--server", addrA, "--node", idC, "--operation-id", op, "restart", "sleep"); code != 0 {
 		t.Fatal(errb)
 	}
-	second := restartCount(t, addrC, "sleep")
-	if second != first {
-		t.Fatalf("replayed restart: first=%d second=%d", first, second)
+	waitObserved(t, addrC, "sleep", "RUNNING")
+	secondPID := waitProcessPID(t, addrC, "sleep")
+	if secondPID != firstPID {
+		t.Fatalf("replayed restart: pid first=%d second=%d", firstPID, secondPID)
+	}
+	secondCount := restartCount(t, addrC, "sleep")
+	if secondCount != firstCount {
+		t.Fatalf("replayed restart: restart_count first=%d second=%d", firstCount, secondCount)
 	}
 }
 
@@ -120,12 +130,28 @@ func waitObserved(t *testing.T, addr, name, observed string) {
 	for time.Now().Before(deadline) {
 		var code int
 		code, listOut, errb = runP1CLI("--server", addr, "process", "list")
-		if code == 0 && strings.Contains(listOut, name) && strings.Contains(listOut, observed) {
+		if code == 0 && listHasObserved(listOut, name, observed) {
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("wait observed %s %s: list=%q stderr=%q", name, observed, listOut, errb)
+}
+
+func listHasObserved(out, name, observed string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) < 4 {
+			continue
+		}
+		if fields[0] == name && fields[3] == observed {
+			return true
+		}
+	}
+	return false
 }
 
 func waitGossipName(t *testing.T, addr, name string) {
@@ -157,17 +183,45 @@ func waitGossipName(t *testing.T, addr, name string) {
 	t.Fatalf("gossip never showed process %q on %s (last=%q)", name, addr, last)
 }
 
+func waitProcessPID(t *testing.T, addr, name string) int32 {
+	t.Helper()
+	deadline := time.Now().Add(8 * time.Second)
+	var lastObs string
+	var lastPID int32
+	for time.Now().Before(deadline) {
+		inst, ok := getProcessInstance(t, addr, name)
+		if ok && inst.GetObserved() == "RUNNING" && inst.GetPid() > 0 {
+			return inst.GetPid()
+		}
+		if ok {
+			lastObs, lastPID = inst.GetObserved(), inst.GetPid()
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("wait pid %s: observed=%s pid=%d", name, lastObs, lastPID)
+	return 0
+}
+
 func restartCount(t *testing.T, addr, name string) int32 {
+	t.Helper()
+	inst, ok := getProcessInstance(t, addr, name)
+	if !ok {
+		t.Fatalf("GetProcess %q: no instances", name)
+	}
+	return inst.GetRestartCount()
+}
+
+func getProcessInstance(t *testing.T, addr, name string) (*procmeshv1.Instance, bool) {
 	t.Helper()
 	hc := &http.Client{Timeout: 5 * time.Second}
 	cli := procmeshv1connect.NewProcessServiceClient(hc, "http://"+addr)
 	resp, err := cli.GetProcess(context.Background(), connect.NewRequest(&procmeshv1.GetProcessRequest{IdOrName: name}))
 	if err != nil {
-		t.Fatal(err)
+		return nil, false
 	}
 	insts := resp.Msg.GetProcess().GetInstances()
 	if len(insts) == 0 {
-		t.Fatalf("GetProcess %q: no instances", name)
+		return nil, false
 	}
-	return insts[0].GetRestartCount()
+	return insts[0], true
 }

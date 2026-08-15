@@ -164,10 +164,13 @@ func (m *Manager) reconcileInstance(ctx context.Context, spec ProcessSpec, inst 
 				return m.startInstance(ctx, spec, inst, m.bootID(ctx))
 			}
 			// DecideRestart said neither restart nor fatal (never / clean on-failure).
+			// Stay EXITED/BACKOFF so the next pass does not treat this as STOPPED
+			// and auto-start (OnFailure clean exit must not relaunch).
+			return nil
 		}
 
-		// From STOPPED (e.g. after ResetFailure) start once. Do not start
-		// UNKNOWN/FATAL (already returned) or EXITED without a restart decision.
+		// From STOPPED (e.g. after ResetFailure / operator Restart) start once.
+		// Do not start UNKNOWN/FATAL (already returned) or EXITED without a restart decision.
 		if inst.Observed == ObservedStopped {
 			if !DepsReady(spec, byName) {
 				return nil
@@ -215,6 +218,11 @@ func (m *Manager) refresh(ctx context.Context, inst *Instance) error {
 			}
 		}
 		return m.deps.Store.PutInstance(ctx, *inst)
+	}
+	// A clean stop leaves the shim socket with a dead child. Do not treat
+	// that as a crash; operator Restart relies on STOPPED → startInstance.
+	if inst.Observed == ObservedStopped {
+		return nil
 	}
 	m.handleExit(ctx, inst, st)
 	return nil

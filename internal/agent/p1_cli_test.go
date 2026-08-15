@@ -133,7 +133,7 @@ func startLiveAgent(t *testing.T) string {
 func writeSleepSpec(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "sleep.yaml")
-	body := "name: sleep\ncommand: /bin/sleep\nargs:\n  - \"60\"\ninstances: 1\n"
+	body := "name: sleep\nprocess_id: slp\ncommand: /bin/sleep\nargs:\n  - \"60\"\ninstances: 1\n"
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}

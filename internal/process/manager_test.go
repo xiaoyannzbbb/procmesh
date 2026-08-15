@@ -1664,6 +1664,36 @@ func TestRestart_StopsThenSetsDesiredRunning(t *testing.T) {
 	}
 }
 
+func TestRestart_ReconcileStartsNewPID(t *testing.T) {
+	ctx := context.Background()
+	m, st, _ := newTestManager(t)
+	spec := process.ProcessSpec{
+		ProcessID: "p1",
+		Name:      "sleep",
+		Command:   "/bin/sleep",
+		Args:      []string{"60"},
+		Instances: 1,
+	}
+	inst := startSleep(t, m, st, spec)
+	oldPID := inst.PID
+	if err := m.Restart(ctx, "p1", "op-rst", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetInstance(ctx, inst.InstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Observed != process.ObservedRunning || got.PID <= 0 {
+		t.Fatalf("after restart+reconcile %+v", got)
+	}
+	if got.PID == oldPID {
+		t.Fatalf("pid not replaced: %d", oldPID)
+	}
+}
+
 func TestRestart_MissingSpec(t *testing.T) {
 	m, _, _ := newTestManager(t)
 	err := m.Restart(context.Background(), "nope", "op-r", "t")
