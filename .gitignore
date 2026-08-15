@@ -16,4 +16,5 @@ web/test-results/
 web/playwright-report/
 web/blob-report/
 web/playwright/.cache/
+web/playwright/.auth/
 *.exe

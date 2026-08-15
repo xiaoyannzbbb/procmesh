@@ -1,6 +1,8 @@
-.PHONY: test proto proto-ts web
+.PHONY: test proto proto-ts web test-e2e
 test:
 	go test ./...
+test-e2e:
+	go test ./internal/agent -run TestP5_ -count=1 -timeout 180s
 proto:
 	PATH="$$PATH:$$(go env GOPATH)/bin" protoc \
 		--go_out=. --go_opt=module=github.com/qleelulu/procmesh \
