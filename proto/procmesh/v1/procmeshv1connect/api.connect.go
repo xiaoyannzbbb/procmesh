@@ -31,6 +31,12 @@ const (
 	NodeServiceName = "procmesh.v1.NodeService"
 	// ClusterServiceName is the fully-qualified name of the ClusterService service.
 	ClusterServiceName = "procmesh.v1.ClusterService"
+	// AuthServiceName is the fully-qualified name of the AuthService service.
+	AuthServiceName = "procmesh.v1.AuthService"
+	// UserServiceName is the fully-qualified name of the UserService service.
+	UserServiceName = "procmesh.v1.UserService"
+	// RoleServiceName is the fully-qualified name of the RoleService service.
+	RoleServiceName = "procmesh.v1.RoleService"
 )
 
 // These constants are the fully-qualified names of the RPCs defined in this package. They're
@@ -98,6 +104,10 @@ const (
 	// NodeServiceRevokeJoinTokenProcedure is the fully-qualified name of the NodeService's
 	// RevokeJoinToken RPC.
 	NodeServiceRevokeJoinTokenProcedure = "/procmesh.v1.NodeService/RevokeJoinToken"
+	// NodeServiceRemoveNodeProcedure is the fully-qualified name of the NodeService's RemoveNode RPC.
+	NodeServiceRemoveNodeProcedure = "/procmesh.v1.NodeService/RemoveNode"
+	// NodeServicePromoteNodeProcedure is the fully-qualified name of the NodeService's PromoteNode RPC.
+	NodeServicePromoteNodeProcedure = "/procmesh.v1.NodeService/PromoteNode"
 	// ClusterServiceInitProcedure is the fully-qualified name of the ClusterService's Init RPC.
 	ClusterServiceInitProcedure = "/procmesh.v1.ClusterService/Init"
 	// ClusterServiceJoinProcedure is the fully-qualified name of the ClusterService's Join RPC.
@@ -107,6 +117,28 @@ const (
 	ClusterServiceRequestJoinProcedure = "/procmesh.v1.ClusterService/RequestJoin"
 	// ClusterServiceOverviewProcedure is the fully-qualified name of the ClusterService's Overview RPC.
 	ClusterServiceOverviewProcedure = "/procmesh.v1.ClusterService/Overview"
+	// AuthServiceLoginProcedure is the fully-qualified name of the AuthService's Login RPC.
+	AuthServiceLoginProcedure = "/procmesh.v1.AuthService/Login"
+	// AuthServiceLogoutProcedure is the fully-qualified name of the AuthService's Logout RPC.
+	AuthServiceLogoutProcedure = "/procmesh.v1.AuthService/Logout"
+	// AuthServiceCreateAPITokenProcedure is the fully-qualified name of the AuthService's
+	// CreateAPIToken RPC.
+	AuthServiceCreateAPITokenProcedure = "/procmesh.v1.AuthService/CreateAPIToken"
+	// AuthServiceRevokeAPITokenProcedure is the fully-qualified name of the AuthService's
+	// RevokeAPIToken RPC.
+	AuthServiceRevokeAPITokenProcedure = "/procmesh.v1.AuthService/RevokeAPIToken"
+	// UserServiceListUsersProcedure is the fully-qualified name of the UserService's ListUsers RPC.
+	UserServiceListUsersProcedure = "/procmesh.v1.UserService/ListUsers"
+	// UserServiceCreateUserProcedure is the fully-qualified name of the UserService's CreateUser RPC.
+	UserServiceCreateUserProcedure = "/procmesh.v1.UserService/CreateUser"
+	// UserServiceDisableUserProcedure is the fully-qualified name of the UserService's DisableUser RPC.
+	UserServiceDisableUserProcedure = "/procmesh.v1.UserService/DisableUser"
+	// RoleServiceListRolesProcedure is the fully-qualified name of the RoleService's ListRoles RPC.
+	RoleServiceListRolesProcedure = "/procmesh.v1.RoleService/ListRoles"
+	// RoleServiceCreateRoleProcedure is the fully-qualified name of the RoleService's CreateRole RPC.
+	RoleServiceCreateRoleProcedure = "/procmesh.v1.RoleService/CreateRole"
+	// RoleServiceGrantRoleProcedure is the fully-qualified name of the RoleService's GrantRole RPC.
+	RoleServiceGrantRoleProcedure = "/procmesh.v1.RoleService/GrantRole"
 )
 
 // ProcessServiceClient is a client for the procmesh.v1.ProcessService service.
@@ -715,6 +747,8 @@ type NodeServiceClient interface {
 	GetNode(context.Context, *connect.Request[v1.GetNodeRequest]) (*connect.Response[v1.GetNodeResponse], error)
 	CreateJoinToken(context.Context, *connect.Request[v1.CreateJoinTokenRequest]) (*connect.Response[v1.CreateJoinTokenResponse], error)
 	RevokeJoinToken(context.Context, *connect.Request[v1.RevokeJoinTokenRequest]) (*connect.Response[v1.RevokeJoinTokenResponse], error)
+	RemoveNode(context.Context, *connect.Request[v1.RemoveNodeRequest]) (*connect.Response[v1.RemoveNodeResponse], error)
+	PromoteNode(context.Context, *connect.Request[v1.PromoteNodeRequest]) (*connect.Response[v1.PromoteNodeResponse], error)
 }
 
 // NewNodeServiceClient constructs a client for the procmesh.v1.NodeService service. By default, it
@@ -752,6 +786,18 @@ func NewNodeServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 			connect.WithSchema(nodeServiceMethods.ByName("RevokeJoinToken")),
 			connect.WithClientOptions(opts...),
 		),
+		removeNode: connect.NewClient[v1.RemoveNodeRequest, v1.RemoveNodeResponse](
+			httpClient,
+			baseURL+NodeServiceRemoveNodeProcedure,
+			connect.WithSchema(nodeServiceMethods.ByName("RemoveNode")),
+			connect.WithClientOptions(opts...),
+		),
+		promoteNode: connect.NewClient[v1.PromoteNodeRequest, v1.PromoteNodeResponse](
+			httpClient,
+			baseURL+NodeServicePromoteNodeProcedure,
+			connect.WithSchema(nodeServiceMethods.ByName("PromoteNode")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -761,6 +807,8 @@ type nodeServiceClient struct {
 	getNode         *connect.Client[v1.GetNodeRequest, v1.GetNodeResponse]
 	createJoinToken *connect.Client[v1.CreateJoinTokenRequest, v1.CreateJoinTokenResponse]
 	revokeJoinToken *connect.Client[v1.RevokeJoinTokenRequest, v1.RevokeJoinTokenResponse]
+	removeNode      *connect.Client[v1.RemoveNodeRequest, v1.RemoveNodeResponse]
+	promoteNode     *connect.Client[v1.PromoteNodeRequest, v1.PromoteNodeResponse]
 }
 
 // ListNodes calls procmesh.v1.NodeService.ListNodes.
@@ -783,12 +831,24 @@ func (c *nodeServiceClient) RevokeJoinToken(ctx context.Context, req *connect.Re
 	return c.revokeJoinToken.CallUnary(ctx, req)
 }
 
+// RemoveNode calls procmesh.v1.NodeService.RemoveNode.
+func (c *nodeServiceClient) RemoveNode(ctx context.Context, req *connect.Request[v1.RemoveNodeRequest]) (*connect.Response[v1.RemoveNodeResponse], error) {
+	return c.removeNode.CallUnary(ctx, req)
+}
+
+// PromoteNode calls procmesh.v1.NodeService.PromoteNode.
+func (c *nodeServiceClient) PromoteNode(ctx context.Context, req *connect.Request[v1.PromoteNodeRequest]) (*connect.Response[v1.PromoteNodeResponse], error) {
+	return c.promoteNode.CallUnary(ctx, req)
+}
+
 // NodeServiceHandler is an implementation of the procmesh.v1.NodeService service.
 type NodeServiceHandler interface {
 	ListNodes(context.Context, *connect.Request[v1.ListNodesRequest]) (*connect.Response[v1.ListNodesResponse], error)
 	GetNode(context.Context, *connect.Request[v1.GetNodeRequest]) (*connect.Response[v1.GetNodeResponse], error)
 	CreateJoinToken(context.Context, *connect.Request[v1.CreateJoinTokenRequest]) (*connect.Response[v1.CreateJoinTokenResponse], error)
 	RevokeJoinToken(context.Context, *connect.Request[v1.RevokeJoinTokenRequest]) (*connect.Response[v1.RevokeJoinTokenResponse], error)
+	RemoveNode(context.Context, *connect.Request[v1.RemoveNodeRequest]) (*connect.Response[v1.RemoveNodeResponse], error)
+	PromoteNode(context.Context, *connect.Request[v1.PromoteNodeRequest]) (*connect.Response[v1.PromoteNodeResponse], error)
 }
 
 // NewNodeServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -822,6 +882,18 @@ func NewNodeServiceHandler(svc NodeServiceHandler, opts ...connect.HandlerOption
 		connect.WithSchema(nodeServiceMethods.ByName("RevokeJoinToken")),
 		connect.WithHandlerOptions(opts...),
 	)
+	nodeServiceRemoveNodeHandler := connect.NewUnaryHandler(
+		NodeServiceRemoveNodeProcedure,
+		svc.RemoveNode,
+		connect.WithSchema(nodeServiceMethods.ByName("RemoveNode")),
+		connect.WithHandlerOptions(opts...),
+	)
+	nodeServicePromoteNodeHandler := connect.NewUnaryHandler(
+		NodeServicePromoteNodeProcedure,
+		svc.PromoteNode,
+		connect.WithSchema(nodeServiceMethods.ByName("PromoteNode")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/procmesh.v1.NodeService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case NodeServiceListNodesProcedure:
@@ -832,6 +904,10 @@ func NewNodeServiceHandler(svc NodeServiceHandler, opts ...connect.HandlerOption
 			nodeServiceCreateJoinTokenHandler.ServeHTTP(w, r)
 		case NodeServiceRevokeJoinTokenProcedure:
 			nodeServiceRevokeJoinTokenHandler.ServeHTTP(w, r)
+		case NodeServiceRemoveNodeProcedure:
+			nodeServiceRemoveNodeHandler.ServeHTTP(w, r)
+		case NodeServicePromoteNodeProcedure:
+			nodeServicePromoteNodeHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -855,6 +931,14 @@ func (UnimplementedNodeServiceHandler) CreateJoinToken(context.Context, *connect
 
 func (UnimplementedNodeServiceHandler) RevokeJoinToken(context.Context, *connect.Request[v1.RevokeJoinTokenRequest]) (*connect.Response[v1.RevokeJoinTokenResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.NodeService.RevokeJoinToken is not implemented"))
+}
+
+func (UnimplementedNodeServiceHandler) RemoveNode(context.Context, *connect.Request[v1.RemoveNodeRequest]) (*connect.Response[v1.RemoveNodeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.NodeService.RemoveNode is not implemented"))
+}
+
+func (UnimplementedNodeServiceHandler) PromoteNode(context.Context, *connect.Request[v1.PromoteNodeRequest]) (*connect.Response[v1.PromoteNodeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.NodeService.PromoteNode is not implemented"))
 }
 
 // ClusterServiceClient is a client for the procmesh.v1.ClusterService service.
@@ -1003,4 +1087,396 @@ func (UnimplementedClusterServiceHandler) RequestJoin(context.Context, *connect.
 
 func (UnimplementedClusterServiceHandler) Overview(context.Context, *connect.Request[v1.ClusterOverviewRequest]) (*connect.Response[v1.ClusterOverviewResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterService.Overview is not implemented"))
+}
+
+// AuthServiceClient is a client for the procmesh.v1.AuthService service.
+type AuthServiceClient interface {
+	Login(context.Context, *connect.Request[v1.LoginRequest]) (*connect.Response[v1.LoginResponse], error)
+	Logout(context.Context, *connect.Request[v1.LogoutRequest]) (*connect.Response[v1.LogoutResponse], error)
+	CreateAPIToken(context.Context, *connect.Request[v1.CreateAPITokenRequest]) (*connect.Response[v1.CreateAPITokenResponse], error)
+	RevokeAPIToken(context.Context, *connect.Request[v1.RevokeAPITokenRequest]) (*connect.Response[v1.RevokeAPITokenResponse], error)
+}
+
+// NewAuthServiceClient constructs a client for the procmesh.v1.AuthService service. By default, it
+// uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses, and sends
+// uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the connect.WithGRPC() or
+// connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewAuthServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) AuthServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	authServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("AuthService").Methods()
+	return &authServiceClient{
+		login: connect.NewClient[v1.LoginRequest, v1.LoginResponse](
+			httpClient,
+			baseURL+AuthServiceLoginProcedure,
+			connect.WithSchema(authServiceMethods.ByName("Login")),
+			connect.WithClientOptions(opts...),
+		),
+		logout: connect.NewClient[v1.LogoutRequest, v1.LogoutResponse](
+			httpClient,
+			baseURL+AuthServiceLogoutProcedure,
+			connect.WithSchema(authServiceMethods.ByName("Logout")),
+			connect.WithClientOptions(opts...),
+		),
+		createAPIToken: connect.NewClient[v1.CreateAPITokenRequest, v1.CreateAPITokenResponse](
+			httpClient,
+			baseURL+AuthServiceCreateAPITokenProcedure,
+			connect.WithSchema(authServiceMethods.ByName("CreateAPIToken")),
+			connect.WithClientOptions(opts...),
+		),
+		revokeAPIToken: connect.NewClient[v1.RevokeAPITokenRequest, v1.RevokeAPITokenResponse](
+			httpClient,
+			baseURL+AuthServiceRevokeAPITokenProcedure,
+			connect.WithSchema(authServiceMethods.ByName("RevokeAPIToken")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// authServiceClient implements AuthServiceClient.
+type authServiceClient struct {
+	login          *connect.Client[v1.LoginRequest, v1.LoginResponse]
+	logout         *connect.Client[v1.LogoutRequest, v1.LogoutResponse]
+	createAPIToken *connect.Client[v1.CreateAPITokenRequest, v1.CreateAPITokenResponse]
+	revokeAPIToken *connect.Client[v1.RevokeAPITokenRequest, v1.RevokeAPITokenResponse]
+}
+
+// Login calls procmesh.v1.AuthService.Login.
+func (c *authServiceClient) Login(ctx context.Context, req *connect.Request[v1.LoginRequest]) (*connect.Response[v1.LoginResponse], error) {
+	return c.login.CallUnary(ctx, req)
+}
+
+// Logout calls procmesh.v1.AuthService.Logout.
+func (c *authServiceClient) Logout(ctx context.Context, req *connect.Request[v1.LogoutRequest]) (*connect.Response[v1.LogoutResponse], error) {
+	return c.logout.CallUnary(ctx, req)
+}
+
+// CreateAPIToken calls procmesh.v1.AuthService.CreateAPIToken.
+func (c *authServiceClient) CreateAPIToken(ctx context.Context, req *connect.Request[v1.CreateAPITokenRequest]) (*connect.Response[v1.CreateAPITokenResponse], error) {
+	return c.createAPIToken.CallUnary(ctx, req)
+}
+
+// RevokeAPIToken calls procmesh.v1.AuthService.RevokeAPIToken.
+func (c *authServiceClient) RevokeAPIToken(ctx context.Context, req *connect.Request[v1.RevokeAPITokenRequest]) (*connect.Response[v1.RevokeAPITokenResponse], error) {
+	return c.revokeAPIToken.CallUnary(ctx, req)
+}
+
+// AuthServiceHandler is an implementation of the procmesh.v1.AuthService service.
+type AuthServiceHandler interface {
+	Login(context.Context, *connect.Request[v1.LoginRequest]) (*connect.Response[v1.LoginResponse], error)
+	Logout(context.Context, *connect.Request[v1.LogoutRequest]) (*connect.Response[v1.LogoutResponse], error)
+	CreateAPIToken(context.Context, *connect.Request[v1.CreateAPITokenRequest]) (*connect.Response[v1.CreateAPITokenResponse], error)
+	RevokeAPIToken(context.Context, *connect.Request[v1.RevokeAPITokenRequest]) (*connect.Response[v1.RevokeAPITokenResponse], error)
+}
+
+// NewAuthServiceHandler builds an HTTP handler from the service implementation. It returns the path
+// on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewAuthServiceHandler(svc AuthServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	authServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("AuthService").Methods()
+	authServiceLoginHandler := connect.NewUnaryHandler(
+		AuthServiceLoginProcedure,
+		svc.Login,
+		connect.WithSchema(authServiceMethods.ByName("Login")),
+		connect.WithHandlerOptions(opts...),
+	)
+	authServiceLogoutHandler := connect.NewUnaryHandler(
+		AuthServiceLogoutProcedure,
+		svc.Logout,
+		connect.WithSchema(authServiceMethods.ByName("Logout")),
+		connect.WithHandlerOptions(opts...),
+	)
+	authServiceCreateAPITokenHandler := connect.NewUnaryHandler(
+		AuthServiceCreateAPITokenProcedure,
+		svc.CreateAPIToken,
+		connect.WithSchema(authServiceMethods.ByName("CreateAPIToken")),
+		connect.WithHandlerOptions(opts...),
+	)
+	authServiceRevokeAPITokenHandler := connect.NewUnaryHandler(
+		AuthServiceRevokeAPITokenProcedure,
+		svc.RevokeAPIToken,
+		connect.WithSchema(authServiceMethods.ByName("RevokeAPIToken")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/procmesh.v1.AuthService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case AuthServiceLoginProcedure:
+			authServiceLoginHandler.ServeHTTP(w, r)
+		case AuthServiceLogoutProcedure:
+			authServiceLogoutHandler.ServeHTTP(w, r)
+		case AuthServiceCreateAPITokenProcedure:
+			authServiceCreateAPITokenHandler.ServeHTTP(w, r)
+		case AuthServiceRevokeAPITokenProcedure:
+			authServiceRevokeAPITokenHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedAuthServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedAuthServiceHandler struct{}
+
+func (UnimplementedAuthServiceHandler) Login(context.Context, *connect.Request[v1.LoginRequest]) (*connect.Response[v1.LoginResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.AuthService.Login is not implemented"))
+}
+
+func (UnimplementedAuthServiceHandler) Logout(context.Context, *connect.Request[v1.LogoutRequest]) (*connect.Response[v1.LogoutResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.AuthService.Logout is not implemented"))
+}
+
+func (UnimplementedAuthServiceHandler) CreateAPIToken(context.Context, *connect.Request[v1.CreateAPITokenRequest]) (*connect.Response[v1.CreateAPITokenResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.AuthService.CreateAPIToken is not implemented"))
+}
+
+func (UnimplementedAuthServiceHandler) RevokeAPIToken(context.Context, *connect.Request[v1.RevokeAPITokenRequest]) (*connect.Response[v1.RevokeAPITokenResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.AuthService.RevokeAPIToken is not implemented"))
+}
+
+// UserServiceClient is a client for the procmesh.v1.UserService service.
+type UserServiceClient interface {
+	ListUsers(context.Context, *connect.Request[v1.ListUsersRequest]) (*connect.Response[v1.ListUsersResponse], error)
+	CreateUser(context.Context, *connect.Request[v1.CreateUserRequest]) (*connect.Response[v1.CreateUserResponse], error)
+	DisableUser(context.Context, *connect.Request[v1.DisableUserRequest]) (*connect.Response[v1.DisableUserResponse], error)
+}
+
+// NewUserServiceClient constructs a client for the procmesh.v1.UserService service. By default, it
+// uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses, and sends
+// uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the connect.WithGRPC() or
+// connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewUserServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) UserServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	userServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("UserService").Methods()
+	return &userServiceClient{
+		listUsers: connect.NewClient[v1.ListUsersRequest, v1.ListUsersResponse](
+			httpClient,
+			baseURL+UserServiceListUsersProcedure,
+			connect.WithSchema(userServiceMethods.ByName("ListUsers")),
+			connect.WithClientOptions(opts...),
+		),
+		createUser: connect.NewClient[v1.CreateUserRequest, v1.CreateUserResponse](
+			httpClient,
+			baseURL+UserServiceCreateUserProcedure,
+			connect.WithSchema(userServiceMethods.ByName("CreateUser")),
+			connect.WithClientOptions(opts...),
+		),
+		disableUser: connect.NewClient[v1.DisableUserRequest, v1.DisableUserResponse](
+			httpClient,
+			baseURL+UserServiceDisableUserProcedure,
+			connect.WithSchema(userServiceMethods.ByName("DisableUser")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// userServiceClient implements UserServiceClient.
+type userServiceClient struct {
+	listUsers   *connect.Client[v1.ListUsersRequest, v1.ListUsersResponse]
+	createUser  *connect.Client[v1.CreateUserRequest, v1.CreateUserResponse]
+	disableUser *connect.Client[v1.DisableUserRequest, v1.DisableUserResponse]
+}
+
+// ListUsers calls procmesh.v1.UserService.ListUsers.
+func (c *userServiceClient) ListUsers(ctx context.Context, req *connect.Request[v1.ListUsersRequest]) (*connect.Response[v1.ListUsersResponse], error) {
+	return c.listUsers.CallUnary(ctx, req)
+}
+
+// CreateUser calls procmesh.v1.UserService.CreateUser.
+func (c *userServiceClient) CreateUser(ctx context.Context, req *connect.Request[v1.CreateUserRequest]) (*connect.Response[v1.CreateUserResponse], error) {
+	return c.createUser.CallUnary(ctx, req)
+}
+
+// DisableUser calls procmesh.v1.UserService.DisableUser.
+func (c *userServiceClient) DisableUser(ctx context.Context, req *connect.Request[v1.DisableUserRequest]) (*connect.Response[v1.DisableUserResponse], error) {
+	return c.disableUser.CallUnary(ctx, req)
+}
+
+// UserServiceHandler is an implementation of the procmesh.v1.UserService service.
+type UserServiceHandler interface {
+	ListUsers(context.Context, *connect.Request[v1.ListUsersRequest]) (*connect.Response[v1.ListUsersResponse], error)
+	CreateUser(context.Context, *connect.Request[v1.CreateUserRequest]) (*connect.Response[v1.CreateUserResponse], error)
+	DisableUser(context.Context, *connect.Request[v1.DisableUserRequest]) (*connect.Response[v1.DisableUserResponse], error)
+}
+
+// NewUserServiceHandler builds an HTTP handler from the service implementation. It returns the path
+// on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewUserServiceHandler(svc UserServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	userServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("UserService").Methods()
+	userServiceListUsersHandler := connect.NewUnaryHandler(
+		UserServiceListUsersProcedure,
+		svc.ListUsers,
+		connect.WithSchema(userServiceMethods.ByName("ListUsers")),
+		connect.WithHandlerOptions(opts...),
+	)
+	userServiceCreateUserHandler := connect.NewUnaryHandler(
+		UserServiceCreateUserProcedure,
+		svc.CreateUser,
+		connect.WithSchema(userServiceMethods.ByName("CreateUser")),
+		connect.WithHandlerOptions(opts...),
+	)
+	userServiceDisableUserHandler := connect.NewUnaryHandler(
+		UserServiceDisableUserProcedure,
+		svc.DisableUser,
+		connect.WithSchema(userServiceMethods.ByName("DisableUser")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/procmesh.v1.UserService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case UserServiceListUsersProcedure:
+			userServiceListUsersHandler.ServeHTTP(w, r)
+		case UserServiceCreateUserProcedure:
+			userServiceCreateUserHandler.ServeHTTP(w, r)
+		case UserServiceDisableUserProcedure:
+			userServiceDisableUserHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedUserServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedUserServiceHandler struct{}
+
+func (UnimplementedUserServiceHandler) ListUsers(context.Context, *connect.Request[v1.ListUsersRequest]) (*connect.Response[v1.ListUsersResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.UserService.ListUsers is not implemented"))
+}
+
+func (UnimplementedUserServiceHandler) CreateUser(context.Context, *connect.Request[v1.CreateUserRequest]) (*connect.Response[v1.CreateUserResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.UserService.CreateUser is not implemented"))
+}
+
+func (UnimplementedUserServiceHandler) DisableUser(context.Context, *connect.Request[v1.DisableUserRequest]) (*connect.Response[v1.DisableUserResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.UserService.DisableUser is not implemented"))
+}
+
+// RoleServiceClient is a client for the procmesh.v1.RoleService service.
+type RoleServiceClient interface {
+	ListRoles(context.Context, *connect.Request[v1.ListRolesRequest]) (*connect.Response[v1.ListRolesResponse], error)
+	CreateRole(context.Context, *connect.Request[v1.CreateRoleRequest]) (*connect.Response[v1.CreateRoleResponse], error)
+	GrantRole(context.Context, *connect.Request[v1.GrantRoleRequest]) (*connect.Response[v1.GrantRoleResponse], error)
+}
+
+// NewRoleServiceClient constructs a client for the procmesh.v1.RoleService service. By default, it
+// uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses, and sends
+// uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the connect.WithGRPC() or
+// connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewRoleServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) RoleServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	roleServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("RoleService").Methods()
+	return &roleServiceClient{
+		listRoles: connect.NewClient[v1.ListRolesRequest, v1.ListRolesResponse](
+			httpClient,
+			baseURL+RoleServiceListRolesProcedure,
+			connect.WithSchema(roleServiceMethods.ByName("ListRoles")),
+			connect.WithClientOptions(opts...),
+		),
+		createRole: connect.NewClient[v1.CreateRoleRequest, v1.CreateRoleResponse](
+			httpClient,
+			baseURL+RoleServiceCreateRoleProcedure,
+			connect.WithSchema(roleServiceMethods.ByName("CreateRole")),
+			connect.WithClientOptions(opts...),
+		),
+		grantRole: connect.NewClient[v1.GrantRoleRequest, v1.GrantRoleResponse](
+			httpClient,
+			baseURL+RoleServiceGrantRoleProcedure,
+			connect.WithSchema(roleServiceMethods.ByName("GrantRole")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// roleServiceClient implements RoleServiceClient.
+type roleServiceClient struct {
+	listRoles  *connect.Client[v1.ListRolesRequest, v1.ListRolesResponse]
+	createRole *connect.Client[v1.CreateRoleRequest, v1.CreateRoleResponse]
+	grantRole  *connect.Client[v1.GrantRoleRequest, v1.GrantRoleResponse]
+}
+
+// ListRoles calls procmesh.v1.RoleService.ListRoles.
+func (c *roleServiceClient) ListRoles(ctx context.Context, req *connect.Request[v1.ListRolesRequest]) (*connect.Response[v1.ListRolesResponse], error) {
+	return c.listRoles.CallUnary(ctx, req)
+}
+
+// CreateRole calls procmesh.v1.RoleService.CreateRole.
+func (c *roleServiceClient) CreateRole(ctx context.Context, req *connect.Request[v1.CreateRoleRequest]) (*connect.Response[v1.CreateRoleResponse], error) {
+	return c.createRole.CallUnary(ctx, req)
+}
+
+// GrantRole calls procmesh.v1.RoleService.GrantRole.
+func (c *roleServiceClient) GrantRole(ctx context.Context, req *connect.Request[v1.GrantRoleRequest]) (*connect.Response[v1.GrantRoleResponse], error) {
+	return c.grantRole.CallUnary(ctx, req)
+}
+
+// RoleServiceHandler is an implementation of the procmesh.v1.RoleService service.
+type RoleServiceHandler interface {
+	ListRoles(context.Context, *connect.Request[v1.ListRolesRequest]) (*connect.Response[v1.ListRolesResponse], error)
+	CreateRole(context.Context, *connect.Request[v1.CreateRoleRequest]) (*connect.Response[v1.CreateRoleResponse], error)
+	GrantRole(context.Context, *connect.Request[v1.GrantRoleRequest]) (*connect.Response[v1.GrantRoleResponse], error)
+}
+
+// NewRoleServiceHandler builds an HTTP handler from the service implementation. It returns the path
+// on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewRoleServiceHandler(svc RoleServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	roleServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("RoleService").Methods()
+	roleServiceListRolesHandler := connect.NewUnaryHandler(
+		RoleServiceListRolesProcedure,
+		svc.ListRoles,
+		connect.WithSchema(roleServiceMethods.ByName("ListRoles")),
+		connect.WithHandlerOptions(opts...),
+	)
+	roleServiceCreateRoleHandler := connect.NewUnaryHandler(
+		RoleServiceCreateRoleProcedure,
+		svc.CreateRole,
+		connect.WithSchema(roleServiceMethods.ByName("CreateRole")),
+		connect.WithHandlerOptions(opts...),
+	)
+	roleServiceGrantRoleHandler := connect.NewUnaryHandler(
+		RoleServiceGrantRoleProcedure,
+		svc.GrantRole,
+		connect.WithSchema(roleServiceMethods.ByName("GrantRole")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/procmesh.v1.RoleService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case RoleServiceListRolesProcedure:
+			roleServiceListRolesHandler.ServeHTTP(w, r)
+		case RoleServiceCreateRoleProcedure:
+			roleServiceCreateRoleHandler.ServeHTTP(w, r)
+		case RoleServiceGrantRoleProcedure:
+			roleServiceGrantRoleHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedRoleServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedRoleServiceHandler struct{}
+
+func (UnimplementedRoleServiceHandler) ListRoles(context.Context, *connect.Request[v1.ListRolesRequest]) (*connect.Response[v1.ListRolesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.RoleService.ListRoles is not implemented"))
+}
+
+func (UnimplementedRoleServiceHandler) CreateRole(context.Context, *connect.Request[v1.CreateRoleRequest]) (*connect.Response[v1.CreateRoleResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.RoleService.CreateRole is not implemented"))
+}
+
+func (UnimplementedRoleServiceHandler) GrantRole(context.Context, *connect.Request[v1.GrantRoleRequest]) (*connect.Response[v1.GrantRoleResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.RoleService.GrantRole is not implemented"))
 }

@@ -17,6 +17,10 @@ func CodeOf(err error) errcode.Code {
 	return ""
 }
 
+func unimplemented() error {
+	return ToConnect(errcode.E(errcode.UNAVAILABLE, "not implemented"))
+}
+
 // ToConnect maps err to a Connect error with ErrorInfo detail.
 // nil is returned unchanged.
 func ToConnect(err error) error {

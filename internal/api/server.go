@@ -89,6 +89,12 @@ func NewServer(opts Options) (*Server, error) {
 	mountConnect(engine, np, nh)
 	clp, clh := procmeshv1connect.NewClusterServiceHandler(&ClusterAPI{Deps: opts.Cluster, Degraded: degraded})
 	mountConnect(engine, clp, clh)
+	ap, ah := procmeshv1connect.NewAuthServiceHandler(&AuthAPI{})
+	mountConnect(engine, ap, ah)
+	up, uh := procmeshv1connect.NewUserServiceHandler(&UserAPI{})
+	mountConnect(engine, up, uh)
+	rp, rh := procmeshv1connect.NewRoleServiceHandler(&RoleAPI{})
+	mountConnect(engine, rp, rh)
 
 	legacy, err := localhttp.NewServerOpts(opts.Mgr, opts.Logs, opts.Addr, opts.Degraded, opts.Ready)
 	if err != nil {

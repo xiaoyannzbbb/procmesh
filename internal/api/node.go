@@ -81,6 +81,14 @@ func (s *NodeAPI) RevokeJoinToken(_ context.Context, req *connect.Request[procme
 	return connect.NewResponse(&procmeshv1.RevokeJoinTokenResponse{}), nil
 }
 
+func (s *NodeAPI) RemoveNode(_ context.Context, _ *connect.Request[procmeshv1.RemoveNodeRequest]) (*connect.Response[procmeshv1.RemoveNodeResponse], error) {
+	return nil, unimplemented()
+}
+
+func (s *NodeAPI) PromoteNode(_ context.Context, _ *connect.Request[procmeshv1.PromoteNodeRequest]) (*connect.Response[procmeshv1.PromoteNodeResponse], error) {
+	return nil, unimplemented()
+}
+
 func findNode(members []cluster.NodeSummary, idOrHost string) (cluster.NodeSummary, bool) {
 	for _, n := range members {
 		if n.NodeID == idOrHost {
