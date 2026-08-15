@@ -118,7 +118,10 @@ func NewServer(opts Options) (*Server, error) {
 	mountConnect(engine, lp, lh)
 	np, nh := procmeshv1connect.NewNodeServiceHandler(&NodeAPI{Deps: opts.Cluster, Auth: opts.Auth, Degraded: degraded}, intercept)
 	mountConnect(engine, np, nh)
-	clp, clh := procmeshv1connect.NewClusterServiceHandler(&ClusterAPI{Deps: opts.Cluster, Auth: opts.Auth, Degraded: degraded}, intercept)
+	clp, clh := procmeshv1connect.NewClusterServiceHandler(&ClusterAPI{
+		Deps: opts.Cluster, Auth: opts.Auth, Degraded: degraded,
+		Logger: opts.Logger.With("component", "cluster"),
+	}, intercept)
 	mountConnect(engine, clp, clh)
 	ap, ah := procmeshv1connect.NewAuthServiceHandler(&AuthAPI{Auth: opts.Auth}, intercept)
 	mountConnect(engine, ap, ah)

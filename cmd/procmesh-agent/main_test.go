@@ -21,3 +21,14 @@ func TestRun_InvalidLogLevelExitsTwo(t *testing.T) {
 		t.Fatalf("code=%d stderr=%q", code, stderr.String())
 	}
 }
+
+func TestRun_HelpExitsZero(t *testing.T) {
+	var stderr bytes.Buffer
+	code := run([]string{"--help"}, &stderr)
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "log-format") || !strings.Contains(stderr.String(), "log-level") {
+		t.Fatalf("help missing logging flags: %q", stderr.String())
+	}
+}

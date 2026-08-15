@@ -1,8 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -107,6 +110,7 @@ type clusterEnvCfg struct {
 	onAdmit   func(nodeID, raftAddr string) error
 	leaderAPI func() string
 	raftAddr  func() string
+	logger    *slog.Logger
 }
 
 func newClusterEnvFull(t *testing.T, cfg clusterEnvCfg) *clusterEnv {
@@ -163,7 +167,7 @@ func newClusterEnvFull(t *testing.T, cfg clusterEnvCfg) *clusterEnv {
 	if env.mesh != nil {
 		deps.Mesh = env.mesh
 	}
-	srv, err := NewServer(Options{Mgr: m, Store: st, Cluster: deps, Degraded: cfg.degraded, Auth: cfg.auth})
+	srv, err := NewServer(Options{Mgr: m, Store: st, Cluster: deps, Degraded: cfg.degraded, Auth: cfg.auth, Logger: cfg.logger})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,11 +224,16 @@ func (e *clusterEnv) init(t *testing.T) *procmeshv1.InitClusterResponse {
 func TestInit_OnReadyAfterCerts(t *testing.T) {
 	var dir string
 	var called, hadCerts bool
-	e := newClusterEnvReady(t, false, true, func() error {
-		called = true
-		_, err := os.Stat(filepath.Join(dir, "agent.crt"))
-		hadCerts = err == nil
-		return errors.New("rpc listen failed")
+	var logOut bytes.Buffer
+	e := newClusterEnvFull(t, clusterEnvCfg{
+		withMesh: true,
+		logger:   slog.New(slog.NewJSONHandler(&logOut, nil)),
+		onReady: func() error {
+			called = true
+			_, err := os.Stat(filepath.Join(dir, "agent.crt"))
+			hadCerts = err == nil
+			return errors.New("rpc listen failed")
+		},
 	})
 	dir = e.dir
 	got := e.init(t)
@@ -239,6 +248,13 @@ func TestInit_OnReadyAfterCerts(t *testing.T) {
 	}
 	if !control.AlreadyInited(e.dir) {
 		t.Fatal("OnReady error must not roll back Init")
+	}
+	var record map[string]any
+	if err := json.Unmarshal(logOut.Bytes(), &record); err != nil {
+		t.Fatalf("cluster warning is not JSON: %v; output=%q", err, logOut.String())
+	}
+	if record["level"] != "WARN" || record["msg"] != "cluster ready failed" || record["error"] != "rpc listen failed" {
+		t.Fatalf("cluster warning = %#v", record)
 	}
 }
 

@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
-	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -69,6 +69,7 @@ type ClusterAPI struct {
 	Deps     ClusterDeps
 	Auth     *auth.Service
 	Degraded func() bool
+	Logger   *slog.Logger
 }
 
 func (s *ClusterAPI) Init(ctx context.Context, req *connect.Request[procmeshv1.InitClusterRequest]) (*connect.Response[procmeshv1.InitClusterResponse], error) {
@@ -90,7 +91,7 @@ func (s *ClusterAPI) Init(ctx context.Context, req *connect.Request[procmeshv1.I
 		return nil, ToConnect(err)
 	}
 	if err := s.callOnReady(); err != nil {
-		fmt.Fprintf(os.Stderr, "cluster ready: %v\n", err)
+		s.warn("cluster ready failed", err)
 	}
 	if s.Deps.Store != nil {
 		if err := s.Deps.Store.SetClusterID(ctx, result.ClusterID); err != nil {
@@ -171,7 +172,7 @@ func (s *ClusterAPI) Join(ctx context.Context, req *connect.Request[procmeshv1.J
 			}
 			if add != nil {
 				if err := add(req.Msg.GetNodeId(), raftAddr); err != nil {
-					fmt.Fprintf(os.Stderr, "add nonvoter: %v\n", err)
+					s.warn("add raft nonvoter failed", err)
 				}
 			}
 		}
@@ -182,7 +183,7 @@ func (s *ClusterAPI) Join(ctx context.Context, req *connect.Request[procmeshv1.J
 	}
 	if gossip := req.Msg.GetGossipAddress(); gossip != "" {
 		if err := control.AppendGossipSeed(s.Deps.Dir, gossip); err != nil {
-			fmt.Fprintf(os.Stderr, "persist gossip seed: %v\n", err)
+			s.warn("persist gossip seed failed", err)
 		}
 	}
 	resp := &procmeshv1.JoinClusterResponse{
@@ -254,7 +255,7 @@ func (s *ClusterAPI) RequestJoin(ctx context.Context, req *connect.Request[procm
 		return nil, ToConnect(err)
 	}
 	if err := s.callOnReady(); err != nil {
-		fmt.Fprintf(os.Stderr, "cluster ready: %v\n", err)
+		s.warn("cluster ready failed", err)
 	}
 	if s.Deps.Store != nil {
 		if err := s.Deps.Store.SetClusterID(ctx, joined.Msg.GetClusterId()); err != nil {
@@ -267,7 +268,7 @@ func (s *ClusterAPI) RequestJoin(ctx context.Context, req *connect.Request[procm
 	if j, ok := s.Deps.Mesh.(meshJoiner); ok {
 		if gossip := joined.Msg.GetGossipAddress(); gossip != "" {
 			if _, err := j.Join([]string{gossip}); err != nil {
-				fmt.Fprintf(os.Stderr, "mesh join: %v\n", err)
+				s.warn("mesh join failed", err)
 			}
 		}
 	}
@@ -275,6 +276,12 @@ func (s *ClusterAPI) RequestJoin(ctx context.Context, req *connect.Request[procm
 		ClusterId:     joined.Msg.GetClusterId(),
 		GossipAddress: joined.Msg.GetGossipAddress(),
 	}), nil
+}
+
+func (s *ClusterAPI) warn(message string, err error) {
+	if s.Logger != nil {
+		s.Logger.Warn(message, "error", err)
+	}
 }
 
 func (s *ClusterAPI) Overview(ctx context.Context, _ *connect.Request[procmeshv1.ClusterOverviewRequest]) (*connect.Response[procmeshv1.ClusterOverviewResponse], error) {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -29,6 +30,9 @@ func run(args []string, stderr io.Writer) int {
 	logFormat := fs.String("log-format", "text", "log format: text or json")
 	logLevel := fs.String("log-level", "info", "log level: debug, info, warn, or error")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 
