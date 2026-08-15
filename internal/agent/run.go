@@ -245,6 +245,7 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		ready:    ready,
 		degraded: degraded,
 		fwd:      fwd,
+		node:     clusterDeps.Control,
 	}
 	clusterDeps.OnReady = rt.startRPC
 	if err := rt.startRPC(); err != nil {

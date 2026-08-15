@@ -48,13 +48,16 @@ func TestCheckJoin_EmptyNodeID(t *testing.T) {
 	}
 }
 
-func TestCheckJoin_RemovedAndRevokedAllowNewBoot(t *testing.T) {
+func TestCheckJoin_RemovedAndRevokedDenied(t *testing.T) {
 	for _, st := range []cluster.State{cluster.StateRemoved, cluster.StateRevoked} {
 		err := cluster.CheckJoin([]cluster.NodeSummary{{
 			NodeID: "n", BootID: "b1", State: st, ProtocolVersion: 1,
 		}}, cluster.JoinIdentity{NodeID: "n", BootID: "b2", ProtocolVersion: 1})
-		if err != nil {
-			t.Fatalf("state %s: %v", st, err)
+		if !errcode.Is(err, errcode.DENIED) {
+			t.Fatalf("state %s: got %v", st, err)
+		}
+		if err == nil || err.Error() != "DENIED: node removed" {
+			t.Fatalf("state %s: want node removed: %v", st, err)
 		}
 	}
 }

@@ -549,11 +549,6 @@ func (s *State) Member(nodeID string) (Member, bool) {
 	return m, ok
 }
 
-func (s *State) SerialRevoked(serial string) bool {
-	_, ok := s.CRL[strings.ToUpper(serial)]
-	return ok
-}
-
 // FSM is the in-memory Raft finite-state machine.
 type FSM struct {
 	mu    sync.Mutex

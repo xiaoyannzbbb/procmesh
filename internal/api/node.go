@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -116,14 +117,84 @@ func (s *NodeAPI) RemoveNode(ctx context.Context, req *connect.Request[procmeshv
 	if err := requirePerm(ctx, s.Auth, auth.PermNodeRemove, req.Msg.GetNodeId(), true); err != nil {
 		return nil, err
 	}
-	return nil, unimplemented()
+	if err := rejectDegraded(s.Degraded); err != nil {
+		return nil, err
+	}
+	if _, _, err := metaOf(req.Msg.GetMeta()); err != nil {
+		return nil, err
+	}
+	if err := requireCluster(s.Deps); err != nil {
+		return nil, err
+	}
+	if s.Deps.Control == nil {
+		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "raft control not configured"))
+	}
+	nodeID := req.Msg.GetNodeId()
+	if nodeID == "" {
+		return nil, ToConnect(errcode.E(errcode.INVALID, "node_id required"))
+	}
+	self, err := s.Deps.localNodeID(ctx)
+	if err != nil {
+		return nil, ToConnect(err)
+	}
+	if nodeID == self {
+		return nil, ToConnect(errcode.E(errcode.INVALID, "cannot remove self"))
+	}
+	cmd, err := control.EncodeCommand(control.CmdMemberRemove, control.MemberRemoveBody{NodeID: nodeID})
+	if err != nil {
+		return nil, ToConnect(err)
+	}
+	if err := s.Deps.Control.Apply(cmd, authApplyTimeout); err != nil {
+		return nil, ToConnect(err)
+	}
+	if err := s.Deps.Control.RemoveServer(nodeID); err != nil && !ignoreRemoveServerErr(err) {
+		return nil, ToConnect(err)
+	}
+	return connect.NewResponse(&procmeshv1.RemoveNodeResponse{}), nil
 }
 
 func (s *NodeAPI) PromoteNode(ctx context.Context, req *connect.Request[procmeshv1.PromoteNodeRequest]) (*connect.Response[procmeshv1.PromoteNodeResponse], error) {
 	if err := requirePerm(ctx, s.Auth, auth.PermClusterManage, req.Msg.GetNodeId(), true); err != nil {
 		return nil, err
 	}
-	return nil, unimplemented()
+	if err := rejectDegraded(s.Degraded); err != nil {
+		return nil, err
+	}
+	if _, _, err := metaOf(req.Msg.GetMeta()); err != nil {
+		return nil, err
+	}
+	if err := requireCluster(s.Deps); err != nil {
+		return nil, err
+	}
+	if s.Deps.Control == nil {
+		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "raft control not configured"))
+	}
+	nodeID := req.Msg.GetNodeId()
+	if nodeID == "" {
+		return nil, ToConnect(errcode.E(errcode.INVALID, "node_id required"))
+	}
+	view := s.Deps.Control.View()
+	m, ok := view.Member(nodeID)
+	if !ok {
+		return nil, ToConnect(errcode.E(errcode.NOT_FOUND, "node not found"))
+	}
+	// V1.0 默认单 voter 签发；promote 只扩 quorum，不分发 ca.key。
+	// 只有已有 CA 的 voter 能签发；init 节点是默认签发者。
+	if m.Status != control.MemberAdmitted || m.RaftAddr == "" {
+		return nil, ToConnect(errcode.E(errcode.INVALID, "node not admitted"))
+	}
+	if err := s.Deps.Control.AddVoter(nodeID, m.RaftAddr); err != nil {
+		return nil, ToConnect(err)
+	}
+	return connect.NewResponse(&procmeshv1.PromoteNodeResponse{}), nil
+}
+
+func ignoreRemoveServerErr(err error) bool {
+	if err == nil || errcode.Is(err, errcode.NOT_FOUND) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unknown server") || strings.Contains(msg, "not found")
 }
 
 func findNode(members []cluster.NodeSummary, idOrHost string) (cluster.NodeSummary, bool) {

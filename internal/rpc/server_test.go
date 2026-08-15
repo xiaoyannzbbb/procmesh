@@ -20,7 +20,7 @@ func TestServer_RequiresClientCert(t *testing.T) {
 	}
 	srv, err := rpc.NewServer(ln.Addr().String(), credsOf(seed), "cid", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-	}))
+	}), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestServer_RejectsForeignCA(t *testing.T) {
 	}
 	srv, err := rpc.NewServer(ln.Addr().String(), credsOf(seed), "cid", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-	}))
+	}), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

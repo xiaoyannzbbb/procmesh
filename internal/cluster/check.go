@@ -18,13 +18,18 @@ func CheckJoin(existing []NodeSummary, req JoinIdentity) error {
 		return errcode.E(errcode.INCOMPATIBLE_VERSION, "incompatible protocol version")
 	}
 	for _, n := range existing {
-		if n.NodeID != req.NodeID || n.BootID == req.BootID {
+		if n.NodeID != req.NodeID {
 			continue
 		}
 		switch n.State {
-		case StateLeft, StateRemoved, StateRevoked:
+		case StateLeft:
 			continue
+		case StateRemoved, StateRevoked:
+			return errcode.E(errcode.DENIED, "node removed")
 		default:
+			if n.BootID == req.BootID {
+				continue
+			}
 			return errcode.E(errcode.DUPLICATE_NODE_ID, "duplicate node_id")
 		}
 	}

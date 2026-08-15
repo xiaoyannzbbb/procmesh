@@ -36,6 +36,7 @@ type rpcRuntime struct {
 	degraded bool
 	fwd      *agentForwarder
 	auth     *auth.Service
+	node     *control.Node
 }
 
 func (r *rpcRuntime) startRPC() error {
@@ -70,7 +71,10 @@ func (r *rpcRuntime) startRPCLocked() error {
 	if err != nil {
 		return fmt.Errorf("rpc listen: %w", err)
 	}
-	srv, err := rpc.NewServer(ln.Addr().String(), creds, clusterID, r.localHandler())
+	node := r.node
+	srv, err := rpc.NewServer(ln.Addr().String(), creds, clusterID, r.localHandler(), func(s string) bool {
+		return node.View().SerialRevoked(s)
+	})
 	if err != nil {
 		_ = ln.Close()
 		return err

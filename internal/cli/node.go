@@ -28,6 +28,16 @@ func runNode(c *client, sub string, pos []string, opt options, stdout io.Writer)
 			return usageError("missing node token subcommand")
 		}
 		return runNodeToken(c, pos[0], pos[1:], opt, stdout)
+	case "remove":
+		if len(pos) != 1 || pos[0] == "" {
+			return usageError("node remove requires NODE_ID")
+		}
+		return nodeRemove(c, pos[0])
+	case "promote":
+		if len(pos) != 1 || pos[0] == "" {
+			return usageError("node promote requires NODE_ID")
+		}
+		return nodePromote(c, pos[0])
 	default:
 		return usageError("unknown node command")
 	}
@@ -86,6 +96,22 @@ func nodeTokenCreate(c *client, opt options, stdout io.Writer) error {
 	fmt.Fprintf(stdout, "expires=%d\n", resp.Msg.GetExpiresUnix())
 	fmt.Fprintf(stdout, "uses=%d\n", resp.Msg.GetUses())
 	return nil
+}
+
+func nodeRemove(c *client, nodeID string) error {
+	_, err := c.node.RemoveNode(context.Background(), connect.NewRequest(&procmeshv1.RemoveNodeRequest{
+		Meta:   c.meta(),
+		NodeId: nodeID,
+	}))
+	return err
+}
+
+func nodePromote(c *client, nodeID string) error {
+	_, err := c.node.PromoteNode(context.Background(), connect.NewRequest(&procmeshv1.PromoteNodeRequest{
+		Meta:   c.meta(),
+		NodeId: nodeID,
+	}))
+	return err
 }
 
 func nodeTokenRevoke(c *client, tokenID string) error {

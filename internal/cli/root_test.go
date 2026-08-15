@@ -96,6 +96,22 @@ func TestCLI_NodeHeaderSent(t *testing.T) {
 	}
 }
 
+func TestCLI_NodeRemoveUsage(t *testing.T) {
+	if !strings.Contains(usageText, "node remove NODE_ID") {
+		t.Fatal("usage missing node remove")
+	}
+	if !strings.Contains(usageText, "node promote NODE_ID") {
+		t.Fatal("usage missing node promote")
+	}
+	code, _, errb := runCLI("node", "remove")
+	if code != 2 {
+		t.Fatalf("exit=%d stderr=%q", code, errb)
+	}
+	if !strings.Contains(errb, "node remove") {
+		t.Fatalf("stderr=%q", errb)
+	}
+}
+
 func TestCLI_UnknownCommand(t *testing.T) {
 	code, _, errb := runCLI("foobar")
 	if code != 2 {

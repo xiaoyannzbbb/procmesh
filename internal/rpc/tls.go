@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"strings"
 	"time"
 
 	"github.com/qleelulu/procmesh/internal/control"
@@ -13,7 +14,9 @@ import (
 // ServerTLS builds a server-side mTLS config.
 // ClientAuth requires a cert signed by the cluster CA; VerifyPeerCertificate
 // checks the peer URI SAN cluster_id (Agent certs have no DNS SAN).
-func ServerTLS(creds control.AgentCreds, clusterID string) (*tls.Config, error) {
+// revoked, if non-nil, is called with the peer leaf serial (uppercase hex);
+// nil is treated as never-revoked.
+func ServerTLS(creds control.AgentCreds, clusterID string, revoked func(serial string) bool) (*tls.Config, error) {
 	cert, pool, err := loadCreds(creds)
 	if err != nil {
 		return nil, err
@@ -24,7 +27,7 @@ func ServerTLS(creds control.AgentCreds, clusterID string) (*tls.Config, error) 
 		ClientCAs:    pool,
 		MinVersion:   tls.VersionTLS12,
 		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-			return verifyPeer(rawCerts, pool, clusterID, "")
+			return verifyPeer(rawCerts, pool, clusterID, "", revoked)
 		},
 	}, nil
 }
@@ -43,7 +46,7 @@ func ClientTLS(creds control.AgentCreds, clusterID, expectNodeID string) (*tls.C
 		InsecureSkipVerify: true, //nolint:gosec // hostname N/A; VerifyPeerCertificate enforces identity
 		MinVersion:         tls.VersionTLS12,
 		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-			return verifyPeer(rawCerts, pool, clusterID, expectNodeID)
+			return verifyPeer(rawCerts, pool, clusterID, expectNodeID, nil)
 		},
 	}, nil
 }
@@ -72,7 +75,7 @@ func loadCreds(creds control.AgentCreds) (tls.Certificate, *x509.CertPool, error
 	return cert, pool, nil
 }
 
-func verifyPeer(rawCerts [][]byte, roots *x509.CertPool, clusterID, expectNodeID string) error {
+func verifyPeer(rawCerts [][]byte, roots *x509.CertPool, clusterID, expectNodeID string, revoked func(string) bool) error {
 	if len(rawCerts) == 0 {
 		return errcode.E(errcode.DENIED, "no peer certificate")
 	}
@@ -97,6 +100,10 @@ func verifyPeer(rawCerts [][]byte, roots *x509.CertPool, clusterID, expectNodeID
 	}
 	if _, err := leaf.Verify(opts); err != nil {
 		return errcode.E(errcode.DENIED, "peer cert verify failed")
+	}
+	serial := strings.ToUpper(leaf.SerialNumber.Text(16))
+	if revoked != nil && revoked(serial) {
+		return errcode.E(errcode.DENIED, "certificate revoked")
 	}
 	if now.Before(leaf.NotBefore) || now.After(leaf.NotAfter) {
 		return errcode.E(errcode.DENIED, "peer cert not valid at now")

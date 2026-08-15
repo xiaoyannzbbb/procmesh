@@ -97,7 +97,7 @@ func TestDial_CallsOwnerProcess(t *testing.T) {
 	mux := http.NewServeMux()
 	path, h := procmeshv1connect.NewProcessServiceHandler(&stubProcess{})
 	mux.Handle(path, h)
-	srv, err := rpc.NewServer(ln.Addr().String(), credsOf(owner), "cid", mux)
+	srv, err := rpc.NewServer(ln.Addr().String(), credsOf(owner), "cid", mux, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

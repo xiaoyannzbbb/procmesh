@@ -43,6 +43,8 @@ commands:
   node status [id-or-hostname]
   node token create [--ttl DURATION] [--uses N]
   node token revoke TOKEN_ID
+  node remove NODE_ID
+  node promote NODE_ID
   login [--user NAME] [--password PASS]
   logout
   user list
