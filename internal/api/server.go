@@ -34,20 +34,24 @@ type Server struct {
 }
 
 type Options struct {
-	Addr      string
-	Mgr       *process.Manager
-	Logs      *logmgr.Manager
-	Store     RevisionStore // 可为 *store.Store；nil 时 Config.Diff 不可用
-	Cluster   ClusterDeps   // 零值 = 未接线；Init/Join → UNAVAILABLE
-	Auth      *auth.Service // nil = 不鉴权（单测）
-	Degraded  bool
-	Ready     func() error
-	Started   time.Time
-	LocalOnly bool
-	LocalID   string
-	Router    *Router
-	Forward   Forwarder
-	HasQuorum func() bool
+	Addr          string
+	Mgr           *process.Manager
+	Logs          *logmgr.Manager
+	Store         RevisionStore // 可为 *store.Store；nil 时 Config.Diff 不可用
+	Cluster       ClusterDeps   // 零值 = 未接线；Init/Join → UNAVAILABLE
+	Auth          *auth.Service // nil = 不鉴权（单测）
+	Degraded      bool
+	Ready         func() error
+	Started       time.Time
+	LocalOnly     bool
+	LocalID       string
+	Router        *Router
+	Forward       Forwarder
+	HasQuorum     func() bool
+	RPCHealthy    func() bool
+	GossipHealthy func() bool
+	CertExpires   func() int64
+	CAExpires     func() int64
 }
 
 func NewServer(opts Options) (*Server, error) {
@@ -56,6 +60,18 @@ func NewServer(opts Options) (*Server, error) {
 	}
 	if opts.Started.IsZero() {
 		opts.Started = time.Now()
+	}
+	if opts.Cluster.RPCHealthy == nil {
+		opts.Cluster.RPCHealthy = opts.RPCHealthy
+	}
+	if opts.Cluster.GossipHealthy == nil {
+		opts.Cluster.GossipHealthy = opts.GossipHealthy
+	}
+	if opts.Cluster.CertExpires == nil {
+		opts.Cluster.CertExpires = opts.CertExpires
+	}
+	if opts.Cluster.CAExpires == nil {
+		opts.Cluster.CAExpires = opts.CAExpires
 	}
 
 	rpcForwardTotal := &atomic.Uint64{}

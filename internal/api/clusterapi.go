@@ -2,12 +2,15 @@ package api
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -42,6 +45,10 @@ type ClusterDeps struct {
 	LeaderAPI     func() string                       // 非 leader 转发 Join 的 API 地址
 	RaftAddr      func() string                       // 本机 Raft advertise，RequestJoin 填入
 	SetRaftLeader func(addr string)                   // RequestJoin 记下 seed 返回的 leader
+	RPCHealthy    func() bool                         // nil → true
+	GossipHealthy func() bool                         // nil → Mesh != nil
+	CertExpires   func() int64                        // nil → parse agent.crt
+	CAExpires     func() int64                        // nil → parse ca.crt
 }
 
 type ClusterMetaStore interface {
@@ -274,13 +281,7 @@ func (s *ClusterAPI) Overview(ctx context.Context, _ *connect.Request[procmeshv1
 	if err := requirePerm(ctx, s.Auth, auth.PermClusterRead, "", false, true); err != nil {
 		return nil, err
 	}
-	members := s.Deps.members()
-	var alive int32
-	for _, n := range members {
-		if n.State == cluster.StateAlive {
-			alive++
-		}
-	}
+	sum := summarize(s.Deps.members())
 	var quorum bool
 	var leader string
 	if n := s.Deps.controlNode(); n != nil {
@@ -288,12 +289,140 @@ func (s *ClusterAPI) Overview(ctx context.Context, _ *connect.Request[procmeshv1
 		leader = n.LeaderAddr()
 	}
 	return connect.NewResponse(&procmeshv1.ClusterOverviewResponse{
-		ClusterId:     s.Deps.clusterID(ctx),
-		Members:       int32(len(members)),
-		Alive:         alive,
-		ControlQuorum: quorum,
-		ControlLeader: leader,
+		ClusterId:        s.Deps.clusterID(ctx),
+		Members:          sum.members,
+		Alive:            sum.alive,
+		ControlQuorum:    quorum,
+		ControlLeader:    leader,
+		Suspect:          sum.suspect,
+		Failed:           sum.failed,
+		ProcessTotal:     sum.processTotal,
+		ProcessRunning:   sum.processRunning,
+		ProcessUnhealthy: sum.processUnhealthy,
+		ProcessFatal:     sum.processFatal,
+		CpuPercent:       sum.cpuPercent,
+		MemoryPercent:    sum.memoryPercent,
+		DiskPercent:      sum.diskPercent,
+		GossipHealthy:    s.Deps.gossipHealthy(),
+		RpcHealthy:       s.Deps.rpcHealthy(),
+		AgentDegraded:    s.Degraded != nil && s.Degraded(),
+		CertExpiresUnix:  s.Deps.certExpiresUnix(),
+		CaExpiresUnix:    s.Deps.caExpiresUnix(),
+		ViewUnixMs:       s.Deps.now().UnixMilli(),
+		PlatformNote:     platformNote(),
+		VersionCounts:    sum.versionCounts,
 	}), nil
+}
+
+type overviewCounts struct {
+	members, alive, suspect, failed                              int32
+	processTotal, processRunning, processUnhealthy, processFatal int32
+	cpuPercent, memoryPercent, diskPercent                       int32
+	versionCounts                                                map[string]int32
+}
+
+func summarize(members []cluster.NodeSummary) overviewCounts {
+	out := overviewCounts{
+		members:       int32(len(members)),
+		versionCounts: make(map[string]int32),
+	}
+	var cpuSum, memSum, diskSum, aliveN int
+	for _, n := range members {
+		switch n.State {
+		case cluster.StateAlive:
+			out.alive++
+			cpuSum += n.Resources.CPUPercent
+			memSum += n.Resources.MemoryPercent
+			diskSum += n.Resources.DiskPercent
+			aliveN++
+		case cluster.StateSuspect:
+			out.suspect++
+		case cluster.StateFailed:
+			out.failed++
+		}
+		out.processTotal += int32(len(n.Processes))
+		for _, p := range n.Processes {
+			if p.Observed == "RUNNING" {
+				out.processRunning++
+			}
+			if p.Health == "UNHEALTHY" {
+				out.processUnhealthy++
+			}
+			if p.Observed == "FATAL" {
+				out.processFatal++
+			}
+		}
+		ver := n.AgentVersion
+		if ver == "" {
+			ver = "unknown"
+		}
+		out.versionCounts[ver]++
+	}
+	if aliveN > 0 {
+		out.cpuPercent = int32(cpuSum / aliveN)
+		out.memoryPercent = int32(memSum / aliveN)
+		out.diskPercent = int32(diskSum / aliveN)
+	}
+	return out
+}
+
+func platformNote() string {
+	switch runtime.GOOS {
+	case "linux":
+		return ""
+	case "darwin":
+		return "macOS: resource_limit ignored (no cgroup); Host reboot recovery depends on how the Agent is started."
+	default:
+		return runtime.GOOS + ": linux process semantics unavailable"
+	}
+}
+
+// CertNotAfterUnix returns NotAfter.Unix() of the named PEM cert under dir, or 0 on error.
+func CertNotAfterUnix(dir, name string) int64 {
+	if dir == "" {
+		return 0
+	}
+	pemBytes, err := os.ReadFile(filepath.Join(dir, name))
+	if err != nil {
+		return 0
+	}
+	block, _ := pem.Decode(pemBytes)
+	if block == nil {
+		return 0
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return 0
+	}
+	return cert.NotAfter.Unix()
+}
+
+func (d ClusterDeps) gossipHealthy() bool {
+	if d.GossipHealthy != nil {
+		return d.GossipHealthy()
+	}
+	return d.Mesh != nil
+}
+
+func (d ClusterDeps) rpcHealthy() bool {
+	if d.RPCHealthy != nil {
+		return d.RPCHealthy()
+	}
+	return true
+}
+
+func (d ClusterDeps) certExpiresUnix() int64 {
+	if d.CertExpires != nil {
+		return d.CertExpires()
+	}
+	return CertNotAfterUnix(d.Dir, "agent.crt")
+}
+
+func (d ClusterDeps) caExpiresUnix() int64 {
+	if d.CAExpires != nil {
+		return d.CAExpires()
+	}
+	return CertNotAfterUnix(d.Dir, "ca.crt")
 }
 
 func (s *ClusterAPI) callOnReady() error {

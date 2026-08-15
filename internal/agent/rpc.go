@@ -53,6 +53,15 @@ func (r *rpcRuntime) startRPC() error {
 	return r.startRPCLocked()
 }
 
+func (r *rpcRuntime) rpcListening() bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.srv != nil
+}
+
 func (r *rpcRuntime) startRPCLocked() error {
 	if r.srv != nil {
 		return nil

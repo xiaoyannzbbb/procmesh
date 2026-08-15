@@ -347,6 +347,10 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 			n := rt.control()
 			return n != nil && n.HasQuorum()
 		},
+		RPCHealthy:    rt.rpcListening,
+		GossipHealthy: func() bool { return mesh != nil },
+		CertExpires:   func() int64 { return api.CertNotAfterUnix(clusterDeps.Dir, "agent.crt") },
+		CAExpires:     func() int64 { return api.CertNotAfterUnix(clusterDeps.Dir, "ca.crt") },
 	})
 	if err != nil {
 		_ = ln.Close()
