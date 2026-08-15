@@ -32,16 +32,20 @@ const canUpdate = computed(() => (session.value?.permissions ?? []).includes("pr
 const targetOpts = computed(() => ({ headers: withTarget(props.targetNodeId) }));
 const enabled = computed(() => props.idOrName.length > 0 && props.targetNodeId.length > 0);
 
+const acceptRemoteSpec = ref(true);
+
 const configQuery = useQuery({
   queryKey: computed(() => ["process-config", props.idOrName, props.targetNodeId]),
   queryFn: () => config.getConfig({ idOrName: props.idOrName }, targetOpts.value),
   enabled,
+  refetchOnWindowFocus: false,
 });
 
 const historyQuery = useQuery({
   queryKey: computed(() => ["process-history", props.idOrName, props.targetNodeId]),
   queryFn: () => config.history({ idOrName: props.idOrName }, targetOpts.value),
   enabled,
+  refetchOnWindowFocus: false,
 });
 
 const diffQuery = useQuery({
@@ -58,17 +62,23 @@ const diffQuery = useQuery({
     );
   },
   enabled: computed(() => enabled.value && selected.value.length === 2),
+  refetchOnWindowFocus: false,
 });
+
+const configPending = computed(() => configQuery.isPending.value);
+const historyPending = computed(() => historyQuery.isPending.value);
+const diffPending = computed(() => diffQuery.isPending.value);
+const diffError = computed(() => diffQuery.error.value);
+const diffText = computed(() => diffQuery.data.value?.diff ?? "");
 
 watch(
   () => configQuery.data.value?.spec,
   (spec) => {
-    if (!spec) {
+    if (!spec || !acceptRemoteSpec.value) {
       return;
     }
-    const next = create(ProcessSpecSchema, spec);
-    loadedSpec.value = next;
-    editorText.value = JSON.stringify(toJson(ProcessSpecSchema, next), null, 2);
+    applySpec(spec);
+    acceptRemoteSpec.value = false;
   },
   { immediate: true },
 );
@@ -113,6 +123,7 @@ async function refresh(): Promise<void> {
 async function onReload(): Promise<void> {
   conflictText.value = "";
   actionError.value = "";
+  acceptRemoteSpec.value = true;
   await refresh();
 }
 
@@ -215,7 +226,7 @@ async function onRollback(toRevision: bigint | number): Promise<void> {
   <div class="panel">
     <div v-if="conflictText" class="banner conflict" role="alert">{{ conflictText }}</div>
     <p v-if="errorText" class="error" role="alert">{{ errorText }}</p>
-    <p v-if="configQuery.isPending && !loadedSpec" class="muted">Loading…</p>
+    <p v-if="configPending && !loadedSpec" class="muted">Loading…</p>
 
     <section v-if="loadedSpec" class="card">
       <div class="title-row">
@@ -258,7 +269,7 @@ async function onRollback(toRevision: bigint | number): Promise<void> {
 
     <section class="card">
       <h2>History</h2>
-      <p v-if="historyQuery.isPending && !revisions.length" class="muted">Loading history…</p>
+      <p v-if="historyPending && !revisions.length" class="muted">Loading history…</p>
       <table v-else class="table">
         <thead>
           <tr>
@@ -301,11 +312,11 @@ async function onRollback(toRevision: bigint | number): Promise<void> {
       </table>
       <div v-if="selected.length === 2" class="diff-block">
         <h3>Diff {{ selected.slice().sort((a, b) => Number(a) - Number(b)).join(" → ") }}</h3>
-        <p v-if="diffQuery.isPending" class="muted">Loading diff…</p>
-        <p v-else-if="diffQuery.error.value" class="error" role="alert">
-          {{ formatRemoteError(diffQuery.error.value) }}
+        <p v-if="diffPending" class="muted">Loading diff…</p>
+        <p v-else-if="diffError" class="error" role="alert">
+          {{ formatRemoteError(diffError) }}
         </p>
-        <pre v-else class="diff">{{ diffQuery.data.value?.diff || "(empty)" }}</pre>
+        <pre v-else class="diff">{{ diffText || "(empty)" }}</pre>
       </div>
     </section>
   </div>
