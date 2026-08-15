@@ -109,6 +109,11 @@ func (s *ClusterAPI) Join(ctx context.Context, req *connect.Request[procmeshv1.J
 	if err := requireInited(s.Deps.Dir); err != nil {
 		return nil, err
 	}
+	adm := s.Deps.admission()
+	// 先查 FSM 吊销：被删节点可能仍在 gossip 为 ALIVE，CheckJoin 会先撞 DUPLICATE_NODE_ID。
+	if adm != nil && adm.IsRevoked(req.Msg.GetNodeId()) {
+		return nil, ToConnect(errcode.E(errcode.DENIED, "node removed"))
+	}
 	if err := cluster.CheckJoin(s.Deps.members(), cluster.JoinIdentity{
 		NodeID:          req.Msg.GetNodeId(),
 		BootID:          req.Msg.GetBootId(),
@@ -116,11 +121,7 @@ func (s *ClusterAPI) Join(ctx context.Context, req *connect.Request[procmeshv1.J
 	}); err != nil {
 		return nil, ToConnect(err)
 	}
-	adm := s.Deps.admission()
 	if adm != nil {
-		if adm.IsRevoked(req.Msg.GetNodeId()) {
-			return nil, ToConnect(errcode.E(errcode.DENIED, "node removed"))
-		}
 		if n := s.Deps.controlNode(); n != nil && !n.IsLeader() {
 			return s.forwardJoin(ctx, req)
 		}

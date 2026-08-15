@@ -877,6 +877,55 @@ func TestJoin_RevokedNodeDenied(t *testing.T) {
 	}
 }
 
+func TestJoin_RevokedWhileStillInGossip(t *testing.T) {
+	ctx := context.Background()
+	raftNode := startTestRaft(t, "seed")
+	e := newClusterEnvFull(t, clusterEnvCfg{withMesh: true, control: raftNode})
+	e.init(t)
+	adm := control.Admission{Node: raftNode}
+	if err := adm.Admit("gone", "127.0.0.1:19099", "BB"); err != nil {
+		t.Fatal(err)
+	}
+	cmd, err := control.EncodeCommand(control.CmdMemberRemove, control.MemberRemoveBody{NodeID: "gone"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := raftNode.Apply(cmd, 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	e.mesh.setMembers([]cluster.NodeSummary{
+		e.local,
+		{
+			NodeID:          "gone",
+			BootID:          "boot-old",
+			State:           cluster.StateAlive,
+			ProtocolVersion: version.Protocol,
+		},
+	})
+	csr, _, err := control.NewCSR("join", "gone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.cluster.Join(ctx, connect.NewRequest(&procmeshv1.JoinClusterRequest{
+		Meta:            &procmeshv1.MutationMeta{OperationId: "op-join-gossip-revoked", Operator: "t"},
+		Token:           "pmj_unused",
+		NodeId:          "gone",
+		BootId:          "boot-new",
+		ProtocolVersion: int32(version.Protocol),
+		CsrPem:          csr,
+	}))
+	code, detail := connectDetail(t, err)
+	if code != connect.CodePermissionDenied || detail != "DENIED" {
+		t.Fatalf("code=%v detail=%s err=%v", code, detail, err)
+	}
+	if strings.Contains(err.Error(), "DUPLICATE_NODE_ID") {
+		t.Fatalf("revoked rejoin must not be DUPLICATE_NODE_ID: %v", err)
+	}
+	if !strings.Contains(err.Error(), "node removed") {
+		t.Fatalf("want node removed: %v", err)
+	}
+}
+
 func TestInit_NotConfigured(t *testing.T) {
 	m, st, _ := newTestManager(t)
 	srv, err := NewServer(Options{Mgr: m, Store: st})
