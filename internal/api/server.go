@@ -9,7 +9,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/gin-gonic/gin"
+	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/errcode"
@@ -37,6 +39,7 @@ type Options struct {
 	Logs      *logmgr.Manager
 	Store     RevisionStore // 可为 *store.Store；nil 时 Config.Diff 不可用
 	Cluster   ClusterDeps   // 零值 = 未接线；Init/Join → UNAVAILABLE
+	Auth      *auth.Service // nil = 不鉴权（单测）
 	Degraded  bool
 	Ready     func() error
 	Started   time.Time
@@ -70,30 +73,31 @@ func NewServer(opts Options) (*Server, error) {
 	engine.GET("/metrics", s.metrics)
 
 	degraded := s.isDegraded
+	intercept := connect.WithInterceptors(AuthInterceptor(opts.Auth, s.clusterInited))
 	pp, ph := procmeshv1connect.NewProcessServiceHandler(&ProcessAPI{
 		Mgr: opts.Mgr, Degraded: degraded,
 		LocalOnly: opts.LocalOnly, LocalID: opts.LocalID, Router: opts.Router, Forward: opts.Forward,
-	})
+	}, intercept)
 	mountConnect(engine, pp, ph)
 	cp, ch := procmeshv1connect.NewConfigServiceHandler(&ConfigAPI{
 		Mgr: opts.Mgr, Revs: opts.Store, Degraded: degraded,
 		LocalOnly: opts.LocalOnly, LocalID: opts.LocalID, Router: opts.Router, Forward: opts.Forward,
-	})
+	}, intercept)
 	mountConnect(engine, cp, ch)
 	lp, lh := procmeshv1connect.NewLogServiceHandler(&LogAPI{
 		Mgr:       opts.Mgr,
 		LocalOnly: opts.LocalOnly, LocalID: opts.LocalID, Router: opts.Router, Forward: opts.Forward,
-	})
+	}, intercept)
 	mountConnect(engine, lp, lh)
-	np, nh := procmeshv1connect.NewNodeServiceHandler(&NodeAPI{Deps: opts.Cluster, Degraded: degraded})
+	np, nh := procmeshv1connect.NewNodeServiceHandler(&NodeAPI{Deps: opts.Cluster, Degraded: degraded}, intercept)
 	mountConnect(engine, np, nh)
-	clp, clh := procmeshv1connect.NewClusterServiceHandler(&ClusterAPI{Deps: opts.Cluster, Degraded: degraded})
+	clp, clh := procmeshv1connect.NewClusterServiceHandler(&ClusterAPI{Deps: opts.Cluster, Degraded: degraded}, intercept)
 	mountConnect(engine, clp, clh)
-	ap, ah := procmeshv1connect.NewAuthServiceHandler(&AuthAPI{})
+	ap, ah := procmeshv1connect.NewAuthServiceHandler(&AuthAPI{Auth: opts.Auth}, intercept)
 	mountConnect(engine, ap, ah)
-	up, uh := procmeshv1connect.NewUserServiceHandler(&UserAPI{})
+	up, uh := procmeshv1connect.NewUserServiceHandler(&UserAPI{}, intercept)
 	mountConnect(engine, up, uh)
-	rp, rh := procmeshv1connect.NewRoleServiceHandler(&RoleAPI{})
+	rp, rh := procmeshv1connect.NewRoleServiceHandler(&RoleAPI{}, intercept)
 	mountConnect(engine, rp, rh)
 
 	legacy, err := localhttp.NewServerOpts(opts.Mgr, opts.Logs, opts.Addr, opts.Degraded, opts.Ready)

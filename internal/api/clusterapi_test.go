@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/store"
@@ -83,6 +84,11 @@ func newClusterEnvOpts(t *testing.T, degraded, withMesh bool) *clusterEnv {
 
 func newClusterEnvReady(t *testing.T, degraded, withMesh bool, onReady func() error) *clusterEnv {
 	t.Helper()
+	return newClusterEnvAuth(t, degraded, withMesh, onReady, nil)
+}
+
+func newClusterEnvAuth(t *testing.T, degraded, withMesh bool, onReady func() error, authSvc *auth.Service) *clusterEnv {
+	t.Helper()
 	m, st, layout := newTestManager(t)
 	ctx := context.Background()
 	nodeID, err := st.GetOrCreateNodeID(ctx)
@@ -131,7 +137,7 @@ func newClusterEnvReady(t *testing.T, degraded, withMesh bool, onReady func() er
 	if env.mesh != nil {
 		deps.Mesh = env.mesh
 	}
-	srv, err := NewServer(Options{Mgr: m, Store: st, Cluster: deps, Degraded: degraded})
+	srv, err := NewServer(Options{Mgr: m, Store: st, Cluster: deps, Degraded: degraded, Auth: authSvc})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,10 +260,22 @@ func TestInit_ReturnsClusterIDAndPasswordThenConflict(t *testing.T) {
 		t.Fatalf("second init code=%v detail=%s err=%v", code, detail, err)
 	}
 
-	// Init must not close loopback unauthenticated access.
+	// Auth==nil: Init must not close loopback unauthenticated access.
 	proc := procmeshv1connect.NewProcessServiceClient(e.http, e.url)
 	if _, err := proc.ListProcesses(ctx, connect.NewRequest(&procmeshv1.ListProcessesRequest{})); err != nil {
 		t.Fatalf("process still unauth after init: %v", err)
+	}
+}
+
+func TestInit_ClosesUnauthWhenAuthInjected(t *testing.T) {
+	ctx := context.Background()
+	e := newClusterEnvAuth(t, false, true, nil, newTestAuthService(t))
+	e.init(t)
+	proc := procmeshv1connect.NewProcessServiceClient(e.http, e.url)
+	_, err := proc.ListProcesses(ctx, connect.NewRequest(&procmeshv1.ListProcessesRequest{}))
+	code, detail := connectDetail(t, err)
+	if code != connect.CodePermissionDenied || detail != "DENIED" {
+		t.Fatalf("unauth after init code=%v detail=%s err=%v", code, detail, err)
 	}
 }
 

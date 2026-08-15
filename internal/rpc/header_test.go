@@ -15,3 +15,19 @@ func TestHeader_TargetAndSource(t *testing.T) {
 		t.Fatalf("%v", h)
 	}
 }
+
+func TestHeader_UserSessionToken(t *testing.T) {
+	h := make(http.Header)
+	rpc.SetUserID(h, "u1")
+	rpc.SetSessionID(h, "s1")
+	rpc.SetTokenID(h, "t1")
+	if rpc.UserIDOf(h) != "u1" || rpc.SessionIDOf(h) != "s1" || rpc.TokenIDOf(h) != "t1" {
+		t.Fatalf("%v", h)
+	}
+	rpc.SetUserID(h, "")
+	rpc.SetSessionID(h, "")
+	rpc.SetTokenID(h, "")
+	if rpc.UserIDOf(h) != "u1" || rpc.SessionIDOf(h) != "s1" || rpc.TokenIDOf(h) != "t1" {
+		t.Fatalf("empty set must be no-op: %v", h)
+	}
+}
