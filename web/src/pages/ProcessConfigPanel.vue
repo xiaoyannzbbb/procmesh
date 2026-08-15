@@ -105,6 +105,10 @@ function mutationMeta() {
   };
 }
 
+function configKey() {
+  return ["process-config", props.idOrName, props.targetNodeId];
+}
+
 function applySpec(spec: ProcessSpec | undefined): void {
   if (!spec) {
     return;
@@ -112,6 +116,14 @@ function applySpec(spec: ProcessSpec | undefined): void {
   const next = create(ProcessSpecSchema, spec);
   loadedSpec.value = next;
   editorText.value = JSON.stringify(toJson(ProcessSpecSchema, next), null, 2);
+}
+
+function commitSpec(spec: ProcessSpec | undefined): void {
+  if (!spec) {
+    return;
+  }
+  applySpec(spec);
+  queryClient.setQueryData(configKey(), { spec: loadedSpec.value });
 }
 
 async function refresh(): Promise<void> {
@@ -171,7 +183,7 @@ async function onSave(): Promise<void> {
       },
       targetOpts.value,
     );
-    applySpec(out.spec);
+    commitSpec(out.spec);
     await queryClient.invalidateQueries({ queryKey: ["process-history", props.idOrName, props.targetNodeId] });
     await queryClient.invalidateQueries({ queryKey: ["process", props.idOrName, props.targetNodeId] });
   } catch (err) {
@@ -207,7 +219,7 @@ async function onRollback(toRevision: bigint | number): Promise<void> {
       },
       targetOpts.value,
     );
-    applySpec(out.spec);
+    commitSpec(out.spec);
     await queryClient.invalidateQueries({ queryKey: ["process-history", props.idOrName, props.targetNodeId] });
     await queryClient.invalidateQueries({ queryKey: ["process", props.idOrName, props.targetNodeId] });
   } catch (err) {

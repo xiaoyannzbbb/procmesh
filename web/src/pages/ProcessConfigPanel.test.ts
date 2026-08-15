@@ -27,6 +27,7 @@ function sampleSpec() {
 type MountOpts = {
   updateConfig?: ReturnType<typeof vi.fn>;
   spec?: ReturnType<typeof sampleSpec>;
+  queryClient?: QueryClient;
   revisions?: Array<{
     revision: bigint;
     operator: string;
@@ -46,9 +47,11 @@ async function mountPanel(opts: MountOpts | ReturnType<typeof vi.fn> = {}) {
     csrfToken: "csrf",
     permissions: ["process.config.update", "process.config.read"],
   };
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
+  const queryClient =
+    resolved.queryClient ??
+    new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
   const spec = resolved.spec ?? sampleSpec();
   const configClient = {
     getConfig: vi.fn().mockResolvedValue({ spec }),
@@ -144,5 +147,39 @@ describe("ProcessConfigPanel", () => {
     expect(updateConfig).toHaveBeenCalledTimes(2);
     expect(updateConfig.mock.calls[0][0].expectedRevision).toBe(3n);
     expect(updateConfig.mock.calls[1][0].expectedRevision).toBe(3n);
+  });
+
+  it("remount after save uses new latest as expected_revision", async () => {
+    const saved = create(ProcessSpecSchema, {
+      processId: "p1",
+      name: "api",
+      command: "sleep",
+      latestRevision: 4n,
+    });
+    const updateConfig = vi.fn().mockResolvedValue({ spec: saved });
+    const first = await mountPanel({ updateConfig });
+    const edited = first.wrapper.get("textarea").element.value.replace('"name": "web"', '"name": "api"');
+    await first.wrapper.get("textarea").setValue(edited);
+    await first.wrapper.get("form.config-form").trigger("submit");
+    await flushPromises();
+    expect(first.wrapper.get("textarea").element.value).toContain('"name": "api"');
+    expect(first.wrapper.text()).toContain("Latest Revision4");
+
+    first.wrapper.unmount();
+    const idx = mounted.indexOf(first.wrapper);
+    if (idx >= 0) {
+      mounted.splice(idx, 1);
+    }
+
+    const second = await mountPanel({
+      queryClient: first.queryClient,
+      updateConfig,
+      spec: sampleSpec(),
+    });
+    expect(second.wrapper.get("textarea").element.value).toContain('"name": "api"');
+    expect(second.wrapper.text()).toContain("Latest Revision4");
+    await second.wrapper.get("form.config-form").trigger("submit");
+    await flushPromises();
+    expect(updateConfig.mock.calls.at(-1)?.[0].expectedRevision).toBe(4n);
   });
 });
