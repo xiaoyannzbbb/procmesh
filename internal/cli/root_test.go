@@ -238,7 +238,7 @@ func TestCLI_AgentJoinAlreadyInited(t *testing.T) {
 }
 
 func TestClient_HTTPTimeout(t *testing.T) {
-	c := newClient("127.0.0.1:9000", "op", "t", "")
+	c := newClient("127.0.0.1:9000", "op", "t", "", "")
 	if c.http == nil {
 		t.Fatal("nil http client")
 	}

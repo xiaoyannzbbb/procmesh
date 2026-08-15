@@ -23,16 +23,26 @@ type client struct {
 	logs     procmeshv1connect.LogServiceClient
 	node     procmeshv1connect.NodeServiceClient
 	cluster  procmeshv1connect.ClusterServiceClient
+	auth     procmeshv1connect.AuthServiceClient
+	user     procmeshv1connect.UserServiceClient
+	role     procmeshv1connect.RoleServiceClient
 	opID     string
 	operator string
 }
 
-func newClient(server, opID, operator, node string) *client {
+func newClient(server, opID, operator, node, authToken string) *client {
 	base := normalizeServer(server)
 	hc := &http.Client{Timeout: httpTimeout}
 	opts := []connect.ClientOption{}
+	var interceptors []connect.Interceptor
 	if node != "" {
-		opts = append(opts, connect.WithInterceptors(targetNodeInterceptor(node)))
+		interceptors = append(interceptors, targetNodeInterceptor(node))
+	}
+	if authToken != "" {
+		interceptors = append(interceptors, bearerInterceptor(authToken))
+	}
+	if len(interceptors) > 0 {
+		opts = append(opts, connect.WithInterceptors(interceptors...))
 	}
 	return &client{
 		base:     base,
@@ -42,6 +52,9 @@ func newClient(server, opID, operator, node string) *client {
 		logs:     procmeshv1connect.NewLogServiceClient(hc, base, opts...),
 		node:     procmeshv1connect.NewNodeServiceClient(hc, base, opts...),
 		cluster:  procmeshv1connect.NewClusterServiceClient(hc, base, opts...),
+		auth:     procmeshv1connect.NewAuthServiceClient(hc, base, opts...),
+		user:     procmeshv1connect.NewUserServiceClient(hc, base, opts...),
+		role:     procmeshv1connect.NewRoleServiceClient(hc, base, opts...),
 		opID:     opID,
 		operator: operator,
 	}
@@ -66,6 +79,27 @@ func (n targetNodeInterceptor) WrapStreamingClient(next connect.StreamingClientF
 }
 
 func (n targetNodeInterceptor) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
+	return next
+}
+
+type bearerInterceptor string
+
+func (t bearerInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
+	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+		req.Header().Set("Authorization", "Bearer "+string(t))
+		return next(ctx, req)
+	}
+}
+
+func (t bearerInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
+	return func(ctx context.Context, spec connect.Spec) connect.StreamingClientConn {
+		conn := next(ctx, spec)
+		conn.RequestHeader().Set("Authorization", "Bearer "+string(t))
+		return conn
+	}
+}
+
+func (t bearerInterceptor) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
 	return next
 }
 

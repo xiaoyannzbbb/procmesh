@@ -95,9 +95,9 @@ func NewServer(opts Options) (*Server, error) {
 	mountConnect(engine, clp, clh)
 	ap, ah := procmeshv1connect.NewAuthServiceHandler(&AuthAPI{Auth: opts.Auth}, intercept)
 	mountConnect(engine, ap, ah)
-	up, uh := procmeshv1connect.NewUserServiceHandler(&UserAPI{}, intercept)
+	up, uh := procmeshv1connect.NewUserServiceHandler(&UserAPI{Auth: opts.Auth}, intercept)
 	mountConnect(engine, up, uh)
-	rp, rh := procmeshv1connect.NewRoleServiceHandler(&RoleAPI{}, intercept)
+	rp, rh := procmeshv1connect.NewRoleServiceHandler(&RoleAPI{Auth: opts.Auth}, intercept)
 	mountConnect(engine, rp, rh)
 
 	legacy, err := localhttp.NewServerOpts(opts.Mgr, opts.Logs, opts.Addr, opts.Degraded, opts.Ready)

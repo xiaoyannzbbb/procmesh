@@ -19,6 +19,7 @@ flags:
   --operation-id ID        mutation id (default generated UUID)
   --operator NAME          operator (default $USER or cli)
   --node NODE              target owner node_id or hostname
+  --auth-token TOKEN       Bearer token (overrides session file)
 
 commands:
   status
@@ -42,6 +43,14 @@ commands:
   node status [id-or-hostname]
   node token create [--ttl DURATION] [--uses N]
   node token revoke TOKEN_ID
+  login [--user NAME] [--password PASS]
+  logout
+  user list
+  user create --user NAME --password PASS [--display NAME] [--email E]
+  user disable USER_ID
+  role list
+  role create --name NAME --perm P [--perm P...]
+  role grant --user-id ID --role-id ID [--scope CLUSTER|AGENT] [--scope-id NODE]
 `
 
 type usageError string
@@ -72,12 +81,23 @@ type options struct {
 	ttl       time.Duration
 	uses      int32
 
+	authToken string
+	user      string
+	password  string
+	display   string
+	email     string
+	name      string
+	perms     []string
+	userID    string
+	roleID    string
+	scope     string
+	scopeID   string
+
 	args []string
 }
 
 // Main is the procmesh CLI entrypoint. args are os.Args[1:].
 func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	_ = stdin
 	opt, err := parseArgs(args)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -100,8 +120,8 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		opt.operator = defaultOperator()
 	}
 
-	c := newClient(opt.server, opt.operationID, opt.operator, opt.node)
 	cmd, rest := opt.args[0], opt.args[1:]
+	c := newClient(opt.server, opt.operationID, opt.operator, opt.node, sessionTokenFor(cmd, opt.server, opt.authToken))
 	var runErr error
 	switch cmd {
 	case "status":
@@ -131,6 +151,23 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return printUsage(stderr, usageError("missing node subcommand"))
 		}
 		runErr = runNode(c, rest[0], rest[1:], opt, stdout)
+	case "login":
+		runErr = runLogin(c, opt, stdin, stdout)
+	case "logout":
+		if len(rest) != 0 {
+			return printUsage(stderr, usageError("unexpected arguments"))
+		}
+		runErr = runLogout(c)
+	case "user":
+		if len(rest) == 0 {
+			return printUsage(stderr, usageError("missing user subcommand"))
+		}
+		runErr = runUser(c, rest[0], rest[1:], opt, stdout)
+	case "role":
+		if len(rest) == 0 {
+			return printUsage(stderr, usageError("missing role subcommand"))
+		}
+		runErr = runRole(c, rest[0], rest[1:], opt, stdout)
 	default:
 		return printUsage(stderr, usageError("unknown command"))
 	}
@@ -255,6 +292,28 @@ func applyFlag(opt *options, name, val string) error {
 			return usageError("invalid --uses")
 		}
 		opt.uses = int32(n)
+	case "auth-token":
+		opt.authToken = val
+	case "user":
+		opt.user = val
+	case "password":
+		opt.password = val
+	case "display":
+		opt.display = val
+	case "email":
+		opt.email = val
+	case "name":
+		opt.name = val
+	case "perm":
+		opt.perms = append(opt.perms, val)
+	case "user-id":
+		opt.userID = val
+	case "role-id":
+		opt.roleID = val
+	case "scope":
+		opt.scope = val
+	case "scope-id":
+		opt.scopeID = val
 	default:
 		return usageError("unknown flag --" + name)
 	}
