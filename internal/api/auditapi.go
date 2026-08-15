@@ -81,9 +81,10 @@ func (s *AuditAPI) listTarget(ctx context.Context, req *connect.Request[procmesh
 
 func (s *AuditAPI) aggregateRemotes(ctx context.Context, req *connect.Request[procmeshv1.ListAuditRequest], resource string, limit int, now time.Time) []*procmeshv1.AuditEntry {
 	var (
-		out []*procmeshv1.AuditEntry
-		mu  sync.Mutex
-		g   errgroup.Group
+		out   []*procmeshv1.AuditEntry
+		alive []cluster.NodeSummary
+		mu    sync.Mutex
+		g     errgroup.Group
 	)
 	for _, m := range s.memberList() {
 		if m.NodeID == "" || m.NodeID == s.LocalID {
@@ -93,22 +94,25 @@ func (s *AuditAPI) aggregateRemotes(ctx context.Context, req *connect.Request[pr
 		case cluster.StateFailed, cluster.StateSuspect:
 			out = append(out, unavailableEntry(m, now))
 		case cluster.StateAlive:
-			m := m
-			g.Go(func() error {
-				hopCtx, cancel := context.WithTimeout(ctx, auditHopTimeout)
-				defer cancel()
-				rt := Route{NodeID: m.NodeID, RPC: m.RPCAddress}
-				ents, err := s.hopNode(hopCtx, req, rt, resource, limit)
-				mu.Lock()
-				defer mu.Unlock()
-				if err != nil {
-					out = append(out, unavailableEntry(m, now))
-					return nil
-				}
-				out = append(out, ents...)
-				return nil
-			})
+			alive = append(alive, m)
 		}
+	}
+	for _, m := range alive {
+		m := m
+		g.Go(func() error {
+			hopCtx, cancel := context.WithTimeout(ctx, auditHopTimeout)
+			defer cancel()
+			rt := Route{NodeID: m.NodeID, RPC: m.RPCAddress}
+			ents, err := s.hopNode(hopCtx, req, rt, resource, limit)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				out = append(out, unavailableEntry(m, now))
+				return nil
+			}
+			out = append(out, ents...)
+			return nil
+		})
 	}
 	_ = g.Wait()
 	return out
@@ -177,7 +181,7 @@ func (s *AuditAPI) placeholder(nodeID string, now time.Time) *procmeshv1.AuditEn
 	return &procmeshv1.AuditEntry{
 		Event:             &procmeshv1.AuditEvent{Action: "unavailable", Result: "UNAVAILABLE"},
 		SourceNode:        nodeID,
-		Freshness:         freshness.Classify(now, lastMs, state),
+		Freshness:         placeholderFreshness(now, lastMs, state),
 		LastUpdatedUnixMs: lastMs,
 	}
 }
@@ -186,9 +190,17 @@ func unavailableEntry(m cluster.NodeSummary, now time.Time) *procmeshv1.AuditEnt
 	return &procmeshv1.AuditEntry{
 		Event:             &procmeshv1.AuditEvent{Action: "unavailable", Result: "UNAVAILABLE"},
 		SourceNode:        m.NodeID,
-		Freshness:         freshness.Classify(now, m.LastUpdatedUnixMs, string(m.State)),
+		Freshness:         placeholderFreshness(now, m.LastUpdatedUnixMs, string(m.State)),
 		LastUpdatedUnixMs: m.LastUpdatedUnixMs,
 	}
+}
+
+func placeholderFreshness(now time.Time, lastMs int64, state string) string {
+	f := freshness.Classify(now, lastMs, state)
+	if f == freshness.LIVE {
+		return freshness.STALE
+	}
+	return f
 }
 
 func (s *AuditAPI) memberList() []cluster.NodeSummary {
