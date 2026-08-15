@@ -16,7 +16,7 @@ type Server struct {
 }
 
 // NewServer builds an mTLS server with the given handler.
-// Handler is injected by the caller (e.g. LocalOnly Process/Config/Log/Audit Connect handlers).
+// Handler is injected by the caller (e.g. LocalOnly Process/Config/Log/Audit/Metrics Connect handlers).
 func NewServer(addr string, creds control.AgentCreds, clusterID string, h http.Handler, revoked func(serial string) bool) (*Server, error) {
 	tlsCfg, err := ServerTLS(creds, clusterID, revoked)
 	if err != nil {

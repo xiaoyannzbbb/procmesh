@@ -76,6 +76,10 @@ func hopRPCPerm(procedure string) (perm string, write bool, ok bool) {
 		return auth.PermProcessLogsDownload, false, true
 	case "ListAudit":
 		return auth.PermAuditRead, false, true
+	case "GetAgentMetrics":
+		return auth.PermClusterRead, false, true
+	case "GetProcessMetrics":
+		return auth.PermProcessRead, false, true
 	default:
 		// ApplyProcess 的 create/update 由 handler 判定
 		return "", false, false

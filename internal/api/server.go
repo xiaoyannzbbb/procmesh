@@ -120,7 +120,11 @@ func NewServer(opts Options) (*Server, error) {
 	mountConnect(engine, rp, rh)
 	adp, adh := procmeshv1connect.NewAuditServiceHandler(newAuditAPI(opts), intercept)
 	mountConnect(engine, adp, adh)
-	mp, mh := procmeshv1connect.NewMetricsServiceHandler(&MetricsAPI{}, intercept)
+	mp, mh := procmeshv1connect.NewMetricsServiceHandler(&MetricsAPI{
+		Mgr: opts.Mgr, Auth: opts.Auth, Started: opts.Started, Cluster: opts.Cluster,
+		LocalOnly: opts.LocalOnly, LocalID: opts.LocalID, Router: opts.Router, Forward: opts.Forward,
+		Degraded: degraded,
+	}, intercept)
 	mountConnect(engine, mp, mh)
 
 	legacy, err := localhttp.NewServerOpts(opts.Mgr, opts.Logs, opts.Addr, opts.Degraded, opts.Ready)

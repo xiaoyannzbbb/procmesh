@@ -223,6 +223,10 @@ func (f *blockingAuditForwarder) Log(context.Context, Route) (procmeshv1connect.
 	return nil, errors.New("unused")
 }
 
+func (f *blockingAuditForwarder) Metrics(context.Context, Route) (procmeshv1connect.MetricsServiceClient, error) {
+	return nil, errors.New("unused")
+}
+
 func (f *blockingAuditForwarder) Audit(ctx context.Context, _ Route) (procmeshv1connect.AuditServiceClient, error) {
 	if f.started != nil {
 		select {

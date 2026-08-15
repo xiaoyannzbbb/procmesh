@@ -42,6 +42,7 @@ type rpcRuntime struct {
 	controlBind string
 	controlAdv  string
 	knownLeader string
+	started     time.Time
 }
 
 func (r *rpcRuntime) startRPC() error {
@@ -192,6 +193,19 @@ func (r *rpcRuntime) localHandler() http.Handler {
 		LocalOnly: true, LocalID: r.nodeID,
 	}, opts...)
 	mux.Handle(ap, ah)
+	var localFn func() cluster.NodeSummary
+	if r.src != nil {
+		localFn = r.src.Snapshot
+	}
+	mp, mh := procmeshv1connect.NewMetricsServiceHandler(&api.MetricsAPI{
+		Mgr: r.mgr, Auth: r.auth, Started: r.started,
+		Cluster: api.ClusterDeps{
+			Dir: r.dir, Store: r.st, Mesh: r.mesh, Local: localFn,
+			ControlFn: r.control, NodeID: r.nodeID,
+		},
+		LocalOnly: true, LocalID: r.nodeID, Degraded: degraded,
+	}, opts...)
+	mux.Handle(mp, mh)
 	return mux
 }
 
@@ -264,6 +278,7 @@ const (
 	configHopTimeout  = rpc.MutationTimeout
 	logHopTimeout     = time.Duration(0)
 	auditHopTimeout   = 2 * time.Second
+	metricsHopTimeout = rpc.UnaryTimeout
 )
 
 func (f *agentForwarder) dial(rt api.Route, timeout time.Duration) (*http.Client, string, error) {
@@ -308,4 +323,12 @@ func (f *agentForwarder) Audit(_ context.Context, rt api.Route) (procmeshv1conne
 		return nil, err
 	}
 	return rpc.NewAuditClient(hc, base), nil
+}
+
+func (f *agentForwarder) Metrics(_ context.Context, rt api.Route) (procmeshv1connect.MetricsServiceClient, error) {
+	hc, base, err := f.dial(rt, metricsHopTimeout)
+	if err != nil {
+		return nil, err
+	}
+	return rpc.NewMetricsClient(hc, base), nil
 }
