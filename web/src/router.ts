@@ -6,6 +6,8 @@ import LoginPage from "./pages/LoginPage.vue";
 import NodeDetailPage from "./pages/NodeDetailPage.vue";
 import NodesPage from "./pages/NodesPage.vue";
 import OverviewPage from "./pages/OverviewPage.vue";
+import ProcessDetailPage from "./pages/ProcessDetailPage.vue";
+import ProcessesPage from "./pages/ProcessesPage.vue";
 
 const PlaceholderPage = defineComponent({
   name: "PlaceholderPage",
@@ -23,8 +25,8 @@ const routes: RouteRecordRaw[] = [
       { path: "", component: OverviewPage },
       { path: "nodes", component: NodesPage },
       { path: "nodes/:id", component: NodeDetailPage },
-      { path: "processes", component: PlaceholderPage },
-      { path: "processes/:idOrName", component: PlaceholderPage },
+      { path: "processes", component: ProcessesPage },
+      { path: "processes/:idOrName", component: ProcessDetailPage },
       { path: "users", component: PlaceholderPage },
       { path: "roles", component: PlaceholderPage },
       { path: "audit", component: PlaceholderPage },
