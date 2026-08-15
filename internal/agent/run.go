@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -36,6 +37,7 @@ type Options struct {
 	InsecureListen   bool
 	OnListen         func(addr string)
 	ConfigPath       string
+	Logger           *slog.Logger
 	GossipListen     string // default 127.0.0.1:7946
 	GossipAdvertise  string
 	RPCListen        string // default 127.0.0.1:9001; tests use 127.0.0.1:0
