@@ -73,10 +73,15 @@ type clusterEnv struct {
 
 func newClusterEnv(t *testing.T) *clusterEnv {
 	t.Helper()
-	return newClusterEnvOpts(t, false, true)
+	return newClusterEnvReady(t, false, true, nil)
 }
 
 func newClusterEnvOpts(t *testing.T, degraded, withMesh bool) *clusterEnv {
+	t.Helper()
+	return newClusterEnvReady(t, degraded, withMesh, nil)
+}
+
+func newClusterEnvReady(t *testing.T, degraded, withMesh bool, onReady func() error) *clusterEnv {
 	t.Helper()
 	m, st, layout := newTestManager(t)
 	ctx := context.Background()
@@ -121,6 +126,7 @@ func newClusterEnvOpts(t *testing.T, degraded, withMesh bool) *clusterEnv {
 		Hostname: local.Hostname,
 		BootID:   bootID,
 		APIAddr:  local.APIAddress,
+		OnReady:  onReady,
 	}
 	if env.mesh != nil {
 		deps.Mesh = env.mesh
@@ -152,6 +158,73 @@ func (e *clusterEnv) init(t *testing.T) *procmeshv1.InitClusterResponse {
 		e.mesh.setMembers([]cluster.NodeSummary{e.local})
 	}
 	return resp.Msg
+}
+
+func TestInit_OnReadyAfterCerts(t *testing.T) {
+	var dir string
+	var called, hadCerts bool
+	e := newClusterEnvReady(t, false, true, func() error {
+		called = true
+		_, err := os.Stat(filepath.Join(dir, "agent.crt"))
+		hadCerts = err == nil
+		return errors.New("rpc listen failed")
+	})
+	dir = e.dir
+	got := e.init(t)
+	if got.GetClusterId() == "" {
+		t.Fatal("init should succeed even if OnReady fails")
+	}
+	if !called {
+		t.Fatal("OnReady not called after Init")
+	}
+	if !hadCerts {
+		t.Fatal("OnReady ran before certs were written")
+	}
+	if !control.AlreadyInited(e.dir) {
+		t.Fatal("OnReady error must not roll back Init")
+	}
+}
+
+func TestRequestJoin_OnReadyAfterCerts(t *testing.T) {
+	ctx := context.Background()
+	seed := newClusterEnv(t)
+	inited := seed.init(t)
+	tok, err := seed.node.CreateJoinToken(ctx, connect.NewRequest(&procmeshv1.CreateJoinTokenRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-tok", Operator: "t"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var dir string
+	var called, hadCerts bool
+	joiner := newClusterEnvReady(t, false, true, func() error {
+		called = true
+		_, err := os.Stat(filepath.Join(dir, "agent.crt"))
+		hadCerts = err == nil
+		return errors.New("rpc listen failed")
+	})
+	dir = joiner.dir
+	resp, err := joiner.cluster.RequestJoin(ctx, connect.NewRequest(&procmeshv1.RequestJoinRequest{
+		Meta:       &procmeshv1.MutationMeta{OperationId: "op-rjoin", Operator: "t"},
+		SeedServer: seed.url,
+		Token:      tok.Msg.GetToken(),
+	}))
+	if err != nil {
+		t.Fatalf("OnReady error should not fail RequestJoin: %v", err)
+	}
+	if resp.Msg.GetClusterId() != inited.GetClusterId() {
+		t.Fatalf("cluster_id=%q want %q", resp.Msg.GetClusterId(), inited.GetClusterId())
+	}
+	if !called {
+		t.Fatal("OnReady not called after RequestJoin")
+	}
+	if !hadCerts {
+		t.Fatal("OnReady ran before joiner certs were written")
+	}
+	if !control.AlreadyInited(joiner.dir) {
+		t.Fatal("OnReady error must not roll back RequestJoin")
+	}
 }
 
 func TestInit_ReturnsClusterIDAndPasswordThenConflict(t *testing.T) {

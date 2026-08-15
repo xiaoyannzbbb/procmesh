@@ -34,6 +34,7 @@ type ClusterDeps struct {
 	BootID     string
 	APIAddr    string
 	HTTPClient *http.Client
+	OnReady    func() error // called after Init/RequestJoin persist certs; failure is logged only
 }
 
 type ClusterMetaStore interface {
@@ -78,6 +79,7 @@ func (s *ClusterAPI) Init(ctx context.Context, req *connect.Request[procmeshv1.I
 			return nil, ToConnect(err)
 		}
 	}
+	s.callOnReady()
 	return connect.NewResponse(&procmeshv1.InitClusterResponse{
 		ClusterId:     result.ClusterID,
 		NodeId:        result.NodeID,
@@ -195,6 +197,7 @@ func (s *ClusterAPI) RequestJoin(ctx context.Context, req *connect.Request[procm
 			return nil, ToConnect(err)
 		}
 	}
+	s.callOnReady()
 	if j, ok := s.Deps.Mesh.(meshJoiner); ok {
 		if gossip := joined.Msg.GetGossipAddress(); gossip != "" {
 			if _, err := j.Join([]string{gossip}); err != nil {
@@ -221,6 +224,15 @@ func (s *ClusterAPI) Overview(ctx context.Context, _ *connect.Request[procmeshv1
 		Members:   int32(len(members)),
 		Alive:     alive,
 	}), nil
+}
+
+func (s *ClusterAPI) callOnReady() {
+	if s.Deps.OnReady == nil {
+		return
+	}
+	if err := s.Deps.OnReady(); err != nil {
+		fmt.Fprintf(os.Stderr, "cluster ready: %v\n", err)
+	}
 }
 
 func requireCluster(d ClusterDeps) error {

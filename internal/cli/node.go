@@ -100,7 +100,7 @@ func formatNodeLine(n *procmeshv1.Node) string {
 	if n == nil {
 		return ""
 	}
-	return fmt.Sprintf("%s\t%s\t%s\t%d\t%s\t%s",
+	return fmt.Sprintf("%s\t%s\t%s\t%d\t%s\t%s\t%s",
 		n.GetNodeId(), n.GetHostname(), n.GetState(), n.GetProtocolVersion(),
-		n.GetApiAddress(), n.GetGossipAddress())
+		n.GetApiAddress(), n.GetGossipAddress(), n.GetRpcAddress())
 }

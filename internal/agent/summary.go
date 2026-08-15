@@ -62,6 +62,12 @@ func (s *liveSource) setGossip(addr string) {
 	s.mu.Unlock()
 }
 
+func (s *liveSource) setRPC(addr string) {
+	s.mu.Lock()
+	s.rpcAddr = addr
+	s.mu.Unlock()
+}
+
 func processSummaries(mgr *process.Manager) []cluster.ProcessSummary {
 	if mgr == nil {
 		return nil

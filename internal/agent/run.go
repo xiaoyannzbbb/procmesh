@@ -25,6 +25,7 @@ import (
 )
 
 const defaultGossipListen = "127.0.0.1:7946"
+const defaultRPCListen = "127.0.0.1:9001"
 
 // Options is the procmesh-agent runtime configuration.
 type Options struct {
@@ -36,6 +37,9 @@ type Options struct {
 	ConfigPath      string
 	GossipListen    string // default 127.0.0.1:7946
 	GossipAdvertise string
+	RPCListen       string // default 127.0.0.1:9001; tests use 127.0.0.1:0
+	RPCAdvertise    string
+	OnRPCListen     func(addr string)
 	BootID          string // empty = paths.CurrentBootID(); tests may override
 }
 
@@ -131,6 +135,18 @@ func Run(ctx context.Context, opt Options) error {
 	if err := CheckListen(gossipListen, opt.InsecureListen); err != nil {
 		return err
 	}
+	if opt.RPCListen == "" {
+		opt.RPCListen = cfg.RPC.Listen
+	}
+	if opt.RPCListen == "" {
+		opt.RPCListen = defaultRPCListen
+	}
+	if opt.RPCAdvertise == "" {
+		opt.RPCAdvertise = cfg.RPC.Advertise
+	}
+	if err := CheckListen(opt.RPCListen, opt.InsecureListen); err != nil {
+		return err
+	}
 	bindAddr, bindPort, err := splitListen(gossipListen)
 	if err != nil {
 		return err
@@ -217,22 +233,61 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		mesh.Update()
 	}
 
+	fwd := &agentForwarder{}
+	rt := &rpcRuntime{
+		opt:      opt,
+		dir:      clusterDeps.Dir,
+		nodeID:   clusterDeps.NodeID,
+		mgr:      mgr,
+		st:       st,
+		mesh:     mesh,
+		src:      src,
+		ready:    ready,
+		degraded: degraded,
+		fwd:      fwd,
+	}
+	clusterDeps.OnReady = rt.startRPC
+	if err := rt.startRPC(); err != nil {
+		_ = ln.Close()
+		rt.shutdown(context.Background())
+		shutdownMesh(mesh)
+		return fmt.Errorf("start rpc: %w", err)
+	}
+
+	var members func() []cluster.NodeSummary
+	if mesh != nil {
+		members = mesh.Members
+	} else if src != nil {
+		members = func() []cluster.NodeSummary { return []cluster.NodeSummary{src.Snapshot()} }
+	}
+	router := &api.Router{
+		LocalID:      clusterDeps.NodeID,
+		LocalHost:    clusterDeps.Hostname,
+		Members:      members,
+		LocalHasName: localHasNameFn(mgr),
+	}
+
 	var revs api.RevisionStore
 	if st != nil {
 		revs = st
 	}
 	srv, err := api.NewServer(api.Options{
-		Addr:     opt.Listen,
-		Mgr:      mgr,
-		Logs:     logs,
-		Store:    revs,
-		Cluster:  clusterDeps,
-		Degraded: degraded,
-		Ready:    ready,
-		Started:  time.Now(),
+		Addr:      opt.Listen,
+		Mgr:       mgr,
+		Logs:      logs,
+		Store:     revs,
+		Cluster:   clusterDeps,
+		Degraded:  degraded,
+		Ready:     ready,
+		Started:   time.Now(),
+		LocalOnly: false,
+		LocalID:   clusterDeps.NodeID,
+		Router:    router,
+		Forward:   fwd,
 	})
 	if err != nil {
 		_ = ln.Close()
+		rt.shutdown(context.Background())
 		shutdownMesh(mesh)
 		return fmt.Errorf("new server: %w", err)
 	}
@@ -281,9 +336,13 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		shutCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shutCtx)
+		rt.shutdown(shutCtx)
 		shutdownMesh(mesh)
 		return nil
 	case err := <-errCh:
+		shutCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		rt.shutdown(shutCtx)
 		shutdownMesh(mesh)
 		return err
 	}

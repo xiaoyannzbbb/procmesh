@@ -9,6 +9,26 @@ import (
 	"time"
 )
 
+func TestAccept_RPCAddressAfterInit(t *testing.T) {
+	addr, _ := startClusterAgent(t, "")
+	code, out, errb := runP1CLI("--server", addr, "cluster", "init")
+	if code != 0 {
+		t.Fatalf("init exit=%d stderr=%q stdout=%q", code, errb, out)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		code, out, errb = runP1CLI("--server", addr, "node", "list")
+		if code == 0 && strings.Contains(out, "127.0.0.1:") && strings.Count(out, "127.0.0.1:") >= 1 {
+			// node list 已打印 rpc 或至少成员仍在；改为解析 rpc 列/字段
+			if rpcAddrFromNodeList(out) != "" {
+				return
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("missing rpc_address after init: %q stderr=%q", out, errb)
+}
+
 func TestAccept_NodeListAfterInit(t *testing.T) {
 	addr, root := startClusterAgent(t, "")
 	nodeID := readNodeID(t, root)
@@ -149,6 +169,7 @@ func startClusterAgentAt(t *testing.T, root, bootID string) string {
 			DataDir:      root,
 			Listen:       "127.0.0.1:0",
 			GossipListen: "127.0.0.1:0",
+			RPCListen:    "127.0.0.1:0",
 			ShimBin:      testShimBin,
 			BootID:       bootID,
 			OnListen:     func(addr string) { got <- addr },
@@ -201,6 +222,20 @@ func parseKV(out, key string) string {
 	for _, line := range strings.Split(out, "\n") {
 		if strings.HasPrefix(line, prefix) {
 			return strings.TrimPrefix(line, prefix)
+		}
+	}
+	return ""
+}
+
+func rpcAddrFromNodeList(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) >= 7 && fields[6] != "" {
+			return fields[6]
 		}
 	}
 	return ""
