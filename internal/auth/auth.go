@@ -179,12 +179,28 @@ func (s *Service) sessionPrincipal(sessionID string) (Principal, error) {
 	}, nil
 }
 
+func (s *Service) AuthenticateTokenID(tokenID string) (Principal, error) {
+	if tokenID == "" {
+		return Principal{}, errcode.E(errcode.DENIED, "invalid token")
+	}
+	st := s.Store.View()
+	tok, ok := st.APITokens[tokenID]
+	if !ok {
+		return Principal{}, errcode.E(errcode.DENIED, "invalid token")
+	}
+	return s.principalFromToken(st, tok)
+}
+
 func (s *Service) tokenPrincipal(plain string) (Principal, error) {
 	st := s.Store.View()
 	tok, ok := st.TokenByPlain(plain)
 	if !ok {
 		return Principal{}, errcode.E(errcode.DENIED, "invalid token")
 	}
+	return s.principalFromToken(st, tok)
+}
+
+func (s *Service) principalFromToken(st control.State, tok control.APIToken) (Principal, error) {
 	if tok.Revoked {
 		return Principal{}, errcode.E(errcode.DENIED, "token revoked")
 	}

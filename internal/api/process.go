@@ -54,25 +54,21 @@ func stampHop(h http.Header, localID, target string) {
 	rpc.SetTarget(h, target)
 }
 
-// stampIdentity 按当前 Principal 覆盖 hop 身份头，不转发客户端伪造值。
+// stampIdentity 按当前 Principal 覆盖 hop 身份头。Token 只转发内部 id，不带 pmt_ 明文。
 func stampIdentity(h http.Header, ctx context.Context) {
 	src := make(http.Header)
 	if p, ok := PrincipalFrom(ctx); ok {
 		rpc.SetUserID(src, p.UserID)
 		if p.SessionID != "" {
 			rpc.SetSessionID(src, p.SessionID)
-		} else if tok := hopTokenCred(h, p.TokenID); tok != "" {
-			rpc.SetTokenID(src, tok)
+		} else if p.TokenID != "" {
+			rpc.SetTokenID(src, p.TokenID)
 		}
 	}
 	rpc.CopyIdentity(h, src)
-}
-
-func hopTokenCred(h http.Header, tokenID string) string {
 	if b := bearerToken(h); strings.HasPrefix(b, "pmt_") {
-		return b
+		h.Del("Authorization")
 	}
-	return tokenID
 }
 
 func mapForwardErr(err error) error {

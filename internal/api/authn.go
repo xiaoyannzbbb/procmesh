@@ -155,14 +155,18 @@ func (o *ownerAuthInterceptor) authenticate(ctx context.Context, procedure strin
 	if o.svc == nil {
 		return ctx, nil
 	}
-	cred := rpc.SessionIDOf(h)
-	if cred == "" {
-		cred = rpc.TokenIDOf(h)
-	}
-	if cred == "" {
+	var (
+		p   auth.Principal
+		err error
+	)
+	switch {
+	case rpc.SessionIDOf(h) != "":
+		p, err = o.svc.AuthenticateSession(rpc.SessionIDOf(h), "", false)
+	case rpc.TokenIDOf(h) != "":
+		p, err = o.svc.AuthenticateTokenID(rpc.TokenIDOf(h))
+	default:
 		return ctx, ToConnect(errcode.E(errcode.DENIED, "missing session"))
 	}
-	p, err := o.svc.AuthenticateBearer(cred)
 	if err != nil {
 		return ctx, ToConnect(err)
 	}

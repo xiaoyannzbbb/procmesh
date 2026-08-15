@@ -321,6 +321,58 @@ func TestAPIToken_ShownOnce(t *testing.T) {
 	requireCode(t, err, errcode.DENIED, "")
 }
 
+func TestAuthenticateTokenID_ByInternalID(t *testing.T) {
+	svc, store, clk := newTestSvc(t)
+	plain, tokenID, _, err := svc.CreateAPIToken("user-admin", "hop", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := svc.AuthenticateTokenID(tokenID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.UserID != "user-admin" || p.TokenID != tokenID || p.SessionID != "" {
+		t.Fatalf("principal=%+v", p)
+	}
+	_, err = svc.AuthenticateTokenID(plain)
+	requireCode(t, err, errcode.DENIED, "")
+	_, err = svc.AuthenticateTokenID("")
+	requireCode(t, err, errcode.DENIED, "")
+	_, err = svc.AuthenticateTokenID("missing")
+	requireCode(t, err, errcode.DENIED, "")
+
+	if err := svc.RevokeAPIToken(tokenID); err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.AuthenticateTokenID(tokenID)
+	requireCode(t, err, errcode.DENIED, "token revoked")
+
+	_, expID, _, err := svc.CreateAPIToken("user-admin", "exp", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clk.Add(time.Minute)
+	_, err = svc.AuthenticateTokenID(expID)
+	requireCode(t, err, errcode.DENIED, "token expired")
+
+	_, foreverID, _, err := svc.CreateAPIToken("user-admin", "forever", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clk.Add(365 * 24 * time.Hour)
+	p, err = svc.AuthenticateTokenID(foreverID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.TokenID != foreverID {
+		t.Fatalf("zero ttl=%+v", p)
+	}
+
+	apply(t, store, control.CmdUserDisable, control.UserDisableBody{UserID: "user-admin"})
+	_, err = svc.AuthenticateTokenID(foreverID)
+	requireCode(t, err, errcode.DENIED, "user not active")
+}
+
 func TestAPIToken_ZeroTTLNeverExpires(t *testing.T) {
 	svc, store, clk := newTestSvc(t)
 	plain, tokenID, exp, err := svc.CreateAPIToken("user-admin", "forever", 0)
