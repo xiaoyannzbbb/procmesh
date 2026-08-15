@@ -164,7 +164,7 @@ func (s *State) Apply(cmd Command, now time.Time) error {
 	case CmdBindPut:
 		return applyJSON(cmd.Body, s.applyBindPut)
 	case CmdJoinTokenPut:
-		return applyJSON(cmd.Body, s.applyJoinTokenPut)
+		return applyJSON(cmd.Body, func(b JoinTokenPutBody) error { return s.applyJoinTokenPut(b, now) })
 	case CmdJoinTokenConsume:
 		return applyJSON(cmd.Body, func(b JoinTokenConsumeBody) error { return s.applyJoinTokenConsume(b, now) })
 	case CmdJoinTokenRevoke:
@@ -362,7 +362,7 @@ func (s *State) applyBindPut(b BindPutBody) error {
 	return nil
 }
 
-func (s *State) applyJoinTokenPut(b JoinTokenPutBody) error {
+func (s *State) applyJoinTokenPut(b JoinTokenPutBody, now time.Time) error {
 	if b.Hash == "" {
 		return errcode.E(errcode.INVALID, "join token hash required")
 	}
@@ -374,10 +374,14 @@ func (s *State) applyJoinTokenPut(b JoinTokenPutBody) error {
 			return err
 		}
 	}
+	ttl := time.Duration(b.TTLSeconds) * time.Second
+	if ttl <= 0 {
+		ttl = DefaultTokenTTL
+	}
 	s.JoinTokens[id] = JoinToken{
 		ID:          id,
 		Hash:        b.Hash,
-		ExpiresUnix: b.ExpiresUnix,
+		ExpiresUnix: now.Add(ttl).Unix(),
 		Remaining:   b.Remaining,
 	}
 	return nil

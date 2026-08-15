@@ -180,10 +180,10 @@ func TestFSM_JoinTokenConsumeOnce(t *testing.T) {
 	plain := "pmj_join-once"
 	sum := sha256.Sum256([]byte(plain))
 	if err := s.Apply(mustEncode(t, "join_token_put", control.JoinTokenPutBody{
-		ID:          "jt-1",
-		Hash:        hex.EncodeToString(sum[:]),
-		ExpiresUnix: now.Add(time.Hour).Unix(),
-		Remaining:   1,
+		ID:         "jt-1",
+		Hash:       hex.EncodeToString(sum[:]),
+		TTLSeconds: int64(time.Hour.Seconds()),
+		Remaining:  1,
 	}), now); err != nil {
 		t.Fatal(err)
 	}
@@ -404,10 +404,10 @@ func TestFSM_JoinTokenErrorsMatchConsumeToken(t *testing.T) {
 	plain := "pmj_revoked"
 	sum := sha256.Sum256([]byte(plain))
 	if err := s.Apply(mustEncode(t, "join_token_put", control.JoinTokenPutBody{
-		ID:          "jt-r",
-		Hash:        hex.EncodeToString(sum[:]),
-		ExpiresUnix: now.Add(time.Hour).Unix(),
-		Remaining:   2,
+		ID:         "jt-r",
+		Hash:       hex.EncodeToString(sum[:]),
+		TTLSeconds: int64(time.Hour.Seconds()),
+		Remaining:  2,
 	}), now); err != nil {
 		t.Fatal(err)
 	}
@@ -422,10 +422,10 @@ func TestFSM_JoinTokenErrorsMatchConsumeToken(t *testing.T) {
 	expired := "pmj_expired"
 	sum = sha256.Sum256([]byte(expired))
 	if err := s.Apply(mustEncode(t, "join_token_put", control.JoinTokenPutBody{
-		ID:          "jt-e",
-		Hash:        hex.EncodeToString(sum[:]),
-		ExpiresUnix: now.Add(time.Second).Unix(),
-		Remaining:   1,
+		ID:         "jt-e",
+		Hash:       hex.EncodeToString(sum[:]),
+		TTLSeconds: 1, // 1 second
+		Remaining:  1,
 	}), now); err != nil {
 		t.Fatal(err)
 	}
@@ -473,10 +473,10 @@ func TestFSM_RolePutAndJoinTokenLookup(t *testing.T) {
 	plain := "pmj_lookup"
 	sum := sha256.Sum256([]byte(plain))
 	if err := s.Apply(mustEncode(t, "join_token_put", control.JoinTokenPutBody{
-		ID:          "jt-l",
-		Hash:        hex.EncodeToString(sum[:]),
-		ExpiresUnix: now.Add(time.Hour).Unix(),
-		Remaining:   3,
+		ID:         "jt-l",
+		Hash:       hex.EncodeToString(sum[:]),
+		TTLSeconds: int64(time.Hour.Seconds()),
+		Remaining:  3,
 	}), now); err != nil {
 		t.Fatal(err)
 	}

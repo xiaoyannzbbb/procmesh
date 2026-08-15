@@ -36,12 +36,12 @@ func (a *Admission) CreateToken(ttl time.Duration, uses int, now time.Time) (pla
 	if err != nil {
 		return "", TokenInfo{}, err
 	}
-	expires := now.Add(ttl)
+	_ = now // FSM 用 log AppendedAt 加 TTL 计算过期时间
 	cmd, err := EncodeCommand(CmdJoinTokenPut, JoinTokenPutBody{
-		ID:          id,
-		Hash:        hashToken(plain),
-		ExpiresUnix: expires.Unix(),
-		Remaining:   uses,
+		ID:         id,
+		Hash:       hashToken(plain),
+		TTLSeconds: int64(ttl.Seconds()),
+		Remaining:  uses,
 	})
 	if err != nil {
 		return "", TokenInfo{}, err
@@ -49,9 +49,10 @@ func (a *Admission) CreateToken(ttl time.Duration, uses int, now time.Time) (pla
 	if err := a.Node.Apply(cmd, admissionApplyTO); err != nil {
 		return "", TokenInfo{}, err
 	}
+	// ExpiresAt 是近似值；真实值由 FSM Apply 时的 AppendedAt 决定
 	return plain, TokenInfo{
 		ID:        id,
-		ExpiresAt: expires,
+		ExpiresAt: time.Now().Add(ttl),
 		Remaining: uses,
 	}, nil
 }
