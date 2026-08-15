@@ -3,6 +3,9 @@ import { createConnectTransport } from "@connectrpc/connect-web";
 import { getCsrf } from "./csrf";
 
 const csrfInterceptor: Interceptor = (next) => async (req) => {
+  if (req.url.includes("/procmesh.v1.AuthService/Login")) {
+    return next(req);
+  }
   const token = getCsrf();
   if (token) {
     req.header.set("X-CSRF-Token", token);

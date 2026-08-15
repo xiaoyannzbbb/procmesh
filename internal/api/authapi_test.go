@@ -157,3 +157,66 @@ func parseSetCookie(h http.Header) string {
 	}
 	return v
 }
+
+func TestAuth_GetMeReturnsPermissions(t *testing.T) {
+	ctx := context.Background()
+	e := newAuthnEnv(t, true)
+
+	sid, _ := e.login(t)
+	adminReq := connect.NewRequest(&procmeshv1.GetMeRequest{})
+	adminReq.Header().Set("Cookie", auth.CookieName+"="+sid)
+	adminMe, err := e.authc.GetMe(ctx, adminReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminPerms := adminMe.Msg.GetPermissions()
+	if !containsStr(adminPerms, "process.restart") {
+		t.Fatalf("super_admin missing process.restart: %v", adminPerms)
+	}
+	if !sortedStrings(adminPerms) {
+		t.Fatalf("super_admin permissions not sorted: %v", adminPerms)
+	}
+
+	putViewerUser(t, e.svc)
+	viewLogin, err := e.authc.Login(ctx, connect.NewRequest(&procmeshv1.LoginRequest{
+		Username: "viewer",
+		Password: testAdminPass,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewReq := connect.NewRequest(&procmeshv1.GetMeRequest{})
+	viewReq.Header().Set("Cookie", auth.CookieName+"="+viewLogin.Msg.GetSessionId())
+	viewMe, err := e.authc.GetMe(ctx, viewReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewPerms := viewMe.Msg.GetPermissions()
+	if containsStr(viewPerms, "process.restart") {
+		t.Fatalf("viewer must not have process.restart: %v", viewPerms)
+	}
+	if !containsStr(viewPerms, "process.read") {
+		t.Fatalf("viewer missing process.read: %v", viewPerms)
+	}
+	if !sortedStrings(viewPerms) {
+		t.Fatalf("viewer permissions not sorted: %v", viewPerms)
+	}
+}
+
+func containsStr(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
+func sortedStrings(ss []string) bool {
+	for i := 1; i < len(ss); i++ {
+		if ss[i-1] > ss[i] {
+			return false
+		}
+	}
+	return true
+}
