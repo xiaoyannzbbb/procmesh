@@ -50,3 +50,19 @@ func SetTokenID(h http.Header, tokenID string) {
 	}
 	h.Set(HeaderTokenID, tokenID)
 }
+
+// CopyIdentity 用 src 的 User/Session/Token 覆盖 dst（缺省则清空）。
+func CopyIdentity(dst, src http.Header) {
+	if dst == nil {
+		return
+	}
+	dst.Del(HeaderUserID)
+	dst.Del(HeaderSessionID)
+	dst.Del(HeaderTokenID)
+	if src == nil {
+		return
+	}
+	SetUserID(dst, UserIDOf(src))
+	SetSessionID(dst, SessionIDOf(src))
+	SetTokenID(dst, TokenIDOf(src))
+}

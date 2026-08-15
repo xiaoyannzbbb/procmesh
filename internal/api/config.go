@@ -40,6 +40,7 @@ func (s *ConfigAPI) remoteConfig(ctx context.Context, rt Route, header http.Head
 		return nil, unavailableOwner()
 	}
 	stampHop(header, s.LocalID, rt.NodeID)
+	stampIdentity(header, ctx)
 	cli, err := s.Forward.Config(ctx, rt)
 	if err != nil {
 		return nil, ToConnect(rpc.MapDialError(err))

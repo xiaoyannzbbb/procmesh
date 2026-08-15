@@ -9,7 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/api"
+	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/process"
@@ -33,6 +35,7 @@ type rpcRuntime struct {
 	ready    func() error
 	degraded bool
 	fwd      *agentForwarder
+	auth     *auth.Service
 }
 
 func (r *rpcRuntime) startRPC() error {
@@ -133,20 +136,24 @@ func (r *rpcRuntime) localHandler() http.Handler {
 	if r.st != nil {
 		revs = r.st
 	}
+	var opts []connect.HandlerOption
+	if r.auth != nil {
+		opts = append(opts, connect.WithInterceptors(api.OwnerAuthInterceptor(r.auth, r.nodeID)))
+	}
 	pp, ph := procmeshv1connect.NewProcessServiceHandler(&api.ProcessAPI{
-		Mgr: r.mgr, Degraded: degraded,
+		Mgr: r.mgr, Auth: r.auth, Degraded: degraded,
 		LocalOnly: true, LocalID: r.nodeID,
-	})
+	}, opts...)
 	mux.Handle(pp, ph)
 	cp, ch := procmeshv1connect.NewConfigServiceHandler(&api.ConfigAPI{
-		Mgr: r.mgr, Revs: revs, Degraded: degraded,
+		Mgr: r.mgr, Auth: r.auth, Revs: revs, Degraded: degraded,
 		LocalOnly: true, LocalID: r.nodeID,
-	})
+	}, opts...)
 	mux.Handle(cp, ch)
 	lp, lh := procmeshv1connect.NewLogServiceHandler(&api.LogAPI{
-		Mgr:       r.mgr,
+		Mgr: r.mgr, Auth: r.auth,
 		LocalOnly: true, LocalID: r.nodeID,
-	})
+	}, opts...)
 	mux.Handle(lp, lh)
 	return mux
 }

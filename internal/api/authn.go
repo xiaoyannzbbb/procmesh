@@ -8,6 +8,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/rpc"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
 
@@ -114,4 +115,60 @@ func cookieValue(h http.Header, name string) string {
 		return ""
 	}
 	return c.Value
+}
+
+// OwnerAuthInterceptor 在 :9001 再验 hop 会话，不信任入口「已授权」头。
+func OwnerAuthInterceptor(svc *auth.Service, localID string) connect.Interceptor {
+	return &ownerAuthInterceptor{svc: svc, localID: localID}
+}
+
+type ownerAuthInterceptor struct {
+	svc     *auth.Service
+	localID string
+}
+
+func (o *ownerAuthInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
+	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+		ctx, err := o.authenticate(ctx, req.Spec().Procedure, req.Header())
+		if err != nil {
+			return nil, err
+		}
+		return next(ctx, req)
+	}
+}
+
+func (o *ownerAuthInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
+	return next
+}
+
+func (o *ownerAuthInterceptor) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
+	return func(ctx context.Context, conn connect.StreamingHandlerConn) error {
+		ctx, err := o.authenticate(ctx, conn.Spec().Procedure, conn.RequestHeader())
+		if err != nil {
+			return err
+		}
+		return next(ctx, conn)
+	}
+}
+
+func (o *ownerAuthInterceptor) authenticate(ctx context.Context, procedure string, h http.Header) (context.Context, error) {
+	if o.svc == nil {
+		return ctx, nil
+	}
+	cred := rpc.SessionIDOf(h)
+	if cred == "" {
+		cred = rpc.TokenIDOf(h)
+	}
+	if cred == "" {
+		return ctx, ToConnect(errcode.E(errcode.DENIED, "missing session"))
+	}
+	p, err := o.svc.AuthenticateBearer(cred)
+	if err != nil {
+		return ctx, ToConnect(err)
+	}
+	ctx = WithPrincipal(ctx, p)
+	if err := requireHopPerm(ctx, o.svc, procedure, o.localID); err != nil {
+		return ctx, err
+	}
+	return ctx, nil
 }

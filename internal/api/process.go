@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/auth"
@@ -53,6 +54,27 @@ func stampHop(h http.Header, localID, target string) {
 	rpc.SetTarget(h, target)
 }
 
+// stampIdentity 按当前 Principal 覆盖 hop 身份头，不转发客户端伪造值。
+func stampIdentity(h http.Header, ctx context.Context) {
+	src := make(http.Header)
+	if p, ok := PrincipalFrom(ctx); ok {
+		rpc.SetUserID(src, p.UserID)
+		if p.SessionID != "" {
+			rpc.SetSessionID(src, p.SessionID)
+		} else if tok := hopTokenCred(h, p.TokenID); tok != "" {
+			rpc.SetTokenID(src, tok)
+		}
+	}
+	rpc.CopyIdentity(h, src)
+}
+
+func hopTokenCred(h http.Header, tokenID string) string {
+	if b := bearerToken(h); strings.HasPrefix(b, "pmt_") {
+		return b
+	}
+	return tokenID
+}
+
 func mapForwardErr(err error) error {
 	if err == nil {
 		return nil
@@ -69,6 +91,7 @@ func (s *ProcessAPI) remoteProcess(ctx context.Context, rt Route, header http.He
 		return nil, unavailableOwner()
 	}
 	stampHop(header, s.LocalID, rt.NodeID)
+	stampIdentity(header, ctx)
 	cli, err := s.Forward.Process(ctx, rt)
 	if err != nil {
 		return nil, ToConnect(rpc.MapDialError(err))

@@ -147,34 +147,41 @@ func remoteOwnerRouter(localID, ownerID, processName string) *Router {
 	}
 }
 
-func serveProcessAPI(t *testing.T, api *ProcessAPI) procmeshv1connect.ProcessServiceClient {
+func serveProcessAPI(t *testing.T, api *ProcessAPI, interceptors ...connect.Interceptor) procmeshv1connect.ProcessServiceClient {
 	t.Helper()
 	mux := http.NewServeMux()
-	pp, ph := procmeshv1connect.NewProcessServiceHandler(api)
+	pp, ph := procmeshv1connect.NewProcessServiceHandler(api, handlerOpts(interceptors)...)
 	mux.Handle(pp, ph)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return procmeshv1connect.NewProcessServiceClient(srv.Client(), srv.URL)
 }
 
-func serveConfigAPI(t *testing.T, api *ConfigAPI) procmeshv1connect.ConfigServiceClient {
+func serveConfigAPI(t *testing.T, api *ConfigAPI, interceptors ...connect.Interceptor) procmeshv1connect.ConfigServiceClient {
 	t.Helper()
 	mux := http.NewServeMux()
-	cp, ch := procmeshv1connect.NewConfigServiceHandler(api)
+	cp, ch := procmeshv1connect.NewConfigServiceHandler(api, handlerOpts(interceptors)...)
 	mux.Handle(cp, ch)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return procmeshv1connect.NewConfigServiceClient(srv.Client(), srv.URL)
 }
 
-func serveLogAPI(t *testing.T, api *LogAPI) procmeshv1connect.LogServiceClient {
+func serveLogAPI(t *testing.T, api *LogAPI, interceptors ...connect.Interceptor) procmeshv1connect.LogServiceClient {
 	t.Helper()
 	mux := http.NewServeMux()
-	lp, lh := procmeshv1connect.NewLogServiceHandler(api)
+	lp, lh := procmeshv1connect.NewLogServiceHandler(api, handlerOpts(interceptors)...)
 	mux.Handle(lp, lh)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return procmeshv1connect.NewLogServiceClient(srv.Client(), srv.URL)
+}
+
+func handlerOpts(interceptors []connect.Interceptor) []connect.HandlerOption {
+	if len(interceptors) == 0 {
+		return nil
+	}
+	return []connect.HandlerOption{connect.WithInterceptors(interceptors...)}
 }
 
 type fakeForwarder struct {

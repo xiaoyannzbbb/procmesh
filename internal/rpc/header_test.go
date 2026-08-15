@@ -31,3 +31,21 @@ func TestHeader_UserSessionToken(t *testing.T) {
 		t.Fatalf("empty set must be no-op: %v", h)
 	}
 }
+
+func TestHeader_CopyIdentity(t *testing.T) {
+	dst := make(http.Header)
+	rpc.SetUserID(dst, "old")
+	rpc.SetSessionID(dst, "olds")
+	rpc.SetTokenID(dst, "oldt")
+	src := make(http.Header)
+	rpc.SetUserID(src, "u1")
+	rpc.SetSessionID(src, "s1")
+	rpc.CopyIdentity(dst, src)
+	if rpc.UserIDOf(dst) != "u1" || rpc.SessionIDOf(dst) != "s1" || rpc.TokenIDOf(dst) != "" {
+		t.Fatalf("%v", dst)
+	}
+	rpc.CopyIdentity(dst, nil)
+	if rpc.UserIDOf(dst) != "" || rpc.SessionIDOf(dst) != "" {
+		t.Fatalf("nil src should clear: %v", dst)
+	}
+}

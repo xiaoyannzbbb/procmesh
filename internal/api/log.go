@@ -53,6 +53,7 @@ func (s *LogAPI) remoteLog(ctx context.Context, rt Route, header http.Header) (p
 		return nil, unavailableOwner()
 	}
 	stampHop(header, s.LocalID, rt.NodeID)
+	stampIdentity(header, ctx)
 	cli, err := s.Forward.Log(ctx, rt)
 	if err != nil {
 		return nil, ToConnect(rpc.MapDialError(err))
