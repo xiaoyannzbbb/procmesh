@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -55,7 +56,16 @@ func TestAccept_JoinTwoAgents(t *testing.T) {
 	if idA == idB {
 		t.Fatalf("agents unexpectedly share node_id %q", idA)
 	}
+	joinTwo(t, addrA, addrB)
+	_, listA, errb := runP1CLI("--server", addrA, "node", "list")
+	_, listB, errbB := runP1CLI("--server", addrB, "node", "list")
+	if !containsAll(parseNodeIDs(listA), idA, idB) || !containsAll(parseNodeIDs(listB), idA, idB) {
+		t.Fatalf("want both ids on both agents; A=%q (%q) B=%q (%q)", listA, errb, listB, errbB)
+	}
+}
 
+func joinTwo(t *testing.T, addrA, addrC string) {
+	t.Helper()
 	code, out, errb := runP1CLI("--server", addrA, "cluster", "init")
 	if code != 0 {
 		t.Fatalf("cluster init exit=%d stderr=%q stdout=%q", code, errb, out)
@@ -69,32 +79,30 @@ func TestAccept_JoinTwoAgents(t *testing.T) {
 		t.Fatalf("missing token in %q", tokOut)
 	}
 
-	code, out, errb = runP1CLI("--server", addrB, "agent", "join", "--seed", addrA, "--token", token)
+	code, out, errb = runP1CLI("--server", addrC, "agent", "join", "--seed", addrA, "--token", token)
 	if code != 0 {
 		t.Fatalf("agent join exit=%d stderr=%q stdout=%q", code, errb, out)
 	}
 
 	deadline := time.Now().Add(5 * time.Second)
-	var listA, listB string
+	var listA, listC string
 	for time.Now().Before(deadline) {
 		code, listA, errb = runP1CLI("--server", addrA, "node", "list")
 		if code != 0 {
 			t.Fatalf("node list A exit=%d stderr=%q", code, errb)
 		}
-		code, listB, errb = runP1CLI("--server", addrB, "node", "list")
+		code, listC, errb = runP1CLI("--server", addrC, "node", "list")
 		if code != 0 {
-			t.Fatalf("node list B exit=%d stderr=%q", code, errb)
+			t.Fatalf("node list C exit=%d stderr=%q", code, errb)
 		}
 		idsA := parseNodeIDs(listA)
-		idsB := parseNodeIDs(listB)
-		if len(idsA) == 2 && len(idsB) == 2 && distinctIDs(idsA) && distinctIDs(idsB) {
-			if containsAll(idsA, idA, idB) && containsAll(idsB, idA, idB) {
-				return
-			}
+		idsC := parseNodeIDs(listC)
+		if len(idsA) == 2 && len(idsC) == 2 && distinctIDs(idsA) && distinctIDs(idsC) {
+			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("want 2 distinct members on both agents; A=%q B=%q", listA, listB)
+	t.Fatalf("want 2 distinct members on both agents; A=%q C=%q", listA, listC)
 }
 
 func TestAccept_DuplicateNodeIDRejected(t *testing.T) {
@@ -148,19 +156,29 @@ func TestAccept_DuplicateNodeIDRejected(t *testing.T) {
 }
 
 func startClusterAgent(t *testing.T, bootID string) (addr, root string) {
+	addr, root, _ = startClusterAgentCtl(t, bootID)
+	return addr, root
+}
+
+func startClusterAgentCtl(t *testing.T, bootID string) (addr, root string, cancel context.CancelFunc) {
 	t.Helper()
 	root, err := os.MkdirTemp("", "pm")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
-	return startClusterAgentAt(t, root, bootID), root
+	addr, cancel = startClusterAgentAtCtl(t, root, bootID)
+	return addr, root, cancel
 }
 
 func startClusterAgentAt(t *testing.T, root, bootID string) string {
+	addr, _ := startClusterAgentAtCtl(t, root, bootID)
+	return addr
+}
+
+func startClusterAgentAtCtl(t *testing.T, root, bootID string) (string, context.CancelFunc) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
 
 	got := make(chan string, 1)
 	errCh := make(chan error, 1)
@@ -183,15 +201,21 @@ func startClusterAgentAt(t *testing.T, root, bootID string) string {
 	case <-time.After(10 * time.Second):
 		t.Fatal("agent listen timeout")
 	}
+	var once sync.Once
+	stop := func() {
+		once.Do(func() {
+			cancel()
+			select {
+			case <-errCh:
+			case <-time.After(5 * time.Second):
+			}
+		})
+	}
 	t.Cleanup(func() {
-		cancel()
-		select {
-		case <-errCh:
-		case <-time.After(5 * time.Second):
-		}
+		stop()
 		cleanupDataDir(root)
 	})
-	return addr
+	return addr, stop
 }
 
 func readNodeID(t *testing.T, root string) string {
