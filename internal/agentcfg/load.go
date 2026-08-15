@@ -11,9 +11,10 @@ import (
 )
 
 type Config struct {
-	Disk   logmgr.Policy
-	Gossip Gossip
-	RPC    RPC
+	Disk    logmgr.Policy
+	Gossip  Gossip
+	RPC     RPC
+	Control Control
 }
 
 type Gossip struct {
@@ -26,10 +27,16 @@ type RPC struct {
 	Advertise string
 }
 
+type Control struct {
+	Listen    string
+	Advertise string
+}
+
 type file struct {
-	Disk   *diskFile   `yaml:"disk"`
-	Gossip *gossipFile `yaml:"gossip"`
-	RPC    *rpcFile    `yaml:"rpc"`
+	Disk    *diskFile    `yaml:"disk"`
+	Gossip  *gossipFile  `yaml:"gossip"`
+	RPC     *rpcFile     `yaml:"rpc"`
+	Control *controlFile `yaml:"control"`
 }
 
 type diskFile struct {
@@ -46,6 +53,11 @@ type gossipFile struct {
 }
 
 type rpcFile struct {
+	Listen    string `yaml:"listen"`
+	Advertise string `yaml:"advertise"`
+}
+
+type controlFile struct {
 	Listen    string `yaml:"listen"`
 	Advertise string `yaml:"advertise"`
 }
@@ -123,6 +135,10 @@ func LoadAll(path string, required bool) (Config, error) {
 	if r := f.RPC; r != nil {
 		cfg.RPC.Listen = r.Listen
 		cfg.RPC.Advertise = r.Advertise
+	}
+	if c := f.Control; c != nil {
+		cfg.Control.Listen = c.Listen
+		cfg.Control.Advertise = c.Advertise
 	}
 	return cfg, nil
 }

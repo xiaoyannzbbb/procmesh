@@ -61,7 +61,17 @@ func (s *NodeAPI) CreateJoinToken(ctx context.Context, req *connect.Request[proc
 		return nil, err
 	}
 	ttl := time.Duration(req.Msg.GetTtlSeconds()) * time.Second
-	plain, info, err := control.CreateToken(s.Deps.Dir, ttl, int(req.Msg.GetUses()), s.Deps.now())
+	var (
+		plain string
+		info  control.TokenInfo
+		err   error
+	)
+	if s.Deps.Control != nil {
+		adm := control.Admission{Node: s.Deps.Control}
+		plain, info, err = adm.CreateToken(ttl, int(req.Msg.GetUses()), s.Deps.now())
+	} else {
+		plain, info, err = control.CreateToken(s.Deps.Dir, ttl, int(req.Msg.GetUses()), s.Deps.now())
+	}
 	if err != nil {
 		return nil, ToConnect(err)
 	}
@@ -89,7 +99,14 @@ func (s *NodeAPI) RevokeJoinToken(ctx context.Context, req *connect.Request[proc
 	if err := requireInited(s.Deps.Dir); err != nil {
 		return nil, err
 	}
-	if err := control.RevokeToken(s.Deps.Dir, req.Msg.GetTokenId()); err != nil {
+	var err error
+	if s.Deps.Control != nil {
+		adm := control.Admission{Node: s.Deps.Control}
+		err = adm.RevokeToken(req.Msg.GetTokenId())
+	} else {
+		err = control.RevokeToken(s.Deps.Dir, req.Msg.GetTokenId())
+	}
+	if err != nil {
 		return nil, ToConnect(err)
 	}
 	return connect.NewResponse(&procmeshv1.RevokeJoinTokenResponse{}), nil

@@ -90,6 +90,22 @@ func TestLoadAll_RPCListenAndAdvertise(t *testing.T) {
 	}
 }
 
+func TestLoadAll_ControlListenAndAdvertise(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent.yaml")
+	body := "control:\n  listen: 127.0.0.1:9002\n  advertise: 10.0.0.1:9002\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := agentcfg.LoadAll(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Control.Listen != "127.0.0.1:9002" || cfg.Control.Advertise != "10.0.0.1:9002" {
+		t.Fatalf("%+v", cfg.Control)
+	}
+}
+
 func TestLoad_UsesLoadAllDiskOnly(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent.yaml")

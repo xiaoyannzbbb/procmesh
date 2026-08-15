@@ -36,6 +36,10 @@ type ClusterDeps struct {
 	APIAddr    string
 	HTTPClient *http.Client
 	OnReady    func() error // called after Init/RequestJoin persist certs; failure is logged only
+	Control    *control.Node
+	OnAdmit    func(nodeID, raftAddr string) error // leader AddNonvoter；nil 忽略
+	LeaderAPI  func() string                       // 非 leader 转发 Join 的 API 地址
+	RaftAddr   func() string                       // 本机 Raft advertise，RequestJoin 填入
 }
 
 type ClusterMetaStore interface {
@@ -110,6 +114,15 @@ func (s *ClusterAPI) Join(ctx context.Context, req *connect.Request[procmeshv1.J
 	}); err != nil {
 		return nil, ToConnect(err)
 	}
+	adm := s.Deps.admission()
+	if adm != nil {
+		if adm.IsRevoked(req.Msg.GetNodeId()) {
+			return nil, ToConnect(errcode.E(errcode.DENIED, "node removed"))
+		}
+		if !s.Deps.Control.IsLeader() {
+			return s.forwardJoin(ctx, req)
+		}
+	}
 	now := s.Deps.now()
 	meta, err := control.LoadMeta(s.Deps.Dir)
 	if err != nil {
@@ -119,24 +132,55 @@ func (s *ClusterAPI) Join(ctx context.Context, req *connect.Request[procmeshv1.J
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	certPEM, err := control.SignCSR(bundle.CACertPEM, bundle.CAKeyPEM, req.Msg.GetCsrPem(), meta.ClusterID, req.Msg.GetNodeId(), now)
-	if err != nil {
-		return nil, ToConnect(err)
-	}
-	if err := control.ConsumeToken(s.Deps.Dir, req.Msg.GetToken(), now); err != nil {
-		return nil, ToConnect(err)
+	var certPEM []byte
+	if adm != nil {
+		if err := adm.ConsumeToken(req.Msg.GetToken(), now); err != nil {
+			return nil, ToConnect(err)
+		}
+		certPEM, err = control.SignCSR(bundle.CACertPEM, bundle.CAKeyPEM, req.Msg.GetCsrPem(), meta.ClusterID, req.Msg.GetNodeId(), now)
+		if err != nil {
+			return nil, ToConnect(err)
+		}
+		serial, err := control.CertSerial(certPEM)
+		if err != nil {
+			return nil, ToConnect(err)
+		}
+		if err := adm.Admit(req.Msg.GetNodeId(), req.Msg.GetRaftAddress(), serial); err != nil {
+			return nil, ToConnect(err)
+		}
+		if raftAddr := req.Msg.GetRaftAddress(); raftAddr != "" {
+			add := s.Deps.OnAdmit
+			if add == nil {
+				add = s.Deps.Control.AddNonvoter
+			}
+			if err := add(req.Msg.GetNodeId(), raftAddr); err != nil {
+				fmt.Fprintf(os.Stderr, "add nonvoter: %v\n", err)
+			}
+		}
+	} else {
+		certPEM, err = control.SignCSR(bundle.CACertPEM, bundle.CAKeyPEM, req.Msg.GetCsrPem(), meta.ClusterID, req.Msg.GetNodeId(), now)
+		if err != nil {
+			return nil, ToConnect(err)
+		}
+		if err := control.ConsumeToken(s.Deps.Dir, req.Msg.GetToken(), now); err != nil {
+			return nil, ToConnect(err)
+		}
 	}
 	if gossip := req.Msg.GetGossipAddress(); gossip != "" {
 		if err := control.AppendGossipSeed(s.Deps.Dir, gossip); err != nil {
 			fmt.Fprintf(os.Stderr, "persist gossip seed: %v\n", err)
 		}
 	}
-	return connect.NewResponse(&procmeshv1.JoinClusterResponse{
+	resp := &procmeshv1.JoinClusterResponse{
 		ClusterId:     meta.ClusterID,
 		CaPem:         bundle.CACertPEM,
 		CertPem:       certPEM,
 		GossipAddress: s.Deps.gossipAddr(),
-	}), nil
+	}
+	if s.Deps.Control != nil {
+		resp.RaftLeader = s.Deps.Control.Advertise()
+	}
+	return connect.NewResponse(resp), nil
 }
 
 func (s *ClusterAPI) RequestJoin(ctx context.Context, req *connect.Request[procmeshv1.RequestJoinRequest]) (*connect.Response[procmeshv1.RequestJoinResponse], error) {
@@ -176,6 +220,7 @@ func (s *ClusterAPI) RequestJoin(ctx context.Context, req *connect.Request[procm
 		ProtocolVersion: int32(version.Protocol),
 		ApiAddress:      s.Deps.APIAddr,
 		GossipAddress:   s.Deps.gossipAddr(),
+		RaftAddress:     s.Deps.raftAddr(),
 		CsrPem:          csrPEM,
 	}))
 	if err != nil {
@@ -321,6 +366,52 @@ func (d ClusterDeps) gossipAddr() string {
 		return d.Local().GossipAddress
 	}
 	return ""
+}
+
+func (d ClusterDeps) raftAddr() string {
+	if d.RaftAddr != nil {
+		return d.RaftAddr()
+	}
+	return ""
+}
+
+func (d ClusterDeps) admission() *control.Admission {
+	if d.Control == nil {
+		return nil
+	}
+	return &control.Admission{Node: d.Control}
+}
+
+func (s *ClusterAPI) forwardJoin(ctx context.Context, req *connect.Request[procmeshv1.JoinClusterRequest]) (*connect.Response[procmeshv1.JoinClusterResponse], error) {
+	var leaderAPI string
+	if s.Deps.LeaderAPI != nil {
+		leaderAPI = s.Deps.LeaderAPI()
+	}
+	if leaderAPI == "" {
+		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "raft leader api unknown"))
+	}
+	client := procmeshv1connect.NewClusterServiceClient(s.Deps.httpClient(), seedBaseURL(leaderAPI))
+	resp, err := client.Join(ctx, connect.NewRequest(req.Msg))
+	if err != nil {
+		return nil, mapJoinForwardErr(err)
+	}
+	return resp, nil
+}
+
+func mapJoinForwardErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	var ce *connect.Error
+	if errors.As(err, &ce) {
+		switch ce.Code() {
+		case connect.CodeUnavailable, connect.CodeUnknown, connect.CodeDeadlineExceeded:
+			return ToConnect(errcode.E(errcode.UNAVAILABLE, "leader unreachable"))
+		default:
+			return err
+		}
+	}
+	return ToConnect(errcode.E(errcode.UNAVAILABLE, "leader unreachable"))
 }
 
 func (d ClusterDeps) clusterID(ctx context.Context) string {

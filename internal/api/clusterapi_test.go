@@ -89,6 +89,27 @@ func newClusterEnvReady(t *testing.T, degraded, withMesh bool, onReady func() er
 
 func newClusterEnvAuth(t *testing.T, degraded, withMesh bool, onReady func() error, authSvc *auth.Service) *clusterEnv {
 	t.Helper()
+	return newClusterEnvFull(t, clusterEnvCfg{
+		degraded: degraded,
+		withMesh: withMesh,
+		onReady:  onReady,
+		auth:     authSvc,
+	})
+}
+
+type clusterEnvCfg struct {
+	degraded  bool
+	withMesh  bool
+	onReady   func() error
+	auth      *auth.Service
+	control   *control.Node
+	onAdmit   func(nodeID, raftAddr string) error
+	leaderAPI func() string
+	raftAddr  func() string
+}
+
+func newClusterEnvFull(t *testing.T, cfg clusterEnvCfg) *clusterEnv {
+	t.Helper()
 	m, st, layout := newTestManager(t)
 	ctx := context.Background()
 	nodeID, err := st.GetOrCreateNodeID(ctx)
@@ -117,7 +138,7 @@ func newClusterEnvAuth(t *testing.T, degraded, withMesh bool, onReady func() err
 		nodeID: nodeID,
 		bootID: bootID,
 	}
-	if withMesh {
+	if cfg.withMesh {
 		env.mesh = &staticMesh{members: []cluster.NodeSummary{local}}
 	}
 	deps := ClusterDeps{
@@ -127,17 +148,21 @@ func newClusterEnvAuth(t *testing.T, degraded, withMesh bool, onReady func() err
 		GossipAddr: func() string {
 			return env.local.GossipAddress
 		},
-		Now:      func() time.Time { return env.now },
-		NodeID:   nodeID,
-		Hostname: local.Hostname,
-		BootID:   bootID,
-		APIAddr:  local.APIAddress,
-		OnReady:  onReady,
+		Now:       func() time.Time { return env.now },
+		NodeID:    nodeID,
+		Hostname:  local.Hostname,
+		BootID:    bootID,
+		APIAddr:   local.APIAddress,
+		OnReady:   cfg.onReady,
+		Control:   cfg.control,
+		OnAdmit:   cfg.onAdmit,
+		LeaderAPI: cfg.leaderAPI,
+		RaftAddr:  cfg.raftAddr,
 	}
 	if env.mesh != nil {
 		deps.Mesh = env.mesh
 	}
-	srv, err := NewServer(Options{Mgr: m, Store: st, Cluster: deps, Degraded: degraded, Auth: authSvc})
+	srv, err := NewServer(Options{Mgr: m, Store: st, Cluster: deps, Degraded: cfg.degraded, Auth: cfg.auth})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,6 +173,31 @@ func newClusterEnvAuth(t *testing.T, degraded, withMesh bool, onReady func() err
 	env.http = hs.Client()
 	env.url = hs.URL
 	return env
+}
+
+func startTestRaft(t *testing.T, nodeID string) *control.Node {
+	t.Helper()
+	n, err := control.Start(control.RaftConfig{
+		Dir:    t.TempDir(),
+		Bind:   "127.0.0.1:0",
+		NodeID: nodeID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = n.Shutdown() })
+	if err := n.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if n.IsLeader() && n.HasQuorum() {
+			return n
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("no raft leader")
+	return n
 }
 
 func (e *clusterEnv) init(t *testing.T) *procmeshv1.InitClusterResponse {
@@ -725,6 +775,105 @@ func TestRequestJoin_SeedUnreachable(t *testing.T) {
 	code, detail := connectDetail(t, err)
 	if code != connect.CodeUnavailable || detail != "UNAVAILABLE" {
 		t.Fatalf("code=%v detail=%s err=%v", code, detail, err)
+	}
+}
+
+func TestJoin_UsesRaftTokenNotFile(t *testing.T) {
+	ctx := context.Background()
+	raftNode := startTestRaft(t, "seed")
+	var admitted []string
+	e := newClusterEnvFull(t, clusterEnvCfg{
+		withMesh: true,
+		control:  raftNode,
+		onAdmit: func(nodeID, raftAddr string) error {
+			admitted = append(admitted, nodeID+"="+raftAddr)
+			return nil
+		},
+	})
+	inited := e.init(t)
+	adm := control.Admission{Node: raftNode}
+	plain, _, err := adm.CreateToken(time.Hour, 1, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(e.dir, "tokens.json")); !os.IsNotExist(err) {
+		t.Fatalf("tokens.json should not exist before join: %v", err)
+	}
+	const joinerID = "raft-joiner"
+	csr, _, err := control.NewCSR("join", joinerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined, err := e.cluster.Join(ctx, connect.NewRequest(&procmeshv1.JoinClusterRequest{
+		Meta:            &procmeshv1.MutationMeta{OperationId: "op-join-raft", Operator: "t"},
+		Token:           plain,
+		NodeId:          joinerID,
+		Hostname:        "joiner-host",
+		BootId:          "boot-rj",
+		ProtocolVersion: int32(version.Protocol),
+		ApiAddress:      "127.0.0.1:9001",
+		GossipAddress:   "127.0.0.1:7947",
+		RaftAddress:     "127.0.0.1:19002",
+		CsrPem:          csr,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if joined.Msg.GetClusterId() != inited.GetClusterId() {
+		t.Fatalf("cluster_id=%q want %q", joined.Msg.GetClusterId(), inited.GetClusterId())
+	}
+	if joined.Msg.GetRaftLeader() != raftNode.Advertise() {
+		t.Fatalf("raft_leader=%q want %q", joined.Msg.GetRaftLeader(), raftNode.Advertise())
+	}
+	if err := control.VerifyAgent(joined.Msg.GetCaPem(), joined.Msg.GetCertPem(), inited.GetClusterId(), joinerID, e.now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(e.dir, "tokens.json")); !os.IsNotExist(err) {
+		t.Fatal("tokens.json must not be written")
+	}
+	m, ok := raftNode.View().Members[joinerID]
+	if !ok || m.Status != control.MemberAdmitted || m.RaftAddr != "127.0.0.1:19002" {
+		t.Fatalf("member=%+v ok=%v", m, ok)
+	}
+	if len(admitted) != 1 || admitted[0] != joinerID+"=127.0.0.1:19002" {
+		t.Fatalf("onAdmit=%v", admitted)
+	}
+}
+
+func TestJoin_RevokedNodeDenied(t *testing.T) {
+	ctx := context.Background()
+	raftNode := startTestRaft(t, "seed")
+	e := newClusterEnvFull(t, clusterEnvCfg{withMesh: true, control: raftNode})
+	e.init(t)
+	adm := control.Admission{Node: raftNode}
+	if err := adm.Admit("gone", "", "AA"); err != nil {
+		t.Fatal(err)
+	}
+	cmd, err := control.EncodeCommand(control.CmdMemberRemove, control.MemberRemoveBody{NodeID: "gone"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := raftNode.Apply(cmd, 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	csr, _, err := control.NewCSR("join", "gone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.cluster.Join(ctx, connect.NewRequest(&procmeshv1.JoinClusterRequest{
+		Meta:            &procmeshv1.MutationMeta{OperationId: "op-join-revoked", Operator: "t"},
+		Token:           "pmj_unused",
+		NodeId:          "gone",
+		BootId:          "boot-gone",
+		ProtocolVersion: int32(version.Protocol),
+		CsrPem:          csr,
+	}))
+	code, detail := connectDetail(t, err)
+	if code != connect.CodePermissionDenied || detail != "DENIED" {
+		t.Fatalf("code=%v detail=%s err=%v", code, detail, err)
+	}
+	if !strings.Contains(err.Error(), "node removed") {
+		t.Fatalf("want node removed: %v", err)
 	}
 }
 

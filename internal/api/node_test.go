@@ -109,6 +109,37 @@ func TestCreateJoinToken_MissingOperationID(t *testing.T) {
 	}
 }
 
+func TestCreateJoinToken_UsesRaftNotFile(t *testing.T) {
+	ctx := context.Background()
+	raftNode := startTestRaft(t, "seed")
+	e := newClusterEnvFull(t, clusterEnvCfg{withMesh: true, control: raftNode})
+	e.init(t)
+	tok, err := e.node.CreateJoinToken(ctx, connect.NewRequest(&procmeshv1.CreateJoinTokenRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-tok-raft", Operator: "t"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(tok.Msg.GetToken(), "pmj_") || tok.Msg.GetTokenId() == "" {
+		t.Fatalf("token %+v", tok.Msg)
+	}
+	if _, err := os.Stat(filepath.Join(e.dir, "tokens.json")); !os.IsNotExist(err) {
+		t.Fatal("tokens.json must not be written")
+	}
+	if _, ok := raftNode.View().JoinTokens[tok.Msg.GetTokenId()]; !ok {
+		t.Fatal("token missing from raft")
+	}
+	if _, err := e.node.RevokeJoinToken(ctx, connect.NewRequest(&procmeshv1.RevokeJoinTokenRequest{
+		Meta:    &procmeshv1.MutationMeta{OperationId: "op-rev-raft", Operator: "t"},
+		TokenId: tok.Msg.GetTokenId(),
+	})); err != nil {
+		t.Fatal(err)
+	}
+	if !raftNode.View().JoinTokens[tok.Msg.GetTokenId()].Revoked {
+		t.Fatal("expected raft token revoked")
+	}
+}
+
 func TestRevokeJoinToken(t *testing.T) {
 	ctx := context.Background()
 	e := newClusterEnv(t)
