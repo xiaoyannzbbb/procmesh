@@ -32,6 +32,16 @@ func (f *countingForwarder) Log(ctx context.Context, rt Route) (procmeshv1connec
 	return f.inner.Log(ctx, rt)
 }
 
+func (f *countingForwarder) Audit(ctx context.Context, rt Route) (procmeshv1connect.AuditServiceClient, error) {
+	f.n.Add(1)
+	return f.inner.Audit(ctx, rt)
+}
+
+func (f *countingForwarder) Metrics(ctx context.Context, rt Route) (procmeshv1connect.MetricsServiceClient, error) {
+	f.n.Add(1)
+	return f.inner.Metrics(ctx, rt)
+}
+
 func wrapForwarder(f Forwarder, n *atomic.Uint64) Forwarder {
 	if f == nil || n == nil {
 		return f

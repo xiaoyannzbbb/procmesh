@@ -257,6 +257,7 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 
 	fwd := &agentForwarder{}
 	authSvc := &auth.Service{}
+	started := time.Now()
 	raftDir := ""
 	if clusterDeps.Dir != "" {
 		raftDir = filepath.Join(filepath.Dir(clusterDeps.Dir), "raft")
@@ -277,6 +278,7 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		raftDir:     raftDir,
 		controlBind: opt.ControlListen,
 		controlAdv:  opt.ControlAdvertise,
+		started:     started,
 	}
 	if control.AlreadyInited(clusterDeps.Dir) {
 		if err := rt.startRaft(false); err != nil {
@@ -338,7 +340,7 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		Auth:      authSvc,
 		Degraded:  degraded,
 		Ready:     ready,
-		Started:   time.Now(),
+		Started:   started,
 		LocalOnly: false,
 		LocalID:   clusterDeps.NodeID,
 		Router:    router,
@@ -347,6 +349,11 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 			n := rt.control()
 			return n != nil && n.HasQuorum()
 		},
+		RPCHealthy:    rt.rpcListening,
+		GossipHealthy: func() bool { return mesh != nil },
+		CertExpires:   func() int64 { return api.CertNotAfterUnix(clusterDeps.Dir, "agent.crt") },
+		CAExpires:     func() int64 { return api.CertNotAfterUnix(clusterDeps.Dir, "ca.crt") },
+		Members:       members,
 	})
 	if err != nil {
 		_ = ln.Close()

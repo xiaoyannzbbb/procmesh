@@ -797,6 +797,7 @@ type Instance struct {
 	RestartCount   int32                  `protobuf:"varint,8,opt,name=restart_count,json=restartCount,proto3" json:"restart_count,omitempty"`
 	ExitCode       int32                  `protobuf:"varint,9,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
 	HasExitCode    bool                   `protobuf:"varint,10,opt,name=has_exit_code,json=hasExitCode,proto3" json:"has_exit_code,omitempty"`
+	StartedUnixMs  int64                  `protobuf:"varint,11,opt,name=started_unix_ms,json=startedUnixMs,proto3" json:"started_unix_ms,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -899,6 +900,13 @@ func (x *Instance) GetHasExitCode() bool {
 		return x.HasExitCode
 	}
 	return false
+}
+
+func (x *Instance) GetStartedUnixMs() int64 {
+	if x != nil {
+		return x.StartedUnixMs
+	}
+	return 0
 }
 
 type ProcessView struct {
@@ -3634,14 +3642,31 @@ func (*ClusterOverviewRequest) Descriptor() ([]byte, []int) {
 }
 
 type ClusterOverviewResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ClusterId     string                 `protobuf:"bytes,1,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
-	Members       int32                  `protobuf:"varint,2,opt,name=members,proto3" json:"members,omitempty"`
-	Alive         int32                  `protobuf:"varint,3,opt,name=alive,proto3" json:"alive,omitempty"`
-	ControlQuorum bool                   `protobuf:"varint,4,opt,name=control_quorum,json=controlQuorum,proto3" json:"control_quorum,omitempty"`
-	ControlLeader string                 `protobuf:"bytes,5,opt,name=control_leader,json=controlLeader,proto3" json:"control_leader,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	ClusterId        string                 `protobuf:"bytes,1,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
+	Members          int32                  `protobuf:"varint,2,opt,name=members,proto3" json:"members,omitempty"`
+	Alive            int32                  `protobuf:"varint,3,opt,name=alive,proto3" json:"alive,omitempty"`
+	ControlQuorum    bool                   `protobuf:"varint,4,opt,name=control_quorum,json=controlQuorum,proto3" json:"control_quorum,omitempty"`
+	ControlLeader    string                 `protobuf:"bytes,5,opt,name=control_leader,json=controlLeader,proto3" json:"control_leader,omitempty"`
+	Suspect          int32                  `protobuf:"varint,6,opt,name=suspect,proto3" json:"suspect,omitempty"`
+	Failed           int32                  `protobuf:"varint,7,opt,name=failed,proto3" json:"failed,omitempty"`
+	ProcessTotal     int32                  `protobuf:"varint,8,opt,name=process_total,json=processTotal,proto3" json:"process_total,omitempty"`
+	ProcessRunning   int32                  `protobuf:"varint,9,opt,name=process_running,json=processRunning,proto3" json:"process_running,omitempty"`
+	ProcessUnhealthy int32                  `protobuf:"varint,10,opt,name=process_unhealthy,json=processUnhealthy,proto3" json:"process_unhealthy,omitempty"`
+	ProcessFatal     int32                  `protobuf:"varint,11,opt,name=process_fatal,json=processFatal,proto3" json:"process_fatal,omitempty"`
+	CpuPercent       int32                  `protobuf:"varint,12,opt,name=cpu_percent,json=cpuPercent,proto3" json:"cpu_percent,omitempty"` // ALIVE 成员平均值；无 ALIVE = 0 且 overview_freshness=UNKNOWN
+	MemoryPercent    int32                  `protobuf:"varint,13,opt,name=memory_percent,json=memoryPercent,proto3" json:"memory_percent,omitempty"`
+	DiskPercent      int32                  `protobuf:"varint,14,opt,name=disk_percent,json=diskPercent,proto3" json:"disk_percent,omitempty"`
+	GossipHealthy    bool                   `protobuf:"varint,15,opt,name=gossip_healthy,json=gossipHealthy,proto3" json:"gossip_healthy,omitempty"`
+	RpcHealthy       bool                   `protobuf:"varint,16,opt,name=rpc_healthy,json=rpcHealthy,proto3" json:"rpc_healthy,omitempty"`
+	AgentDegraded    bool                   `protobuf:"varint,17,opt,name=agent_degraded,json=agentDegraded,proto3" json:"agent_degraded,omitempty"`
+	CertExpiresUnix  int64                  `protobuf:"varint,18,opt,name=cert_expires_unix,json=certExpiresUnix,proto3" json:"cert_expires_unix,omitempty"`
+	CaExpiresUnix    int64                  `protobuf:"varint,19,opt,name=ca_expires_unix,json=caExpiresUnix,proto3" json:"ca_expires_unix,omitempty"`
+	ViewUnixMs       int64                  `protobuf:"varint,20,opt,name=view_unix_ms,json=viewUnixMs,proto3" json:"view_unix_ms,omitempty"`
+	PlatformNote     string                 `protobuf:"bytes,21,opt,name=platform_note,json=platformNote,proto3" json:"platform_note,omitempty"` // 非 linux 必须非空
+	VersionCounts    map[string]int32       `protobuf:"bytes,22,rep,name=version_counts,json=versionCounts,proto3" json:"version_counts,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *ClusterOverviewResponse) Reset() {
@@ -3707,6 +3732,125 @@ func (x *ClusterOverviewResponse) GetControlLeader() string {
 		return x.ControlLeader
 	}
 	return ""
+}
+
+func (x *ClusterOverviewResponse) GetSuspect() int32 {
+	if x != nil {
+		return x.Suspect
+	}
+	return 0
+}
+
+func (x *ClusterOverviewResponse) GetFailed() int32 {
+	if x != nil {
+		return x.Failed
+	}
+	return 0
+}
+
+func (x *ClusterOverviewResponse) GetProcessTotal() int32 {
+	if x != nil {
+		return x.ProcessTotal
+	}
+	return 0
+}
+
+func (x *ClusterOverviewResponse) GetProcessRunning() int32 {
+	if x != nil {
+		return x.ProcessRunning
+	}
+	return 0
+}
+
+func (x *ClusterOverviewResponse) GetProcessUnhealthy() int32 {
+	if x != nil {
+		return x.ProcessUnhealthy
+	}
+	return 0
+}
+
+func (x *ClusterOverviewResponse) GetProcessFatal() int32 {
+	if x != nil {
+		return x.ProcessFatal
+	}
+	return 0
+}
+
+func (x *ClusterOverviewResponse) GetCpuPercent() int32 {
+	if x != nil {
+		return x.CpuPercent
+	}
+	return 0
+}
+
+func (x *ClusterOverviewResponse) GetMemoryPercent() int32 {
+	if x != nil {
+		return x.MemoryPercent
+	}
+	return 0
+}
+
+func (x *ClusterOverviewResponse) GetDiskPercent() int32 {
+	if x != nil {
+		return x.DiskPercent
+	}
+	return 0
+}
+
+func (x *ClusterOverviewResponse) GetGossipHealthy() bool {
+	if x != nil {
+		return x.GossipHealthy
+	}
+	return false
+}
+
+func (x *ClusterOverviewResponse) GetRpcHealthy() bool {
+	if x != nil {
+		return x.RpcHealthy
+	}
+	return false
+}
+
+func (x *ClusterOverviewResponse) GetAgentDegraded() bool {
+	if x != nil {
+		return x.AgentDegraded
+	}
+	return false
+}
+
+func (x *ClusterOverviewResponse) GetCertExpiresUnix() int64 {
+	if x != nil {
+		return x.CertExpiresUnix
+	}
+	return 0
+}
+
+func (x *ClusterOverviewResponse) GetCaExpiresUnix() int64 {
+	if x != nil {
+		return x.CaExpiresUnix
+	}
+	return 0
+}
+
+func (x *ClusterOverviewResponse) GetViewUnixMs() int64 {
+	if x != nil {
+		return x.ViewUnixMs
+	}
+	return 0
+}
+
+func (x *ClusterOverviewResponse) GetPlatformNote() string {
+	if x != nil {
+		return x.PlatformNote
+	}
+	return ""
+}
+
+func (x *ClusterOverviewResponse) GetVersionCounts() map[string]int32 {
+	if x != nil {
+		return x.VersionCounts
+	}
+	return nil
 }
 
 type RequestJoinRequest struct {
@@ -4237,6 +4381,118 @@ func (*RevokeAPITokenResponse) Descriptor() ([]byte, []int) {
 	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{69}
 }
 
+type GetMeRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetMeRequest) Reset() {
+	*x = GetMeRequest{}
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[70]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetMeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetMeRequest) ProtoMessage() {}
+
+func (x *GetMeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[70]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetMeRequest.ProtoReflect.Descriptor instead.
+func (*GetMeRequest) Descriptor() ([]byte, []int) {
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{70}
+}
+
+type GetMeResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Username      string                 `protobuf:"bytes,2,opt,name=username,proto3" json:"username,omitempty"`
+	CsrfToken     string                 `protobuf:"bytes,3,opt,name=csrf_token,json=csrfToken,proto3" json:"csrf_token,omitempty"`
+	ExpiresUnix   int64                  `protobuf:"varint,4,opt,name=expires_unix,json=expiresUnix,proto3" json:"expires_unix,omitempty"`
+	Permissions   []string               `protobuf:"bytes,5,rep,name=permissions,proto3" json:"permissions,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetMeResponse) Reset() {
+	*x = GetMeResponse{}
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[71]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetMeResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetMeResponse) ProtoMessage() {}
+
+func (x *GetMeResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[71]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetMeResponse.ProtoReflect.Descriptor instead.
+func (*GetMeResponse) Descriptor() ([]byte, []int) {
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{71}
+}
+
+func (x *GetMeResponse) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *GetMeResponse) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *GetMeResponse) GetCsrfToken() string {
+	if x != nil {
+		return x.CsrfToken
+	}
+	return ""
+}
+
+func (x *GetMeResponse) GetExpiresUnix() int64 {
+	if x != nil {
+		return x.ExpiresUnix
+	}
+	return 0
+}
+
+func (x *GetMeResponse) GetPermissions() []string {
+	if x != nil {
+		return x.Permissions
+	}
+	return nil
+}
+
 type User struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
@@ -4252,7 +4508,7 @@ type User struct {
 
 func (x *User) Reset() {
 	*x = User{}
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[70]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[72]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4264,7 +4520,7 @@ func (x *User) String() string {
 func (*User) ProtoMessage() {}
 
 func (x *User) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[70]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[72]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4277,7 +4533,7 @@ func (x *User) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use User.ProtoReflect.Descriptor instead.
 func (*User) Descriptor() ([]byte, []int) {
-	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{70}
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{72}
 }
 
 func (x *User) GetUserId() string {
@@ -4337,7 +4593,7 @@ type ListUsersRequest struct {
 
 func (x *ListUsersRequest) Reset() {
 	*x = ListUsersRequest{}
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[71]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[73]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4349,7 +4605,7 @@ func (x *ListUsersRequest) String() string {
 func (*ListUsersRequest) ProtoMessage() {}
 
 func (x *ListUsersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[71]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[73]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4362,7 +4618,7 @@ func (x *ListUsersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListUsersRequest.ProtoReflect.Descriptor instead.
 func (*ListUsersRequest) Descriptor() ([]byte, []int) {
-	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{71}
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{73}
 }
 
 type ListUsersResponse struct {
@@ -4374,7 +4630,7 @@ type ListUsersResponse struct {
 
 func (x *ListUsersResponse) Reset() {
 	*x = ListUsersResponse{}
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[72]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[74]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4386,7 +4642,7 @@ func (x *ListUsersResponse) String() string {
 func (*ListUsersResponse) ProtoMessage() {}
 
 func (x *ListUsersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[72]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[74]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4399,7 +4655,7 @@ func (x *ListUsersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListUsersResponse.ProtoReflect.Descriptor instead.
 func (*ListUsersResponse) Descriptor() ([]byte, []int) {
-	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{72}
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{74}
 }
 
 func (x *ListUsersResponse) GetUsers() []*User {
@@ -4422,7 +4678,7 @@ type CreateUserRequest struct {
 
 func (x *CreateUserRequest) Reset() {
 	*x = CreateUserRequest{}
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[73]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[75]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4434,7 +4690,7 @@ func (x *CreateUserRequest) String() string {
 func (*CreateUserRequest) ProtoMessage() {}
 
 func (x *CreateUserRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[73]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[75]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4447,7 +4703,7 @@ func (x *CreateUserRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateUserRequest.ProtoReflect.Descriptor instead.
 func (*CreateUserRequest) Descriptor() ([]byte, []int) {
-	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{73}
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{75}
 }
 
 func (x *CreateUserRequest) GetMeta() *MutationMeta {
@@ -4494,7 +4750,7 @@ type CreateUserResponse struct {
 
 func (x *CreateUserResponse) Reset() {
 	*x = CreateUserResponse{}
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[74]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[76]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4506,7 +4762,7 @@ func (x *CreateUserResponse) String() string {
 func (*CreateUserResponse) ProtoMessage() {}
 
 func (x *CreateUserResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[74]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[76]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4519,7 +4775,7 @@ func (x *CreateUserResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateUserResponse.ProtoReflect.Descriptor instead.
 func (*CreateUserResponse) Descriptor() ([]byte, []int) {
-	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{74}
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{76}
 }
 
 func (x *CreateUserResponse) GetUser() *User {
@@ -4539,7 +4795,7 @@ type DisableUserRequest struct {
 
 func (x *DisableUserRequest) Reset() {
 	*x = DisableUserRequest{}
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[75]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[77]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4551,7 +4807,7 @@ func (x *DisableUserRequest) String() string {
 func (*DisableUserRequest) ProtoMessage() {}
 
 func (x *DisableUserRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[75]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[77]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4564,7 +4820,7 @@ func (x *DisableUserRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DisableUserRequest.ProtoReflect.Descriptor instead.
 func (*DisableUserRequest) Descriptor() ([]byte, []int) {
-	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{75}
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{77}
 }
 
 func (x *DisableUserRequest) GetMeta() *MutationMeta {
@@ -4590,7 +4846,7 @@ type DisableUserResponse struct {
 
 func (x *DisableUserResponse) Reset() {
 	*x = DisableUserResponse{}
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[76]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[78]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4602,7 +4858,7 @@ func (x *DisableUserResponse) String() string {
 func (*DisableUserResponse) ProtoMessage() {}
 
 func (x *DisableUserResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[76]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[78]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4615,7 +4871,7 @@ func (x *DisableUserResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DisableUserResponse.ProtoReflect.Descriptor instead.
 func (*DisableUserResponse) Descriptor() ([]byte, []int) {
-	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{76}
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{78}
 }
 
 func (x *DisableUserResponse) GetUser() *User {
@@ -4636,7 +4892,7 @@ type Role struct {
 
 func (x *Role) Reset() {
 	*x = Role{}
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[77]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[79]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4648,7 +4904,7 @@ func (x *Role) String() string {
 func (*Role) ProtoMessage() {}
 
 func (x *Role) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[77]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[79]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4661,7 +4917,7 @@ func (x *Role) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Role.ProtoReflect.Descriptor instead.
 func (*Role) Descriptor() ([]byte, []int) {
-	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{77}
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{79}
 }
 
 func (x *Role) GetRoleId() string {
@@ -4697,7 +4953,7 @@ type Binding struct {
 
 func (x *Binding) Reset() {
 	*x = Binding{}
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[78]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[80]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4709,7 +4965,7 @@ func (x *Binding) String() string {
 func (*Binding) ProtoMessage() {}
 
 func (x *Binding) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[78]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[80]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4722,7 +4978,7 @@ func (x *Binding) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Binding.ProtoReflect.Descriptor instead.
 func (*Binding) Descriptor() ([]byte, []int) {
-	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{78}
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{80}
 }
 
 func (x *Binding) GetUserId() string {
@@ -4761,7 +5017,7 @@ type ListRolesRequest struct {
 
 func (x *ListRolesRequest) Reset() {
 	*x = ListRolesRequest{}
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[79]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[81]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4773,7 +5029,7 @@ func (x *ListRolesRequest) String() string {
 func (*ListRolesRequest) ProtoMessage() {}
 
 func (x *ListRolesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[79]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[81]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4786,7 +5042,7 @@ func (x *ListRolesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRolesRequest.ProtoReflect.Descriptor instead.
 func (*ListRolesRequest) Descriptor() ([]byte, []int) {
-	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{79}
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{81}
 }
 
 type ListRolesResponse struct {
@@ -4799,7 +5055,7 @@ type ListRolesResponse struct {
 
 func (x *ListRolesResponse) Reset() {
 	*x = ListRolesResponse{}
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[80]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[82]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4811,7 +5067,7 @@ func (x *ListRolesResponse) String() string {
 func (*ListRolesResponse) ProtoMessage() {}
 
 func (x *ListRolesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[80]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[82]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4824,7 +5080,7 @@ func (x *ListRolesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRolesResponse.ProtoReflect.Descriptor instead.
 func (*ListRolesResponse) Descriptor() ([]byte, []int) {
-	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{80}
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{82}
 }
 
 func (x *ListRolesResponse) GetRoles() []*Role {
@@ -4852,7 +5108,7 @@ type CreateRoleRequest struct {
 
 func (x *CreateRoleRequest) Reset() {
 	*x = CreateRoleRequest{}
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[81]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[83]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4864,7 +5120,7 @@ func (x *CreateRoleRequest) String() string {
 func (*CreateRoleRequest) ProtoMessage() {}
 
 func (x *CreateRoleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[81]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[83]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4877,7 +5133,7 @@ func (x *CreateRoleRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateRoleRequest.ProtoReflect.Descriptor instead.
 func (*CreateRoleRequest) Descriptor() ([]byte, []int) {
-	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{81}
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{83}
 }
 
 func (x *CreateRoleRequest) GetMeta() *MutationMeta {
@@ -4910,7 +5166,7 @@ type CreateRoleResponse struct {
 
 func (x *CreateRoleResponse) Reset() {
 	*x = CreateRoleResponse{}
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[82]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[84]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4922,7 +5178,7 @@ func (x *CreateRoleResponse) String() string {
 func (*CreateRoleResponse) ProtoMessage() {}
 
 func (x *CreateRoleResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[82]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[84]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4935,7 +5191,7 @@ func (x *CreateRoleResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateRoleResponse.ProtoReflect.Descriptor instead.
 func (*CreateRoleResponse) Descriptor() ([]byte, []int) {
-	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{82}
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{84}
 }
 
 func (x *CreateRoleResponse) GetRole() *Role {
@@ -4958,7 +5214,7 @@ type GrantRoleRequest struct {
 
 func (x *GrantRoleRequest) Reset() {
 	*x = GrantRoleRequest{}
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[83]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[85]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4970,7 +5226,7 @@ func (x *GrantRoleRequest) String() string {
 func (*GrantRoleRequest) ProtoMessage() {}
 
 func (x *GrantRoleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[83]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[85]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4983,7 +5239,7 @@ func (x *GrantRoleRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GrantRoleRequest.ProtoReflect.Descriptor instead.
 func (*GrantRoleRequest) Descriptor() ([]byte, []int) {
-	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{83}
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{85}
 }
 
 func (x *GrantRoleRequest) GetMeta() *MutationMeta {
@@ -5030,7 +5286,7 @@ type GrantRoleResponse struct {
 
 func (x *GrantRoleResponse) Reset() {
 	*x = GrantRoleResponse{}
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[84]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[86]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5042,7 +5298,7 @@ func (x *GrantRoleResponse) String() string {
 func (*GrantRoleResponse) ProtoMessage() {}
 
 func (x *GrantRoleResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_procmesh_v1_api_proto_msgTypes[84]
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[86]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5055,12 +5311,660 @@ func (x *GrantRoleResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GrantRoleResponse.ProtoReflect.Descriptor instead.
 func (*GrantRoleResponse) Descriptor() ([]byte, []int) {
-	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{84}
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{86}
 }
 
 func (x *GrantRoleResponse) GetBinding() *Binding {
 	if x != nil {
 		return x.Binding
+	}
+	return nil
+}
+
+type AuditEvent struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	AuditId         string                 `protobuf:"bytes,1,opt,name=audit_id,json=auditId,proto3" json:"audit_id,omitempty"`
+	TimestampUnixMs int64                  `protobuf:"varint,2,opt,name=timestamp_unix_ms,json=timestampUnixMs,proto3" json:"timestamp_unix_ms,omitempty"`
+	UserId          string                 `protobuf:"bytes,3,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Username        string                 `protobuf:"bytes,4,opt,name=username,proto3" json:"username,omitempty"`
+	SourceIp        string                 `protobuf:"bytes,5,opt,name=source_ip,json=sourceIp,proto3" json:"source_ip,omitempty"`
+	SourceAgent     string                 `protobuf:"bytes,6,opt,name=source_agent,json=sourceAgent,proto3" json:"source_agent,omitempty"`
+	TargetAgent     string                 `protobuf:"bytes,7,opt,name=target_agent,json=targetAgent,proto3" json:"target_agent,omitempty"`
+	Resource        string                 `protobuf:"bytes,8,opt,name=resource,proto3" json:"resource,omitempty"`
+	Action          string                 `protobuf:"bytes,9,opt,name=action,proto3" json:"action,omitempty"`
+	OperationId     string                 `protobuf:"bytes,10,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
+	Result          string                 `protobuf:"bytes,11,opt,name=result,proto3" json:"result,omitempty"`
+	MetadataJson    string                 `protobuf:"bytes,12,opt,name=metadata_json,json=metadataJson,proto3" json:"metadata_json,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *AuditEvent) Reset() {
+	*x = AuditEvent{}
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[87]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AuditEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AuditEvent) ProtoMessage() {}
+
+func (x *AuditEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[87]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AuditEvent.ProtoReflect.Descriptor instead.
+func (*AuditEvent) Descriptor() ([]byte, []int) {
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{87}
+}
+
+func (x *AuditEvent) GetAuditId() string {
+	if x != nil {
+		return x.AuditId
+	}
+	return ""
+}
+
+func (x *AuditEvent) GetTimestampUnixMs() int64 {
+	if x != nil {
+		return x.TimestampUnixMs
+	}
+	return 0
+}
+
+func (x *AuditEvent) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *AuditEvent) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *AuditEvent) GetSourceIp() string {
+	if x != nil {
+		return x.SourceIp
+	}
+	return ""
+}
+
+func (x *AuditEvent) GetSourceAgent() string {
+	if x != nil {
+		return x.SourceAgent
+	}
+	return ""
+}
+
+func (x *AuditEvent) GetTargetAgent() string {
+	if x != nil {
+		return x.TargetAgent
+	}
+	return ""
+}
+
+func (x *AuditEvent) GetResource() string {
+	if x != nil {
+		return x.Resource
+	}
+	return ""
+}
+
+func (x *AuditEvent) GetAction() string {
+	if x != nil {
+		return x.Action
+	}
+	return ""
+}
+
+func (x *AuditEvent) GetOperationId() string {
+	if x != nil {
+		return x.OperationId
+	}
+	return ""
+}
+
+func (x *AuditEvent) GetResult() string {
+	if x != nil {
+		return x.Result
+	}
+	return ""
+}
+
+func (x *AuditEvent) GetMetadataJson() string {
+	if x != nil {
+		return x.MetadataJson
+	}
+	return ""
+}
+
+type AuditEntry struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Event             *AuditEvent            `protobuf:"bytes,1,opt,name=event,proto3" json:"event,omitempty"`
+	SourceNode        string                 `protobuf:"bytes,2,opt,name=source_node,json=sourceNode,proto3" json:"source_node,omitempty"`
+	Freshness         string                 `protobuf:"bytes,3,opt,name=freshness,proto3" json:"freshness,omitempty"` // LIVE | STALE | UNKNOWN
+	LastUpdatedUnixMs int64                  `protobuf:"varint,4,opt,name=last_updated_unix_ms,json=lastUpdatedUnixMs,proto3" json:"last_updated_unix_ms,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *AuditEntry) Reset() {
+	*x = AuditEntry{}
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[88]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AuditEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AuditEntry) ProtoMessage() {}
+
+func (x *AuditEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[88]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AuditEntry.ProtoReflect.Descriptor instead.
+func (*AuditEntry) Descriptor() ([]byte, []int) {
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{88}
+}
+
+func (x *AuditEntry) GetEvent() *AuditEvent {
+	if x != nil {
+		return x.Event
+	}
+	return nil
+}
+
+func (x *AuditEntry) GetSourceNode() string {
+	if x != nil {
+		return x.SourceNode
+	}
+	return ""
+}
+
+func (x *AuditEntry) GetFreshness() string {
+	if x != nil {
+		return x.Freshness
+	}
+	return ""
+}
+
+func (x *AuditEntry) GetLastUpdatedUnixMs() int64 {
+	if x != nil {
+		return x.LastUpdatedUnixMs
+	}
+	return 0
+}
+
+type ListAuditRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Resource      string                 `protobuf:"bytes,1,opt,name=resource,proto3" json:"resource,omitempty"`                       // 空 = 全部
+	Limit         int32                  `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`                            // 0 = 50；封顶 200
+	TargetNode    string                 `protobuf:"bytes,3,opt,name=target_node,json=targetNode,proto3" json:"target_node,omitempty"` // 空 = 聚合；非空 = 只查该 node
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListAuditRequest) Reset() {
+	*x = ListAuditRequest{}
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[89]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListAuditRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListAuditRequest) ProtoMessage() {}
+
+func (x *ListAuditRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[89]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListAuditRequest.ProtoReflect.Descriptor instead.
+func (*ListAuditRequest) Descriptor() ([]byte, []int) {
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{89}
+}
+
+func (x *ListAuditRequest) GetResource() string {
+	if x != nil {
+		return x.Resource
+	}
+	return ""
+}
+
+func (x *ListAuditRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *ListAuditRequest) GetTargetNode() string {
+	if x != nil {
+		return x.TargetNode
+	}
+	return ""
+}
+
+type ListAuditResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Entries       []*AuditEntry          `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListAuditResponse) Reset() {
+	*x = ListAuditResponse{}
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[90]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListAuditResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListAuditResponse) ProtoMessage() {}
+
+func (x *ListAuditResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[90]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListAuditResponse.ProtoReflect.Descriptor instead.
+func (*ListAuditResponse) Descriptor() ([]byte, []int) {
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{90}
+}
+
+func (x *ListAuditResponse) GetEntries() []*AuditEntry {
+	if x != nil {
+		return x.Entries
+	}
+	return nil
+}
+
+type GetAgentMetricsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetAgentMetricsRequest) Reset() {
+	*x = GetAgentMetricsRequest{}
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[91]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetAgentMetricsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetAgentMetricsRequest) ProtoMessage() {}
+
+func (x *GetAgentMetricsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[91]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetAgentMetricsRequest.ProtoReflect.Descriptor instead.
+func (*GetAgentMetricsRequest) Descriptor() ([]byte, []int) {
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{91}
+}
+
+type AgentMetrics struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	UptimeSeconds  float64                `protobuf:"fixed64,1,opt,name=uptime_seconds,json=uptimeSeconds,proto3" json:"uptime_seconds,omitempty"`
+	ProcessRunning int32                  `protobuf:"varint,2,opt,name=process_running,json=processRunning,proto3" json:"process_running,omitempty"`
+	Members        int32                  `protobuf:"varint,3,opt,name=members,proto3" json:"members,omitempty"`
+	Alive          int32                  `protobuf:"varint,4,opt,name=alive,proto3" json:"alive,omitempty"`
+	ControlQuorum  bool                   `protobuf:"varint,5,opt,name=control_quorum,json=controlQuorum,proto3" json:"control_quorum,omitempty"`
+	Resources      *ResourceSummary       `protobuf:"bytes,6,opt,name=resources,proto3" json:"resources,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *AgentMetrics) Reset() {
+	*x = AgentMetrics{}
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[92]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AgentMetrics) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AgentMetrics) ProtoMessage() {}
+
+func (x *AgentMetrics) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[92]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AgentMetrics.ProtoReflect.Descriptor instead.
+func (*AgentMetrics) Descriptor() ([]byte, []int) {
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{92}
+}
+
+func (x *AgentMetrics) GetUptimeSeconds() float64 {
+	if x != nil {
+		return x.UptimeSeconds
+	}
+	return 0
+}
+
+func (x *AgentMetrics) GetProcessRunning() int32 {
+	if x != nil {
+		return x.ProcessRunning
+	}
+	return 0
+}
+
+func (x *AgentMetrics) GetMembers() int32 {
+	if x != nil {
+		return x.Members
+	}
+	return 0
+}
+
+func (x *AgentMetrics) GetAlive() int32 {
+	if x != nil {
+		return x.Alive
+	}
+	return 0
+}
+
+func (x *AgentMetrics) GetControlQuorum() bool {
+	if x != nil {
+		return x.ControlQuorum
+	}
+	return false
+}
+
+func (x *AgentMetrics) GetResources() *ResourceSummary {
+	if x != nil {
+		return x.Resources
+	}
+	return nil
+}
+
+type GetAgentMetricsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Metrics       *AgentMetrics          `protobuf:"bytes,1,opt,name=metrics,proto3" json:"metrics,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetAgentMetricsResponse) Reset() {
+	*x = GetAgentMetricsResponse{}
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[93]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetAgentMetricsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetAgentMetricsResponse) ProtoMessage() {}
+
+func (x *GetAgentMetricsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[93]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetAgentMetricsResponse.ProtoReflect.Descriptor instead.
+func (*GetAgentMetricsResponse) Descriptor() ([]byte, []int) {
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{93}
+}
+
+func (x *GetAgentMetricsResponse) GetMetrics() *AgentMetrics {
+	if x != nil {
+		return x.Metrics
+	}
+	return nil
+}
+
+type GetProcessMetricsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	IdOrName      string                 `protobuf:"bytes,1,opt,name=id_or_name,json=idOrName,proto3" json:"id_or_name,omitempty"`
+	InstanceId    string                 `protobuf:"bytes,2,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetProcessMetricsRequest) Reset() {
+	*x = GetProcessMetricsRequest{}
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[94]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetProcessMetricsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetProcessMetricsRequest) ProtoMessage() {}
+
+func (x *GetProcessMetricsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[94]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetProcessMetricsRequest.ProtoReflect.Descriptor instead.
+func (*GetProcessMetricsRequest) Descriptor() ([]byte, []int) {
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{94}
+}
+
+func (x *GetProcessMetricsRequest) GetIdOrName() string {
+	if x != nil {
+		return x.IdOrName
+	}
+	return ""
+}
+
+func (x *GetProcessMetricsRequest) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
+}
+
+type ProcessMetrics struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	InstanceId    string                 `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	Pid           int32                  `protobuf:"varint,2,opt,name=pid,proto3" json:"pid,omitempty"`
+	UptimeSeconds int64                  `protobuf:"varint,3,opt,name=uptime_seconds,json=uptimeSeconds,proto3" json:"uptime_seconds,omitempty"`
+	CpuPercent    int32                  `protobuf:"varint,4,opt,name=cpu_percent,json=cpuPercent,proto3" json:"cpu_percent,omitempty"`    // -1 = unknown
+	MemoryBytes   int64                  `protobuf:"varint,5,opt,name=memory_bytes,json=memoryBytes,proto3" json:"memory_bytes,omitempty"` // -1 = unknown
+	Note          string                 `protobuf:"bytes,6,opt,name=note,proto3" json:"note,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProcessMetrics) Reset() {
+	*x = ProcessMetrics{}
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[95]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProcessMetrics) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProcessMetrics) ProtoMessage() {}
+
+func (x *ProcessMetrics) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[95]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProcessMetrics.ProtoReflect.Descriptor instead.
+func (*ProcessMetrics) Descriptor() ([]byte, []int) {
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{95}
+}
+
+func (x *ProcessMetrics) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
+}
+
+func (x *ProcessMetrics) GetPid() int32 {
+	if x != nil {
+		return x.Pid
+	}
+	return 0
+}
+
+func (x *ProcessMetrics) GetUptimeSeconds() int64 {
+	if x != nil {
+		return x.UptimeSeconds
+	}
+	return 0
+}
+
+func (x *ProcessMetrics) GetCpuPercent() int32 {
+	if x != nil {
+		return x.CpuPercent
+	}
+	return 0
+}
+
+func (x *ProcessMetrics) GetMemoryBytes() int64 {
+	if x != nil {
+		return x.MemoryBytes
+	}
+	return 0
+}
+
+func (x *ProcessMetrics) GetNote() string {
+	if x != nil {
+		return x.Note
+	}
+	return ""
+}
+
+type GetProcessMetricsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Metrics       []*ProcessMetrics      `protobuf:"bytes,1,rep,name=metrics,proto3" json:"metrics,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetProcessMetricsResponse) Reset() {
+	*x = GetProcessMetricsResponse{}
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[96]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetProcessMetricsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetProcessMetricsResponse) ProtoMessage() {}
+
+func (x *GetProcessMetricsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[96]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetProcessMetricsResponse.ProtoReflect.Descriptor instead.
+func (*GetProcessMetricsResponse) Descriptor() ([]byte, []int) {
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{96}
+}
+
+func (x *GetProcessMetricsResponse) GetMetrics() []*ProcessMetrics {
+	if x != nil {
+		return x.Metrics
 	}
 	return nil
 }
@@ -5149,7 +6053,7 @@ const file_proto_procmesh_v1_api_proto_rawDesc = "" +
 	"\x0flatest_revision\x18\x15 \x01(\x03R\x0elatestRevision\x1a>\n" +
 	"\x10EnvironmentEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb4\x02\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xdc\x02\n" +
 	"\bInstance\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12\x18\n" +
@@ -5162,7 +6066,8 @@ const file_proto_procmesh_v1_api_proto_rawDesc = "" +
 	"\rrestart_count\x18\b \x01(\x05R\frestartCount\x12\x1b\n" +
 	"\texit_code\x18\t \x01(\x05R\bexitCode\x12\"\n" +
 	"\rhas_exit_code\x18\n" +
-	" \x01(\bR\vhasExitCode\"\x8f\x01\n" +
+	" \x01(\bR\vhasExitCode\x12&\n" +
+	"\x0fstarted_unix_ms\x18\v \x01(\x03R\rstartedUnixMs\"\x8f\x01\n" +
 	"\vProcessView\x12\x1d\n" +
 	"\n" +
 	"process_id\x18\x01 \x01(\tR\tprocessId\x12,\n" +
@@ -5365,14 +6270,38 @@ const file_proto_procmesh_v1_api_proto_rawDesc = "" +
 	"\x0egossip_address\x18\x04 \x01(\tR\rgossipAddress\x12\x1f\n" +
 	"\vraft_leader\x18\x05 \x01(\tR\n" +
 	"raftLeader\"\x18\n" +
-	"\x16ClusterOverviewRequest\"\xb6\x01\n" +
+	"\x16ClusterOverviewRequest\"\x9f\a\n" +
 	"\x17ClusterOverviewResponse\x12\x1d\n" +
 	"\n" +
 	"cluster_id\x18\x01 \x01(\tR\tclusterId\x12\x18\n" +
 	"\amembers\x18\x02 \x01(\x05R\amembers\x12\x14\n" +
 	"\x05alive\x18\x03 \x01(\x05R\x05alive\x12%\n" +
 	"\x0econtrol_quorum\x18\x04 \x01(\bR\rcontrolQuorum\x12%\n" +
-	"\x0econtrol_leader\x18\x05 \x01(\tR\rcontrolLeader\"z\n" +
+	"\x0econtrol_leader\x18\x05 \x01(\tR\rcontrolLeader\x12\x18\n" +
+	"\asuspect\x18\x06 \x01(\x05R\asuspect\x12\x16\n" +
+	"\x06failed\x18\a \x01(\x05R\x06failed\x12#\n" +
+	"\rprocess_total\x18\b \x01(\x05R\fprocessTotal\x12'\n" +
+	"\x0fprocess_running\x18\t \x01(\x05R\x0eprocessRunning\x12+\n" +
+	"\x11process_unhealthy\x18\n" +
+	" \x01(\x05R\x10processUnhealthy\x12#\n" +
+	"\rprocess_fatal\x18\v \x01(\x05R\fprocessFatal\x12\x1f\n" +
+	"\vcpu_percent\x18\f \x01(\x05R\n" +
+	"cpuPercent\x12%\n" +
+	"\x0ememory_percent\x18\r \x01(\x05R\rmemoryPercent\x12!\n" +
+	"\fdisk_percent\x18\x0e \x01(\x05R\vdiskPercent\x12%\n" +
+	"\x0egossip_healthy\x18\x0f \x01(\bR\rgossipHealthy\x12\x1f\n" +
+	"\vrpc_healthy\x18\x10 \x01(\bR\n" +
+	"rpcHealthy\x12%\n" +
+	"\x0eagent_degraded\x18\x11 \x01(\bR\ragentDegraded\x12*\n" +
+	"\x11cert_expires_unix\x18\x12 \x01(\x03R\x0fcertExpiresUnix\x12&\n" +
+	"\x0fca_expires_unix\x18\x13 \x01(\x03R\rcaExpiresUnix\x12 \n" +
+	"\fview_unix_ms\x18\x14 \x01(\x03R\n" +
+	"viewUnixMs\x12#\n" +
+	"\rplatform_note\x18\x15 \x01(\tR\fplatformNote\x12^\n" +
+	"\x0eversion_counts\x18\x16 \x03(\v27.procmesh.v1.ClusterOverviewResponse.VersionCountsEntryR\rversionCounts\x1a@\n" +
+	"\x12VersionCountsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\x05R\x05value:\x028\x01\"z\n" +
 	"\x12RequestJoinRequest\x12-\n" +
 	"\x04meta\x18\x01 \x01(\v2\x19.procmesh.v1.MutationMetaR\x04meta\x12\x1f\n" +
 	"\vseed_server\x18\x02 \x01(\tR\n" +
@@ -5408,7 +6337,15 @@ const file_proto_procmesh_v1_api_proto_rawDesc = "" +
 	"\x15RevokeAPITokenRequest\x12-\n" +
 	"\x04meta\x18\x01 \x01(\v2\x19.procmesh.v1.MutationMetaR\x04meta\x12\x19\n" +
 	"\btoken_id\x18\x02 \x01(\tR\atokenId\"\x18\n" +
-	"\x16RevokeAPITokenResponse\"\xd7\x01\n" +
+	"\x16RevokeAPITokenResponse\"\x0e\n" +
+	"\fGetMeRequest\"\xa8\x01\n" +
+	"\rGetMeResponse\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x1a\n" +
+	"\busername\x18\x02 \x01(\tR\busername\x12\x1d\n" +
+	"\n" +
+	"csrf_token\x18\x03 \x01(\tR\tcsrfToken\x12!\n" +
+	"\fexpires_unix\x18\x04 \x01(\x03R\vexpiresUnix\x12 \n" +
+	"\vpermissions\x18\x05 \x03(\tR\vpermissions\"\xd7\x01\n" +
 	"\x04User\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x1a\n" +
 	"\busername\x18\x02 \x01(\tR\busername\x12!\n" +
@@ -5461,7 +6398,62 @@ const file_proto_procmesh_v1_api_proto_rawDesc = "" +
 	"scope_type\x18\x04 \x01(\tR\tscopeType\x12\x19\n" +
 	"\bscope_id\x18\x05 \x01(\tR\ascopeId\"C\n" +
 	"\x11GrantRoleResponse\x12.\n" +
-	"\abinding\x18\x01 \x01(\v2\x14.procmesh.v1.BindingR\abinding2\xc1\x06\n" +
+	"\abinding\x18\x01 \x01(\v2\x14.procmesh.v1.BindingR\abinding\"\xff\x02\n" +
+	"\n" +
+	"AuditEvent\x12\x19\n" +
+	"\baudit_id\x18\x01 \x01(\tR\aauditId\x12*\n" +
+	"\x11timestamp_unix_ms\x18\x02 \x01(\x03R\x0ftimestampUnixMs\x12\x17\n" +
+	"\auser_id\x18\x03 \x01(\tR\x06userId\x12\x1a\n" +
+	"\busername\x18\x04 \x01(\tR\busername\x12\x1b\n" +
+	"\tsource_ip\x18\x05 \x01(\tR\bsourceIp\x12!\n" +
+	"\fsource_agent\x18\x06 \x01(\tR\vsourceAgent\x12!\n" +
+	"\ftarget_agent\x18\a \x01(\tR\vtargetAgent\x12\x1a\n" +
+	"\bresource\x18\b \x01(\tR\bresource\x12\x16\n" +
+	"\x06action\x18\t \x01(\tR\x06action\x12!\n" +
+	"\foperation_id\x18\n" +
+	" \x01(\tR\voperationId\x12\x16\n" +
+	"\x06result\x18\v \x01(\tR\x06result\x12#\n" +
+	"\rmetadata_json\x18\f \x01(\tR\fmetadataJson\"\xab\x01\n" +
+	"\n" +
+	"AuditEntry\x12-\n" +
+	"\x05event\x18\x01 \x01(\v2\x17.procmesh.v1.AuditEventR\x05event\x12\x1f\n" +
+	"\vsource_node\x18\x02 \x01(\tR\n" +
+	"sourceNode\x12\x1c\n" +
+	"\tfreshness\x18\x03 \x01(\tR\tfreshness\x12/\n" +
+	"\x14last_updated_unix_ms\x18\x04 \x01(\x03R\x11lastUpdatedUnixMs\"e\n" +
+	"\x10ListAuditRequest\x12\x1a\n" +
+	"\bresource\x18\x01 \x01(\tR\bresource\x12\x14\n" +
+	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12\x1f\n" +
+	"\vtarget_node\x18\x03 \x01(\tR\n" +
+	"targetNode\"F\n" +
+	"\x11ListAuditResponse\x121\n" +
+	"\aentries\x18\x01 \x03(\v2\x17.procmesh.v1.AuditEntryR\aentries\"\x18\n" +
+	"\x16GetAgentMetricsRequest\"\xf1\x01\n" +
+	"\fAgentMetrics\x12%\n" +
+	"\x0euptime_seconds\x18\x01 \x01(\x01R\ruptimeSeconds\x12'\n" +
+	"\x0fprocess_running\x18\x02 \x01(\x05R\x0eprocessRunning\x12\x18\n" +
+	"\amembers\x18\x03 \x01(\x05R\amembers\x12\x14\n" +
+	"\x05alive\x18\x04 \x01(\x05R\x05alive\x12%\n" +
+	"\x0econtrol_quorum\x18\x05 \x01(\bR\rcontrolQuorum\x12:\n" +
+	"\tresources\x18\x06 \x01(\v2\x1c.procmesh.v1.ResourceSummaryR\tresources\"N\n" +
+	"\x17GetAgentMetricsResponse\x123\n" +
+	"\ametrics\x18\x01 \x01(\v2\x19.procmesh.v1.AgentMetricsR\ametrics\"Y\n" +
+	"\x18GetProcessMetricsRequest\x12\x1c\n" +
+	"\n" +
+	"id_or_name\x18\x01 \x01(\tR\bidOrName\x12\x1f\n" +
+	"\vinstance_id\x18\x02 \x01(\tR\n" +
+	"instanceId\"\xc2\x01\n" +
+	"\x0eProcessMetrics\x12\x1f\n" +
+	"\vinstance_id\x18\x01 \x01(\tR\n" +
+	"instanceId\x12\x10\n" +
+	"\x03pid\x18\x02 \x01(\x05R\x03pid\x12%\n" +
+	"\x0euptime_seconds\x18\x03 \x01(\x03R\ruptimeSeconds\x12\x1f\n" +
+	"\vcpu_percent\x18\x04 \x01(\x05R\n" +
+	"cpuPercent\x12!\n" +
+	"\fmemory_bytes\x18\x05 \x01(\x03R\vmemoryBytes\x12\x12\n" +
+	"\x04note\x18\x06 \x01(\tR\x04note\"R\n" +
+	"\x19GetProcessMetricsResponse\x125\n" +
+	"\ametrics\x18\x01 \x03(\v2\x1b.procmesh.v1.ProcessMetricsR\ametrics2\xc1\x06\n" +
 	"\x0eProcessService\x12V\n" +
 	"\rListProcesses\x12!.procmesh.v1.ListProcessesRequest\x1a\".procmesh.v1.ListProcessesResponse\x12M\n" +
 	"\n" +
@@ -5498,12 +6490,13 @@ const file_proto_procmesh_v1_api_proto_rawDesc = "" +
 	"\x04Init\x12\x1f.procmesh.v1.InitClusterRequest\x1a .procmesh.v1.InitClusterResponse\x12I\n" +
 	"\x04Join\x12\x1f.procmesh.v1.JoinClusterRequest\x1a .procmesh.v1.JoinClusterResponse\x12P\n" +
 	"\vRequestJoin\x12\x1f.procmesh.v1.RequestJoinRequest\x1a .procmesh.v1.RequestJoinResponse\x12U\n" +
-	"\bOverview\x12#.procmesh.v1.ClusterOverviewRequest\x1a$.procmesh.v1.ClusterOverviewResponse2\xc6\x02\n" +
+	"\bOverview\x12#.procmesh.v1.ClusterOverviewRequest\x1a$.procmesh.v1.ClusterOverviewResponse2\x86\x03\n" +
 	"\vAuthService\x12>\n" +
 	"\x05Login\x12\x19.procmesh.v1.LoginRequest\x1a\x1a.procmesh.v1.LoginResponse\x12A\n" +
 	"\x06Logout\x12\x1a.procmesh.v1.LogoutRequest\x1a\x1b.procmesh.v1.LogoutResponse\x12Y\n" +
 	"\x0eCreateAPIToken\x12\".procmesh.v1.CreateAPITokenRequest\x1a#.procmesh.v1.CreateAPITokenResponse\x12Y\n" +
-	"\x0eRevokeAPIToken\x12\".procmesh.v1.RevokeAPITokenRequest\x1a#.procmesh.v1.RevokeAPITokenResponse2\xfa\x01\n" +
+	"\x0eRevokeAPIToken\x12\".procmesh.v1.RevokeAPITokenRequest\x1a#.procmesh.v1.RevokeAPITokenResponse\x12>\n" +
+	"\x05GetMe\x12\x19.procmesh.v1.GetMeRequest\x1a\x1a.procmesh.v1.GetMeResponse2\xfa\x01\n" +
 	"\vUserService\x12J\n" +
 	"\tListUsers\x12\x1d.procmesh.v1.ListUsersRequest\x1a\x1e.procmesh.v1.ListUsersResponse\x12M\n" +
 	"\n" +
@@ -5513,7 +6506,12 @@ const file_proto_procmesh_v1_api_proto_rawDesc = "" +
 	"\tListRoles\x12\x1d.procmesh.v1.ListRolesRequest\x1a\x1e.procmesh.v1.ListRolesResponse\x12M\n" +
 	"\n" +
 	"CreateRole\x12\x1e.procmesh.v1.CreateRoleRequest\x1a\x1f.procmesh.v1.CreateRoleResponse\x12J\n" +
-	"\tGrantRole\x12\x1d.procmesh.v1.GrantRoleRequest\x1a\x1e.procmesh.v1.GrantRoleResponseB;Z9github.com/qleelulu/procmesh/proto/procmesh/v1;procmeshv1b\x06proto3"
+	"\tGrantRole\x12\x1d.procmesh.v1.GrantRoleRequest\x1a\x1e.procmesh.v1.GrantRoleResponse2Z\n" +
+	"\fAuditService\x12J\n" +
+	"\tListAudit\x12\x1d.procmesh.v1.ListAuditRequest\x1a\x1e.procmesh.v1.ListAuditResponse2\xd2\x01\n" +
+	"\x0eMetricsService\x12\\\n" +
+	"\x0fGetAgentMetrics\x12#.procmesh.v1.GetAgentMetricsRequest\x1a$.procmesh.v1.GetAgentMetricsResponse\x12b\n" +
+	"\x11GetProcessMetrics\x12%.procmesh.v1.GetProcessMetricsRequest\x1a&.procmesh.v1.GetProcessMetricsResponseB;Z9github.com/qleelulu/procmesh/proto/procmesh/v1;procmeshv1b\x06proto3"
 
 var (
 	file_proto_procmesh_v1_api_proto_rawDescOnce sync.Once
@@ -5527,230 +6525,257 @@ func file_proto_procmesh_v1_api_proto_rawDescGZIP() []byte {
 	return file_proto_procmesh_v1_api_proto_rawDescData
 }
 
-var file_proto_procmesh_v1_api_proto_msgTypes = make([]protoimpl.MessageInfo, 87)
+var file_proto_procmesh_v1_api_proto_msgTypes = make([]protoimpl.MessageInfo, 100)
 var file_proto_procmesh_v1_api_proto_goTypes = []any{
-	(*ErrorInfo)(nil),               // 0: procmesh.v1.ErrorInfo
-	(*MutationMeta)(nil),            // 1: procmesh.v1.MutationMeta
-	(*Backoff)(nil),                 // 2: procmesh.v1.Backoff
-	(*RestartPolicy)(nil),           // 3: procmesh.v1.RestartPolicy
-	(*HealthCheck)(nil),             // 4: procmesh.v1.HealthCheck
-	(*LogPolicy)(nil),               // 5: procmesh.v1.LogPolicy
-	(*ResourceLimit)(nil),           // 6: procmesh.v1.ResourceLimit
-	(*Dependency)(nil),              // 7: procmesh.v1.Dependency
-	(*ProcessSpec)(nil),             // 8: procmesh.v1.ProcessSpec
-	(*Instance)(nil),                // 9: procmesh.v1.Instance
-	(*ProcessView)(nil),             // 10: procmesh.v1.ProcessView
-	(*ApplyProcessRequest)(nil),     // 11: procmesh.v1.ApplyProcessRequest
-	(*ApplyProcessResponse)(nil),    // 12: procmesh.v1.ApplyProcessResponse
-	(*GetProcessRequest)(nil),       // 13: procmesh.v1.GetProcessRequest
-	(*GetProcessResponse)(nil),      // 14: procmesh.v1.GetProcessResponse
-	(*ListProcessesRequest)(nil),    // 15: procmesh.v1.ListProcessesRequest
-	(*ListProcessesResponse)(nil),   // 16: procmesh.v1.ListProcessesResponse
-	(*DeleteProcessRequest)(nil),    // 17: procmesh.v1.DeleteProcessRequest
-	(*DeleteProcessResponse)(nil),   // 18: procmesh.v1.DeleteProcessResponse
-	(*ProcessRefRequest)(nil),       // 19: procmesh.v1.ProcessRefRequest
-	(*ProcessRefResponse)(nil),      // 20: procmesh.v1.ProcessRefResponse
-	(*AdoptRequest)(nil),            // 21: procmesh.v1.AdoptRequest
-	(*AdoptResponse)(nil),           // 22: procmesh.v1.AdoptResponse
-	(*GetConfigRequest)(nil),        // 23: procmesh.v1.GetConfigRequest
-	(*GetConfigResponse)(nil),       // 24: procmesh.v1.GetConfigResponse
-	(*UpdateConfigRequest)(nil),     // 25: procmesh.v1.UpdateConfigRequest
-	(*UpdateConfigResponse)(nil),    // 26: procmesh.v1.UpdateConfigResponse
-	(*HistoryRequest)(nil),          // 27: procmesh.v1.HistoryRequest
-	(*Revision)(nil),                // 28: procmesh.v1.Revision
-	(*HistoryResponse)(nil),         // 29: procmesh.v1.HistoryResponse
-	(*DiffRequest)(nil),             // 30: procmesh.v1.DiffRequest
-	(*DiffResponse)(nil),            // 31: procmesh.v1.DiffResponse
-	(*RollbackRequest)(nil),         // 32: procmesh.v1.RollbackRequest
-	(*RollbackResponse)(nil),        // 33: procmesh.v1.RollbackResponse
-	(*TailLogsRequest)(nil),         // 34: procmesh.v1.TailLogsRequest
-	(*TailLogsResponse)(nil),        // 35: procmesh.v1.TailLogsResponse
-	(*StreamLogsRequest)(nil),       // 36: procmesh.v1.StreamLogsRequest
-	(*DownloadLogsRequest)(nil),     // 37: procmesh.v1.DownloadLogsRequest
-	(*LogChunk)(nil),                // 38: procmesh.v1.LogChunk
-	(*ResourceSummary)(nil),         // 39: procmesh.v1.ResourceSummary
-	(*ProcessSummary)(nil),          // 40: procmesh.v1.ProcessSummary
-	(*Node)(nil),                    // 41: procmesh.v1.Node
-	(*ListNodesRequest)(nil),        // 42: procmesh.v1.ListNodesRequest
-	(*ListNodesResponse)(nil),       // 43: procmesh.v1.ListNodesResponse
-	(*GetNodeRequest)(nil),          // 44: procmesh.v1.GetNodeRequest
-	(*GetNodeResponse)(nil),         // 45: procmesh.v1.GetNodeResponse
-	(*CreateJoinTokenRequest)(nil),  // 46: procmesh.v1.CreateJoinTokenRequest
-	(*CreateJoinTokenResponse)(nil), // 47: procmesh.v1.CreateJoinTokenResponse
-	(*RevokeJoinTokenRequest)(nil),  // 48: procmesh.v1.RevokeJoinTokenRequest
-	(*RevokeJoinTokenResponse)(nil), // 49: procmesh.v1.RevokeJoinTokenResponse
-	(*RemoveNodeRequest)(nil),       // 50: procmesh.v1.RemoveNodeRequest
-	(*RemoveNodeResponse)(nil),      // 51: procmesh.v1.RemoveNodeResponse
-	(*PromoteNodeRequest)(nil),      // 52: procmesh.v1.PromoteNodeRequest
-	(*PromoteNodeResponse)(nil),     // 53: procmesh.v1.PromoteNodeResponse
-	(*InitClusterRequest)(nil),      // 54: procmesh.v1.InitClusterRequest
-	(*InitClusterResponse)(nil),     // 55: procmesh.v1.InitClusterResponse
-	(*JoinClusterRequest)(nil),      // 56: procmesh.v1.JoinClusterRequest
-	(*JoinClusterResponse)(nil),     // 57: procmesh.v1.JoinClusterResponse
-	(*ClusterOverviewRequest)(nil),  // 58: procmesh.v1.ClusterOverviewRequest
-	(*ClusterOverviewResponse)(nil), // 59: procmesh.v1.ClusterOverviewResponse
-	(*RequestJoinRequest)(nil),      // 60: procmesh.v1.RequestJoinRequest
-	(*RequestJoinResponse)(nil),     // 61: procmesh.v1.RequestJoinResponse
-	(*LoginRequest)(nil),            // 62: procmesh.v1.LoginRequest
-	(*LoginResponse)(nil),           // 63: procmesh.v1.LoginResponse
-	(*LogoutRequest)(nil),           // 64: procmesh.v1.LogoutRequest
-	(*LogoutResponse)(nil),          // 65: procmesh.v1.LogoutResponse
-	(*CreateAPITokenRequest)(nil),   // 66: procmesh.v1.CreateAPITokenRequest
-	(*CreateAPITokenResponse)(nil),  // 67: procmesh.v1.CreateAPITokenResponse
-	(*RevokeAPITokenRequest)(nil),   // 68: procmesh.v1.RevokeAPITokenRequest
-	(*RevokeAPITokenResponse)(nil),  // 69: procmesh.v1.RevokeAPITokenResponse
-	(*User)(nil),                    // 70: procmesh.v1.User
-	(*ListUsersRequest)(nil),        // 71: procmesh.v1.ListUsersRequest
-	(*ListUsersResponse)(nil),       // 72: procmesh.v1.ListUsersResponse
-	(*CreateUserRequest)(nil),       // 73: procmesh.v1.CreateUserRequest
-	(*CreateUserResponse)(nil),      // 74: procmesh.v1.CreateUserResponse
-	(*DisableUserRequest)(nil),      // 75: procmesh.v1.DisableUserRequest
-	(*DisableUserResponse)(nil),     // 76: procmesh.v1.DisableUserResponse
-	(*Role)(nil),                    // 77: procmesh.v1.Role
-	(*Binding)(nil),                 // 78: procmesh.v1.Binding
-	(*ListRolesRequest)(nil),        // 79: procmesh.v1.ListRolesRequest
-	(*ListRolesResponse)(nil),       // 80: procmesh.v1.ListRolesResponse
-	(*CreateRoleRequest)(nil),       // 81: procmesh.v1.CreateRoleRequest
-	(*CreateRoleResponse)(nil),      // 82: procmesh.v1.CreateRoleResponse
-	(*GrantRoleRequest)(nil),        // 83: procmesh.v1.GrantRoleRequest
-	(*GrantRoleResponse)(nil),       // 84: procmesh.v1.GrantRoleResponse
-	nil,                             // 85: procmesh.v1.ProcessSpec.EnvironmentEntry
-	nil,                             // 86: procmesh.v1.Node.LabelsEntry
+	(*ErrorInfo)(nil),                 // 0: procmesh.v1.ErrorInfo
+	(*MutationMeta)(nil),              // 1: procmesh.v1.MutationMeta
+	(*Backoff)(nil),                   // 2: procmesh.v1.Backoff
+	(*RestartPolicy)(nil),             // 3: procmesh.v1.RestartPolicy
+	(*HealthCheck)(nil),               // 4: procmesh.v1.HealthCheck
+	(*LogPolicy)(nil),                 // 5: procmesh.v1.LogPolicy
+	(*ResourceLimit)(nil),             // 6: procmesh.v1.ResourceLimit
+	(*Dependency)(nil),                // 7: procmesh.v1.Dependency
+	(*ProcessSpec)(nil),               // 8: procmesh.v1.ProcessSpec
+	(*Instance)(nil),                  // 9: procmesh.v1.Instance
+	(*ProcessView)(nil),               // 10: procmesh.v1.ProcessView
+	(*ApplyProcessRequest)(nil),       // 11: procmesh.v1.ApplyProcessRequest
+	(*ApplyProcessResponse)(nil),      // 12: procmesh.v1.ApplyProcessResponse
+	(*GetProcessRequest)(nil),         // 13: procmesh.v1.GetProcessRequest
+	(*GetProcessResponse)(nil),        // 14: procmesh.v1.GetProcessResponse
+	(*ListProcessesRequest)(nil),      // 15: procmesh.v1.ListProcessesRequest
+	(*ListProcessesResponse)(nil),     // 16: procmesh.v1.ListProcessesResponse
+	(*DeleteProcessRequest)(nil),      // 17: procmesh.v1.DeleteProcessRequest
+	(*DeleteProcessResponse)(nil),     // 18: procmesh.v1.DeleteProcessResponse
+	(*ProcessRefRequest)(nil),         // 19: procmesh.v1.ProcessRefRequest
+	(*ProcessRefResponse)(nil),        // 20: procmesh.v1.ProcessRefResponse
+	(*AdoptRequest)(nil),              // 21: procmesh.v1.AdoptRequest
+	(*AdoptResponse)(nil),             // 22: procmesh.v1.AdoptResponse
+	(*GetConfigRequest)(nil),          // 23: procmesh.v1.GetConfigRequest
+	(*GetConfigResponse)(nil),         // 24: procmesh.v1.GetConfigResponse
+	(*UpdateConfigRequest)(nil),       // 25: procmesh.v1.UpdateConfigRequest
+	(*UpdateConfigResponse)(nil),      // 26: procmesh.v1.UpdateConfigResponse
+	(*HistoryRequest)(nil),            // 27: procmesh.v1.HistoryRequest
+	(*Revision)(nil),                  // 28: procmesh.v1.Revision
+	(*HistoryResponse)(nil),           // 29: procmesh.v1.HistoryResponse
+	(*DiffRequest)(nil),               // 30: procmesh.v1.DiffRequest
+	(*DiffResponse)(nil),              // 31: procmesh.v1.DiffResponse
+	(*RollbackRequest)(nil),           // 32: procmesh.v1.RollbackRequest
+	(*RollbackResponse)(nil),          // 33: procmesh.v1.RollbackResponse
+	(*TailLogsRequest)(nil),           // 34: procmesh.v1.TailLogsRequest
+	(*TailLogsResponse)(nil),          // 35: procmesh.v1.TailLogsResponse
+	(*StreamLogsRequest)(nil),         // 36: procmesh.v1.StreamLogsRequest
+	(*DownloadLogsRequest)(nil),       // 37: procmesh.v1.DownloadLogsRequest
+	(*LogChunk)(nil),                  // 38: procmesh.v1.LogChunk
+	(*ResourceSummary)(nil),           // 39: procmesh.v1.ResourceSummary
+	(*ProcessSummary)(nil),            // 40: procmesh.v1.ProcessSummary
+	(*Node)(nil),                      // 41: procmesh.v1.Node
+	(*ListNodesRequest)(nil),          // 42: procmesh.v1.ListNodesRequest
+	(*ListNodesResponse)(nil),         // 43: procmesh.v1.ListNodesResponse
+	(*GetNodeRequest)(nil),            // 44: procmesh.v1.GetNodeRequest
+	(*GetNodeResponse)(nil),           // 45: procmesh.v1.GetNodeResponse
+	(*CreateJoinTokenRequest)(nil),    // 46: procmesh.v1.CreateJoinTokenRequest
+	(*CreateJoinTokenResponse)(nil),   // 47: procmesh.v1.CreateJoinTokenResponse
+	(*RevokeJoinTokenRequest)(nil),    // 48: procmesh.v1.RevokeJoinTokenRequest
+	(*RevokeJoinTokenResponse)(nil),   // 49: procmesh.v1.RevokeJoinTokenResponse
+	(*RemoveNodeRequest)(nil),         // 50: procmesh.v1.RemoveNodeRequest
+	(*RemoveNodeResponse)(nil),        // 51: procmesh.v1.RemoveNodeResponse
+	(*PromoteNodeRequest)(nil),        // 52: procmesh.v1.PromoteNodeRequest
+	(*PromoteNodeResponse)(nil),       // 53: procmesh.v1.PromoteNodeResponse
+	(*InitClusterRequest)(nil),        // 54: procmesh.v1.InitClusterRequest
+	(*InitClusterResponse)(nil),       // 55: procmesh.v1.InitClusterResponse
+	(*JoinClusterRequest)(nil),        // 56: procmesh.v1.JoinClusterRequest
+	(*JoinClusterResponse)(nil),       // 57: procmesh.v1.JoinClusterResponse
+	(*ClusterOverviewRequest)(nil),    // 58: procmesh.v1.ClusterOverviewRequest
+	(*ClusterOverviewResponse)(nil),   // 59: procmesh.v1.ClusterOverviewResponse
+	(*RequestJoinRequest)(nil),        // 60: procmesh.v1.RequestJoinRequest
+	(*RequestJoinResponse)(nil),       // 61: procmesh.v1.RequestJoinResponse
+	(*LoginRequest)(nil),              // 62: procmesh.v1.LoginRequest
+	(*LoginResponse)(nil),             // 63: procmesh.v1.LoginResponse
+	(*LogoutRequest)(nil),             // 64: procmesh.v1.LogoutRequest
+	(*LogoutResponse)(nil),            // 65: procmesh.v1.LogoutResponse
+	(*CreateAPITokenRequest)(nil),     // 66: procmesh.v1.CreateAPITokenRequest
+	(*CreateAPITokenResponse)(nil),    // 67: procmesh.v1.CreateAPITokenResponse
+	(*RevokeAPITokenRequest)(nil),     // 68: procmesh.v1.RevokeAPITokenRequest
+	(*RevokeAPITokenResponse)(nil),    // 69: procmesh.v1.RevokeAPITokenResponse
+	(*GetMeRequest)(nil),              // 70: procmesh.v1.GetMeRequest
+	(*GetMeResponse)(nil),             // 71: procmesh.v1.GetMeResponse
+	(*User)(nil),                      // 72: procmesh.v1.User
+	(*ListUsersRequest)(nil),          // 73: procmesh.v1.ListUsersRequest
+	(*ListUsersResponse)(nil),         // 74: procmesh.v1.ListUsersResponse
+	(*CreateUserRequest)(nil),         // 75: procmesh.v1.CreateUserRequest
+	(*CreateUserResponse)(nil),        // 76: procmesh.v1.CreateUserResponse
+	(*DisableUserRequest)(nil),        // 77: procmesh.v1.DisableUserRequest
+	(*DisableUserResponse)(nil),       // 78: procmesh.v1.DisableUserResponse
+	(*Role)(nil),                      // 79: procmesh.v1.Role
+	(*Binding)(nil),                   // 80: procmesh.v1.Binding
+	(*ListRolesRequest)(nil),          // 81: procmesh.v1.ListRolesRequest
+	(*ListRolesResponse)(nil),         // 82: procmesh.v1.ListRolesResponse
+	(*CreateRoleRequest)(nil),         // 83: procmesh.v1.CreateRoleRequest
+	(*CreateRoleResponse)(nil),        // 84: procmesh.v1.CreateRoleResponse
+	(*GrantRoleRequest)(nil),          // 85: procmesh.v1.GrantRoleRequest
+	(*GrantRoleResponse)(nil),         // 86: procmesh.v1.GrantRoleResponse
+	(*AuditEvent)(nil),                // 87: procmesh.v1.AuditEvent
+	(*AuditEntry)(nil),                // 88: procmesh.v1.AuditEntry
+	(*ListAuditRequest)(nil),          // 89: procmesh.v1.ListAuditRequest
+	(*ListAuditResponse)(nil),         // 90: procmesh.v1.ListAuditResponse
+	(*GetAgentMetricsRequest)(nil),    // 91: procmesh.v1.GetAgentMetricsRequest
+	(*AgentMetrics)(nil),              // 92: procmesh.v1.AgentMetrics
+	(*GetAgentMetricsResponse)(nil),   // 93: procmesh.v1.GetAgentMetricsResponse
+	(*GetProcessMetricsRequest)(nil),  // 94: procmesh.v1.GetProcessMetricsRequest
+	(*ProcessMetrics)(nil),            // 95: procmesh.v1.ProcessMetrics
+	(*GetProcessMetricsResponse)(nil), // 96: procmesh.v1.GetProcessMetricsResponse
+	nil,                               // 97: procmesh.v1.ProcessSpec.EnvironmentEntry
+	nil,                               // 98: procmesh.v1.Node.LabelsEntry
+	nil,                               // 99: procmesh.v1.ClusterOverviewResponse.VersionCountsEntry
 }
 var file_proto_procmesh_v1_api_proto_depIdxs = []int32{
-	2,  // 0: procmesh.v1.RestartPolicy.backoff:type_name -> procmesh.v1.Backoff
-	85, // 1: procmesh.v1.ProcessSpec.environment:type_name -> procmesh.v1.ProcessSpec.EnvironmentEntry
-	3,  // 2: procmesh.v1.ProcessSpec.restart:type_name -> procmesh.v1.RestartPolicy
-	4,  // 3: procmesh.v1.ProcessSpec.health:type_name -> procmesh.v1.HealthCheck
-	5,  // 4: procmesh.v1.ProcessSpec.log:type_name -> procmesh.v1.LogPolicy
-	6,  // 5: procmesh.v1.ProcessSpec.resources:type_name -> procmesh.v1.ResourceLimit
-	7,  // 6: procmesh.v1.ProcessSpec.dependencies:type_name -> procmesh.v1.Dependency
-	8,  // 7: procmesh.v1.ProcessView.spec:type_name -> procmesh.v1.ProcessSpec
-	9,  // 8: procmesh.v1.ProcessView.instances:type_name -> procmesh.v1.Instance
-	1,  // 9: procmesh.v1.ApplyProcessRequest.meta:type_name -> procmesh.v1.MutationMeta
-	8,  // 10: procmesh.v1.ApplyProcessRequest.spec:type_name -> procmesh.v1.ProcessSpec
-	8,  // 11: procmesh.v1.ApplyProcessResponse.spec:type_name -> procmesh.v1.ProcessSpec
-	10, // 12: procmesh.v1.GetProcessResponse.process:type_name -> procmesh.v1.ProcessView
-	10, // 13: procmesh.v1.ListProcessesResponse.processes:type_name -> procmesh.v1.ProcessView
-	1,  // 14: procmesh.v1.DeleteProcessRequest.meta:type_name -> procmesh.v1.MutationMeta
-	1,  // 15: procmesh.v1.ProcessRefRequest.meta:type_name -> procmesh.v1.MutationMeta
-	10, // 16: procmesh.v1.ProcessRefResponse.process:type_name -> procmesh.v1.ProcessView
-	1,  // 17: procmesh.v1.AdoptRequest.meta:type_name -> procmesh.v1.MutationMeta
-	10, // 18: procmesh.v1.AdoptResponse.process:type_name -> procmesh.v1.ProcessView
-	8,  // 19: procmesh.v1.GetConfigResponse.spec:type_name -> procmesh.v1.ProcessSpec
-	1,  // 20: procmesh.v1.UpdateConfigRequest.meta:type_name -> procmesh.v1.MutationMeta
-	8,  // 21: procmesh.v1.UpdateConfigRequest.spec:type_name -> procmesh.v1.ProcessSpec
-	8,  // 22: procmesh.v1.UpdateConfigResponse.spec:type_name -> procmesh.v1.ProcessSpec
-	28, // 23: procmesh.v1.HistoryResponse.revisions:type_name -> procmesh.v1.Revision
-	1,  // 24: procmesh.v1.RollbackRequest.meta:type_name -> procmesh.v1.MutationMeta
-	8,  // 25: procmesh.v1.RollbackResponse.spec:type_name -> procmesh.v1.ProcessSpec
-	86, // 26: procmesh.v1.Node.labels:type_name -> procmesh.v1.Node.LabelsEntry
-	39, // 27: procmesh.v1.Node.resources:type_name -> procmesh.v1.ResourceSummary
-	40, // 28: procmesh.v1.Node.processes:type_name -> procmesh.v1.ProcessSummary
-	41, // 29: procmesh.v1.ListNodesResponse.nodes:type_name -> procmesh.v1.Node
-	41, // 30: procmesh.v1.GetNodeResponse.node:type_name -> procmesh.v1.Node
-	1,  // 31: procmesh.v1.CreateJoinTokenRequest.meta:type_name -> procmesh.v1.MutationMeta
-	1,  // 32: procmesh.v1.RevokeJoinTokenRequest.meta:type_name -> procmesh.v1.MutationMeta
-	1,  // 33: procmesh.v1.RemoveNodeRequest.meta:type_name -> procmesh.v1.MutationMeta
-	1,  // 34: procmesh.v1.PromoteNodeRequest.meta:type_name -> procmesh.v1.MutationMeta
-	1,  // 35: procmesh.v1.InitClusterRequest.meta:type_name -> procmesh.v1.MutationMeta
-	1,  // 36: procmesh.v1.JoinClusterRequest.meta:type_name -> procmesh.v1.MutationMeta
-	1,  // 37: procmesh.v1.RequestJoinRequest.meta:type_name -> procmesh.v1.MutationMeta
-	1,  // 38: procmesh.v1.LogoutRequest.meta:type_name -> procmesh.v1.MutationMeta
-	1,  // 39: procmesh.v1.CreateAPITokenRequest.meta:type_name -> procmesh.v1.MutationMeta
-	1,  // 40: procmesh.v1.RevokeAPITokenRequest.meta:type_name -> procmesh.v1.MutationMeta
-	70, // 41: procmesh.v1.ListUsersResponse.users:type_name -> procmesh.v1.User
-	1,  // 42: procmesh.v1.CreateUserRequest.meta:type_name -> procmesh.v1.MutationMeta
-	70, // 43: procmesh.v1.CreateUserResponse.user:type_name -> procmesh.v1.User
-	1,  // 44: procmesh.v1.DisableUserRequest.meta:type_name -> procmesh.v1.MutationMeta
-	70, // 45: procmesh.v1.DisableUserResponse.user:type_name -> procmesh.v1.User
-	77, // 46: procmesh.v1.ListRolesResponse.roles:type_name -> procmesh.v1.Role
-	78, // 47: procmesh.v1.ListRolesResponse.bindings:type_name -> procmesh.v1.Binding
-	1,  // 48: procmesh.v1.CreateRoleRequest.meta:type_name -> procmesh.v1.MutationMeta
-	77, // 49: procmesh.v1.CreateRoleResponse.role:type_name -> procmesh.v1.Role
-	1,  // 50: procmesh.v1.GrantRoleRequest.meta:type_name -> procmesh.v1.MutationMeta
-	78, // 51: procmesh.v1.GrantRoleResponse.binding:type_name -> procmesh.v1.Binding
-	15, // 52: procmesh.v1.ProcessService.ListProcesses:input_type -> procmesh.v1.ListProcessesRequest
-	13, // 53: procmesh.v1.ProcessService.GetProcess:input_type -> procmesh.v1.GetProcessRequest
-	11, // 54: procmesh.v1.ProcessService.ApplyProcess:input_type -> procmesh.v1.ApplyProcessRequest
-	17, // 55: procmesh.v1.ProcessService.DeleteProcess:input_type -> procmesh.v1.DeleteProcessRequest
-	19, // 56: procmesh.v1.ProcessService.StartProcess:input_type -> procmesh.v1.ProcessRefRequest
-	19, // 57: procmesh.v1.ProcessService.StopProcess:input_type -> procmesh.v1.ProcessRefRequest
-	19, // 58: procmesh.v1.ProcessService.RestartProcess:input_type -> procmesh.v1.ProcessRefRequest
-	19, // 59: procmesh.v1.ProcessService.KillProcess:input_type -> procmesh.v1.ProcessRefRequest
-	19, // 60: procmesh.v1.ProcessService.ResetFailure:input_type -> procmesh.v1.ProcessRefRequest
-	21, // 61: procmesh.v1.ProcessService.AdoptInstance:input_type -> procmesh.v1.AdoptRequest
-	23, // 62: procmesh.v1.ConfigService.GetConfig:input_type -> procmesh.v1.GetConfigRequest
-	25, // 63: procmesh.v1.ConfigService.UpdateConfig:input_type -> procmesh.v1.UpdateConfigRequest
-	27, // 64: procmesh.v1.ConfigService.History:input_type -> procmesh.v1.HistoryRequest
-	30, // 65: procmesh.v1.ConfigService.Diff:input_type -> procmesh.v1.DiffRequest
-	32, // 66: procmesh.v1.ConfigService.Rollback:input_type -> procmesh.v1.RollbackRequest
-	34, // 67: procmesh.v1.LogService.TailLogs:input_type -> procmesh.v1.TailLogsRequest
-	36, // 68: procmesh.v1.LogService.StreamLogs:input_type -> procmesh.v1.StreamLogsRequest
-	37, // 69: procmesh.v1.LogService.DownloadLogs:input_type -> procmesh.v1.DownloadLogsRequest
-	42, // 70: procmesh.v1.NodeService.ListNodes:input_type -> procmesh.v1.ListNodesRequest
-	44, // 71: procmesh.v1.NodeService.GetNode:input_type -> procmesh.v1.GetNodeRequest
-	46, // 72: procmesh.v1.NodeService.CreateJoinToken:input_type -> procmesh.v1.CreateJoinTokenRequest
-	48, // 73: procmesh.v1.NodeService.RevokeJoinToken:input_type -> procmesh.v1.RevokeJoinTokenRequest
-	50, // 74: procmesh.v1.NodeService.RemoveNode:input_type -> procmesh.v1.RemoveNodeRequest
-	52, // 75: procmesh.v1.NodeService.PromoteNode:input_type -> procmesh.v1.PromoteNodeRequest
-	54, // 76: procmesh.v1.ClusterService.Init:input_type -> procmesh.v1.InitClusterRequest
-	56, // 77: procmesh.v1.ClusterService.Join:input_type -> procmesh.v1.JoinClusterRequest
-	60, // 78: procmesh.v1.ClusterService.RequestJoin:input_type -> procmesh.v1.RequestJoinRequest
-	58, // 79: procmesh.v1.ClusterService.Overview:input_type -> procmesh.v1.ClusterOverviewRequest
-	62, // 80: procmesh.v1.AuthService.Login:input_type -> procmesh.v1.LoginRequest
-	64, // 81: procmesh.v1.AuthService.Logout:input_type -> procmesh.v1.LogoutRequest
-	66, // 82: procmesh.v1.AuthService.CreateAPIToken:input_type -> procmesh.v1.CreateAPITokenRequest
-	68, // 83: procmesh.v1.AuthService.RevokeAPIToken:input_type -> procmesh.v1.RevokeAPITokenRequest
-	71, // 84: procmesh.v1.UserService.ListUsers:input_type -> procmesh.v1.ListUsersRequest
-	73, // 85: procmesh.v1.UserService.CreateUser:input_type -> procmesh.v1.CreateUserRequest
-	75, // 86: procmesh.v1.UserService.DisableUser:input_type -> procmesh.v1.DisableUserRequest
-	79, // 87: procmesh.v1.RoleService.ListRoles:input_type -> procmesh.v1.ListRolesRequest
-	81, // 88: procmesh.v1.RoleService.CreateRole:input_type -> procmesh.v1.CreateRoleRequest
-	83, // 89: procmesh.v1.RoleService.GrantRole:input_type -> procmesh.v1.GrantRoleRequest
-	16, // 90: procmesh.v1.ProcessService.ListProcesses:output_type -> procmesh.v1.ListProcessesResponse
-	14, // 91: procmesh.v1.ProcessService.GetProcess:output_type -> procmesh.v1.GetProcessResponse
-	12, // 92: procmesh.v1.ProcessService.ApplyProcess:output_type -> procmesh.v1.ApplyProcessResponse
-	18, // 93: procmesh.v1.ProcessService.DeleteProcess:output_type -> procmesh.v1.DeleteProcessResponse
-	20, // 94: procmesh.v1.ProcessService.StartProcess:output_type -> procmesh.v1.ProcessRefResponse
-	20, // 95: procmesh.v1.ProcessService.StopProcess:output_type -> procmesh.v1.ProcessRefResponse
-	20, // 96: procmesh.v1.ProcessService.RestartProcess:output_type -> procmesh.v1.ProcessRefResponse
-	20, // 97: procmesh.v1.ProcessService.KillProcess:output_type -> procmesh.v1.ProcessRefResponse
-	20, // 98: procmesh.v1.ProcessService.ResetFailure:output_type -> procmesh.v1.ProcessRefResponse
-	22, // 99: procmesh.v1.ProcessService.AdoptInstance:output_type -> procmesh.v1.AdoptResponse
-	24, // 100: procmesh.v1.ConfigService.GetConfig:output_type -> procmesh.v1.GetConfigResponse
-	26, // 101: procmesh.v1.ConfigService.UpdateConfig:output_type -> procmesh.v1.UpdateConfigResponse
-	29, // 102: procmesh.v1.ConfigService.History:output_type -> procmesh.v1.HistoryResponse
-	31, // 103: procmesh.v1.ConfigService.Diff:output_type -> procmesh.v1.DiffResponse
-	33, // 104: procmesh.v1.ConfigService.Rollback:output_type -> procmesh.v1.RollbackResponse
-	35, // 105: procmesh.v1.LogService.TailLogs:output_type -> procmesh.v1.TailLogsResponse
-	38, // 106: procmesh.v1.LogService.StreamLogs:output_type -> procmesh.v1.LogChunk
-	38, // 107: procmesh.v1.LogService.DownloadLogs:output_type -> procmesh.v1.LogChunk
-	43, // 108: procmesh.v1.NodeService.ListNodes:output_type -> procmesh.v1.ListNodesResponse
-	45, // 109: procmesh.v1.NodeService.GetNode:output_type -> procmesh.v1.GetNodeResponse
-	47, // 110: procmesh.v1.NodeService.CreateJoinToken:output_type -> procmesh.v1.CreateJoinTokenResponse
-	49, // 111: procmesh.v1.NodeService.RevokeJoinToken:output_type -> procmesh.v1.RevokeJoinTokenResponse
-	51, // 112: procmesh.v1.NodeService.RemoveNode:output_type -> procmesh.v1.RemoveNodeResponse
-	53, // 113: procmesh.v1.NodeService.PromoteNode:output_type -> procmesh.v1.PromoteNodeResponse
-	55, // 114: procmesh.v1.ClusterService.Init:output_type -> procmesh.v1.InitClusterResponse
-	57, // 115: procmesh.v1.ClusterService.Join:output_type -> procmesh.v1.JoinClusterResponse
-	61, // 116: procmesh.v1.ClusterService.RequestJoin:output_type -> procmesh.v1.RequestJoinResponse
-	59, // 117: procmesh.v1.ClusterService.Overview:output_type -> procmesh.v1.ClusterOverviewResponse
-	63, // 118: procmesh.v1.AuthService.Login:output_type -> procmesh.v1.LoginResponse
-	65, // 119: procmesh.v1.AuthService.Logout:output_type -> procmesh.v1.LogoutResponse
-	67, // 120: procmesh.v1.AuthService.CreateAPIToken:output_type -> procmesh.v1.CreateAPITokenResponse
-	69, // 121: procmesh.v1.AuthService.RevokeAPIToken:output_type -> procmesh.v1.RevokeAPITokenResponse
-	72, // 122: procmesh.v1.UserService.ListUsers:output_type -> procmesh.v1.ListUsersResponse
-	74, // 123: procmesh.v1.UserService.CreateUser:output_type -> procmesh.v1.CreateUserResponse
-	76, // 124: procmesh.v1.UserService.DisableUser:output_type -> procmesh.v1.DisableUserResponse
-	80, // 125: procmesh.v1.RoleService.ListRoles:output_type -> procmesh.v1.ListRolesResponse
-	82, // 126: procmesh.v1.RoleService.CreateRole:output_type -> procmesh.v1.CreateRoleResponse
-	84, // 127: procmesh.v1.RoleService.GrantRole:output_type -> procmesh.v1.GrantRoleResponse
-	90, // [90:128] is the sub-list for method output_type
-	52, // [52:90] is the sub-list for method input_type
-	52, // [52:52] is the sub-list for extension type_name
-	52, // [52:52] is the sub-list for extension extendee
-	0,  // [0:52] is the sub-list for field type_name
+	2,   // 0: procmesh.v1.RestartPolicy.backoff:type_name -> procmesh.v1.Backoff
+	97,  // 1: procmesh.v1.ProcessSpec.environment:type_name -> procmesh.v1.ProcessSpec.EnvironmentEntry
+	3,   // 2: procmesh.v1.ProcessSpec.restart:type_name -> procmesh.v1.RestartPolicy
+	4,   // 3: procmesh.v1.ProcessSpec.health:type_name -> procmesh.v1.HealthCheck
+	5,   // 4: procmesh.v1.ProcessSpec.log:type_name -> procmesh.v1.LogPolicy
+	6,   // 5: procmesh.v1.ProcessSpec.resources:type_name -> procmesh.v1.ResourceLimit
+	7,   // 6: procmesh.v1.ProcessSpec.dependencies:type_name -> procmesh.v1.Dependency
+	8,   // 7: procmesh.v1.ProcessView.spec:type_name -> procmesh.v1.ProcessSpec
+	9,   // 8: procmesh.v1.ProcessView.instances:type_name -> procmesh.v1.Instance
+	1,   // 9: procmesh.v1.ApplyProcessRequest.meta:type_name -> procmesh.v1.MutationMeta
+	8,   // 10: procmesh.v1.ApplyProcessRequest.spec:type_name -> procmesh.v1.ProcessSpec
+	8,   // 11: procmesh.v1.ApplyProcessResponse.spec:type_name -> procmesh.v1.ProcessSpec
+	10,  // 12: procmesh.v1.GetProcessResponse.process:type_name -> procmesh.v1.ProcessView
+	10,  // 13: procmesh.v1.ListProcessesResponse.processes:type_name -> procmesh.v1.ProcessView
+	1,   // 14: procmesh.v1.DeleteProcessRequest.meta:type_name -> procmesh.v1.MutationMeta
+	1,   // 15: procmesh.v1.ProcessRefRequest.meta:type_name -> procmesh.v1.MutationMeta
+	10,  // 16: procmesh.v1.ProcessRefResponse.process:type_name -> procmesh.v1.ProcessView
+	1,   // 17: procmesh.v1.AdoptRequest.meta:type_name -> procmesh.v1.MutationMeta
+	10,  // 18: procmesh.v1.AdoptResponse.process:type_name -> procmesh.v1.ProcessView
+	8,   // 19: procmesh.v1.GetConfigResponse.spec:type_name -> procmesh.v1.ProcessSpec
+	1,   // 20: procmesh.v1.UpdateConfigRequest.meta:type_name -> procmesh.v1.MutationMeta
+	8,   // 21: procmesh.v1.UpdateConfigRequest.spec:type_name -> procmesh.v1.ProcessSpec
+	8,   // 22: procmesh.v1.UpdateConfigResponse.spec:type_name -> procmesh.v1.ProcessSpec
+	28,  // 23: procmesh.v1.HistoryResponse.revisions:type_name -> procmesh.v1.Revision
+	1,   // 24: procmesh.v1.RollbackRequest.meta:type_name -> procmesh.v1.MutationMeta
+	8,   // 25: procmesh.v1.RollbackResponse.spec:type_name -> procmesh.v1.ProcessSpec
+	98,  // 26: procmesh.v1.Node.labels:type_name -> procmesh.v1.Node.LabelsEntry
+	39,  // 27: procmesh.v1.Node.resources:type_name -> procmesh.v1.ResourceSummary
+	40,  // 28: procmesh.v1.Node.processes:type_name -> procmesh.v1.ProcessSummary
+	41,  // 29: procmesh.v1.ListNodesResponse.nodes:type_name -> procmesh.v1.Node
+	41,  // 30: procmesh.v1.GetNodeResponse.node:type_name -> procmesh.v1.Node
+	1,   // 31: procmesh.v1.CreateJoinTokenRequest.meta:type_name -> procmesh.v1.MutationMeta
+	1,   // 32: procmesh.v1.RevokeJoinTokenRequest.meta:type_name -> procmesh.v1.MutationMeta
+	1,   // 33: procmesh.v1.RemoveNodeRequest.meta:type_name -> procmesh.v1.MutationMeta
+	1,   // 34: procmesh.v1.PromoteNodeRequest.meta:type_name -> procmesh.v1.MutationMeta
+	1,   // 35: procmesh.v1.InitClusterRequest.meta:type_name -> procmesh.v1.MutationMeta
+	1,   // 36: procmesh.v1.JoinClusterRequest.meta:type_name -> procmesh.v1.MutationMeta
+	99,  // 37: procmesh.v1.ClusterOverviewResponse.version_counts:type_name -> procmesh.v1.ClusterOverviewResponse.VersionCountsEntry
+	1,   // 38: procmesh.v1.RequestJoinRequest.meta:type_name -> procmesh.v1.MutationMeta
+	1,   // 39: procmesh.v1.LogoutRequest.meta:type_name -> procmesh.v1.MutationMeta
+	1,   // 40: procmesh.v1.CreateAPITokenRequest.meta:type_name -> procmesh.v1.MutationMeta
+	1,   // 41: procmesh.v1.RevokeAPITokenRequest.meta:type_name -> procmesh.v1.MutationMeta
+	72,  // 42: procmesh.v1.ListUsersResponse.users:type_name -> procmesh.v1.User
+	1,   // 43: procmesh.v1.CreateUserRequest.meta:type_name -> procmesh.v1.MutationMeta
+	72,  // 44: procmesh.v1.CreateUserResponse.user:type_name -> procmesh.v1.User
+	1,   // 45: procmesh.v1.DisableUserRequest.meta:type_name -> procmesh.v1.MutationMeta
+	72,  // 46: procmesh.v1.DisableUserResponse.user:type_name -> procmesh.v1.User
+	79,  // 47: procmesh.v1.ListRolesResponse.roles:type_name -> procmesh.v1.Role
+	80,  // 48: procmesh.v1.ListRolesResponse.bindings:type_name -> procmesh.v1.Binding
+	1,   // 49: procmesh.v1.CreateRoleRequest.meta:type_name -> procmesh.v1.MutationMeta
+	79,  // 50: procmesh.v1.CreateRoleResponse.role:type_name -> procmesh.v1.Role
+	1,   // 51: procmesh.v1.GrantRoleRequest.meta:type_name -> procmesh.v1.MutationMeta
+	80,  // 52: procmesh.v1.GrantRoleResponse.binding:type_name -> procmesh.v1.Binding
+	87,  // 53: procmesh.v1.AuditEntry.event:type_name -> procmesh.v1.AuditEvent
+	88,  // 54: procmesh.v1.ListAuditResponse.entries:type_name -> procmesh.v1.AuditEntry
+	39,  // 55: procmesh.v1.AgentMetrics.resources:type_name -> procmesh.v1.ResourceSummary
+	92,  // 56: procmesh.v1.GetAgentMetricsResponse.metrics:type_name -> procmesh.v1.AgentMetrics
+	95,  // 57: procmesh.v1.GetProcessMetricsResponse.metrics:type_name -> procmesh.v1.ProcessMetrics
+	15,  // 58: procmesh.v1.ProcessService.ListProcesses:input_type -> procmesh.v1.ListProcessesRequest
+	13,  // 59: procmesh.v1.ProcessService.GetProcess:input_type -> procmesh.v1.GetProcessRequest
+	11,  // 60: procmesh.v1.ProcessService.ApplyProcess:input_type -> procmesh.v1.ApplyProcessRequest
+	17,  // 61: procmesh.v1.ProcessService.DeleteProcess:input_type -> procmesh.v1.DeleteProcessRequest
+	19,  // 62: procmesh.v1.ProcessService.StartProcess:input_type -> procmesh.v1.ProcessRefRequest
+	19,  // 63: procmesh.v1.ProcessService.StopProcess:input_type -> procmesh.v1.ProcessRefRequest
+	19,  // 64: procmesh.v1.ProcessService.RestartProcess:input_type -> procmesh.v1.ProcessRefRequest
+	19,  // 65: procmesh.v1.ProcessService.KillProcess:input_type -> procmesh.v1.ProcessRefRequest
+	19,  // 66: procmesh.v1.ProcessService.ResetFailure:input_type -> procmesh.v1.ProcessRefRequest
+	21,  // 67: procmesh.v1.ProcessService.AdoptInstance:input_type -> procmesh.v1.AdoptRequest
+	23,  // 68: procmesh.v1.ConfigService.GetConfig:input_type -> procmesh.v1.GetConfigRequest
+	25,  // 69: procmesh.v1.ConfigService.UpdateConfig:input_type -> procmesh.v1.UpdateConfigRequest
+	27,  // 70: procmesh.v1.ConfigService.History:input_type -> procmesh.v1.HistoryRequest
+	30,  // 71: procmesh.v1.ConfigService.Diff:input_type -> procmesh.v1.DiffRequest
+	32,  // 72: procmesh.v1.ConfigService.Rollback:input_type -> procmesh.v1.RollbackRequest
+	34,  // 73: procmesh.v1.LogService.TailLogs:input_type -> procmesh.v1.TailLogsRequest
+	36,  // 74: procmesh.v1.LogService.StreamLogs:input_type -> procmesh.v1.StreamLogsRequest
+	37,  // 75: procmesh.v1.LogService.DownloadLogs:input_type -> procmesh.v1.DownloadLogsRequest
+	42,  // 76: procmesh.v1.NodeService.ListNodes:input_type -> procmesh.v1.ListNodesRequest
+	44,  // 77: procmesh.v1.NodeService.GetNode:input_type -> procmesh.v1.GetNodeRequest
+	46,  // 78: procmesh.v1.NodeService.CreateJoinToken:input_type -> procmesh.v1.CreateJoinTokenRequest
+	48,  // 79: procmesh.v1.NodeService.RevokeJoinToken:input_type -> procmesh.v1.RevokeJoinTokenRequest
+	50,  // 80: procmesh.v1.NodeService.RemoveNode:input_type -> procmesh.v1.RemoveNodeRequest
+	52,  // 81: procmesh.v1.NodeService.PromoteNode:input_type -> procmesh.v1.PromoteNodeRequest
+	54,  // 82: procmesh.v1.ClusterService.Init:input_type -> procmesh.v1.InitClusterRequest
+	56,  // 83: procmesh.v1.ClusterService.Join:input_type -> procmesh.v1.JoinClusterRequest
+	60,  // 84: procmesh.v1.ClusterService.RequestJoin:input_type -> procmesh.v1.RequestJoinRequest
+	58,  // 85: procmesh.v1.ClusterService.Overview:input_type -> procmesh.v1.ClusterOverviewRequest
+	62,  // 86: procmesh.v1.AuthService.Login:input_type -> procmesh.v1.LoginRequest
+	64,  // 87: procmesh.v1.AuthService.Logout:input_type -> procmesh.v1.LogoutRequest
+	66,  // 88: procmesh.v1.AuthService.CreateAPIToken:input_type -> procmesh.v1.CreateAPITokenRequest
+	68,  // 89: procmesh.v1.AuthService.RevokeAPIToken:input_type -> procmesh.v1.RevokeAPITokenRequest
+	70,  // 90: procmesh.v1.AuthService.GetMe:input_type -> procmesh.v1.GetMeRequest
+	73,  // 91: procmesh.v1.UserService.ListUsers:input_type -> procmesh.v1.ListUsersRequest
+	75,  // 92: procmesh.v1.UserService.CreateUser:input_type -> procmesh.v1.CreateUserRequest
+	77,  // 93: procmesh.v1.UserService.DisableUser:input_type -> procmesh.v1.DisableUserRequest
+	81,  // 94: procmesh.v1.RoleService.ListRoles:input_type -> procmesh.v1.ListRolesRequest
+	83,  // 95: procmesh.v1.RoleService.CreateRole:input_type -> procmesh.v1.CreateRoleRequest
+	85,  // 96: procmesh.v1.RoleService.GrantRole:input_type -> procmesh.v1.GrantRoleRequest
+	89,  // 97: procmesh.v1.AuditService.ListAudit:input_type -> procmesh.v1.ListAuditRequest
+	91,  // 98: procmesh.v1.MetricsService.GetAgentMetrics:input_type -> procmesh.v1.GetAgentMetricsRequest
+	94,  // 99: procmesh.v1.MetricsService.GetProcessMetrics:input_type -> procmesh.v1.GetProcessMetricsRequest
+	16,  // 100: procmesh.v1.ProcessService.ListProcesses:output_type -> procmesh.v1.ListProcessesResponse
+	14,  // 101: procmesh.v1.ProcessService.GetProcess:output_type -> procmesh.v1.GetProcessResponse
+	12,  // 102: procmesh.v1.ProcessService.ApplyProcess:output_type -> procmesh.v1.ApplyProcessResponse
+	18,  // 103: procmesh.v1.ProcessService.DeleteProcess:output_type -> procmesh.v1.DeleteProcessResponse
+	20,  // 104: procmesh.v1.ProcessService.StartProcess:output_type -> procmesh.v1.ProcessRefResponse
+	20,  // 105: procmesh.v1.ProcessService.StopProcess:output_type -> procmesh.v1.ProcessRefResponse
+	20,  // 106: procmesh.v1.ProcessService.RestartProcess:output_type -> procmesh.v1.ProcessRefResponse
+	20,  // 107: procmesh.v1.ProcessService.KillProcess:output_type -> procmesh.v1.ProcessRefResponse
+	20,  // 108: procmesh.v1.ProcessService.ResetFailure:output_type -> procmesh.v1.ProcessRefResponse
+	22,  // 109: procmesh.v1.ProcessService.AdoptInstance:output_type -> procmesh.v1.AdoptResponse
+	24,  // 110: procmesh.v1.ConfigService.GetConfig:output_type -> procmesh.v1.GetConfigResponse
+	26,  // 111: procmesh.v1.ConfigService.UpdateConfig:output_type -> procmesh.v1.UpdateConfigResponse
+	29,  // 112: procmesh.v1.ConfigService.History:output_type -> procmesh.v1.HistoryResponse
+	31,  // 113: procmesh.v1.ConfigService.Diff:output_type -> procmesh.v1.DiffResponse
+	33,  // 114: procmesh.v1.ConfigService.Rollback:output_type -> procmesh.v1.RollbackResponse
+	35,  // 115: procmesh.v1.LogService.TailLogs:output_type -> procmesh.v1.TailLogsResponse
+	38,  // 116: procmesh.v1.LogService.StreamLogs:output_type -> procmesh.v1.LogChunk
+	38,  // 117: procmesh.v1.LogService.DownloadLogs:output_type -> procmesh.v1.LogChunk
+	43,  // 118: procmesh.v1.NodeService.ListNodes:output_type -> procmesh.v1.ListNodesResponse
+	45,  // 119: procmesh.v1.NodeService.GetNode:output_type -> procmesh.v1.GetNodeResponse
+	47,  // 120: procmesh.v1.NodeService.CreateJoinToken:output_type -> procmesh.v1.CreateJoinTokenResponse
+	49,  // 121: procmesh.v1.NodeService.RevokeJoinToken:output_type -> procmesh.v1.RevokeJoinTokenResponse
+	51,  // 122: procmesh.v1.NodeService.RemoveNode:output_type -> procmesh.v1.RemoveNodeResponse
+	53,  // 123: procmesh.v1.NodeService.PromoteNode:output_type -> procmesh.v1.PromoteNodeResponse
+	55,  // 124: procmesh.v1.ClusterService.Init:output_type -> procmesh.v1.InitClusterResponse
+	57,  // 125: procmesh.v1.ClusterService.Join:output_type -> procmesh.v1.JoinClusterResponse
+	61,  // 126: procmesh.v1.ClusterService.RequestJoin:output_type -> procmesh.v1.RequestJoinResponse
+	59,  // 127: procmesh.v1.ClusterService.Overview:output_type -> procmesh.v1.ClusterOverviewResponse
+	63,  // 128: procmesh.v1.AuthService.Login:output_type -> procmesh.v1.LoginResponse
+	65,  // 129: procmesh.v1.AuthService.Logout:output_type -> procmesh.v1.LogoutResponse
+	67,  // 130: procmesh.v1.AuthService.CreateAPIToken:output_type -> procmesh.v1.CreateAPITokenResponse
+	69,  // 131: procmesh.v1.AuthService.RevokeAPIToken:output_type -> procmesh.v1.RevokeAPITokenResponse
+	71,  // 132: procmesh.v1.AuthService.GetMe:output_type -> procmesh.v1.GetMeResponse
+	74,  // 133: procmesh.v1.UserService.ListUsers:output_type -> procmesh.v1.ListUsersResponse
+	76,  // 134: procmesh.v1.UserService.CreateUser:output_type -> procmesh.v1.CreateUserResponse
+	78,  // 135: procmesh.v1.UserService.DisableUser:output_type -> procmesh.v1.DisableUserResponse
+	82,  // 136: procmesh.v1.RoleService.ListRoles:output_type -> procmesh.v1.ListRolesResponse
+	84,  // 137: procmesh.v1.RoleService.CreateRole:output_type -> procmesh.v1.CreateRoleResponse
+	86,  // 138: procmesh.v1.RoleService.GrantRole:output_type -> procmesh.v1.GrantRoleResponse
+	90,  // 139: procmesh.v1.AuditService.ListAudit:output_type -> procmesh.v1.ListAuditResponse
+	93,  // 140: procmesh.v1.MetricsService.GetAgentMetrics:output_type -> procmesh.v1.GetAgentMetricsResponse
+	96,  // 141: procmesh.v1.MetricsService.GetProcessMetrics:output_type -> procmesh.v1.GetProcessMetricsResponse
+	100, // [100:142] is the sub-list for method output_type
+	58,  // [58:100] is the sub-list for method input_type
+	58,  // [58:58] is the sub-list for extension type_name
+	58,  // [58:58] is the sub-list for extension extendee
+	0,   // [0:58] is the sub-list for field type_name
 }
 
 func init() { file_proto_procmesh_v1_api_proto_init() }
@@ -5764,9 +6789,9 @@ func file_proto_procmesh_v1_api_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_procmesh_v1_api_proto_rawDesc), len(file_proto_procmesh_v1_api_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   87,
+			NumMessages:   100,
 			NumExtensions: 0,
-			NumServices:   8,
+			NumServices:   10,
 		},
 		GoTypes:           file_proto_procmesh_v1_api_proto_goTypes,
 		DependencyIndexes: file_proto_procmesh_v1_api_proto_depIdxs,

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"sort"
 	"time"
 
 	"connectrpc.com/connect"
@@ -82,6 +83,49 @@ func (s *AuthAPI) CreateAPIToken(ctx context.Context, req *connect.Request[procm
 		Token:       plain,
 		ExpiresUnix: expUnix,
 	}), nil
+}
+
+func (s *AuthAPI) GetMe(ctx context.Context, _ *connect.Request[procmeshv1.GetMeRequest]) (*connect.Response[procmeshv1.GetMeResponse], error) {
+	if s.Auth == nil {
+		return nil, unimplemented()
+	}
+	p, ok := PrincipalFrom(ctx)
+	if !ok {
+		return nil, ToConnect(errcode.E(errcode.DENIED, "authentication required"))
+	}
+	return connect.NewResponse(&procmeshv1.GetMeResponse{
+		UserId:      p.UserID,
+		Username:    p.Username,
+		CsrfToken:   p.CSRF,
+		Permissions: collectPermissions(s.Auth, p.UserID),
+	}), nil
+}
+
+func collectPermissions(svc *auth.Service, userID string) []string {
+	if svc == nil || svc.Store() == nil {
+		return nil
+	}
+	view := svc.Store().View()
+	seen := make(map[string]struct{})
+	var out []string
+	for _, b := range view.Bindings {
+		if b.UserID != userID {
+			continue
+		}
+		role, ok := view.Roles[b.RoleID]
+		if !ok {
+			continue
+		}
+		for _, perm := range role.Perms {
+			if _, dup := seen[perm]; dup {
+				continue
+			}
+			seen[perm] = struct{}{}
+			out = append(out, perm)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (s *AuthAPI) RevokeAPIToken(ctx context.Context, req *connect.Request[procmeshv1.RevokeAPITokenRequest]) (*connect.Response[procmeshv1.RevokeAPITokenResponse], error) {

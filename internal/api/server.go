@@ -18,6 +18,8 @@ import (
 	"github.com/qleelulu/procmesh/internal/localhttp"
 	"github.com/qleelulu/procmesh/internal/logmgr"
 	"github.com/qleelulu/procmesh/internal/process"
+	"github.com/qleelulu/procmesh/internal/store"
+	"github.com/qleelulu/procmesh/internal/web"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
 
@@ -34,20 +36,25 @@ type Server struct {
 }
 
 type Options struct {
-	Addr      string
-	Mgr       *process.Manager
-	Logs      *logmgr.Manager
-	Store     RevisionStore // 可为 *store.Store；nil 时 Config.Diff 不可用
-	Cluster   ClusterDeps   // 零值 = 未接线；Init/Join → UNAVAILABLE
-	Auth      *auth.Service // nil = 不鉴权（单测）
-	Degraded  bool
-	Ready     func() error
-	Started   time.Time
-	LocalOnly bool
-	LocalID   string
-	Router    *Router
-	Forward   Forwarder
-	HasQuorum func() bool
+	Addr          string
+	Mgr           *process.Manager
+	Logs          *logmgr.Manager
+	Store         RevisionStore // 可为 *store.Store；nil 时 Config.Diff 不可用
+	Cluster       ClusterDeps   // 零值 = 未接线；Init/Join → UNAVAILABLE
+	Auth          *auth.Service // nil = 不鉴权（单测）
+	Degraded      bool
+	Ready         func() error
+	Started       time.Time
+	LocalOnly     bool
+	LocalID       string
+	Router        *Router
+	Forward       Forwarder
+	HasQuorum     func() bool
+	RPCHealthy    func() bool
+	GossipHealthy func() bool
+	CertExpires   func() int64
+	CAExpires     func() int64
+	Members       func() []cluster.NodeSummary
 }
 
 func NewServer(opts Options) (*Server, error) {
@@ -56,6 +63,18 @@ func NewServer(opts Options) (*Server, error) {
 	}
 	if opts.Started.IsZero() {
 		opts.Started = time.Now()
+	}
+	if opts.Cluster.RPCHealthy == nil {
+		opts.Cluster.RPCHealthy = opts.RPCHealthy
+	}
+	if opts.Cluster.GossipHealthy == nil {
+		opts.Cluster.GossipHealthy = opts.GossipHealthy
+	}
+	if opts.Cluster.CertExpires == nil {
+		opts.Cluster.CertExpires = opts.CertExpires
+	}
+	if opts.Cluster.CAExpires == nil {
+		opts.Cluster.CAExpires = opts.CAExpires
 	}
 
 	rpcForwardTotal := &atomic.Uint64{}
@@ -100,12 +119,28 @@ func NewServer(opts Options) (*Server, error) {
 	mountConnect(engine, up, uh)
 	rp, rh := procmeshv1connect.NewRoleServiceHandler(&RoleAPI{Auth: opts.Auth}, intercept)
 	mountConnect(engine, rp, rh)
+	adp, adh := procmeshv1connect.NewAuditServiceHandler(newAuditAPI(opts), intercept)
+	mountConnect(engine, adp, adh)
+	mp, mh := procmeshv1connect.NewMetricsServiceHandler(&MetricsAPI{
+		Mgr: opts.Mgr, Auth: opts.Auth, Started: opts.Started, Cluster: opts.Cluster,
+		LocalOnly: opts.LocalOnly, LocalID: opts.LocalID, Router: opts.Router, Forward: opts.Forward,
+		Degraded: degraded,
+	}, intercept)
+	mountConnect(engine, mp, mh)
 
 	legacy, err := localhttp.NewServerOpts(opts.Mgr, opts.Logs, opts.Addr, opts.Degraded, opts.Ready)
 	if err != nil {
 		return nil, err
 	}
 	engine.Any("/v1/*path", gin.WrapH(wrapLegacyV1(legacy.Handler, s.clusterInited, s.blockLegacyMutations)))
+
+	engine.NoRoute(func(c *gin.Context) {
+		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		web.Handler().ServeHTTP(c.Writer, c.Request)
+	})
 
 	return s, nil
 }
@@ -246,4 +281,27 @@ func (s *Server) isDegraded() bool {
 
 func mountConnect(engine *gin.Engine, path string, h http.Handler) {
 	engine.Any(strings.TrimSuffix(path, "/")+"/*path", gin.WrapH(h))
+}
+
+func newAuditAPI(opts Options) *AuditAPI {
+	var st *store.Store
+	if s, ok := opts.Store.(*store.Store); ok {
+		st = s
+	}
+	members := opts.Members
+	if members == nil && opts.Router != nil {
+		members = opts.Router.Members
+	}
+	if members == nil {
+		members = opts.Cluster.members
+	}
+	return &AuditAPI{
+		Store:     st,
+		Auth:      opts.Auth,
+		LocalOnly: opts.LocalOnly,
+		LocalID:   opts.LocalID,
+		Router:    opts.Router,
+		Forward:   opts.Forward,
+		Members:   members,
+	}
 }

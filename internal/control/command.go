@@ -93,10 +93,10 @@ type BindPutBody struct {
 }
 
 type JoinTokenPutBody struct {
-	ID          string `json:"id"`
-	Hash        string `json:"hash"`
-	ExpiresUnix int64  `json:"expires_unix"`
-	Remaining   int    `json:"remaining"`
+	ID         string `json:"id"`
+	Hash       string `json:"hash"`
+	TTLSeconds int64  `json:"ttl_seconds"`
+	Remaining  int    `json:"remaining"`
 }
 
 type JoinTokenConsumeBody struct {

@@ -35,17 +35,22 @@ func (s *liveSource) Snapshot() cluster.NodeSummary {
 		}
 	}
 	return cluster.NodeSummary{
-		NodeID:            s.nodeID,
-		ClusterID:         clusterID,
-		Hostname:          s.hostname,
-		BootID:            s.bootID,
-		State:             cluster.StateAlive,
-		AgentVersion:      version.Agent,
-		ProtocolVersion:   version.Protocol,
-		APIAddress:        s.apiAddr,
-		RPCAddress:        s.rpcAddr,
-		GossipAddress:     s.gossip,
-		Processes:         processSummaries(s.mgr),
+		NodeID:          s.nodeID,
+		ClusterID:       clusterID,
+		Hostname:        s.hostname,
+		BootID:          s.bootID,
+		State:           cluster.StateAlive,
+		AgentVersion:    version.Agent,
+		ProtocolVersion: version.Protocol,
+		APIAddress:      s.apiAddr,
+		RPCAddress:      s.rpcAddr,
+		GossipAddress:   s.gossip,
+		Processes:       processSummaries(s.mgr),
+		Resources: cluster.ResourceSummary{
+			CPUPercent:    -1,
+			MemoryPercent: -1,
+			DiskPercent:   -1,
+		},
 		LastUpdatedUnixMs: time.Now().UnixMilli(),
 	}
 }

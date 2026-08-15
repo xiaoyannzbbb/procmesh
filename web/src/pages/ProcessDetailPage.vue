@@ -1,0 +1,459 @@
+<script setup lang="ts">
+import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
+import { computed, ref } from "vue";
+import { useRoute } from "vue-router";
+import { withTarget } from "../lib/headers";
+import { newOperationId } from "../lib/opid";
+import { useMetricsClient, useNodeClient, useProcessClient } from "../lib/rpc";
+import { session } from "../lib/session";
+import {
+  flattenClusterProcesses,
+  formatRemoteError,
+  mapProcessDetail,
+  ownerDisplay,
+} from "./processView";
+import ProcessConfigPanel from "./ProcessConfigPanel.vue";
+import ProcessLogsPanel from "./ProcessLogsPanel.vue";
+
+const POLL_MS = 5000;
+const route = useRoute();
+const nodes = useNodeClient();
+const processes = useProcessClient();
+const metrics = useMetricsClient();
+const queryClient = useQueryClient();
+const actionError = ref("");
+const tab = ref<"overview" | "config" | "logs">("overview");
+
+const idOrName = computed(() => String(route.params.idOrName ?? ""));
+const routeNode = computed(() => {
+  const raw = route.query.node;
+  return typeof raw === "string" ? raw : "";
+});
+
+const perms = computed(() => new Set(session.value?.permissions ?? []));
+const canStart = computed(() => perms.value.has("process.start"));
+const canStop = computed(() => perms.value.has("process.stop"));
+const canRestart = computed(() => perms.value.has("process.restart"));
+
+const nodesQuery = useQuery({
+  queryKey: ["nodes"],
+  queryFn: () => nodes.listNodes({}),
+  refetchInterval: POLL_MS,
+});
+
+const gossipRows = computed(() => flattenClusterProcesses(nodesQuery.data.value?.nodes ?? [], Date.now()));
+
+const ownerNodeId = computed(() => {
+  if (routeNode.value) {
+    return routeNode.value;
+  }
+  const matches = gossipRows.value.filter((r) => r.name === idOrName.value);
+  return matches.length === 1 ? matches[0].ownerNodeId : "";
+});
+
+const ownerLabel = computed(() => {
+  const match = gossipRows.value.find((r) => r.ownerNodeId === ownerNodeId.value && r.name === idOrName.value);
+  if (match) {
+    return ownerDisplay(match.ownerHostname, match.ownerNodeId);
+  }
+  return ownerNodeId.value;
+});
+
+const targetOpts = computed(() => ({ headers: withTarget(ownerNodeId.value) }));
+
+const processQuery = useQuery({
+  queryKey: computed(() => ["process", idOrName.value, ownerNodeId.value]),
+  queryFn: () => processes.getProcess({ idOrName: idOrName.value }, targetOpts.value),
+  refetchInterval: POLL_MS,
+  enabled: computed(() => idOrName.value.length > 0 && ownerNodeId.value.length > 0),
+});
+
+const metricsQuery = useQuery({
+  queryKey: computed(() => ["process-metrics", idOrName.value, ownerNodeId.value]),
+  queryFn: () => metrics.getProcessMetrics({ idOrName: idOrName.value }, targetOpts.value),
+  refetchInterval: POLL_MS,
+  enabled: computed(() => idOrName.value.length > 0 && ownerNodeId.value.length > 0),
+});
+
+const detail = computed(() => {
+  const raw = processQuery.data.value?.process;
+  if (!raw) {
+    return null;
+  }
+  return mapProcessDetail(raw, metricsQuery.data.value, Date.now(), ownerLabel.value);
+});
+
+const errorText = computed(() => {
+  if (actionError.value) {
+    return actionError.value;
+  }
+  if (processQuery.error.value) {
+    return formatRemoteError(processQuery.error.value);
+  }
+  if (!ownerNodeId.value && nodesQuery.isFetched.value) {
+    return "Owner node is required.";
+  }
+  if (nodesQuery.error.value && !processQuery.data.value) {
+    return formatRemoteError(nodesQuery.error.value);
+  }
+  return "";
+});
+
+const metricsNote = computed(() => {
+  if (!metricsQuery.error.value) {
+    return "";
+  }
+  return formatRemoteError(metricsQuery.error.value);
+});
+
+function mutationMeta() {
+  return {
+    operationId: newOperationId(),
+    operator: session.value?.username ?? "",
+  };
+}
+
+const acting = computed(
+  () =>
+    startMut.isPending.value ||
+    stopMut.isPending.value ||
+    restartMut.isPending.value ||
+    killMut.isPending.value,
+);
+
+async function invalidateProcess(): Promise<void> {
+  await queryClient.invalidateQueries({ queryKey: ["process", idOrName.value, ownerNodeId.value] });
+  await queryClient.invalidateQueries({ queryKey: ["process-metrics", idOrName.value, ownerNodeId.value] });
+  await queryClient.invalidateQueries({ queryKey: ["nodes"] });
+}
+
+function onActionError(err: unknown): void {
+  actionError.value = formatRemoteError(err);
+}
+
+const startMut = useMutation({
+  mutationFn: () =>
+    processes.startProcess({ meta: mutationMeta(), idOrName: idOrName.value }, targetOpts.value),
+  onSuccess: invalidateProcess,
+  onError: onActionError,
+});
+const stopMut = useMutation({
+  mutationFn: () =>
+    processes.stopProcess({ meta: mutationMeta(), idOrName: idOrName.value }, targetOpts.value),
+  onSuccess: invalidateProcess,
+  onError: onActionError,
+});
+const restartMut = useMutation({
+  mutationFn: () =>
+    processes.restartProcess({ meta: mutationMeta(), idOrName: idOrName.value }, targetOpts.value),
+  onSuccess: invalidateProcess,
+  onError: onActionError,
+});
+const killMut = useMutation({
+  mutationFn: () =>
+    processes.killProcess({ meta: mutationMeta(), idOrName: idOrName.value }, targetOpts.value),
+  onSuccess: invalidateProcess,
+  onError: onActionError,
+});
+
+async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> {
+  actionError.value = "";
+  try {
+    await mut.mutateAsync();
+  } catch {
+    // onError already recorded UNAVAILABLE / TIMEOUT
+  }
+}
+</script>
+
+<template>
+  <div class="page">
+    <div class="head">
+      <div>
+        <RouterLink class="back" to="/processes">← Processes</RouterLink>
+        <h1>{{ detail?.name || idOrName }}</h1>
+      </div>
+      <div class="actions">
+        <button type="button" class="btn" :disabled="!canStart || acting || !ownerNodeId" @click="run(startMut)">Start</button>
+        <button type="button" class="btn" :disabled="!canStop || acting || !ownerNodeId" @click="run(stopMut)">Stop</button>
+        <button type="button" class="btn" :disabled="!canRestart || acting || !ownerNodeId" @click="run(restartMut)">Restart</button>
+        <button type="button" class="btn btn-danger" :disabled="!canStop || acting || !ownerNodeId" @click="run(killMut)">
+          Force Stop
+        </button>
+      </div>
+    </div>
+
+    <p v-if="processQuery.isPending && !detail && ownerNodeId" class="muted">Loading…</p>
+    <p v-else-if="errorText && !detail" class="error" role="alert">{{ errorText }}</p>
+    <template v-else-if="detail">
+      <p v-if="errorText" class="error" role="alert">{{ errorText }}</p>
+      <div v-if="detail.showRestartBanner" class="banner restart" role="status">
+        {{ detail.restartBanner }}
+      </div>
+      <div class="tabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          :class="{ active: tab === 'overview' }"
+          :aria-selected="tab === 'overview'"
+          @click="tab = 'overview'"
+        >
+          Overview
+        </button>
+        <button
+          type="button"
+          role="tab"
+          :class="{ active: tab === 'config' }"
+          :aria-selected="tab === 'config'"
+          @click="tab = 'config'"
+        >
+          Config
+        </button>
+        <button
+          type="button"
+          role="tab"
+          :class="{ active: tab === 'logs' }"
+          :aria-selected="tab === 'logs'"
+          @click="tab = 'logs'"
+        >
+          Logs
+        </button>
+      </div>
+      <ProcessConfigPanel v-if="tab === 'config'" :id-or-name="idOrName" :target-node-id="ownerNodeId" />
+      <ProcessLogsPanel
+        v-else-if="tab === 'logs'"
+        :id-or-name="idOrName"
+        :target-node-id="ownerNodeId"
+        :instances="detail.instanceRows.map((r) => r.instanceId).filter(Boolean)"
+      />
+      <template v-else>
+      <section class="card">
+        <h2>Process</h2>
+        <dl class="facts">
+          <div>
+            <dt>Name</dt>
+            <dd>{{ detail.name || "—" }}</dd>
+          </div>
+          <div>
+            <dt>Process ID</dt>
+            <dd class="mono">{{ detail.processId || "—" }}</dd>
+          </div>
+          <div>
+            <dt>Owner</dt>
+            <dd>{{ detail.owner || "—" }}</dd>
+          </div>
+          <div>
+            <dt>Instances</dt>
+            <dd>{{ detail.instances }}</dd>
+          </div>
+          <div>
+            <dt>Desired</dt>
+            <dd>{{ detail.desired || "—" }}</dd>
+          </div>
+          <div>
+            <dt>Observed</dt>
+            <dd>{{ detail.observed || "—" }}</dd>
+          </div>
+          <div>
+            <dt>Health</dt>
+            <dd>{{ detail.health || "—" }}</dd>
+          </div>
+          <div>
+            <dt>PID</dt>
+            <dd>{{ detail.pid }}</dd>
+          </div>
+          <div>
+            <dt>Uptime</dt>
+            <dd>{{ detail.uptime }}</dd>
+          </div>
+          <div>
+            <dt>Restart Count</dt>
+            <dd>{{ detail.restartCount }}</dd>
+          </div>
+          <div>
+            <dt>Exit Code</dt>
+            <dd>{{ detail.exitCode }}</dd>
+          </div>
+          <div>
+            <dt>Active Revision</dt>
+            <dd>{{ detail.activeRevision }}</dd>
+          </div>
+          <div>
+            <dt>Latest Revision</dt>
+            <dd>{{ detail.latestRevision }}</dd>
+          </div>
+          <div>
+            <dt>CPU</dt>
+            <dd>
+              {{ detail.cpu }}
+              <span v-if="detail.cpuNote || metricsNote" class="muted note">{{ detail.cpuNote || metricsNote }}</span>
+            </dd>
+          </div>
+          <div>
+            <dt>Memory</dt>
+            <dd>
+              {{ detail.memory }}
+              <span v-if="detail.memoryNote || metricsNote" class="muted note">{{ detail.memoryNote || metricsNote }}</span>
+            </dd>
+          </div>
+        </dl>
+      </section>
+
+      <section v-if="detail.instanceRows.length" class="card">
+        <h2>Instances</h2>
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Instance</th>
+              <th>Desired</th>
+              <th>Observed</th>
+              <th>Health</th>
+              <th>PID</th>
+              <th>Uptime</th>
+              <th>Restarts</th>
+              <th>Exit</th>
+              <th>Revision</th>
+              <th>CPU</th>
+              <th>Memory</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="inst in detail.instanceRows" :key="inst.instanceId || String(inst.ordinal)">
+              <td class="mono">{{ inst.instanceId || inst.ordinal }}</td>
+              <td>{{ inst.desired || "—" }}</td>
+              <td>{{ inst.observed || "—" }}</td>
+              <td>{{ inst.health || "—" }}</td>
+              <td>{{ inst.pid }}</td>
+              <td>{{ inst.uptime }}</td>
+              <td>{{ inst.restartCount }}</td>
+              <td>{{ inst.exitCode }}</td>
+              <td>{{ inst.activeRevision }}</td>
+              <td>
+                {{ inst.cpu }}
+                <span v-if="inst.cpuNote" class="muted note">{{ inst.cpuNote }}</span>
+              </td>
+              <td>
+                {{ inst.memory }}
+                <span v-if="inst.memoryNote" class="muted note">{{ inst.memoryNote }}</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+      </template>
+    </template>
+  </div>
+</template>
+
+<style scoped>
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+h1 {
+  margin: 0.25rem 0 0;
+  font-size: 1.35rem;
+  font-weight: 650;
+}
+h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.05rem;
+  font-weight: 650;
+}
+.back {
+  color: var(--color-muted);
+  text-decoration: none;
+  font-size: 0.8rem;
+}
+.back:hover {
+  color: var(--color-text);
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--color-border);
+}
+.tabs button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-muted);
+  padding: 0.5rem 0.85rem;
+  font-size: 0.875rem;
+  font-weight: 550;
+  cursor: pointer;
+  margin-bottom: -1px;
+}
+.tabs button.active {
+  color: var(--color-text);
+  border-bottom-color: var(--color-accent);
+}
+.muted {
+  color: var(--color-muted);
+  font-size: 0.875rem;
+}
+.note {
+  display: block;
+  font-weight: 400;
+  font-size: 0.75rem;
+}
+.error {
+  margin: 0;
+  color: var(--color-danger);
+  font-size: 0.875rem;
+}
+.banner {
+  border-radius: 10px;
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+.restart {
+  background: var(--color-stale);
+  color: var(--color-stale-fg);
+}
+.card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-card);
+  padding: 1.25rem;
+  overflow: auto;
+}
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.85rem 1.25rem;
+  margin: 0;
+}
+.facts div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.facts dt {
+  font-size: 0.75rem;
+  color: var(--color-muted);
+}
+.facts dd {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 550;
+}
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+</style>

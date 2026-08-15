@@ -223,6 +223,57 @@ func TestWriteAudit_WrapsAppendAudit(t *testing.T) {
 	}
 }
 
+func TestListAuditAll_EmptyResourceReturnsAll(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	if err := s.AppendAudit(ctx, store.AuditEvent{AuditID: "all-1", Action: "process.start", Resource: "nginx", Result: "SUCCESS"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendAudit(ctx, store.AuditEvent{AuditID: "all-2", Action: "process.start", Resource: "api", Result: "SUCCESS"}); err != nil {
+		t.Fatal(err)
+	}
+	evs, err := s.ListAuditAll(ctx, "", 10)
+	if err != nil || len(evs) != 2 {
+		t.Fatalf("len=%d err=%v evs=%+v", len(evs), err, evs)
+	}
+	got := map[string]bool{}
+	for _, ev := range evs {
+		got[ev.Resource] = true
+	}
+	if !got["nginx"] || !got["api"] {
+		t.Fatalf("resources=%v", got)
+	}
+}
+
+func TestListAuditAll_CapsLimit(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	for i := 0; i < 5; i++ {
+		ev := store.AuditEvent{
+			AuditID:   "cap-" + string(rune('a'+i)),
+			Timestamp: time.Date(2026, 8, 15, 12, 0, i, 0, time.UTC),
+			Resource:  "nginx",
+			Action:    "process.start",
+			Result:    "SUCCESS",
+		}
+		if err := s.AppendAudit(ctx, ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got2, err := s.ListAuditAll(ctx, "nginx", 2)
+	if err != nil || len(got2) != 2 {
+		t.Fatalf("limit=2 len=%d err=%v", len(got2), err)
+	}
+	got0, err := s.ListAuditAll(ctx, "nginx", 0)
+	if err != nil || len(got0) != 5 {
+		t.Fatalf("limit=0 (as 50) len=%d err=%v", len(got0), err)
+	}
+	got500, err := s.ListAuditAll(ctx, "nginx", 500)
+	if err != nil || len(got500) != 5 {
+		t.Fatalf("limit=500 (as 200) len=%d err=%v", len(got500), err)
+	}
+}
+
 func TestAudit_ErrorAfterClose(t *testing.T) {
 	ctx := context.Background()
 	s := openStore(t)
@@ -234,6 +285,9 @@ func TestAudit_ErrorAfterClose(t *testing.T) {
 	}
 	if _, err := s.ListAudit(ctx, "nginx", 10); err == nil {
 		t.Fatal("ListAudit")
+	}
+	if _, err := s.ListAuditAll(ctx, "", 10); err == nil {
+		t.Fatal("ListAuditAll")
 	}
 }
 

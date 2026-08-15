@@ -160,6 +160,9 @@ func ViewOf(spec process.ProcessSpec, insts []process.Instance) *procmeshv1.Proc
 			pi.ExitCode = int32(*inst.ExitCode)
 			pi.HasExitCode = true
 		}
+		if inst.StartedAt != nil {
+			pi.StartedUnixMs = inst.StartedAt.UTC().UnixMilli()
+		}
 		view.Instances = append(view.Instances, pi)
 	}
 	return view

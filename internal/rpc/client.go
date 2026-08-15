@@ -57,6 +57,16 @@ func NewLogClient(hc *http.Client, base string) procmeshv1connect.LogServiceClie
 	return procmeshv1connect.NewLogServiceClient(hc, base)
 }
 
+// NewAuditClient returns an AuditService client over the given HTTP client and base URL.
+func NewAuditClient(hc *http.Client, base string) procmeshv1connect.AuditServiceClient {
+	return procmeshv1connect.NewAuditServiceClient(hc, base)
+}
+
+// NewMetricsClient returns a MetricsService client over the given HTTP client and base URL.
+func NewMetricsClient(hc *http.Client, base string) procmeshv1connect.MetricsServiceClient {
+	return procmeshv1connect.NewMetricsServiceClient(hc, base)
+}
+
 func baseURL(addr string) string {
 	if strings.HasPrefix(addr, "https://") {
 		return addr

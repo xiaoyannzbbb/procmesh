@@ -103,6 +103,47 @@ func (s *Store) ListAudit(ctx context.Context, resource string, limit int) ([]Au
 	return out, nil
 }
 
+// ListAuditAll returns events newest first. Empty resource skips the resource
+// filter. limit<=0 is treated as 50; limit>200 is treated as 200.
+func (s *Store) ListAuditAll(ctx context.Context, resource string, limit int) ([]AuditEvent, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	q := `SELECT ` + auditCols + ` FROM audit_events`
+	args := make([]any, 0, 2)
+	if resource != "" {
+		q += ` WHERE resource = ?`
+		args = append(args, resource)
+	}
+	q += ` ORDER BY timestamp DESC, rowid DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list audit: %w", err)
+	}
+	defer rows.Close()
+
+	var out []AuditEvent
+	for rows.Next() {
+		ev, err := scanAuditRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ev)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list audit: %w", err)
+	}
+	if out == nil {
+		out = []AuditEvent{}
+	}
+	return out, nil
+}
+
 func scanAuditRow(rows *sql.Rows) (AuditEvent, error) {
 	var ev AuditEvent
 	var ts string

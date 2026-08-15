@@ -24,6 +24,10 @@ func TestListNodes_StandaloneLocal(t *testing.T) {
 	if len(listed.Msg.GetNodes()) != 1 || listed.Msg.GetNodes()[0].GetNodeId() != e.nodeID {
 		t.Fatalf("standalone %+v", listed.Msg.GetNodes())
 	}
+	res := listed.Msg.GetNodes()[0].GetResources()
+	if res == nil || res.GetCpuPercent() != -1 || res.GetMemoryPercent() != -1 || res.GetDiskPercent() != -1 {
+		t.Fatalf("uncollected resources %+v want -1", res)
+	}
 }
 
 func TestGetNode_ByIDAndHostname(t *testing.T) {

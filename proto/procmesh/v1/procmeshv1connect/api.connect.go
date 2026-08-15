@@ -37,6 +37,10 @@ const (
 	UserServiceName = "procmesh.v1.UserService"
 	// RoleServiceName is the fully-qualified name of the RoleService service.
 	RoleServiceName = "procmesh.v1.RoleService"
+	// AuditServiceName is the fully-qualified name of the AuditService service.
+	AuditServiceName = "procmesh.v1.AuditService"
+	// MetricsServiceName is the fully-qualified name of the MetricsService service.
+	MetricsServiceName = "procmesh.v1.MetricsService"
 )
 
 // These constants are the fully-qualified names of the RPCs defined in this package. They're
@@ -127,6 +131,8 @@ const (
 	// AuthServiceRevokeAPITokenProcedure is the fully-qualified name of the AuthService's
 	// RevokeAPIToken RPC.
 	AuthServiceRevokeAPITokenProcedure = "/procmesh.v1.AuthService/RevokeAPIToken"
+	// AuthServiceGetMeProcedure is the fully-qualified name of the AuthService's GetMe RPC.
+	AuthServiceGetMeProcedure = "/procmesh.v1.AuthService/GetMe"
 	// UserServiceListUsersProcedure is the fully-qualified name of the UserService's ListUsers RPC.
 	UserServiceListUsersProcedure = "/procmesh.v1.UserService/ListUsers"
 	// UserServiceCreateUserProcedure is the fully-qualified name of the UserService's CreateUser RPC.
@@ -139,6 +145,14 @@ const (
 	RoleServiceCreateRoleProcedure = "/procmesh.v1.RoleService/CreateRole"
 	// RoleServiceGrantRoleProcedure is the fully-qualified name of the RoleService's GrantRole RPC.
 	RoleServiceGrantRoleProcedure = "/procmesh.v1.RoleService/GrantRole"
+	// AuditServiceListAuditProcedure is the fully-qualified name of the AuditService's ListAudit RPC.
+	AuditServiceListAuditProcedure = "/procmesh.v1.AuditService/ListAudit"
+	// MetricsServiceGetAgentMetricsProcedure is the fully-qualified name of the MetricsService's
+	// GetAgentMetrics RPC.
+	MetricsServiceGetAgentMetricsProcedure = "/procmesh.v1.MetricsService/GetAgentMetrics"
+	// MetricsServiceGetProcessMetricsProcedure is the fully-qualified name of the MetricsService's
+	// GetProcessMetrics RPC.
+	MetricsServiceGetProcessMetricsProcedure = "/procmesh.v1.MetricsService/GetProcessMetrics"
 )
 
 // ProcessServiceClient is a client for the procmesh.v1.ProcessService service.
@@ -1095,6 +1109,7 @@ type AuthServiceClient interface {
 	Logout(context.Context, *connect.Request[v1.LogoutRequest]) (*connect.Response[v1.LogoutResponse], error)
 	CreateAPIToken(context.Context, *connect.Request[v1.CreateAPITokenRequest]) (*connect.Response[v1.CreateAPITokenResponse], error)
 	RevokeAPIToken(context.Context, *connect.Request[v1.RevokeAPITokenRequest]) (*connect.Response[v1.RevokeAPITokenResponse], error)
+	GetMe(context.Context, *connect.Request[v1.GetMeRequest]) (*connect.Response[v1.GetMeResponse], error)
 }
 
 // NewAuthServiceClient constructs a client for the procmesh.v1.AuthService service. By default, it
@@ -1132,6 +1147,12 @@ func NewAuthServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 			connect.WithSchema(authServiceMethods.ByName("RevokeAPIToken")),
 			connect.WithClientOptions(opts...),
 		),
+		getMe: connect.NewClient[v1.GetMeRequest, v1.GetMeResponse](
+			httpClient,
+			baseURL+AuthServiceGetMeProcedure,
+			connect.WithSchema(authServiceMethods.ByName("GetMe")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -1141,6 +1162,7 @@ type authServiceClient struct {
 	logout         *connect.Client[v1.LogoutRequest, v1.LogoutResponse]
 	createAPIToken *connect.Client[v1.CreateAPITokenRequest, v1.CreateAPITokenResponse]
 	revokeAPIToken *connect.Client[v1.RevokeAPITokenRequest, v1.RevokeAPITokenResponse]
+	getMe          *connect.Client[v1.GetMeRequest, v1.GetMeResponse]
 }
 
 // Login calls procmesh.v1.AuthService.Login.
@@ -1163,12 +1185,18 @@ func (c *authServiceClient) RevokeAPIToken(ctx context.Context, req *connect.Req
 	return c.revokeAPIToken.CallUnary(ctx, req)
 }
 
+// GetMe calls procmesh.v1.AuthService.GetMe.
+func (c *authServiceClient) GetMe(ctx context.Context, req *connect.Request[v1.GetMeRequest]) (*connect.Response[v1.GetMeResponse], error) {
+	return c.getMe.CallUnary(ctx, req)
+}
+
 // AuthServiceHandler is an implementation of the procmesh.v1.AuthService service.
 type AuthServiceHandler interface {
 	Login(context.Context, *connect.Request[v1.LoginRequest]) (*connect.Response[v1.LoginResponse], error)
 	Logout(context.Context, *connect.Request[v1.LogoutRequest]) (*connect.Response[v1.LogoutResponse], error)
 	CreateAPIToken(context.Context, *connect.Request[v1.CreateAPITokenRequest]) (*connect.Response[v1.CreateAPITokenResponse], error)
 	RevokeAPIToken(context.Context, *connect.Request[v1.RevokeAPITokenRequest]) (*connect.Response[v1.RevokeAPITokenResponse], error)
+	GetMe(context.Context, *connect.Request[v1.GetMeRequest]) (*connect.Response[v1.GetMeResponse], error)
 }
 
 // NewAuthServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -1202,6 +1230,12 @@ func NewAuthServiceHandler(svc AuthServiceHandler, opts ...connect.HandlerOption
 		connect.WithSchema(authServiceMethods.ByName("RevokeAPIToken")),
 		connect.WithHandlerOptions(opts...),
 	)
+	authServiceGetMeHandler := connect.NewUnaryHandler(
+		AuthServiceGetMeProcedure,
+		svc.GetMe,
+		connect.WithSchema(authServiceMethods.ByName("GetMe")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/procmesh.v1.AuthService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case AuthServiceLoginProcedure:
@@ -1212,6 +1246,8 @@ func NewAuthServiceHandler(svc AuthServiceHandler, opts ...connect.HandlerOption
 			authServiceCreateAPITokenHandler.ServeHTTP(w, r)
 		case AuthServiceRevokeAPITokenProcedure:
 			authServiceRevokeAPITokenHandler.ServeHTTP(w, r)
+		case AuthServiceGetMeProcedure:
+			authServiceGetMeHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1235,6 +1271,10 @@ func (UnimplementedAuthServiceHandler) CreateAPIToken(context.Context, *connect.
 
 func (UnimplementedAuthServiceHandler) RevokeAPIToken(context.Context, *connect.Request[v1.RevokeAPITokenRequest]) (*connect.Response[v1.RevokeAPITokenResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.AuthService.RevokeAPIToken is not implemented"))
+}
+
+func (UnimplementedAuthServiceHandler) GetMe(context.Context, *connect.Request[v1.GetMeRequest]) (*connect.Response[v1.GetMeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.AuthService.GetMe is not implemented"))
 }
 
 // UserServiceClient is a client for the procmesh.v1.UserService service.
@@ -1479,4 +1519,170 @@ func (UnimplementedRoleServiceHandler) CreateRole(context.Context, *connect.Requ
 
 func (UnimplementedRoleServiceHandler) GrantRole(context.Context, *connect.Request[v1.GrantRoleRequest]) (*connect.Response[v1.GrantRoleResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.RoleService.GrantRole is not implemented"))
+}
+
+// AuditServiceClient is a client for the procmesh.v1.AuditService service.
+type AuditServiceClient interface {
+	ListAudit(context.Context, *connect.Request[v1.ListAuditRequest]) (*connect.Response[v1.ListAuditResponse], error)
+}
+
+// NewAuditServiceClient constructs a client for the procmesh.v1.AuditService service. By default,
+// it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses, and
+// sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the connect.WithGRPC()
+// or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewAuditServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) AuditServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	auditServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("AuditService").Methods()
+	return &auditServiceClient{
+		listAudit: connect.NewClient[v1.ListAuditRequest, v1.ListAuditResponse](
+			httpClient,
+			baseURL+AuditServiceListAuditProcedure,
+			connect.WithSchema(auditServiceMethods.ByName("ListAudit")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// auditServiceClient implements AuditServiceClient.
+type auditServiceClient struct {
+	listAudit *connect.Client[v1.ListAuditRequest, v1.ListAuditResponse]
+}
+
+// ListAudit calls procmesh.v1.AuditService.ListAudit.
+func (c *auditServiceClient) ListAudit(ctx context.Context, req *connect.Request[v1.ListAuditRequest]) (*connect.Response[v1.ListAuditResponse], error) {
+	return c.listAudit.CallUnary(ctx, req)
+}
+
+// AuditServiceHandler is an implementation of the procmesh.v1.AuditService service.
+type AuditServiceHandler interface {
+	ListAudit(context.Context, *connect.Request[v1.ListAuditRequest]) (*connect.Response[v1.ListAuditResponse], error)
+}
+
+// NewAuditServiceHandler builds an HTTP handler from the service implementation. It returns the
+// path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewAuditServiceHandler(svc AuditServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	auditServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("AuditService").Methods()
+	auditServiceListAuditHandler := connect.NewUnaryHandler(
+		AuditServiceListAuditProcedure,
+		svc.ListAudit,
+		connect.WithSchema(auditServiceMethods.ByName("ListAudit")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/procmesh.v1.AuditService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case AuditServiceListAuditProcedure:
+			auditServiceListAuditHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedAuditServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedAuditServiceHandler struct{}
+
+func (UnimplementedAuditServiceHandler) ListAudit(context.Context, *connect.Request[v1.ListAuditRequest]) (*connect.Response[v1.ListAuditResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.AuditService.ListAudit is not implemented"))
+}
+
+// MetricsServiceClient is a client for the procmesh.v1.MetricsService service.
+type MetricsServiceClient interface {
+	GetAgentMetrics(context.Context, *connect.Request[v1.GetAgentMetricsRequest]) (*connect.Response[v1.GetAgentMetricsResponse], error)
+	GetProcessMetrics(context.Context, *connect.Request[v1.GetProcessMetricsRequest]) (*connect.Response[v1.GetProcessMetricsResponse], error)
+}
+
+// NewMetricsServiceClient constructs a client for the procmesh.v1.MetricsService service. By
+// default, it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses,
+// and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the
+// connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewMetricsServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) MetricsServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	metricsServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("MetricsService").Methods()
+	return &metricsServiceClient{
+		getAgentMetrics: connect.NewClient[v1.GetAgentMetricsRequest, v1.GetAgentMetricsResponse](
+			httpClient,
+			baseURL+MetricsServiceGetAgentMetricsProcedure,
+			connect.WithSchema(metricsServiceMethods.ByName("GetAgentMetrics")),
+			connect.WithClientOptions(opts...),
+		),
+		getProcessMetrics: connect.NewClient[v1.GetProcessMetricsRequest, v1.GetProcessMetricsResponse](
+			httpClient,
+			baseURL+MetricsServiceGetProcessMetricsProcedure,
+			connect.WithSchema(metricsServiceMethods.ByName("GetProcessMetrics")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// metricsServiceClient implements MetricsServiceClient.
+type metricsServiceClient struct {
+	getAgentMetrics   *connect.Client[v1.GetAgentMetricsRequest, v1.GetAgentMetricsResponse]
+	getProcessMetrics *connect.Client[v1.GetProcessMetricsRequest, v1.GetProcessMetricsResponse]
+}
+
+// GetAgentMetrics calls procmesh.v1.MetricsService.GetAgentMetrics.
+func (c *metricsServiceClient) GetAgentMetrics(ctx context.Context, req *connect.Request[v1.GetAgentMetricsRequest]) (*connect.Response[v1.GetAgentMetricsResponse], error) {
+	return c.getAgentMetrics.CallUnary(ctx, req)
+}
+
+// GetProcessMetrics calls procmesh.v1.MetricsService.GetProcessMetrics.
+func (c *metricsServiceClient) GetProcessMetrics(ctx context.Context, req *connect.Request[v1.GetProcessMetricsRequest]) (*connect.Response[v1.GetProcessMetricsResponse], error) {
+	return c.getProcessMetrics.CallUnary(ctx, req)
+}
+
+// MetricsServiceHandler is an implementation of the procmesh.v1.MetricsService service.
+type MetricsServiceHandler interface {
+	GetAgentMetrics(context.Context, *connect.Request[v1.GetAgentMetricsRequest]) (*connect.Response[v1.GetAgentMetricsResponse], error)
+	GetProcessMetrics(context.Context, *connect.Request[v1.GetProcessMetricsRequest]) (*connect.Response[v1.GetProcessMetricsResponse], error)
+}
+
+// NewMetricsServiceHandler builds an HTTP handler from the service implementation. It returns the
+// path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewMetricsServiceHandler(svc MetricsServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	metricsServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("MetricsService").Methods()
+	metricsServiceGetAgentMetricsHandler := connect.NewUnaryHandler(
+		MetricsServiceGetAgentMetricsProcedure,
+		svc.GetAgentMetrics,
+		connect.WithSchema(metricsServiceMethods.ByName("GetAgentMetrics")),
+		connect.WithHandlerOptions(opts...),
+	)
+	metricsServiceGetProcessMetricsHandler := connect.NewUnaryHandler(
+		MetricsServiceGetProcessMetricsProcedure,
+		svc.GetProcessMetrics,
+		connect.WithSchema(metricsServiceMethods.ByName("GetProcessMetrics")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/procmesh.v1.MetricsService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case MetricsServiceGetAgentMetricsProcedure:
+			metricsServiceGetAgentMetricsHandler.ServeHTTP(w, r)
+		case MetricsServiceGetProcessMetricsProcedure:
+			metricsServiceGetProcessMetricsHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedMetricsServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedMetricsServiceHandler struct{}
+
+func (UnimplementedMetricsServiceHandler) GetAgentMetrics(context.Context, *connect.Request[v1.GetAgentMetricsRequest]) (*connect.Response[v1.GetAgentMetricsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.MetricsService.GetAgentMetrics is not implemented"))
+}
+
+func (UnimplementedMetricsServiceHandler) GetProcessMetrics(context.Context, *connect.Request[v1.GetProcessMetricsRequest]) (*connect.Response[v1.GetProcessMetricsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.MetricsService.GetProcessMetrics is not implemented"))
 }

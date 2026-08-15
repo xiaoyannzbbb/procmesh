@@ -1,0 +1,116 @@
+import { Code, ConnectError } from "@connectrpc/connect";
+import { describe, expect, it } from "vitest";
+import { ErrorInfoSchema } from "../gen/procmesh/v1/api_pb";
+import { STALE } from "../lib/freshness";
+import {
+  flattenClusterProcesses,
+  formatMetric,
+  formatRemoteError,
+  needsRestartBanner,
+  RESTART_REQUIRED_BANNER,
+} from "./processView";
+
+const nowMs = 1_700_000_010_000;
+
+const nodes = [
+  {
+    nodeId: "n-a",
+    hostname: "agent-a",
+    state: "ALIVE",
+    lastUpdatedUnixMs: nowMs - 1_000,
+    processes: [
+      {
+        name: "api",
+        desired: "RUNNING",
+        observed: "RUNNING",
+        health: "HEALTHY",
+        latestRevision: 3,
+        activeRevision: 3,
+        freshnessUnixMs: nowMs - 1_000,
+      },
+    ],
+  },
+  {
+    nodeId: "n-b",
+    hostname: "agent-b",
+    state: "FAILED",
+    lastUpdatedUnixMs: nowMs - 60_000,
+    processes: [
+      {
+        name: "api",
+        desired: "RUNNING",
+        observed: "RUNNING",
+        health: "HEALTHY",
+        latestRevision: 2,
+        activeRevision: 2,
+        freshnessUnixMs: nowMs - 1_000,
+      },
+      {
+        name: "worker",
+        desired: "RUNNING",
+        observed: "EXITED",
+        health: "UNHEALTHY",
+        latestRevision: 4,
+        activeRevision: 3,
+        freshnessUnixMs: nowMs - 2_000,
+      },
+    ],
+  },
+];
+
+describe("flattenClusterProcesses", () => {
+  it("flattens processes from nodes[] gossip summaries", () => {
+    const rows = flattenClusterProcesses(nodes, nowMs);
+    expect(rows).toHaveLength(3);
+    expect(rows.map((r) => r.name).sort()).toEqual(["api", "api", "worker"]);
+  });
+
+  it("keeps same-name processes on different nodes as two rows", () => {
+    const rows = flattenClusterProcesses(nodes, nowMs);
+    const apis = rows.filter((r) => r.name === "api");
+    expect(apis).toHaveLength(2);
+    expect(apis.map((r) => r.ownerNodeId).sort()).toEqual(["n-a", "n-b"]);
+    expect(apis.map((r) => r.ownerHostname).sort()).toEqual(["agent-a", "agent-b"]);
+  });
+
+  it("marks FAILED owner observed=RUNNING as STALE", () => {
+    const rows = flattenClusterProcesses(nodes, nowMs);
+    const failedApi = rows.find((r) => r.name === "api" && r.ownerNodeId === "n-b");
+    expect(failedApi).toBeTruthy();
+    expect(failedApi?.observed).toBe("RUNNING");
+    expect(failedApi?.freshness).toBe(STALE);
+    expect(failedApi?.freshness).not.toBe("LIVE");
+  });
+});
+
+describe("needsRestartBanner", () => {
+  it("returns the restart banner when latest != active", () => {
+    expect(needsRestartBanner(3, 2)).toBe(true);
+    expect(needsRestartBanner(3, 3)).toBe(false);
+    expect(RESTART_REQUIRED_BANNER).toBe("Configuration changed. Restart required.");
+  });
+});
+
+describe("formatRemoteError", () => {
+  it("surfaces UNAVAILABLE and TIMEOUT instead of a local success", () => {
+    expect(formatRemoteError(new ConnectError("owner unreachable", Code.Unavailable))).toBe("UNAVAILABLE");
+    expect(formatRemoteError(new ConnectError("rpc timed out", Code.DeadlineExceeded))).toBe("TIMEOUT");
+  });
+
+  it("surfaces DEGRADED from ErrorInfo even when Connect code is Unavailable", () => {
+    const err = new ConnectError("store impaired", Code.Unavailable, undefined, [
+      { desc: ErrorInfoSchema, value: { code: "DEGRADED", message: "store impaired" } },
+    ]);
+    expect(formatRemoteError(err)).toBe("DEGRADED");
+    expect(formatRemoteError(err)).not.toBe("UNAVAILABLE");
+  });
+});
+
+describe("formatMetric", () => {
+  it("shows unknown plus note when the metric is -1", () => {
+    expect(formatMetric(-1, "macos: process cpu/memory unavailable")).toEqual({
+      text: "unknown",
+      note: "macos: process cpu/memory unavailable",
+    });
+  });
+});

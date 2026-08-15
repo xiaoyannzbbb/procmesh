@@ -15,6 +15,33 @@ import (
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
 
+func TestServer_Root(t *testing.T) {
+	srv, err := NewServer(Options{Started: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	srv.Engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET / %d %q", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `<div id="app">`) {
+		t.Fatalf("GET / body %q", rec.Body.String())
+	}
+}
+
+func TestServer_Healthz(t *testing.T) {
+	srv, err := NewServer(Options{Started: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	srv.Engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "ok" {
+		t.Fatalf("healthz %d %q", rec.Code, rec.Body.String())
+	}
+}
+
 func TestServer_HealthReadyMetrics(t *testing.T) {
 	m, st, _ := newTestManager(t)
 	srv, err := NewServer(Options{

@@ -47,3 +47,17 @@ func TestProto_P4ServicesGenerated(t *testing.T) {
 	_ = (&procmeshv1.PromoteNodeRequest{}).GetNodeId
 	_ = (&procmeshv1.ClusterOverviewResponse{}).GetControlQuorum
 }
+
+func TestProto_P5ServicesGenerated(t *testing.T) {
+	if procmeshv1connect.AuditServiceName != "procmesh.v1.AuditService" {
+		t.Fatalf("audit=%s", procmeshv1connect.AuditServiceName)
+	}
+	if procmeshv1connect.MetricsServiceName != "procmesh.v1.MetricsService" {
+		t.Fatalf("metrics=%s", procmeshv1connect.MetricsServiceName)
+	}
+	if procmeshv1connect.AuthServiceGetMeProcedure == "" {
+		t.Fatal("missing AuthService.GetMe")
+	}
+	_ = (&procmeshv1.ClusterOverviewResponse{}).GetProcessTotal
+	_ = (&procmeshv1.Instance{}).GetStartedUnixMs
+}

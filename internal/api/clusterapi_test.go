@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -1076,5 +1077,147 @@ func TestInit_NotConfigured(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "cluster not configured") {
 		t.Fatalf("want cluster not configured: %v", err)
+	}
+}
+
+func TestCluster_Overview_Aggregates(t *testing.T) {
+	e := newClusterEnv(t)
+	e.mesh.setMembers([]cluster.NodeSummary{
+		{
+			NodeID:       "n1",
+			State:        cluster.StateAlive,
+			AgentVersion: "v1.0.0",
+			Resources:    cluster.ResourceSummary{CPUPercent: 10, MemoryPercent: 20, DiskPercent: 30},
+			Processes:    []cluster.ProcessSummary{{Name: "p1", Observed: "RUNNING", Health: "HEALTHY"}},
+		},
+		{
+			NodeID:       "n2",
+			State:        cluster.StateAlive,
+			AgentVersion: "v1.0.1",
+			Resources:    cluster.ResourceSummary{CPUPercent: 30, MemoryPercent: 40, DiskPercent: 50},
+			Processes:    []cluster.ProcessSummary{{Name: "p2", Observed: "RUNNING", Health: "UNHEALTHY"}},
+		},
+		{
+			NodeID:       "n3",
+			State:        cluster.StateFailed,
+			AgentVersion: "v1.0.0",
+			Resources:    cluster.ResourceSummary{CPUPercent: 99, MemoryPercent: 99, DiskPercent: 99},
+			Processes:    []cluster.ProcessSummary{{Name: "p3", Observed: "RUNNING", Health: "HEALTHY"}},
+		},
+	})
+	ov, err := e.cluster.Overview(context.Background(), connect.NewRequest(&procmeshv1.ClusterOverviewRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := ov.Msg
+	if msg.GetMembers() != 3 || msg.GetAlive() != 2 || msg.GetFailed() != 1 {
+		t.Fatalf("members=%d alive=%d failed=%d", msg.GetMembers(), msg.GetAlive(), msg.GetFailed())
+	}
+	if msg.GetProcessTotal() != 3 || msg.GetProcessRunning() != 3 || msg.GetProcessUnhealthy() != 1 {
+		t.Fatalf("process total=%d running=%d unhealthy=%d", msg.GetProcessTotal(), msg.GetProcessRunning(), msg.GetProcessUnhealthy())
+	}
+	if msg.GetVersionCounts()["v1.0.0"] != 2 {
+		t.Fatalf("version_counts=%v", msg.GetVersionCounts())
+	}
+	if msg.GetViewUnixMs() <= 0 {
+		t.Fatalf("view_unix_ms=%d", msg.GetViewUnixMs())
+	}
+}
+
+func TestCluster_Overview_EmptyPercents(t *testing.T) {
+	e := newClusterEnv(t)
+	e.mesh.setMembers(nil)
+	ov, err := e.cluster.Overview(context.Background(), connect.NewRequest(&procmeshv1.ClusterOverviewRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ov.Msg.GetCpuPercent() != -1 || ov.Msg.GetMemoryPercent() != -1 || ov.Msg.GetDiskPercent() != -1 {
+		t.Fatalf("percents cpu=%d mem=%d disk=%d want -1 (unknown)", ov.Msg.GetCpuPercent(), ov.Msg.GetMemoryPercent(), ov.Msg.GetDiskPercent())
+	}
+}
+
+func TestCluster_Overview_UncollectedResourcesNotZero(t *testing.T) {
+	e := newClusterEnv(t)
+	e.mesh.setMembers([]cluster.NodeSummary{
+		{NodeID: "n1", State: cluster.StateAlive},
+		{NodeID: "n2", State: cluster.StateAlive, Resources: cluster.ResourceSummary{CPUPercent: -1, MemoryPercent: -1, DiskPercent: -1}},
+	})
+	ov, err := e.cluster.Overview(context.Background(), connect.NewRequest(&procmeshv1.ClusterOverviewRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ov.Msg.GetAlive() != 2 {
+		t.Fatalf("alive=%d want 2", ov.Msg.GetAlive())
+	}
+	if ov.Msg.GetCpuPercent() != -1 || ov.Msg.GetMemoryPercent() != -1 || ov.Msg.GetDiskPercent() != -1 {
+		t.Fatalf("uncollected percents cpu=%d mem=%d disk=%d want -1", ov.Msg.GetCpuPercent(), ov.Msg.GetMemoryPercent(), ov.Msg.GetDiskPercent())
+	}
+}
+
+func TestCluster_Overview_PlatformNote(t *testing.T) {
+	e := newClusterEnv(t)
+	ov, err := e.cluster.Overview(context.Background(), connect.NewRequest(&procmeshv1.ClusterOverviewRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	note := ov.Msg.GetPlatformNote()
+	switch runtime.GOOS {
+	case "linux":
+		if note != "" {
+			t.Fatalf("linux platform_note=%q want empty", note)
+		}
+	case "darwin":
+		const want = "macOS: resource_limit ignored (no cgroup); Host reboot recovery depends on how the Agent is started."
+		if note != want {
+			t.Fatalf("darwin platform_note=%q want %q", note, want)
+		}
+	default:
+		if note == "" {
+			t.Fatalf("%s platform_note empty", runtime.GOOS)
+		}
+	}
+}
+
+func TestCluster_Overview_CertExpires(t *testing.T) {
+	e := newClusterEnv(t)
+	e.init(t)
+	ov, err := e.cluster.Overview(context.Background(), connect.NewRequest(&procmeshv1.ClusterOverviewRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Unix()
+	if ov.Msg.GetCaExpiresUnix() <= now {
+		t.Fatalf("ca_expires_unix=%d want > %d", ov.Msg.GetCaExpiresUnix(), now)
+	}
+	if ov.Msg.GetCertExpiresUnix() <= now {
+		t.Fatalf("cert_expires_unix=%d want > %d", ov.Msg.GetCertExpiresUnix(), now)
+	}
+}
+
+func TestCluster_Overview_Summarize(t *testing.T) {
+	got := summarize([]cluster.NodeSummary{
+		{
+			State:     cluster.StateSuspect,
+			Processes: []cluster.ProcessSummary{{Observed: "FATAL", Health: "UNHEALTHY"}},
+		},
+		{
+			State:        cluster.StateAlive,
+			AgentVersion: "v2",
+			Resources:    cluster.ResourceSummary{CPUPercent: 11, MemoryPercent: 21, DiskPercent: 31},
+		},
+		{
+			State:        cluster.StateAlive,
+			AgentVersion: "v2",
+			Resources:    cluster.ResourceSummary{CPUPercent: 10, MemoryPercent: 20, DiskPercent: 30},
+		},
+	})
+	if got.suspect != 1 || got.alive != 2 || got.processFatal != 1 || got.processUnhealthy != 1 {
+		t.Fatalf("counts %+v", got)
+	}
+	if got.versionCounts["unknown"] != 1 || got.versionCounts["v2"] != 2 {
+		t.Fatalf("versions %v", got.versionCounts)
+	}
+	if got.cpuPercent != 10 || got.memoryPercent != 20 || got.diskPercent != 30 {
+		t.Fatalf("percents cpu=%d mem=%d disk=%d", got.cpuPercent, got.memoryPercent, got.diskPercent)
 	}
 }
