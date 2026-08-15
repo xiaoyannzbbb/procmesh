@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -193,6 +194,62 @@ func TestAuditAPI_AliveHopFailPlaceholderNotLive(t *testing.T) {
 	}
 	if placeholder.GetFreshness() != freshness.STALE && placeholder.GetFreshness() != freshness.UNKNOWN {
 		t.Fatalf("placeholder freshness=%q want STALE or UNKNOWN", placeholder.GetFreshness())
+	}
+}
+
+func TestAuditAPI_PlaceholderSurvivesLimitTruncation(t *testing.T) {
+	ctx := context.Background()
+	st := openStoreAt(t, t.TempDir()+"/audit-limit.db")
+	now := time.Date(2026, 8, 15, 14, 0, 0, 0, time.UTC)
+	for i := 0; i < 50; i++ {
+		if err := st.AppendAudit(ctx, store.AuditEvent{
+			AuditID:   fmt.Sprintf("local-%02d", i),
+			Timestamp: now.Add(-time.Duration(i+1) * time.Second),
+			Resource:  "nginx",
+			Action:    "process.start",
+			Result:    "SUCCESS",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	api := &AuditAPI{
+		Store:   st,
+		LocalID: "node-a",
+		Now:     func() time.Time { return now },
+		Members: func() []cluster.NodeSummary {
+			return []cluster.NodeSummary{
+				{NodeID: "node-a", State: cluster.StateAlive, LastUpdatedUnixMs: now.UnixMilli()},
+				{NodeID: "node-b", State: cluster.StateFailed, LastUpdatedUnixMs: now.Add(-time.Minute).UnixMilli()},
+			}
+		},
+	}
+	resp, err := api.ListAudit(ctx, connect.NewRequest(&procmeshv1.ListAuditRequest{Limit: 50}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := resp.Msg.GetEntries()
+	if len(entries) != 50 {
+		t.Fatalf("entries=%d want 50", len(entries))
+	}
+	var placeholder *procmeshv1.AuditEntry
+	for _, e := range entries {
+		if isUnavailablePlaceholder(e) {
+			placeholder = e
+			break
+		}
+	}
+	if placeholder == nil {
+		t.Fatalf("FAILED placeholder dropped after limit truncation: %+v", entries[0])
+	}
+	if placeholder.GetSourceNode() != "node-b" {
+		t.Fatalf("placeholder source_node=%q", placeholder.GetSourceNode())
+	}
+	if placeholder.GetFreshness() == freshness.LIVE {
+		t.Fatalf("placeholder freshness must not be LIVE: %+v", placeholder)
+	}
+	if ev := placeholder.GetEvent(); ev == nil || ev.GetTimestampUnixMs() != now.UnixMilli() {
+		t.Fatalf("placeholder timestamp=%v want now", ev)
 	}
 }
 

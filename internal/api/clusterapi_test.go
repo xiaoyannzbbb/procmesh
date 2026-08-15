@@ -1131,8 +1131,26 @@ func TestCluster_Overview_EmptyPercents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ov.Msg.GetCpuPercent() != 0 || ov.Msg.GetMemoryPercent() != 0 || ov.Msg.GetDiskPercent() != 0 {
-		t.Fatalf("percents cpu=%d mem=%d disk=%d want 0", ov.Msg.GetCpuPercent(), ov.Msg.GetMemoryPercent(), ov.Msg.GetDiskPercent())
+	if ov.Msg.GetCpuPercent() != -1 || ov.Msg.GetMemoryPercent() != -1 || ov.Msg.GetDiskPercent() != -1 {
+		t.Fatalf("percents cpu=%d mem=%d disk=%d want -1 (unknown)", ov.Msg.GetCpuPercent(), ov.Msg.GetMemoryPercent(), ov.Msg.GetDiskPercent())
+	}
+}
+
+func TestCluster_Overview_UncollectedResourcesNotZero(t *testing.T) {
+	e := newClusterEnv(t)
+	e.mesh.setMembers([]cluster.NodeSummary{
+		{NodeID: "n1", State: cluster.StateAlive},
+		{NodeID: "n2", State: cluster.StateAlive, Resources: cluster.ResourceSummary{CPUPercent: -1, MemoryPercent: -1, DiskPercent: -1}},
+	})
+	ov, err := e.cluster.Overview(context.Background(), connect.NewRequest(&procmeshv1.ClusterOverviewRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ov.Msg.GetAlive() != 2 {
+		t.Fatalf("alive=%d want 2", ov.Msg.GetAlive())
+	}
+	if ov.Msg.GetCpuPercent() != -1 || ov.Msg.GetMemoryPercent() != -1 || ov.Msg.GetDiskPercent() != -1 {
+		t.Fatalf("uncollected percents cpu=%d mem=%d disk=%d want -1", ov.Msg.GetCpuPercent(), ov.Msg.GetMemoryPercent(), ov.Msg.GetDiskPercent())
 	}
 }
 

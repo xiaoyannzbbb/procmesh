@@ -31,11 +31,11 @@ const overview = {
 
 const mounted: Array<{ unmount: () => void }> = [];
 
-async function mountOverview() {
+async function mountOverview(overrides: Partial<typeof overview> = {}) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  const clusterClient = { overview: vi.fn().mockResolvedValue(overview) };
+  const clusterClient = { overview: vi.fn().mockResolvedValue({ ...overview, ...overrides }) };
   const wrapper = mount(OverviewPage, {
     global: {
       plugins: [[VueQueryPlugin, { queryClient }]],
@@ -76,5 +76,24 @@ describe("OverviewPage", () => {
     expect(text).toContain("Agent DEGRADED — local store impaired; business processes are not stopped.");
     expect(text.toLowerCase()).not.toMatch(/process (down|fault|failure)/);
     expect(text).not.toMatch(/Process 故障/);
+  });
+
+  it("shows STALE badge and last updated for FAILED last-known workload counts", async () => {
+    const wrapper = await mountOverview();
+    const badge = wrapper.get(".freshness-badge");
+    expect(badge.text()).toBe("STALE");
+    expect(badge.classes()).toContain("freshness-stale");
+    expect(badge.classes()).not.toContain("freshness-live");
+    const html = wrapper.html().toLowerCase();
+    expect(html).not.toMatch(/green|#d1fae5|#10a37f|bg-green/);
+    expect(wrapper.text()).toMatch(/\d+[smhd] ago|unknown/);
+  });
+
+  it("renders uncollected resources as unknown instead of 0%", async () => {
+    const wrapper = await mountOverview({ cpuPercent: -1, memoryPercent: -1, diskPercent: -1 });
+    const text = wrapper.text();
+    expect(text).toContain("unknown");
+    expect(text).not.toMatch(/CPU\s*0%/);
+    expect(text).not.toMatch(/Memory\s*0%/);
   });
 });

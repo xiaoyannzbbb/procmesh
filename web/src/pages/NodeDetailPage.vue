@@ -6,7 +6,7 @@ import FreshnessBadge from "../components/FreshnessBadge.vue";
 import { newOperationId } from "../lib/opid";
 import { useNodeClient } from "../lib/rpc";
 import { session } from "../lib/session";
-import { mapNode, REMOVE_CONFIRM } from "./clusterView";
+import { formatPercent, mapNode, REMOVE_CONFIRM } from "./clusterView";
 
 const POLL_MS = 5000;
 const route = useRoute();
@@ -126,15 +126,15 @@ async function onRemove(): Promise<void> {
           </div>
           <div>
             <dt>CPU</dt>
-            <dd>{{ node.resources.cpuPercent }}%</dd>
+            <dd>{{ formatPercent(node.resources.cpuPercent) }}</dd>
           </div>
           <div>
             <dt>Memory</dt>
-            <dd>{{ node.resources.memoryPercent }}%</dd>
+            <dd>{{ formatPercent(node.resources.memoryPercent) }}</dd>
           </div>
           <div>
             <dt>Disk</dt>
-            <dd>{{ node.resources.diskPercent }}%</dd>
+            <dd>{{ formatPercent(node.resources.diskPercent) }}</dd>
           </div>
           <div>
             <dt>Process Count</dt>

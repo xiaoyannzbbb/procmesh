@@ -1,5 +1,5 @@
 import { Code, ConnectError } from "@connectrpc/connect";
-import { ErrorInfoSchema } from "../gen/procmesh/v1/api_pb";
+import { appCode } from "../lib/connecterr";
 import type { Freshness } from "../lib/freshness";
 import { mapNode } from "./clusterView";
 
@@ -133,11 +133,11 @@ export function needsRestartBanner(latestRevision: number, activeRevision: numbe
 }
 
 export function formatRemoteError(err: unknown): string {
+  const app = appCode(err);
+  if (app) {
+    return app;
+  }
   if (err instanceof ConnectError) {
-    const info = err.findDetails(ErrorInfoSchema)[0];
-    if (info?.code === "UNAVAILABLE" || info?.code === "TIMEOUT") {
-      return info.code;
-    }
     if (err.code === Code.DeadlineExceeded) {
       return "TIMEOUT";
     }

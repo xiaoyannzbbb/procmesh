@@ -62,6 +62,25 @@ func TestMetrics_GetAgentMetricsClusterCounts(t *testing.T) {
 	}
 }
 
+func TestMetrics_GetAgentMetricsUncollectedResources(t *testing.T) {
+	api := &MetricsAPI{
+		Started: time.Now().Add(-time.Hour),
+		Cluster: ClusterDeps{
+			Local: func() cluster.NodeSummary {
+				return cluster.NodeSummary{}
+			},
+		},
+	}
+	resp, err := api.GetAgentMetrics(context.Background(), connect.NewRequest(&procmeshv1.GetAgentMetricsRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := resp.Msg.GetMetrics().GetResources()
+	if res == nil || res.GetCpuPercent() != -1 || res.GetMemoryPercent() != -1 || res.GetDiskPercent() != -1 {
+		t.Fatalf("uncollected resources %+v want -1", res)
+	}
+}
+
 func TestMetrics_GetProcessMetricsUnknownNotFound(t *testing.T) {
 	mgr, _, _ := newTestManager(t)
 	api := &MetricsAPI{Mgr: mgr}

@@ -23,9 +23,9 @@ type ProcessSummary struct {
 }
 
 type ResourceSummary struct {
-	CPUPercent    int `json:"cpu_percent"`
-	MemoryPercent int `json:"memory_percent"`
-	DiskPercent   int `json:"disk_percent"`
+	CPUPercent    int `json:"cpu_percent"`    // -1 = unknown / not collected
+	MemoryPercent int `json:"memory_percent"` // -1 = unknown / not collected
+	DiskPercent   int `json:"disk_percent"`   // -1 = unknown / not collected
 }
 
 type NodeSummary struct {

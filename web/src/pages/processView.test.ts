@@ -1,5 +1,6 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it } from "vitest";
+import { ErrorInfoSchema } from "../gen/procmesh/v1/api_pb";
 import { STALE } from "../lib/freshness";
 import {
   flattenClusterProcesses,
@@ -94,6 +95,14 @@ describe("formatRemoteError", () => {
   it("surfaces UNAVAILABLE and TIMEOUT instead of a local success", () => {
     expect(formatRemoteError(new ConnectError("owner unreachable", Code.Unavailable))).toBe("UNAVAILABLE");
     expect(formatRemoteError(new ConnectError("rpc timed out", Code.DeadlineExceeded))).toBe("TIMEOUT");
+  });
+
+  it("surfaces DEGRADED from ErrorInfo even when Connect code is Unavailable", () => {
+    const err = new ConnectError("store impaired", Code.Unavailable, undefined, [
+      { desc: ErrorInfoSchema, value: { code: "DEGRADED", message: "store impaired" } },
+    ]);
+    expect(formatRemoteError(err)).toBe("DEGRADED");
+    expect(formatRemoteError(err)).not.toBe("UNAVAILABLE");
   });
 });
 

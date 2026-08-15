@@ -53,9 +53,7 @@ func (s *AuditAPI) ListAudit(ctx context.Context, req *connect.Request[procmeshv
 	if !s.LocalOnly && target == "" {
 		entries = append(entries, s.aggregateRemotes(ctx, req, resource, limit, now)...)
 		sortAuditEntries(entries)
-		if len(entries) > limit {
-			entries = entries[:limit]
-		}
+		entries = applyAuditLimit(entries, limit)
 	}
 	return connect.NewResponse(&procmeshv1.ListAuditResponse{Entries: entries}), nil
 }
@@ -179,7 +177,11 @@ func (s *AuditAPI) placeholder(nodeID string, now time.Time) *procmeshv1.AuditEn
 		}
 	}
 	return &procmeshv1.AuditEntry{
-		Event:             &procmeshv1.AuditEvent{Action: "unavailable", Result: "UNAVAILABLE"},
+		Event: &procmeshv1.AuditEvent{
+			Action:          "unavailable",
+			Result:          "UNAVAILABLE",
+			TimestampUnixMs: now.UnixMilli(),
+		},
 		SourceNode:        nodeID,
 		Freshness:         placeholderFreshness(now, lastMs, state),
 		LastUpdatedUnixMs: lastMs,
@@ -188,7 +190,11 @@ func (s *AuditAPI) placeholder(nodeID string, now time.Time) *procmeshv1.AuditEn
 
 func unavailableEntry(m cluster.NodeSummary, now time.Time) *procmeshv1.AuditEntry {
 	return &procmeshv1.AuditEntry{
-		Event:             &procmeshv1.AuditEvent{Action: "unavailable", Result: "UNAVAILABLE"},
+		Event: &procmeshv1.AuditEvent{
+			Action:          "unavailable",
+			Result:          "UNAVAILABLE",
+			TimestampUnixMs: now.UnixMilli(),
+		},
 		SourceNode:        m.NodeID,
 		Freshness:         placeholderFreshness(now, m.LastUpdatedUnixMs, string(m.State)),
 		LastUpdatedUnixMs: m.LastUpdatedUnixMs,
@@ -244,6 +250,39 @@ func sortAuditEntries(entries []*procmeshv1.AuditEntry) {
 	sort.SliceStable(entries, func(i, j int) bool {
 		return auditTimestamp(entries[i]) > auditTimestamp(entries[j])
 	})
+}
+
+func applyAuditLimit(entries []*procmeshv1.AuditEntry, limit int) []*procmeshv1.AuditEntry {
+	if limit <= 0 || len(entries) <= limit {
+		return entries
+	}
+	var placeholders, rest []*procmeshv1.AuditEntry
+	for _, e := range entries {
+		if isUnavailablePlaceholder(e) {
+			placeholders = append(placeholders, e)
+			continue
+		}
+		rest = append(rest, e)
+	}
+	keep := limit - len(placeholders)
+	if keep < 0 {
+		return placeholders[:limit]
+	}
+	if keep > len(rest) {
+		keep = len(rest)
+	}
+	out := make([]*procmeshv1.AuditEntry, 0, keep+len(placeholders))
+	out = append(out, rest[:keep]...)
+	out = append(out, placeholders...)
+	return out
+}
+
+func isUnavailablePlaceholder(e *procmeshv1.AuditEntry) bool {
+	if e == nil {
+		return false
+	}
+	ev := e.GetEvent()
+	return ev != nil && ev.GetAction() == "unavailable" && ev.GetResult() == "UNAVAILABLE"
 }
 
 func auditTimestamp(e *procmeshv1.AuditEntry) int64 {

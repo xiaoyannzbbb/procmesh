@@ -8,6 +8,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/auth"
+	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/rpc"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
@@ -123,14 +124,9 @@ func (s *MetricsAPI) now() time.Time {
 
 func localResourceSummary(d ClusterDeps) *procmeshv1.ResourceSummary {
 	if d.Local == nil {
-		return nil
+		return protoResources(cluster.ResourceSummary{})
 	}
-	r := d.Local().Resources
-	return &procmeshv1.ResourceSummary{
-		CpuPercent:    int32(r.CPUPercent),
-		MemoryPercent: int32(r.MemoryPercent),
-		DiskPercent:   int32(r.DiskPercent),
-	}
+	return protoResources(d.Local().Resources)
 }
 
 func processMetricsOf(inst process.Instance, now time.Time) *procmeshv1.ProcessMetrics {

@@ -325,16 +325,21 @@ func summarize(members []cluster.NodeSummary) overviewCounts {
 	out := overviewCounts{
 		members:       int32(len(members)),
 		versionCounts: make(map[string]int32),
+		cpuPercent:    unknownResourcePercent,
+		memoryPercent: unknownResourcePercent,
+		diskPercent:   unknownResourcePercent,
 	}
-	var cpuSum, memSum, diskSum, aliveN int
+	var cpuSum, memSum, diskSum, resN int
 	for _, n := range members {
 		switch n.State {
 		case cluster.StateAlive:
 			out.alive++
-			cpuSum += n.Resources.CPUPercent
-			memSum += n.Resources.MemoryPercent
-			diskSum += n.Resources.DiskPercent
-			aliveN++
+			if resourceCollected(n.Resources) {
+				cpuSum += n.Resources.CPUPercent
+				memSum += n.Resources.MemoryPercent
+				diskSum += n.Resources.DiskPercent
+				resN++
+			}
 		case cluster.StateSuspect:
 			out.suspect++
 		case cluster.StateFailed:
@@ -358,12 +363,37 @@ func summarize(members []cluster.NodeSummary) overviewCounts {
 		}
 		out.versionCounts[ver]++
 	}
-	if aliveN > 0 {
-		out.cpuPercent = int32(cpuSum / aliveN)
-		out.memoryPercent = int32(memSum / aliveN)
-		out.diskPercent = int32(diskSum / aliveN)
+	if resN > 0 {
+		out.cpuPercent = int32(cpuSum / resN)
+		out.memoryPercent = int32(memSum / resN)
+		out.diskPercent = int32(diskSum / resN)
 	}
 	return out
+}
+
+// unknownResourcePercent is the proto sentinel for "not collected".
+const unknownResourcePercent int32 = -1
+
+func resourceCollected(r cluster.ResourceSummary) bool {
+	if r.CPUPercent < 0 || r.MemoryPercent < 0 || r.DiskPercent < 0 {
+		return false
+	}
+	return r != (cluster.ResourceSummary{})
+}
+
+func protoResources(r cluster.ResourceSummary) *procmeshv1.ResourceSummary {
+	if !resourceCollected(r) {
+		return &procmeshv1.ResourceSummary{
+			CpuPercent:    unknownResourcePercent,
+			MemoryPercent: unknownResourcePercent,
+			DiskPercent:   unknownResourcePercent,
+		}
+	}
+	return &procmeshv1.ResourceSummary{
+		CpuPercent:    int32(r.CPUPercent),
+		MemoryPercent: int32(r.MemoryPercent),
+		DiskPercent:   int32(r.DiskPercent),
+	}
 }
 
 func platformNote() string {

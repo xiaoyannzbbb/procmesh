@@ -1,4 +1,4 @@
-import { classify, formatAge, type Freshness } from "../lib/freshness";
+import { classify, formatAge, STALE, UNKNOWN, type Freshness } from "../lib/freshness";
 
 export const DEGRADED_BANNER =
   "Agent DEGRADED — local store impaired; business processes are not stopped.";
@@ -69,6 +69,9 @@ export type OverviewView = {
     cpuPercent: number;
     memoryPercent: number;
     diskPercent: number;
+    lastUpdatedUnixMs: number;
+    lastUpdated: string;
+    freshness: Freshness;
   };
 };
 
@@ -100,6 +103,13 @@ function toNum(v: unknown): number {
   return 0;
 }
 
+function toResourcePercent(v: unknown): number {
+  if (v === undefined || v === null || v === "") {
+    return -1;
+  }
+  return toNum(v);
+}
+
 function toStr(v: unknown): string {
   if (v === undefined || v === null) {
     return "";
@@ -119,14 +129,39 @@ export function formatUnixSecondsISO(unix: unknown): string {
   return new Date(n * 1000).toISOString();
 }
 
-export function formatResources(r: ResourceView): string {
-  return `CPU ${r.cpuPercent}% · Mem ${r.memoryPercent}% · Disk ${r.diskPercent}%`;
+export function formatPercent(n: number): string {
+  if (!Number.isFinite(n) || n < 0) {
+    return "unknown";
+  }
+  return `${n}%`;
 }
 
-export function mapOverview(input: unknown): OverviewView {
+export function formatResources(r: ResourceView): string {
+  return `CPU ${formatPercent(r.cpuPercent)} · Mem ${formatPercent(r.memoryPercent)} · Disk ${formatPercent(r.diskPercent)}`;
+}
+
+export function workloadFreshness(
+  nowMs: number,
+  viewUnixMs: number,
+  agentFailed: number,
+  agentSuspect: number,
+): Freshness {
+  if (agentFailed > 0 || agentSuspect > 0) {
+    return STALE;
+  }
+  if (viewUnixMs <= 0) {
+    return UNKNOWN;
+  }
+  return classify(nowMs, viewUnixMs, "ALIVE");
+}
+
+export function mapOverview(input: unknown, nowMs = Date.now()): OverviewView {
   const quorum = toBool(pick(input, "controlQuorum", "control_quorum"));
   const degraded = toBool(pick(input, "agentDegraded", "agent_degraded"));
   const versions = asRecord(pick(input, "versionCounts", "version_counts"));
+  const viewUnixMs = toNum(pick(input, "viewUnixMs", "view_unix_ms"));
+  const agentFailed = toNum(pick(input, "failed"));
+  const agentSuspect = toNum(pick(input, "suspect"));
   return {
     clusterId: toStr(pick(input, "clusterId", "cluster_id")),
     procMesh: {
@@ -153,9 +188,12 @@ export function mapOverview(input: unknown): OverviewView {
       processRunning: toNum(pick(input, "processRunning", "process_running")),
       processUnhealthy: toNum(pick(input, "processUnhealthy", "process_unhealthy")),
       processFatal: toNum(pick(input, "processFatal", "process_fatal")),
-      cpuPercent: toNum(pick(input, "cpuPercent", "cpu_percent")),
-      memoryPercent: toNum(pick(input, "memoryPercent", "memory_percent")),
-      diskPercent: toNum(pick(input, "diskPercent", "disk_percent")),
+      cpuPercent: toResourcePercent(pick(input, "cpuPercent", "cpu_percent")),
+      memoryPercent: toResourcePercent(pick(input, "memoryPercent", "memory_percent")),
+      diskPercent: toResourcePercent(pick(input, "diskPercent", "disk_percent")),
+      lastUpdatedUnixMs: viewUnixMs,
+      lastUpdated: formatAge(nowMs, viewUnixMs),
+      freshness: workloadFreshness(nowMs, viewUnixMs, agentFailed, agentSuspect),
     },
   };
 }
@@ -196,9 +234,9 @@ export function mapNode(input: unknown, nowMs: number): NodeView {
     gossipAddress: toStr(pick(input, "gossipAddress", "gossip_address")),
     labels,
     resources: {
-      cpuPercent: toNum(pick(resources, "cpuPercent", "cpu_percent")),
-      memoryPercent: toNum(pick(resources, "memoryPercent", "memory_percent")),
-      diskPercent: toNum(pick(resources, "diskPercent", "disk_percent")),
+      cpuPercent: toResourcePercent(pick(resources, "cpuPercent", "cpu_percent")),
+      memoryPercent: toResourcePercent(pick(resources, "memoryPercent", "memory_percent")),
+      diskPercent: toResourcePercent(pick(resources, "diskPercent", "disk_percent")),
     },
     processCount: processes.length,
     processes,

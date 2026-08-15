@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { STALE } from "../lib/freshness";
-import { DEGRADED_BANNER, mapNode, mapOverview, mapProcess } from "./clusterView";
+import { LIVE, STALE, UNKNOWN } from "../lib/freshness";
+import {
+  DEGRADED_BANNER,
+  formatPercent,
+  formatResources,
+  mapNode,
+  mapOverview,
+  mapProcess,
+  workloadFreshness,
+} from "./clusterView";
 
 const nowMs = 1_700_000_010_000;
 
@@ -55,6 +63,34 @@ describe("mapOverview", () => {
     expect(view.workload.cpuPercent).toBe(12);
     expect(view.workload.memoryPercent).toBe(34);
     expect(view.workload.diskPercent).toBe(56);
+    expect(view.workload.freshness).toBe(STALE);
+  });
+
+  it("marks missing resource percents as unknown, not 0%", () => {
+    const view = mapOverview({ members: 1, alive: 1 }, nowMs);
+    expect(view.workload.cpuPercent).toBe(-1);
+    expect(view.workload.memoryPercent).toBe(-1);
+    expect(view.workload.diskPercent).toBe(-1);
+    expect(formatPercent(view.workload.cpuPercent)).toBe("unknown");
+    expect(formatPercent(0)).toBe("0%");
+  });
+
+  it("marks FAILED last-known workload counts as STALE, not LIVE", () => {
+    const view = mapOverview(
+      {
+        members: 2,
+        alive: 1,
+        failed: 1,
+        processRunning: 2,
+        viewUnixMs: nowMs,
+      },
+      nowMs,
+    );
+    expect(view.workload.processRunning).toBe(2);
+    expect(view.workload.freshness).toBe(STALE);
+    expect(view.workload.freshness).not.toBe(LIVE);
+    expect(view.workload.lastUpdatedUnixMs).toBe(nowMs);
+    expect(view.workload.lastUpdated).toBe("0s ago");
   });
 
   it("does not treat lost quorum or degraded as a process fault", () => {
@@ -116,5 +152,21 @@ describe("mapProcess / mapNode", () => {
     expect(node.processes).toHaveLength(1);
     expect(node.processes[0]?.freshness).toBe(STALE);
     expect(node.processes[0]?.freshness).not.toBe("LIVE");
+  });
+
+  it("formats uncollected node resources as unknown", () => {
+    const node = mapNode({ nodeId: "n1", state: "ALIVE", lastUpdatedUnixMs: nowMs }, nowMs);
+    expect(formatResources(node.resources)).toBe("CPU unknown · Mem unknown · Disk unknown");
+    expect(formatPercent(node.resources.cpuPercent)).toBe("unknown");
+  });
+});
+
+describe("workloadFreshness", () => {
+  it("is UNKNOWN without view timestamp", () => {
+    expect(workloadFreshness(nowMs, 0, 0, 0)).toBe(UNKNOWN);
+  });
+
+  it("is LIVE when all members are ALIVE and the view is fresh", () => {
+    expect(workloadFreshness(nowMs, nowMs - 1_000, 0, 0)).toBe(LIVE);
   });
 });

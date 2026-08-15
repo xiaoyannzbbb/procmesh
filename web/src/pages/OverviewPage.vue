@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { useQuery } from "@tanstack/vue-query";
 import { computed } from "vue";
+import FreshnessBadge from "../components/FreshnessBadge.vue";
 import { useClusterClient } from "../lib/rpc";
-import { mapOverview } from "./clusterView";
+import { formatPercent, mapOverview } from "./clusterView";
 
 const POLL_MS = 5000;
 const client = useClusterClient();
@@ -82,7 +83,11 @@ const errorText = computed(() => {
       </section>
 
       <section class="card">
-        <h2>Workload</h2>
+        <div class="title-row">
+          <h2>Workload</h2>
+          <FreshnessBadge :status="view.workload.freshness" />
+          <span class="muted">{{ view.workload.lastUpdated }}</span>
+        </div>
         <div class="stats">
           <div class="stat">
             <span class="stat-label">Agent Total</span>
@@ -120,15 +125,15 @@ const errorText = computed(() => {
         <dl class="facts resources">
           <div>
             <dt>CPU</dt>
-            <dd>{{ view.workload.cpuPercent }}%</dd>
+            <dd>{{ formatPercent(view.workload.cpuPercent) }}</dd>
           </div>
           <div>
             <dt>Memory</dt>
-            <dd>{{ view.workload.memoryPercent }}%</dd>
+            <dd>{{ formatPercent(view.workload.memoryPercent) }}</dd>
           </div>
           <div>
             <dt>Disk</dt>
-            <dd>{{ view.workload.diskPercent }}%</dd>
+            <dd>{{ formatPercent(view.workload.diskPercent) }}</dd>
           </div>
         </dl>
       </section>
@@ -151,6 +156,15 @@ h2 {
   margin: 0 0 0.75rem;
   font-size: 1.05rem;
   font-weight: 650;
+}
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.title-row h2 {
+  margin: 0;
 }
 h3 {
   margin: 0 0 0.375rem;
