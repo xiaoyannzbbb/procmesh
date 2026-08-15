@@ -321,6 +321,47 @@ func TestAPIToken_ShownOnce(t *testing.T) {
 	requireCode(t, err, errcode.DENIED, "")
 }
 
+func TestAPIToken_ZeroTTLNeverExpires(t *testing.T) {
+	svc, store, clk := newTestSvc(t)
+	plain, tokenID, exp, err := svc.CreateAPIToken("user-admin", "forever", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exp.IsZero() {
+		t.Fatalf("expires=%s want zero", exp)
+	}
+	stored, ok := store.state.APITokens[tokenID]
+	if !ok {
+		t.Fatal("missing token")
+	}
+	if stored.ExpiresUnix != 0 {
+		t.Fatalf("ExpiresUnix=%d want 0", stored.ExpiresUnix)
+	}
+	if stored.ExpiresUnix == clk.Now().Add(time.Hour).Unix() {
+		t.Fatal("stored now+1h default")
+	}
+
+	clk.Add(365 * 24 * time.Hour)
+	p, err := svc.AuthenticateBearer(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.TokenID != tokenID || p.UserID != "user-admin" {
+		t.Fatalf("bearer=%+v", p)
+	}
+
+	plain2, id2, exp2, err := svc.CreateAPIToken("user-admin", "neg", -time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exp2.IsZero() || store.state.APITokens[id2].ExpiresUnix != 0 {
+		t.Fatalf("neg ttl exp=%s unix=%d", exp2, store.state.APITokens[id2].ExpiresUnix)
+	}
+	if _, err := svc.AuthenticateBearer(plain2); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLogin_DisabledUser(t *testing.T) {
 	svc, store, _ := newTestSvc(t)
 	apply(t, store, control.CmdUserDisable, control.UserDisableBody{UserID: "user-admin"})

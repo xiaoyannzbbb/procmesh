@@ -19,7 +19,6 @@ const (
 	csrfBytes     = 32
 	tokenHexN     = 32
 	applyTimeout  = 5 * time.Second
-	defaultTokTTL = time.Hour
 )
 
 type Principal struct {
@@ -129,9 +128,6 @@ func (s *Service) AuthenticateSession(sessionID, csrf string, mutation bool) (Pr
 }
 
 func (s *Service) CreateAPIToken(userID, name string, ttl time.Duration) (plain, tokenID string, expires time.Time, err error) {
-	if ttl <= 0 {
-		ttl = defaultTokTTL
-	}
 	plain, err = randomPrefixed(tokenPrefix, tokenHexN)
 	if err != nil {
 		return "", "", time.Time{}, err
@@ -140,13 +136,18 @@ func (s *Service) CreateAPIToken(userID, name string, ttl time.Duration) (plain,
 	if err != nil {
 		return "", "", time.Time{}, err
 	}
-	exp := s.now().Add(ttl)
+	var expUnix int64
+	var exp time.Time
+	if ttl > 0 {
+		exp = s.now().Add(ttl)
+		expUnix = exp.Unix()
+	}
 	if err := s.apply(control.CmdTokenPut, control.TokenPutBody{
 		ID:          id,
 		UserID:      userID,
 		Name:        name,
 		Hash:        hashToken(plain),
-		ExpiresUnix: exp.Unix(),
+		ExpiresUnix: expUnix,
 	}); err != nil {
 		return "", "", time.Time{}, err
 	}
@@ -163,7 +164,7 @@ func (s *Service) sessionPrincipal(sessionID string) (Principal, error) {
 	if !ok {
 		return Principal{}, errcode.E(errcode.DENIED, "invalid session")
 	}
-	if !s.now().Before(time.Unix(sess.ExpiresUnix, 0)) {
+	if expired(sess.ExpiresUnix, s.now()) {
 		return Principal{}, errcode.E(errcode.DENIED, "session expired")
 	}
 	u, ok := userByID(st, sess.UserID)
@@ -187,7 +188,7 @@ func (s *Service) tokenPrincipal(plain string) (Principal, error) {
 	if tok.Revoked {
 		return Principal{}, errcode.E(errcode.DENIED, "token revoked")
 	}
-	if !s.now().Before(time.Unix(tok.ExpiresUnix, 0)) {
+	if expired(tok.ExpiresUnix, s.now()) {
 		return Principal{}, errcode.E(errcode.DENIED, "token expired")
 	}
 	u, ok := userByID(st, tok.UserID)
@@ -216,6 +217,14 @@ func userByID(st control.State, id string) (control.User, bool) {
 	}
 	u, ok := st.Users[name]
 	return u, ok
+}
+
+// expired reports whether expiresUnix has passed. Zero means never (API tokens).
+func expired(expiresUnix int64, now time.Time) bool {
+	if expiresUnix == 0 {
+		return false
+	}
+	return !now.Before(time.Unix(expiresUnix, 0))
 }
 
 func hashToken(plain string) string {
