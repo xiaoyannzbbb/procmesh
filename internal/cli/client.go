@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/qleelulu/procmesh/internal/rpc"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
@@ -25,20 +27,46 @@ type client struct {
 	operator string
 }
 
-func newClient(server, opID, operator string) *client {
+func newClient(server, opID, operator, node string) *client {
 	base := normalizeServer(server)
 	hc := &http.Client{Timeout: httpTimeout}
+	opts := []connect.ClientOption{}
+	if node != "" {
+		opts = append(opts, connect.WithInterceptors(targetNodeInterceptor(node)))
+	}
 	return &client{
 		base:     base,
 		http:     hc,
-		proc:     procmeshv1connect.NewProcessServiceClient(hc, base),
-		cfg:      procmeshv1connect.NewConfigServiceClient(hc, base),
-		logs:     procmeshv1connect.NewLogServiceClient(hc, base),
-		node:     procmeshv1connect.NewNodeServiceClient(hc, base),
-		cluster:  procmeshv1connect.NewClusterServiceClient(hc, base),
+		proc:     procmeshv1connect.NewProcessServiceClient(hc, base, opts...),
+		cfg:      procmeshv1connect.NewConfigServiceClient(hc, base, opts...),
+		logs:     procmeshv1connect.NewLogServiceClient(hc, base, opts...),
+		node:     procmeshv1connect.NewNodeServiceClient(hc, base, opts...),
+		cluster:  procmeshv1connect.NewClusterServiceClient(hc, base, opts...),
 		opID:     opID,
 		operator: operator,
 	}
+}
+
+// targetNodeInterceptor sets Procmesh-Target-Node on unary and streaming client RPCs.
+type targetNodeInterceptor string
+
+func (n targetNodeInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
+	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+		req.Header().Set(rpc.HeaderTargetNode, string(n))
+		return next(ctx, req)
+	}
+}
+
+func (n targetNodeInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
+	return func(ctx context.Context, spec connect.Spec) connect.StreamingClientConn {
+		conn := next(ctx, spec)
+		conn.RequestHeader().Set(rpc.HeaderTargetNode, string(n))
+		return conn
+	}
+}
+
+func (n targetNodeInterceptor) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
+	return next
 }
 
 func (c *client) meta() *procmeshv1.MutationMeta {

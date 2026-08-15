@@ -18,7 +18,7 @@ flags:
   --server ADDR            Connect base (default 127.0.0.1:9000)
   --operation-id ID        mutation id (default generated UUID)
   --operator NAME          operator (default $USER or cli)
-  --node NODE              remote owner (not supported until P3)
+  --node NODE              target owner node_id or hostname
 
 commands:
   status
@@ -84,10 +84,6 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprint(stderr, usageText)
 		return 2
 	}
-	if opt.node != "" {
-		fmt.Fprintln(stderr, "remote --node is not supported until P3")
-		return 2
-	}
 	if len(opt.args) == 0 {
 		fmt.Fprint(stderr, usageText)
 		return 2
@@ -104,7 +100,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		opt.operator = defaultOperator()
 	}
 
-	c := newClient(opt.server, opt.operationID, opt.operator)
+	c := newClient(opt.server, opt.operationID, opt.operator, opt.node)
 	cmd, rest := opt.args[0], opt.args[1:]
 	var runErr error
 	switch cmd {

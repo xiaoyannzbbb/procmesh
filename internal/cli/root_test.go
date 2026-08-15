@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -68,18 +69,30 @@ func TestCLI_ApplyConflictRevision(t *testing.T) {
 	}
 }
 
-func TestCLI_NodeRejected(t *testing.T) {
-	code, _, errb := runCLI("--node", "x", "status")
-	if code != 2 {
-		t.Fatalf("exit=%d stderr=%q", code, errb)
+func TestCLI_NodeHeaderSent(t *testing.T) {
+	var got string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("Procmesh-Target-Node")
+		http.Error(w, "no", 404)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	code, _, _ := runCLI("--server", srv.URL, "--node", "node-c", "process", "list")
+	if code == 2 {
+		t.Fatalf("P3 must accept --node, exit=%d", code)
 	}
-	if !strings.Contains(errb, "remote --node is not supported until P3") {
-		t.Fatalf("stderr=%q", errb)
+	if got != "node-c" {
+		t.Fatalf("header=%q", got)
 	}
 
-	code, _, errb = runCLI("status", "--node", "agent-a")
-	if code != 2 {
-		t.Fatalf("after-command exit=%d stderr=%q", code, errb)
+	got = "sentinel"
+	code, _, _ = runCLI("--server", srv.URL, "process", "list")
+	if code == 2 {
+		t.Fatalf("empty --node must be accepted, exit=%d", code)
+	}
+	if got != "" {
+		t.Fatalf("empty --node must not set header, got=%q", got)
 	}
 }
 
@@ -225,7 +238,7 @@ func TestCLI_AgentJoinAlreadyInited(t *testing.T) {
 }
 
 func TestClient_HTTPTimeout(t *testing.T) {
-	c := newClient("127.0.0.1:9000", "op", "t")
+	c := newClient("127.0.0.1:9000", "op", "t", "")
 	if c.http == nil {
 		t.Fatal("nil http client")
 	}
