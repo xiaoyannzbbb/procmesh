@@ -63,6 +63,7 @@ func TestDial_TimeoutZeroMeansNoClientTimeout(t *testing.T) {
 		t.Fatalf("Timeout=%v want 0", hc.Timeout)
 	}
 	_ = rpc.NewLogClient(hc, "https://127.0.0.1:1")
+	_ = rpc.NewAuditClient(hc, "https://127.0.0.1:1")
 }
 
 func TestDial_MutationTimeout(t *testing.T) {

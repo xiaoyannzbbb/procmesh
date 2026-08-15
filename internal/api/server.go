@@ -18,6 +18,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/localhttp"
 	"github.com/qleelulu/procmesh/internal/logmgr"
 	"github.com/qleelulu/procmesh/internal/process"
+	"github.com/qleelulu/procmesh/internal/store"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
 
@@ -52,6 +53,7 @@ type Options struct {
 	GossipHealthy func() bool
 	CertExpires   func() int64
 	CAExpires     func() int64
+	Members       func() []cluster.NodeSummary
 }
 
 func NewServer(opts Options) (*Server, error) {
@@ -116,7 +118,7 @@ func NewServer(opts Options) (*Server, error) {
 	mountConnect(engine, up, uh)
 	rp, rh := procmeshv1connect.NewRoleServiceHandler(&RoleAPI{Auth: opts.Auth}, intercept)
 	mountConnect(engine, rp, rh)
-	adp, adh := procmeshv1connect.NewAuditServiceHandler(&AuditAPI{}, intercept)
+	adp, adh := procmeshv1connect.NewAuditServiceHandler(newAuditAPI(opts), intercept)
 	mountConnect(engine, adp, adh)
 	mp, mh := procmeshv1connect.NewMetricsServiceHandler(&MetricsAPI{}, intercept)
 	mountConnect(engine, mp, mh)
@@ -266,4 +268,27 @@ func (s *Server) isDegraded() bool {
 
 func mountConnect(engine *gin.Engine, path string, h http.Handler) {
 	engine.Any(strings.TrimSuffix(path, "/")+"/*path", gin.WrapH(h))
+}
+
+func newAuditAPI(opts Options) *AuditAPI {
+	var st *store.Store
+	if s, ok := opts.Store.(*store.Store); ok {
+		st = s
+	}
+	members := opts.Members
+	if members == nil && opts.Router != nil {
+		members = opts.Router.Members
+	}
+	if members == nil {
+		members = opts.Cluster.members
+	}
+	return &AuditAPI{
+		Store:     st,
+		Auth:      opts.Auth,
+		LocalOnly: opts.LocalOnly,
+		LocalID:   opts.LocalID,
+		Router:    opts.Router,
+		Forward:   opts.Forward,
+		Members:   members,
+	}
 }

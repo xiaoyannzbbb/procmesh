@@ -22,6 +22,7 @@ func TestAgentForwarder_LogHopHasNoClientTimeout(t *testing.T) {
 		t.Fatalf("log hop Timeout=%v want 0", hc.Timeout)
 	}
 	_ = rpc.NewLogClient(hc, "https://127.0.0.1:1")
+	_ = rpc.NewAuditClient(hc, "https://127.0.0.1:1")
 }
 
 func TestAgentForwarder_ProcessHopUsesMutationTimeout(t *testing.T) {

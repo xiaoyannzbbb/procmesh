@@ -187,6 +187,11 @@ func (r *rpcRuntime) localHandler() http.Handler {
 		LocalOnly: true, LocalID: r.nodeID,
 	}, opts...)
 	mux.Handle(lp, lh)
+	ap, ah := procmeshv1connect.NewAuditServiceHandler(&api.AuditAPI{
+		Store: r.st, Auth: r.auth,
+		LocalOnly: true, LocalID: r.nodeID,
+	}, opts...)
+	mux.Handle(ap, ah)
 	return mux
 }
 
@@ -258,6 +263,7 @@ const (
 	processHopTimeout = rpc.MutationTimeout
 	configHopTimeout  = rpc.MutationTimeout
 	logHopTimeout     = time.Duration(0)
+	auditHopTimeout   = 2 * time.Second
 )
 
 func (f *agentForwarder) dial(rt api.Route, timeout time.Duration) (*http.Client, string, error) {
@@ -294,4 +300,12 @@ func (f *agentForwarder) Log(_ context.Context, rt api.Route) (procmeshv1connect
 		return nil, err
 	}
 	return rpc.NewLogClient(hc, base), nil
+}
+
+func (f *agentForwarder) Audit(_ context.Context, rt api.Route) (procmeshv1connect.AuditServiceClient, error) {
+	hc, base, err := f.dial(rt, auditHopTimeout)
+	if err != nil {
+		return nil, err
+	}
+	return rpc.NewAuditClient(hc, base), nil
 }

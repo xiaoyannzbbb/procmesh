@@ -189,10 +189,12 @@ type fakeForwarder struct {
 	processN int
 	configN  int
 	logN     int
+	auditN   int
 	routes   []Route
 	proc     procmeshv1connect.ProcessServiceClient
 	cfg      procmeshv1connect.ConfigServiceClient
 	logs     procmeshv1connect.LogServiceClient
+	audit    procmeshv1connect.AuditServiceClient
 	err      error
 }
 
@@ -227,6 +229,17 @@ func (f *fakeForwarder) Log(_ context.Context, rt Route) (procmeshv1connect.LogS
 		return nil, f.err
 	}
 	return f.logs, nil
+}
+
+func (f *fakeForwarder) Audit(_ context.Context, rt Route) (procmeshv1connect.AuditServiceClient, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.auditN++
+	f.routes = append(f.routes, rt)
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.audit, nil
 }
 
 func (f *fakeForwarder) processCalls() int {
