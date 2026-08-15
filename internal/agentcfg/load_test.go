@@ -74,6 +74,22 @@ func TestLoadAll_GossipListenAndAdvertise(t *testing.T) {
 	}
 }
 
+func TestLoadAll_RPCListenAndAdvertise(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent.yaml")
+	body := "rpc:\n  listen: 127.0.0.1:9001\n  advertise: 10.0.0.1:9001\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := agentcfg.LoadAll(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RPC.Listen != "127.0.0.1:9001" || cfg.RPC.Advertise != "10.0.0.1:9001" {
+		t.Fatalf("%+v", cfg.RPC)
+	}
+}
+
 func TestLoad_UsesLoadAllDiskOnly(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent.yaml")

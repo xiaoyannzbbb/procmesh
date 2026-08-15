@@ -120,3 +120,35 @@ func TestSignCSR_RewritesPlaceholderClusterURI(t *testing.T) {
 		t.Fatalf("rewritten uri=%s/%s", cid, nid)
 	}
 }
+
+func TestLoadAgentCreds_NoCAKey(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	b, err := control.NewBundle("c", "n", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := control.WriteBundle(dir, b); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "ca.key")); err != nil {
+		t.Fatal(err)
+	}
+	creds, err := control.LoadAgentCreds(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := control.VerifyAgent(creds.CACertPEM, creds.AgentCertPEM, "c", "n", now); err != nil {
+		t.Fatal(err)
+	}
+	if len(creds.AgentKeyPEM) == 0 {
+		t.Fatal("missing agent key")
+	}
+}
+
+func TestLoadAgentCreds_MissingCert(t *testing.T) {
+	_, err := control.LoadAgentCreds(t.TempDir())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}

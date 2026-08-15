@@ -38,6 +38,13 @@ type Bundle struct {
 	AgentKeyPEM  []byte
 }
 
+// AgentCreds holds PEMs needed by a joiner (no CA private key).
+type AgentCreds struct {
+	CACertPEM    []byte
+	AgentCertPEM []byte
+	AgentKeyPEM  []byte
+}
+
 // AgentURI returns procmesh://<clusterID>/<nodeID>.
 func AgentURI(clusterID, nodeID string) string {
 	return URIPrefix + clusterID + "/" + nodeID
@@ -269,6 +276,30 @@ func LoadBundle(dir string) (Bundle, error) {
 		AgentCertPEM: agentCert,
 		AgentKeyPEM:  agentKey,
 	}, nil
+}
+
+// LoadAgentCreds reads ca.crt, agent.crt, and agent.key (no ca.key required).
+func LoadAgentCreds(dir string) (AgentCreds, error) {
+	read := func(name string) ([]byte, error) {
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", name, err)
+		}
+		return b, nil
+	}
+	ca, err := read(caCertFile)
+	if err != nil {
+		return AgentCreds{}, err
+	}
+	cert, err := read(agentCertFile)
+	if err != nil {
+		return AgentCreds{}, err
+	}
+	key, err := read(agentKeyFile)
+	if err != nil {
+		return AgentCreds{}, err
+	}
+	return AgentCreds{CACertPEM: ca, AgentCertPEM: cert, AgentKeyPEM: key}, nil
 }
 
 func createCACert(clusterID string, key *ecdsa.PrivateKey, now time.Time) (*x509.Certificate, error) {
