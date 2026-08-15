@@ -25,7 +25,7 @@ func TestServer_Root(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET / %d %q", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "ProcMesh") {
+	if !strings.Contains(rec.Body.String(), `<div id="app">`) {
 		t.Fatalf("GET / body %q", rec.Body.String())
 	}
 }

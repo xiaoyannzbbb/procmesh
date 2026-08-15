@@ -16,7 +16,7 @@ func TestEmbed_HandlerSPAFallback(t *testing.T) {
 			t.Fatalf("GET %s %d", path, rec.Code)
 		}
 		body := rec.Body.String()
-		if !strings.Contains(body, "ProcMesh") {
+		if !strings.Contains(body, `<div id="app">`) {
 			t.Fatalf("GET %s body %q", path, body)
 		}
 		if path != "/" && body != indexBody(t) {
