@@ -123,6 +123,20 @@ func TestP3_FailedOwnerDoesNotMigrate(t *testing.T) {
 	}
 }
 
+func testConnectOpts() []connect.ClientOption {
+	tok := sessionBearer()
+	if tok == "" {
+		return nil
+	}
+	ic := connect.UnaryInterceptorFunc(func(next connect.UnaryFunc) connect.UnaryFunc {
+		return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+			req.Header().Set("Authorization", "Bearer "+tok)
+			return next(ctx, req)
+		}
+	})
+	return []connect.ClientOption{connect.WithInterceptors(ic)}
+}
+
 func waitObserved(t *testing.T, addr, name, observed string) {
 	t.Helper()
 	deadline := time.Now().Add(8 * time.Second)
@@ -157,7 +171,7 @@ func listHasObserved(out, name, observed string) bool {
 func waitGossipName(t *testing.T, addr, name string) {
 	t.Helper()
 	hc := &http.Client{Timeout: 5 * time.Second}
-	cli := procmeshv1connect.NewNodeServiceClient(hc, "http://"+addr)
+	cli := procmeshv1connect.NewNodeServiceClient(hc, "http://"+addr, testConnectOpts()...)
 	deadline := time.Now().Add(8 * time.Second)
 	var last string
 	for time.Now().Before(deadline) {
@@ -214,7 +228,7 @@ func restartCount(t *testing.T, addr, name string) int32 {
 func getProcessInstance(t *testing.T, addr, name string) (*procmeshv1.Instance, bool) {
 	t.Helper()
 	hc := &http.Client{Timeout: 5 * time.Second}
-	cli := procmeshv1connect.NewProcessServiceClient(hc, "http://"+addr)
+	cli := procmeshv1connect.NewProcessServiceClient(hc, "http://"+addr, testConnectOpts()...)
 	resp, err := cli.GetProcess(context.Background(), connect.NewRequest(&procmeshv1.GetProcessRequest{IdOrName: name}))
 	if err != nil {
 		return nil, false

@@ -13,6 +13,34 @@ import (
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
 
+func TestMetrics_ControlQuorum(t *testing.T) {
+	m, st, _ := newTestManager(t)
+	srv, err := NewServer(Options{
+		Mgr:       m,
+		Store:     st,
+		Started:   time.Now(),
+		HasQuorum: func() bool { return false },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	srv.Engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("metrics %d %q", rec.Code, body)
+	}
+	if !strings.Contains(body, "procmesh_cluster_control_quorum 0") {
+		t.Fatalf("want procmesh_cluster_control_quorum 0, got:\n%s", body)
+	}
+	if !strings.Contains(body, "# HELP procmesh_cluster_control_quorum Whether this node sees a Raft leader (1) or not (0).") {
+		t.Fatalf("missing HELP: %q", body)
+	}
+	if !strings.Contains(body, "# TYPE procmesh_cluster_control_quorum gauge") {
+		t.Fatalf("missing TYPE: %q", body)
+	}
+}
+
 func TestMetrics_ForwardTotal(t *testing.T) {
 	m, st, _ := newTestManager(t)
 	fakeCli := &fakeProcessClient{

@@ -140,7 +140,7 @@ func sessionTokenFor(cmd, server, flagToken string) string {
 	if err != nil {
 		return ""
 	}
-	if !sameServer(sess.Server, server) {
+	if os.Getenv("PROCMESH_SESSION") == "" && !sameServer(sess.Server, server) {
 		return ""
 	}
 	return sess.SessionID

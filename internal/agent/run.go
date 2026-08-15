@@ -13,6 +13,7 @@ import (
 
 	"github.com/qleelulu/procmesh/internal/agentcfg"
 	"github.com/qleelulu/procmesh/internal/api"
+	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/errcode"
@@ -29,18 +30,21 @@ const defaultRPCListen = "127.0.0.1:9001"
 
 // Options is the procmesh-agent runtime configuration.
 type Options struct {
-	DataDir         string
-	Listen          string
-	ShimBin         string
-	InsecureListen  bool
-	OnListen        func(addr string)
-	ConfigPath      string
-	GossipListen    string // default 127.0.0.1:7946
-	GossipAdvertise string
-	RPCListen       string // default 127.0.0.1:9001; tests use 127.0.0.1:0
-	RPCAdvertise    string
-	OnRPCListen     func(addr string)
-	BootID          string // empty = paths.CurrentBootID(); tests may override
+	DataDir          string
+	Listen           string
+	ShimBin          string
+	InsecureListen   bool
+	OnListen         func(addr string)
+	ConfigPath       string
+	GossipListen     string // default 127.0.0.1:7946
+	GossipAdvertise  string
+	RPCListen        string // default 127.0.0.1:9001; tests use 127.0.0.1:0
+	RPCAdvertise     string
+	OnRPCListen      func(addr string)
+	ControlListen    string // default 127.0.0.1:9002; tests use 127.0.0.1:0
+	ControlAdvertise string
+	OnControlListen  func(addr string)
+	BootID           string // empty = paths.CurrentBootID(); tests may override
 }
 
 // Run owns the agent lifecycle and blocks until ctx is cancelled.
@@ -147,6 +151,24 @@ func Run(ctx context.Context, opt Options) error {
 	if err := CheckListen(opt.RPCListen, opt.InsecureListen); err != nil {
 		return err
 	}
+	if opt.ControlListen == "" {
+		opt.ControlListen = cfg.Control.Listen
+	}
+	if opt.ControlListen == "" {
+		opt.ControlListen = defaultControlListen
+	}
+	if opt.ControlAdvertise == "" {
+		opt.ControlAdvertise = cfg.Control.Advertise
+	}
+	if err := CheckListen(opt.ControlListen, opt.InsecureListen); err != nil {
+		return err
+	}
+	bindCtrl, advCtrl, err := resolveControlAddr(opt.ControlListen, opt.ControlAdvertise)
+	if err != nil {
+		return fmt.Errorf("control address: %w", err)
+	}
+	opt.ControlListen = bindCtrl
+	opt.ControlAdvertise = advCtrl
 	bindAddr, bindPort, err := splitListen(gossipListen)
 	if err != nil {
 		return err
@@ -234,20 +256,43 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 	}
 
 	fwd := &agentForwarder{}
-	rt := &rpcRuntime{
-		opt:      opt,
-		dir:      clusterDeps.Dir,
-		nodeID:   clusterDeps.NodeID,
-		mgr:      mgr,
-		st:       st,
-		mesh:     mesh,
-		src:      src,
-		ready:    ready,
-		degraded: degraded,
-		fwd:      fwd,
-		node:     clusterDeps.Control,
+	authSvc := &auth.Service{}
+	raftDir := ""
+	if clusterDeps.Dir != "" {
+		raftDir = filepath.Join(filepath.Dir(clusterDeps.Dir), "raft")
 	}
-	clusterDeps.OnReady = rt.startRPC
+	rt := &rpcRuntime{
+		opt:         opt,
+		dir:         clusterDeps.Dir,
+		nodeID:      clusterDeps.NodeID,
+		mgr:         mgr,
+		st:          st,
+		mesh:        mesh,
+		src:         src,
+		ready:       ready,
+		degraded:    degraded,
+		fwd:         fwd,
+		node:        clusterDeps.Control,
+		auth:        authSvc,
+		raftDir:     raftDir,
+		controlBind: opt.ControlListen,
+		controlAdv:  opt.ControlAdvertise,
+	}
+	if control.AlreadyInited(clusterDeps.Dir) {
+		if err := rt.startRaft(false); err != nil {
+			_ = ln.Close()
+			rt.shutdown(context.Background())
+			shutdownMesh(mesh)
+			return fmt.Errorf("start raft: %w", err)
+		}
+		clusterDeps.Control = rt.control()
+	}
+	clusterDeps.ControlFn = rt.control
+	clusterDeps.OnAdmit = rt.onAdmit
+	clusterDeps.LeaderAPI = rt.leaderAPI
+	clusterDeps.RaftAddr = rt.raftAddr
+	clusterDeps.SetRaftLeader = rt.setKnownLeader
+	clusterDeps.OnReady = rt.onReady
 	if err := rt.startRPC(); err != nil {
 		_ = ln.Close()
 		rt.shutdown(context.Background())
@@ -278,6 +323,7 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		Logs:      logs,
 		Store:     revs,
 		Cluster:   clusterDeps,
+		Auth:      authSvc,
 		Degraded:  degraded,
 		Ready:     ready,
 		Started:   time.Now(),
@@ -285,6 +331,10 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		LocalID:   clusterDeps.NodeID,
 		Router:    router,
 		Forward:   fwd,
+		HasQuorum: func() bool {
+			n := rt.control()
+			return n != nil && n.HasQuorum()
+		},
 	})
 	if err != nil {
 		_ = ln.Close()

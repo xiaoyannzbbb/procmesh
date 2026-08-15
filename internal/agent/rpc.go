@@ -25,18 +25,23 @@ type rpcRuntime struct {
 	srv *rpc.Server
 	ln  net.Listener
 
-	opt      Options
-	dir      string
-	nodeID   string
-	mgr      *process.Manager
-	st       *store.Store
-	mesh     *cluster.Mesh
-	src      *liveSource
-	ready    func() error
-	degraded bool
-	fwd      *agentForwarder
-	auth     *auth.Service
-	node     *control.Node
+	opt         Options
+	dir         string
+	nodeID      string
+	mgr         *process.Manager
+	st          *store.Store
+	mesh        *cluster.Mesh
+	src         *liveSource
+	ready       func() error
+	degraded    bool
+	fwd         *agentForwarder
+	auth        *auth.Service
+	node        *control.Node
+	raftDir     string
+	clusterID   string
+	controlBind string
+	controlAdv  string
+	knownLeader string
 }
 
 func (r *rpcRuntime) startRPC() error {
@@ -71,9 +76,12 @@ func (r *rpcRuntime) startRPCLocked() error {
 	if err != nil {
 		return fmt.Errorf("rpc listen: %w", err)
 	}
-	node := r.node
 	srv, err := rpc.NewServer(ln.Addr().String(), creds, clusterID, r.localHandler(), func(s string) bool {
-		return node.View().SerialRevoked(s)
+		n := r.control()
+		if n == nil {
+			return false
+		}
+		return n.View().SerialRevoked(s)
 	})
 	if err != nil {
 		_ = ln.Close()
@@ -122,14 +130,17 @@ func (r *rpcRuntime) shutdown(ctx context.Context) {
 		return
 	}
 	r.mu.Lock()
-	srv, ln := r.srv, r.ln
-	r.srv, r.ln = nil, nil
+	srv, ln, node := r.srv, r.ln, r.node
+	r.srv, r.ln, r.node = nil, nil, nil
 	r.mu.Unlock()
 	if srv != nil {
 		_ = srv.Shutdown(ctx)
 	}
 	if ln != nil {
 		_ = ln.Close()
+	}
+	if node != nil {
+		_ = node.Shutdown()
 	}
 }
 

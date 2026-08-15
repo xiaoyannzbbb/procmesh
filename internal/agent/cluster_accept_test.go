@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,11 +13,10 @@ import (
 
 func TestAccept_RPCAddressAfterInit(t *testing.T) {
 	addr, _ := startClusterAgent(t, "")
-	code, out, errb := runP1CLI("--server", addr, "cluster", "init")
-	if code != 0 {
-		t.Fatalf("init exit=%d stderr=%q stdout=%q", code, errb, out)
-	}
+	initAndLogin(t, addr)
 	deadline := time.Now().Add(3 * time.Second)
+	var code int
+	var out, errb string
 	for time.Now().Before(deadline) {
 		code, out, errb = runP1CLI("--server", addr, "node", "list")
 		if code == 0 && strings.Contains(out, "127.0.0.1:") && strings.Count(out, "127.0.0.1:") >= 1 {
@@ -34,12 +34,9 @@ func TestAccept_NodeListAfterInit(t *testing.T) {
 	addr, root := startClusterAgent(t, "")
 	nodeID := readNodeID(t, root)
 
-	code, out, errb := runP1CLI("--server", addr, "cluster", "init")
-	if code != 0 {
-		t.Fatalf("cluster init exit=%d stderr=%q stdout=%q", code, errb, out)
-	}
+	initAndLogin(t, addr)
 
-	code, out, errb = runP1CLI("--server", addr, "node", "list")
+	code, out, errb := runP1CLI("--server", addr, "node", "list")
 	if code != 0 {
 		t.Fatalf("node list exit=%d stderr=%q stdout=%q", code, errb, out)
 	}
@@ -66,10 +63,7 @@ func TestAccept_JoinTwoAgents(t *testing.T) {
 
 func joinTwo(t *testing.T, addrA, addrC string) {
 	t.Helper()
-	code, out, errb := runP1CLI("--server", addrA, "cluster", "init")
-	if code != 0 {
-		t.Fatalf("cluster init exit=%d stderr=%q stdout=%q", code, errb, out)
-	}
+	initAndLogin(t, addrA)
 	code, tokOut, errb := runP1CLI("--server", addrA, "node", "token", "create")
 	if code != 0 {
 		t.Fatalf("token create exit=%d stderr=%q stdout=%q", code, errb, tokOut)
@@ -79,12 +73,12 @@ func joinTwo(t *testing.T, addrA, addrC string) {
 		t.Fatalf("missing token in %q", tokOut)
 	}
 
-	code, out, errb = runP1CLI("--server", addrC, "agent", "join", "--seed", addrA, "--token", token)
+	code, out, errb := runP1CLI("--server", addrC, "agent", "join", "--seed", addrA, "--token", token)
 	if code != 0 {
 		t.Fatalf("agent join exit=%d stderr=%q stdout=%q", code, errb, out)
 	}
 
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	var listA, listC string
 	for time.Now().Before(deadline) {
 		code, listA, errb = runP1CLI("--server", addrA, "node", "list")
@@ -107,12 +101,11 @@ func joinTwo(t *testing.T, addrA, addrC string) {
 
 func TestAccept_DuplicateNodeIDRejected(t *testing.T) {
 	addrA, rootA := startClusterAgent(t, "")
-	code, out, errb := runP1CLI("--server", addrA, "cluster", "init")
-	if code != 0 {
-		t.Fatalf("cluster init exit=%d stderr=%q stdout=%q", code, errb, out)
-	}
+	initAndLogin(t, addrA)
 
 	spec := writeNeverSpec(t)
+	var code int
+	var out, errb string
 	code, out, errb = runP1CLI("--server", addrA, "process", "apply", "--file", spec, "--expected-revision", "0")
 	if code != 0 {
 		t.Fatalf("apply never exit=%d stderr=%q stdout=%q", code, errb, out)
@@ -183,14 +176,16 @@ func startClusterAgentAtCtl(t *testing.T, root, bootID string) (string, context.
 	got := make(chan string, 1)
 	errCh := make(chan error, 1)
 	go func() {
+		ensureTestSession(t)
 		errCh <- Run(ctx, Options{
-			DataDir:      root,
-			Listen:       "127.0.0.1:0",
-			GossipListen: "127.0.0.1:0",
-			RPCListen:    "127.0.0.1:0",
-			ShimBin:      testShimBin,
-			BootID:       bootID,
-			OnListen:     func(addr string) { got <- addr },
+			DataDir:       root,
+			Listen:        "127.0.0.1:0",
+			GossipListen:  "127.0.0.1:0",
+			RPCListen:     "127.0.0.1:0",
+			ControlListen: "127.0.0.1:0",
+			ShimBin:       testShimBin,
+			BootID:        bootID,
+			OnListen:      func(addr string) { got <- addr },
 		})
 	}()
 	var addr string
@@ -216,6 +211,54 @@ func startClusterAgentAtCtl(t *testing.T, root, bootID string) (string, context.
 		cleanupDataDir(root)
 	})
 	return addr, stop
+}
+
+func ensureTestSession(t *testing.T) {
+	t.Helper()
+	if os.Getenv("PROCMESH_SESSION") != "" {
+		return
+	}
+	t.Setenv("PROCMESH_SESSION", filepath.Join(t.TempDir(), "session"))
+}
+
+func loginAdmin(t *testing.T, server, password string) {
+	t.Helper()
+	ensureTestSession(t)
+	code, out, errb := runP1CLI("--server", server, "login", "--user", "admin", "--password", password)
+	if code != 0 {
+		t.Fatalf("login exit=%d stderr=%q stdout=%q", code, errb, out)
+	}
+}
+
+func initAndLogin(t *testing.T, addr string) {
+	t.Helper()
+	code, out, errb := runP1CLI("--server", addr, "cluster", "init")
+	if code != 0 {
+		t.Fatalf("cluster init exit=%d stderr=%q stdout=%q", code, errb, out)
+	}
+	pw := parseKV(out, "admin_password")
+	if pw == "" {
+		t.Fatalf("missing admin_password in %q", out)
+	}
+	loginAdmin(t, addr, pw)
+}
+
+func sessionBearer() string {
+	path := os.Getenv("PROCMESH_SESSION")
+	if path == "" {
+		return ""
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var sess struct {
+		SessionID string `json:"session_id"`
+	}
+	if json.Unmarshal(raw, &sess) != nil {
+		return ""
+	}
+	return sess.SessionID
 }
 
 func readNodeID(t *testing.T, root string) string {

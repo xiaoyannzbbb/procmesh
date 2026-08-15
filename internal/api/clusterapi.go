@@ -24,22 +24,24 @@ import (
 var _ procmeshv1connect.ClusterServiceHandler = (*ClusterAPI)(nil)
 
 type ClusterDeps struct {
-	Dir        string           // layout.ClusterDir
-	Store      ClusterMetaStore // GetOrCreateNodeID, SetClusterID, GetClusterID
-	Mesh       NodeLister       // Members(); nil → List uses Local
-	Local      func() cluster.NodeSummary
-	GossipAddr func() string // local advertise, returned by seed Join
-	Now        func() time.Time
-	NodeID     string
-	Hostname   string
-	BootID     string
-	APIAddr    string
-	HTTPClient *http.Client
-	OnReady    func() error // called after Init/RequestJoin persist certs; failure is logged only
-	Control    *control.Node
-	OnAdmit    func(nodeID, raftAddr string) error // leader AddNonvoter；nil 忽略
-	LeaderAPI  func() string                       // 非 leader 转发 Join 的 API 地址
-	RaftAddr   func() string                       // 本机 Raft advertise，RequestJoin 填入
+	Dir           string           // layout.ClusterDir
+	Store         ClusterMetaStore // GetOrCreateNodeID, SetClusterID, GetClusterID
+	Mesh          NodeLister       // Members(); nil → List uses Local
+	Local         func() cluster.NodeSummary
+	GossipAddr    func() string // local advertise, returned by seed Join
+	Now           func() time.Time
+	NodeID        string
+	Hostname      string
+	BootID        string
+	APIAddr       string
+	HTTPClient    *http.Client
+	OnReady       func() error // called after Init/RequestJoin persist certs; failure is logged only
+	Control       *control.Node
+	ControlFn     func() *control.Node                // 晚绑定；优先于 Control
+	OnAdmit       func(nodeID, raftAddr string) error // leader AddNonvoter；nil 忽略
+	LeaderAPI     func() string                       // 非 leader 转发 Join 的 API 地址
+	RaftAddr      func() string                       // 本机 Raft advertise，RequestJoin 填入
+	SetRaftLeader func(addr string)                   // RequestJoin 记下 seed 返回的 leader
 }
 
 type ClusterMetaStore interface {
@@ -119,7 +121,7 @@ func (s *ClusterAPI) Join(ctx context.Context, req *connect.Request[procmeshv1.J
 		if adm.IsRevoked(req.Msg.GetNodeId()) {
 			return nil, ToConnect(errcode.E(errcode.DENIED, "node removed"))
 		}
-		if !s.Deps.Control.IsLeader() {
+		if n := s.Deps.controlNode(); n != nil && !n.IsLeader() {
 			return s.forwardJoin(ctx, req)
 		}
 	}
@@ -151,10 +153,14 @@ func (s *ClusterAPI) Join(ctx context.Context, req *connect.Request[procmeshv1.J
 		if raftAddr := req.Msg.GetRaftAddress(); raftAddr != "" {
 			add := s.Deps.OnAdmit
 			if add == nil {
-				add = s.Deps.Control.AddNonvoter
+				if n := s.Deps.controlNode(); n != nil {
+					add = n.AddNonvoter
+				}
 			}
-			if err := add(req.Msg.GetNodeId(), raftAddr); err != nil {
-				fmt.Fprintf(os.Stderr, "add nonvoter: %v\n", err)
+			if add != nil {
+				if err := add(req.Msg.GetNodeId(), raftAddr); err != nil {
+					fmt.Fprintf(os.Stderr, "add nonvoter: %v\n", err)
+				}
 			}
 		}
 	} else {
@@ -177,8 +183,8 @@ func (s *ClusterAPI) Join(ctx context.Context, req *connect.Request[procmeshv1.J
 		CertPem:       certPEM,
 		GossipAddress: s.Deps.gossipAddr(),
 	}
-	if s.Deps.Control != nil {
-		resp.RaftLeader = s.Deps.Control.Advertise()
+	if n := s.Deps.controlNode(); n != nil {
+		resp.RaftLeader = n.Advertise()
 	}
 	return connect.NewResponse(resp), nil
 }
@@ -244,6 +250,9 @@ func (s *ClusterAPI) RequestJoin(ctx context.Context, req *connect.Request[procm
 			return nil, ToConnect(err)
 		}
 	}
+	if s.Deps.SetRaftLeader != nil {
+		s.Deps.SetRaftLeader(joined.Msg.GetRaftLeader())
+	}
 	s.callOnReady()
 	if j, ok := s.Deps.Mesh.(meshJoiner); ok {
 		if gossip := joined.Msg.GetGossipAddress(); gossip != "" {
@@ -269,10 +278,18 @@ func (s *ClusterAPI) Overview(ctx context.Context, _ *connect.Request[procmeshv1
 			alive++
 		}
 	}
+	var quorum bool
+	var leader string
+	if n := s.Deps.controlNode(); n != nil {
+		quorum = n.HasQuorum()
+		leader = n.LeaderAddr()
+	}
 	return connect.NewResponse(&procmeshv1.ClusterOverviewResponse{
-		ClusterId: s.Deps.clusterID(ctx),
-		Members:   int32(len(members)),
-		Alive:     alive,
+		ClusterId:     s.Deps.clusterID(ctx),
+		Members:       int32(len(members)),
+		Alive:         alive,
+		ControlQuorum: quorum,
+		ControlLeader: leader,
 	}), nil
 }
 
@@ -375,11 +392,21 @@ func (d ClusterDeps) raftAddr() string {
 	return ""
 }
 
+func (d ClusterDeps) controlNode() *control.Node {
+	if d.ControlFn != nil {
+		if n := d.ControlFn(); n != nil {
+			return n
+		}
+	}
+	return d.Control
+}
+
 func (d ClusterDeps) admission() *control.Admission {
-	if d.Control == nil {
+	n := d.controlNode()
+	if n == nil {
 		return nil
 	}
-	return &control.Admission{Node: d.Control}
+	return &control.Admission{Node: n}
 }
 
 func (s *ClusterAPI) forwardJoin(ctx context.Context, req *connect.Request[procmeshv1.JoinClusterRequest]) (*connect.Response[procmeshv1.JoinClusterResponse], error) {
@@ -387,7 +414,7 @@ func (s *ClusterAPI) forwardJoin(ctx context.Context, req *connect.Request[procm
 	if s.Deps.LeaderAPI != nil {
 		leaderAPI = s.Deps.LeaderAPI()
 	}
-	if leaderAPI == "" {
+	if leaderAPI == "" || sameAPIAddr(leaderAPI, s.Deps.APIAddr) {
 		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "raft leader api unknown"))
 	}
 	client := procmeshv1connect.NewClusterServiceClient(s.Deps.httpClient(), seedBaseURL(leaderAPI))
@@ -444,6 +471,13 @@ func seedBaseURL(seed string) string {
 		return seed
 	}
 	return "http://" + seed
+}
+
+func sameAPIAddr(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	return strings.TrimPrefix(seedBaseURL(a), "http://") == strings.TrimPrefix(seedBaseURL(b), "http://")
 }
 
 func mapSeedErr(err error) error {

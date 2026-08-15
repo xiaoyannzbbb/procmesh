@@ -62,7 +62,7 @@ func runningInstances(mgr *process.Manager) int {
 	return n
 }
 
-func renderMetrics(uptimeSeconds float64, running, members, alive int, rpcForward uint64) []byte {
+func renderMetrics(uptimeSeconds float64, running, members, alive int, rpcForward uint64, quorum int) []byte {
 	return []byte(fmt.Sprintf(
 		"# HELP procmesh_agent_uptime Agent uptime in seconds.\n"+
 			"# TYPE procmesh_agent_uptime gauge\n"+
@@ -78,7 +78,10 @@ func renderMetrics(uptimeSeconds float64, running, members, alive int, rpcForwar
 			"procmesh_cluster_alive_members %d\n"+
 			"# HELP procmesh_rpc_forward_total Remote owner RPC forward attempts.\n"+
 			"# TYPE procmesh_rpc_forward_total counter\n"+
-			"procmesh_rpc_forward_total %d\n",
-		uptimeSeconds, running, members, alive, rpcForward,
+			"procmesh_rpc_forward_total %d\n"+
+			"# HELP procmesh_cluster_control_quorum Whether this node sees a Raft leader (1) or not (0).\n"+
+			"# TYPE procmesh_cluster_control_quorum gauge\n"+
+			"procmesh_cluster_control_quorum %d\n",
+		uptimeSeconds, running, members, alive, rpcForward, quorum,
 	))
 }

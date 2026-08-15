@@ -47,6 +47,7 @@ type Options struct {
 	LocalID   string
 	Router    *Router
 	Forward   Forwarder
+	HasQuorum func() bool
 }
 
 func NewServer(opts Options) (*Server, error) {
@@ -188,7 +189,24 @@ func (s *Server) metrics(c *gin.Context) {
 		members,
 		alive,
 		rpcForward,
+		s.controlQuorum(),
 	))
+}
+
+func (s *Server) controlQuorum() int {
+	if s.opts.HasQuorum != nil {
+		if s.opts.HasQuorum() {
+			return 1
+		}
+		return 0
+	}
+	if n := s.opts.Cluster.controlNode(); n != nil && n.HasQuorum() {
+		return 1
+	}
+	if s.opts.Auth != nil && s.opts.Auth.Store != nil && s.opts.Auth.Store.HasQuorum() {
+		return 1
+	}
+	return 0
 }
 
 func clusterMemberCounts(d ClusterDeps) (members, alive int) {

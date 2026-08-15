@@ -67,8 +67,8 @@ func (s *NodeAPI) CreateJoinToken(ctx context.Context, req *connect.Request[proc
 		info  control.TokenInfo
 		err   error
 	)
-	if s.Deps.Control != nil {
-		adm := control.Admission{Node: s.Deps.Control}
+	if n := s.Deps.controlNode(); n != nil {
+		adm := control.Admission{Node: n}
 		plain, info, err = adm.CreateToken(ttl, int(req.Msg.GetUses()), s.Deps.now())
 	} else {
 		plain, info, err = control.CreateToken(s.Deps.Dir, ttl, int(req.Msg.GetUses()), s.Deps.now())
@@ -101,8 +101,8 @@ func (s *NodeAPI) RevokeJoinToken(ctx context.Context, req *connect.Request[proc
 		return nil, err
 	}
 	var err error
-	if s.Deps.Control != nil {
-		adm := control.Admission{Node: s.Deps.Control}
+	if n := s.Deps.controlNode(); n != nil {
+		adm := control.Admission{Node: n}
 		err = adm.RevokeToken(req.Msg.GetTokenId())
 	} else {
 		err = control.RevokeToken(s.Deps.Dir, req.Msg.GetTokenId())
@@ -126,7 +126,8 @@ func (s *NodeAPI) RemoveNode(ctx context.Context, req *connect.Request[procmeshv
 	if err := requireCluster(s.Deps); err != nil {
 		return nil, err
 	}
-	if s.Deps.Control == nil {
+	ctrl := s.Deps.controlNode()
+	if ctrl == nil {
 		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "raft control not configured"))
 	}
 	nodeID := req.Msg.GetNodeId()
@@ -144,10 +145,10 @@ func (s *NodeAPI) RemoveNode(ctx context.Context, req *connect.Request[procmeshv
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	if err := s.Deps.Control.Apply(cmd, authApplyTimeout); err != nil {
+	if err := ctrl.Apply(cmd, authApplyTimeout); err != nil {
 		return nil, ToConnect(err)
 	}
-	if err := s.Deps.Control.RemoveServer(nodeID); err != nil && !ignoreRemoveServerErr(err) {
+	if err := ctrl.RemoveServer(nodeID); err != nil && !ignoreRemoveServerErr(err) {
 		return nil, ToConnect(err)
 	}
 	return connect.NewResponse(&procmeshv1.RemoveNodeResponse{}), nil
@@ -166,14 +167,15 @@ func (s *NodeAPI) PromoteNode(ctx context.Context, req *connect.Request[procmesh
 	if err := requireCluster(s.Deps); err != nil {
 		return nil, err
 	}
-	if s.Deps.Control == nil {
+	ctrl := s.Deps.controlNode()
+	if ctrl == nil {
 		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "raft control not configured"))
 	}
 	nodeID := req.Msg.GetNodeId()
 	if nodeID == "" {
 		return nil, ToConnect(errcode.E(errcode.INVALID, "node_id required"))
 	}
-	view := s.Deps.Control.View()
+	view := ctrl.View()
 	m, ok := view.Member(nodeID)
 	if !ok {
 		return nil, ToConnect(errcode.E(errcode.NOT_FOUND, "node not found"))
@@ -183,7 +185,7 @@ func (s *NodeAPI) PromoteNode(ctx context.Context, req *connect.Request[procmesh
 	if m.Status != control.MemberAdmitted || m.RaftAddr == "" {
 		return nil, ToConnect(errcode.E(errcode.INVALID, "node not admitted"))
 	}
-	if err := s.Deps.Control.AddVoter(nodeID, m.RaftAddr); err != nil {
+	if err := ctrl.AddVoter(nodeID, m.RaftAddr); err != nil {
 		return nil, ToConnect(err)
 	}
 	return connect.NewResponse(&procmeshv1.PromoteNodeResponse{}), nil

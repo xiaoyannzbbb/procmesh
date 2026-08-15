@@ -104,11 +104,13 @@ func startLiveAgent(t *testing.T) string {
 	got := make(chan string, 1)
 	errCh := make(chan error, 1)
 	go func() {
+		ensureTestSession(t)
 		errCh <- Run(ctx, Options{
-			DataDir:  root,
-			Listen:   "127.0.0.1:0",
-			ShimBin:  testShimBin,
-			OnListen: func(addr string) { got <- addr },
+			DataDir:       root,
+			Listen:        "127.0.0.1:0",
+			ControlListen: "127.0.0.1:0",
+			ShimBin:       testShimBin,
+			OnListen:      func(addr string) { got <- addr },
 		})
 	}()
 	var addr string
