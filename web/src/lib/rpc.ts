@@ -1,6 +1,6 @@
 import { createClient, type Client } from "@connectrpc/connect";
 import { inject } from "vue";
-import { ClusterService, MetricsService, NodeService, ProcessService } from "../gen/procmesh/v1/api_pb";
+import { ClusterService, ConfigService, LogService, MetricsService, NodeService, ProcessService } from "../gen/procmesh/v1/api_pb";
 import { transport } from "./connect";
 
 export type ClusterClient = Pick<Client<typeof ClusterService>, "overview">;
@@ -10,6 +10,11 @@ export type ProcessClient = Pick<
   "getProcess" | "startProcess" | "stopProcess" | "restartProcess" | "killProcess"
 >;
 export type MetricsClient = Pick<Client<typeof MetricsService>, "getProcessMetrics">;
+export type ConfigClient = Pick<
+  Client<typeof ConfigService>,
+  "getConfig" | "updateConfig" | "history" | "diff" | "rollback"
+>;
+export type LogClient = Pick<Client<typeof LogService>, "tailLogs" | "streamLogs" | "downloadLogs">;
 
 export function useClusterClient(): ClusterClient {
   return inject<ClusterClient | null>("clusterClient", null) ?? createClient(ClusterService, transport);
@@ -25,4 +30,12 @@ export function useProcessClient(): ProcessClient {
 
 export function useMetricsClient(): MetricsClient {
   return inject<MetricsClient | null>("metricsClient", null) ?? createClient(MetricsService, transport);
+}
+
+export function useConfigClient(): ConfigClient {
+  return inject<ConfigClient | null>("configClient", null) ?? createClient(ConfigService, transport);
+}
+
+export function useLogClient(): LogClient {
+  return inject<LogClient | null>("logClient", null) ?? createClient(LogService, transport);
 }

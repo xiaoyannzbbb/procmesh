@@ -12,6 +12,8 @@ import {
   mapProcessDetail,
   ownerDisplay,
 } from "./processView";
+import ProcessConfigPanel from "./ProcessConfigPanel.vue";
+import ProcessLogsPanel from "./ProcessLogsPanel.vue";
 
 const POLL_MS = 5000;
 const route = useRoute();
@@ -20,6 +22,7 @@ const processes = useProcessClient();
 const metrics = useMetricsClient();
 const queryClient = useQueryClient();
 const actionError = ref("");
+const tab = ref<"overview" | "config" | "logs">("overview");
 
 const idOrName = computed(() => String(route.params.idOrName ?? ""));
 const routeNode = computed(() => {
@@ -187,6 +190,43 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
       <div v-if="detail.showRestartBanner" class="banner restart" role="status">
         {{ detail.restartBanner }}
       </div>
+      <div class="tabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          :class="{ active: tab === 'overview' }"
+          :aria-selected="tab === 'overview'"
+          @click="tab = 'overview'"
+        >
+          Overview
+        </button>
+        <button
+          type="button"
+          role="tab"
+          :class="{ active: tab === 'config' }"
+          :aria-selected="tab === 'config'"
+          @click="tab = 'config'"
+        >
+          Config
+        </button>
+        <button
+          type="button"
+          role="tab"
+          :class="{ active: tab === 'logs' }"
+          :aria-selected="tab === 'logs'"
+          @click="tab = 'logs'"
+        >
+          Logs
+        </button>
+      </div>
+      <ProcessConfigPanel v-if="tab === 'config'" :id-or-name="idOrName" :target-node-id="ownerNodeId" />
+      <ProcessLogsPanel
+        v-else-if="tab === 'logs'"
+        :id-or-name="idOrName"
+        :target-node-id="ownerNodeId"
+        :instances="detail.instanceRows.map((r) => r.instanceId).filter(Boolean)"
+      />
+      <template v-else>
       <section class="card">
         <h2>Process</h2>
         <dl class="facts">
@@ -300,6 +340,7 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
           </tbody>
         </table>
       </section>
+      </template>
     </template>
   </div>
 </template>
@@ -338,6 +379,26 @@ h2 {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
+}
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--color-border);
+}
+.tabs button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-muted);
+  padding: 0.5rem 0.85rem;
+  font-size: 0.875rem;
+  font-weight: 550;
+  cursor: pointer;
+  margin-bottom: -1px;
+}
+.tabs button.active {
+  color: var(--color-text);
+  border-bottom-color: var(--color-accent);
 }
 .muted {
   color: var(--color-muted);
