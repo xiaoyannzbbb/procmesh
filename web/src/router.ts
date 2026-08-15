@@ -1,20 +1,15 @@
-import { defineComponent, h } from "vue";
 import { createRouter, createWebHistory, type RouteRecordRaw } from "vue-router";
 import AppShell from "./components/AppShell.vue";
 import { loadSession } from "./lib/session";
+import AuditPage from "./pages/AuditPage.vue";
 import LoginPage from "./pages/LoginPage.vue";
 import NodeDetailPage from "./pages/NodeDetailPage.vue";
 import NodesPage from "./pages/NodesPage.vue";
 import OverviewPage from "./pages/OverviewPage.vue";
 import ProcessDetailPage from "./pages/ProcessDetailPage.vue";
 import ProcessesPage from "./pages/ProcessesPage.vue";
-
-const PlaceholderPage = defineComponent({
-  name: "PlaceholderPage",
-  setup() {
-    return () => h("div");
-  },
-});
+import RolesPage from "./pages/RolesPage.vue";
+import UsersPage from "./pages/UsersPage.vue";
 
 const routes: RouteRecordRaw[] = [
   { path: "/login", component: LoginPage, meta: { public: true } },
@@ -27,9 +22,9 @@ const routes: RouteRecordRaw[] = [
       { path: "nodes/:id", component: NodeDetailPage },
       { path: "processes", component: ProcessesPage },
       { path: "processes/:idOrName", component: ProcessDetailPage },
-      { path: "users", component: PlaceholderPage },
-      { path: "roles", component: PlaceholderPage },
-      { path: "audit", component: PlaceholderPage },
+      { path: "users", component: UsersPage },
+      { path: "roles", component: RolesPage },
+      { path: "audit", component: AuditPage },
     ],
   },
 ];
