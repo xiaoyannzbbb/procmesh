@@ -131,6 +131,78 @@ func TestServer_ConnectAndLegacyJSON(t *testing.T) {
 	}
 }
 
+func TestServer_LegacyMutationRejectedWhenRouterWired(t *testing.T) {
+	m, st, _ := newTestManager(t)
+	srv, err := NewServer(Options{Mgr: m, Store: st, Router: &Router{LocalID: "n1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertLegacyMutationRejected(t, srv)
+	assertLegacyGETAllowed(t, srv)
+}
+
+func TestServer_LegacyMutationRejectedWhenClusterInited(t *testing.T) {
+	m, st, _ := newTestManager(t)
+	if err := st.SetClusterID(context.Background(), "cid"); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(Options{Mgr: m, Store: st, Cluster: ClusterDeps{Store: st}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertLegacyMutationRejected(t, srv)
+	assertLegacyGETAllowed(t, srv)
+}
+
+func TestServer_LegacyMutationAllowedWhenRouterWiredUnclustered(t *testing.T) {
+	m, st, _ := newTestManager(t)
+	srv, err := NewServer(Options{
+		Mgr: m, Store: st,
+		Router:  &Router{LocalID: "n1"},
+		Cluster: ClusterDeps{Store: st, Dir: t.TempDir(), NodeID: "n1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hs := httptest.NewServer(srv.Engine)
+	t.Cleanup(hs.Close)
+	body := `{"operation_id":"op-c","operator":"t","expected_revision":0,"spec":{"process_id":"p1","name":"true","command":"/bin/sleep","args":["5"],"instances":1}}`
+	res, err := http.Post(hs.URL+"/v1/processes", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := io.ReadAll(res.Body)
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("unclustered POST /v1/processes %d %s", res.StatusCode, got)
+	}
+}
+
+func assertLegacyMutationRejected(t *testing.T, srv *Server) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	body := `{"operation_id":"op-c","operator":"t","expected_revision":0,"spec":{"process_id":"p1","name":"true","command":"/bin/true","instances":1}}`
+	srv.Engine.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/processes", strings.NewReader(body)))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("POST /v1/processes %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "use connect rpc for remote mutations") {
+		t.Fatalf("body %q", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "UNAVAILABLE") {
+		t.Fatalf("missing UNAVAILABLE: %q", rec.Body.String())
+	}
+}
+
+func assertLegacyGETAllowed(t *testing.T, srv *Server) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	srv.Engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/processes", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /v1/processes %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestServer_ConnectNilMgrReturnsDegraded(t *testing.T) {
 	srv, err := NewServer(Options{Started: time.Now()})
 	if err != nil {

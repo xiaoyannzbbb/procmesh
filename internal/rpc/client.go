@@ -9,6 +9,13 @@ import (
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
 
+const (
+	// UnaryTimeout is the client bound for list/get hops.
+	UnaryTimeout = 5 * time.Second
+	// MutationTimeout covers stop_timeout (default 10s) plus margin.
+	MutationTimeout = 30 * time.Second
+)
+
 // DialConfig configures an mTLS HTTP client for Agent-to-Agent RPC.
 type DialConfig struct {
 	Creds        control.AgentCreds
@@ -20,18 +27,15 @@ type DialConfig struct {
 
 // Dial builds an mTLS HTTP client and https base URL for the given address.
 // Address may be host:port or already https://...; base URL is always https://host:port.
-// Timeout defaults to 5s when zero.
+// Timeout 0 means no client-wide timeout (context cancellation still applies).
+// Unary hops should set UnaryTimeout or MutationTimeout; Stream/Download must use 0.
 func Dial(cfg DialConfig) (*http.Client, string, error) {
-	timeout := cfg.Timeout
-	if timeout == 0 {
-		timeout = 5 * time.Second
-	}
 	tlsCfg, err := ClientTLS(cfg.Creds, cfg.ClusterID, cfg.ExpectNodeID)
 	if err != nil {
 		return nil, "", err
 	}
 	hc := &http.Client{
-		Timeout:   timeout,
+		Timeout:   cfg.Timeout,
 		Transport: &http.Transport{TLSClientConfig: tlsCfg},
 	}
 	return hc, baseURL(cfg.Address), nil

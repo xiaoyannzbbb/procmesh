@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"net/http"
 	"strings"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/qleelulu/procmesh/internal/cluster"
+	"github.com/qleelulu/procmesh/internal/control"
+	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/localhttp"
 	"github.com/qleelulu/procmesh/internal/logmgr"
 	"github.com/qleelulu/procmesh/internal/process"
@@ -91,9 +94,56 @@ func NewServer(opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	engine.Any("/v1/*path", gin.WrapH(legacy.Handler))
+	engine.Any("/v1/*path", gin.WrapH(wrapLegacyV1(legacy.Handler, s.blockLegacyMutations)))
 
 	return s, nil
+}
+
+const legacyMutationMsg = "use connect rpc for remote mutations"
+
+func wrapLegacyV1(next http.Handler, block func() bool) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if block() && isLegacyProcessMutation(r) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(localhttp.APIError{
+				Code:    string(errcode.UNAVAILABLE),
+				Message: legacyMutationMsg,
+			})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func isLegacyProcessMutation(r *http.Request) bool {
+	switch r.Method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return strings.HasPrefix(r.URL.Path, "/v1/processes") || strings.HasPrefix(r.URL.Path, "/v1/instances")
+	default:
+		return false
+	}
+}
+
+func (s *Server) blockLegacyMutations() bool {
+	if s.clusterInited() {
+		return true
+	}
+	// NewServer tests wire Router without Cluster deps. Agent serveHTTP
+	// always sets Router, so Router alone is not enough there.
+	return s.opts.Router != nil && s.opts.Cluster.Store == nil && s.opts.Cluster.Dir == ""
+}
+
+func (s *Server) clusterInited() bool {
+	if id := s.opts.Cluster.clusterID(context.Background()); id != "" {
+		return true
+	}
+	if s.opts.Cluster.Dir != "" {
+		if _, err := control.LoadAgentCreds(s.opts.Cluster.Dir); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) Serve(l net.Listener) error {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/qleelulu/procmesh/internal/api"
 	"github.com/qleelulu/procmesh/internal/cluster"
@@ -212,35 +213,44 @@ func (f *agentForwarder) snapshot() (control.AgentCreds, string) {
 	return f.creds, f.clusterID
 }
 
-func (f *agentForwarder) Process(_ context.Context, rt api.Route) (procmeshv1connect.ProcessServiceClient, error) {
+const (
+	processHopTimeout = rpc.MutationTimeout
+	configHopTimeout  = rpc.MutationTimeout
+	logHopTimeout     = time.Duration(0)
+)
+
+func (f *agentForwarder) dial(rt api.Route, timeout time.Duration) (*http.Client, string, error) {
 	creds, clusterID := f.snapshot()
 	hc, base, err := rpc.Dial(rpc.DialConfig{
 		Creds: creds, ClusterID: clusterID, ExpectNodeID: rt.NodeID, Address: rt.RPC,
+		Timeout: timeout,
 	})
 	if err != nil {
-		return nil, rpc.MapDialError(err)
+		return nil, "", rpc.MapDialError(err)
+	}
+	return hc, base, nil
+}
+
+func (f *agentForwarder) Process(_ context.Context, rt api.Route) (procmeshv1connect.ProcessServiceClient, error) {
+	hc, base, err := f.dial(rt, processHopTimeout)
+	if err != nil {
+		return nil, err
 	}
 	return rpc.NewProcessClient(hc, base), nil
 }
 
 func (f *agentForwarder) Config(_ context.Context, rt api.Route) (procmeshv1connect.ConfigServiceClient, error) {
-	creds, clusterID := f.snapshot()
-	hc, base, err := rpc.Dial(rpc.DialConfig{
-		Creds: creds, ClusterID: clusterID, ExpectNodeID: rt.NodeID, Address: rt.RPC,
-	})
+	hc, base, err := f.dial(rt, configHopTimeout)
 	if err != nil {
-		return nil, rpc.MapDialError(err)
+		return nil, err
 	}
 	return rpc.NewConfigClient(hc, base), nil
 }
 
 func (f *agentForwarder) Log(_ context.Context, rt api.Route) (procmeshv1connect.LogServiceClient, error) {
-	creds, clusterID := f.snapshot()
-	hc, base, err := rpc.Dial(rpc.DialConfig{
-		Creds: creds, ClusterID: clusterID, ExpectNodeID: rt.NodeID, Address: rt.RPC,
-	})
+	hc, base, err := f.dial(rt, logHopTimeout)
 	if err != nil {
-		return nil, rpc.MapDialError(err)
+		return nil, err
 	}
 	return rpc.NewLogClient(hc, base), nil
 }

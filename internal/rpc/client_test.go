@@ -29,6 +29,64 @@ func TestMapDialError_Refused(t *testing.T) {
 	}
 }
 
+func TestMapDialError_PassesThroughErrcode(t *testing.T) {
+	in := errcode.E(errcode.TIMEOUT, "rpc timed out")
+	got := rpc.MapDialError(in)
+	if !errcode.Is(got, errcode.TIMEOUT) {
+		t.Fatalf("got %v", got)
+	}
+	if got != in {
+		t.Fatalf("want same error, got %v", got)
+	}
+}
+
+func TestMapCallError_PassesThroughErrcode(t *testing.T) {
+	in := errcode.E(errcode.TIMEOUT, "rpc timed out")
+	got := rpc.MapCallError(in)
+	if !errcode.Is(got, errcode.TIMEOUT) {
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestDial_TimeoutZeroMeansNoClientTimeout(t *testing.T) {
+	seed := newSeed(t)
+	hc, _, err := rpc.Dial(rpc.DialConfig{
+		Creds:     credsOf(seed),
+		ClusterID: "cid",
+		Address:   "127.0.0.1:1",
+		Timeout:   0,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hc.Timeout != 0 {
+		t.Fatalf("Timeout=%v want 0", hc.Timeout)
+	}
+	_ = rpc.NewLogClient(hc, "https://127.0.0.1:1")
+}
+
+func TestDial_MutationTimeout(t *testing.T) {
+	seed := newSeed(t)
+	hc, _, err := rpc.Dial(rpc.DialConfig{
+		Creds:     credsOf(seed),
+		ClusterID: "cid",
+		Address:   "127.0.0.1:1",
+		Timeout:   rpc.MutationTimeout,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hc.Timeout != rpc.MutationTimeout {
+		t.Fatalf("Timeout=%v want %v", hc.Timeout, rpc.MutationTimeout)
+	}
+	if rpc.MutationTimeout < 30*time.Second {
+		t.Fatalf("MutationTimeout=%v want >=30s", rpc.MutationTimeout)
+	}
+	if rpc.UnaryTimeout != 5*time.Second {
+		t.Fatalf("UnaryTimeout=%v want 5s", rpc.UnaryTimeout)
+	}
+}
+
 func TestDial_CallsOwnerProcess(t *testing.T) {
 	seed := newSeed(t)
 	owner := signPeer(t, seed, "cid", "owner", time.Now())

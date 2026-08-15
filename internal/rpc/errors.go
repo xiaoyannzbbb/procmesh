@@ -11,9 +11,14 @@ import (
 )
 
 // MapDialError maps dial/connect failures to TIMEOUT or UNAVAILABLE.
+// Existing *errcode.Error values are returned unchanged.
 func MapDialError(err error) error {
 	if err == nil {
 		return nil
+	}
+	var ee *errcode.Error
+	if errors.As(err, &ee) {
+		return err
 	}
 	if isTimeout(err) {
 		return errcode.E(errcode.TIMEOUT, "rpc timed out")
