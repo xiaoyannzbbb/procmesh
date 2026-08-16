@@ -2,12 +2,25 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync/atomic"
 
+	"github.com/qleelulu/procmesh/internal/batch"
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
+
+type batchMetricSnapshot struct {
+	Running     int
+	Success     int
+	Failed      int
+	Timeout     int
+	Denied      int
+	Conflict    int
+	Unavailable int
+	Invalid     int
+}
 
 const prometheusContentType = "text/plain; version=0.0.4; charset=utf-8"
 
@@ -72,7 +85,35 @@ func runningInstances(mgr *process.Manager) int {
 	return n
 }
 
-func renderMetrics(uptimeSeconds float64, running, members, alive int, rpcForward uint64, quorum int) []byte {
+func collectBatchMetrics(eng *batch.Engine) batchMetricSnapshot {
+	var out batchMetricSnapshot
+	if eng == nil || eng.DB == nil {
+		return out
+	}
+	recs, err := eng.DB.ListBatches(context.Background(), 0)
+	if err != nil {
+		return out
+	}
+	for _, rec := range recs {
+		if rec.Status == string(batch.StatusRunning) {
+			out.Running++
+		}
+		var sum batch.Summary
+		if rec.SummaryJSON != "" {
+			_ = json.Unmarshal([]byte(rec.SummaryJSON), &sum)
+		}
+		out.Success += sum.Success
+		out.Failed += sum.Failed
+		out.Timeout += sum.Timeout
+		out.Denied += sum.Denied
+		out.Conflict += sum.Conflict
+		out.Unavailable += sum.Unavailable
+		out.Invalid += sum.Invalid
+	}
+	return out
+}
+
+func renderMetrics(uptimeSeconds float64, running, members, alive int, rpcForward uint64, quorum int, batchStats batchMetricSnapshot) []byte {
 	return []byte(fmt.Sprintf(
 		"# HELP procmesh_agent_uptime Agent uptime in seconds.\n"+
 			"# TYPE procmesh_agent_uptime gauge\n"+
@@ -91,7 +132,21 @@ func renderMetrics(uptimeSeconds float64, running, members, alive int, rpcForwar
 			"procmesh_rpc_forward_total %d\n"+
 			"# HELP procmesh_cluster_control_quorum Whether this node sees a Raft leader (1) or not (0).\n"+
 			"# TYPE procmesh_cluster_control_quorum gauge\n"+
-			"procmesh_cluster_control_quorum %d\n",
+			"procmesh_cluster_control_quorum %d\n"+
+			"# HELP procmesh_batch_running Number of local batches with status=RUNNING.\n"+
+			"# TYPE procmesh_batch_running gauge\n"+
+			"procmesh_batch_running %d\n"+
+			"# HELP procmesh_batch_targets_total Local batch target counts by terminal status.\n"+
+			"# TYPE procmesh_batch_targets_total gauge\n"+
+			"procmesh_batch_targets_total{status=\"success\"} %d\n"+
+			"procmesh_batch_targets_total{status=\"failed\"} %d\n"+
+			"procmesh_batch_targets_total{status=\"timeout\"} %d\n"+
+			"procmesh_batch_targets_total{status=\"denied\"} %d\n"+
+			"procmesh_batch_targets_total{status=\"conflict\"} %d\n"+
+			"procmesh_batch_targets_total{status=\"unavailable\"} %d\n"+
+			"procmesh_batch_targets_total{status=\"invalid\"} %d\n",
 		uptimeSeconds, running, members, alive, rpcForward, quorum,
+		batchStats.Running, batchStats.Success, batchStats.Failed, batchStats.Timeout,
+		batchStats.Denied, batchStats.Conflict, batchStats.Unavailable, batchStats.Invalid,
 	))
 }

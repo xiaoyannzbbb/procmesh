@@ -275,24 +275,29 @@ func (x *RealExpander) finish(spec OwnerSpec, typ Type, status TargetStatus, err
 	}
 	if x.Auth != nil {
 		if err := x.Auth.Allow(spec.NodeID, spec.Group, permForType(typ)); err != nil {
-			if errcode.Is(err, errcode.DENIED) {
-				t.Status = TargetDenied
-				t.Error = err.Error()
-				return t, nil
+			if !errcode.Is(err, errcode.DENIED) {
+				return Target{}, err
 			}
-			return Target{}, err
+			t.Status = TargetDenied
+			t.Error = err.Error()
 		}
 	}
 	if typ != TypeConfigUpdate {
 		return t, nil
 	}
 	if x.ConfigOverlay == nil {
+		if t.Status == TargetDenied {
+			return t, nil
+		}
 		t.Status = TargetInvalid
 		t.Error = "config overlay"
 		return t, nil
 	}
 	payload, rev, err := x.ConfigOverlay(spec)
 	if err != nil {
+		if t.Status == TargetDenied {
+			return t, nil
+		}
 		t.Status = TargetInvalid
 		t.Error = err.Error()
 		return t, nil

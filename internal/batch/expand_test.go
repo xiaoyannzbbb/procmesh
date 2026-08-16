@@ -240,6 +240,27 @@ func TestExpand_PermByType(t *testing.T) {
 	}
 }
 
+func TestExpand_ConfigOverlayOnDenied(t *testing.T) {
+	x := &batch.RealExpander{
+		Cluster: memCluster{nodes: []batch.NodeView{{NodeID: "n1", Processes: []batch.ProcView{{ProcessID: "p1"}}}}},
+		Specs:   memSpecs{"n1/p1": {ProcessID: "p1", Name: "x", NodeID: "n1", Group: "fin", LatestRevision: 4, SpecJSON: `{}`}},
+		Auth:    denyAuth{},
+		ConfigOverlay: func(s batch.OwnerSpec) (string, int64, error) {
+			return `{"expected_revision":4,"spec":{"command":"/bin/x"}}`, 4, nil
+		},
+	}
+	ts, err := x.Expand(context.Background(), batch.Selector{ProcessIDs: []string{"p1"}}, batch.TypeConfigUpdate)
+	if err != nil || len(ts) != 1 {
+		t.Fatalf("%+v %v", ts, err)
+	}
+	if ts[0].Status != batch.TargetDenied {
+		t.Fatalf("status %s", ts[0].Status)
+	}
+	if ts[0].PayloadJSON == "" || ts[0].ExpectedRevision != 4 {
+		t.Fatalf("denied must keep overlay payload: %+v", ts[0])
+	}
+}
+
 func TestExpand_ConfigOverlay(t *testing.T) {
 	x := &batch.RealExpander{
 		Cluster: memCluster{nodes: []batch.NodeView{{NodeID: "n1", Processes: []batch.ProcView{{ProcessID: "p1"}}}}},

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,6 +17,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/agentcfg"
 	"github.com/qleelulu/procmesh/internal/api"
 	"github.com/qleelulu/procmesh/internal/auth"
+	"github.com/qleelulu/procmesh/internal/batch"
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/errcode"
@@ -89,7 +91,7 @@ func Run(ctx context.Context, opt Options) error {
 			logger.Warn("store reopen failed", "error", err)
 			return serveHTTP(ctx, opt, nil, nil, nil, true, func() error {
 				return errcode.E(errcode.DEGRADED, "store unavailable")
-			}, nil, nil, nil, api.ClusterDeps{})
+			}, nil, nil, nil, api.ClusterDeps{}, nil)
 		}
 		degraded = true
 	}
@@ -252,6 +254,7 @@ func Run(ctx context.Context, opt Options) error {
 		}
 		return nil
 	}
+	batchEng := newBatchEngine(st, cfg, nodeID)
 	return serveHTTP(ctx, opt, mgr, logs, st, degraded, ready, mesh, src, collector, api.ClusterDeps{
 		Dir:        layout.ClusterDir,
 		Store:      st,
@@ -261,10 +264,33 @@ func Run(ctx context.Context, opt Options) error {
 		NodeID:     nodeID,
 		Hostname:   hostname,
 		BootID:     hostBoot,
-	})
+	}, batchEng)
 }
 
-func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *logmgr.Manager, st *store.Store, degraded bool, ready func() error, mesh *cluster.Mesh, src *liveSource, collector *metrics.Collector, clusterDeps api.ClusterDeps) error {
+func newBatchEngine(st *store.Store, cfg agentcfg.Config, nodeID string) *batch.Engine {
+	if st == nil {
+		return nil
+	}
+	return &batch.Engine{
+		DB:            st,
+		Concurrency:   cfg.Batch.MaxConcurrency,
+		TargetTimeout: cfg.Batch.TargetTimeout,
+		SourceAgent:   nodeID,
+		NewID:         newBatchID,
+	}
+}
+
+func newBatchID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return strconv.FormatInt(time.Now().UnixNano(), 10)
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+}
+
+func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *logmgr.Manager, st *store.Store, degraded bool, ready func() error, mesh *cluster.Mesh, src *liveSource, collector *metrics.Collector, clusterDeps api.ClusterDeps, batchEng *batch.Engine) error {
 	ln, err := net.Listen("tcp", opt.Listen)
 	if err != nil {
 		shutdownMesh(mesh)
@@ -382,12 +408,20 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		CAExpires:     func() int64 { return api.CertNotAfterUnix(clusterDeps.Dir, "ca.crt") },
 		Members:       members,
 		Metrics:       collector,
+		Batch:         batchEng,
 	})
 	if err != nil {
 		_ = ln.Close()
 		rt.shutdown(context.Background())
 		shutdownMesh(mesh)
 		return fmt.Errorf("new server: %w", err)
+	}
+
+	if batchEng != nil && !degraded {
+		batchEng.Start(ctx)
+		if err := batchEng.Resume(ctx); err != nil {
+			opt.Logger.Warn("batch resume failed", "error", err)
+		}
 	}
 
 	opt.Logger.With("component", "http").Info("http listening", "address", apiAddr)

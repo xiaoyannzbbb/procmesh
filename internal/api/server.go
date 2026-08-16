@@ -14,6 +14,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/gin-gonic/gin"
 	"github.com/qleelulu/procmesh/internal/auth"
+	"github.com/qleelulu/procmesh/internal/batch"
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/errcode"
@@ -60,6 +61,7 @@ type Options struct {
 	CAExpires     func() int64
 	Members       func() []cluster.NodeSummary
 	Metrics       *metrics.Collector
+	Batch         *batch.Engine
 }
 
 func NewServer(opts Options) (*Server, error) {
@@ -141,6 +143,22 @@ func NewServer(opts Options) (*Server, error) {
 		Degraded: degraded, Metrics: opts.Metrics,
 	}, intercept)
 	mountConnect(engine, mp, mh)
+	if opts.Batch != nil {
+		members := opts.Members
+		if members == nil && opts.Router != nil {
+			members = opts.Router.Members
+		}
+		bapi := &BatchAPI{
+			Auth: opts.Auth, Engine: opts.Batch, Store: batchAuditStore(opts),
+			LocalID: opts.LocalID, Mgr: opts.Mgr, Router: opts.Router, Forward: opts.Forward,
+			Members: members, Degraded: s.isDegraded,
+		}
+		if opts.Batch.Exec == nil {
+			opts.Batch.Exec = &batchExecutor{api: bapi}
+		}
+		bp, bh := procmeshv1connect.NewBatchServiceHandler(bapi, intercept)
+		mountConnect(engine, bp, bh)
+	}
 
 	legacy, err := localhttp.NewServerOpts(opts.Mgr, opts.Logs, opts.Addr, opts.Degraded, opts.Ready)
 	if err != nil {
@@ -265,6 +283,7 @@ func (s *Server) metrics(c *gin.Context) {
 		alive,
 		rpcForward,
 		s.controlQuorum(),
+		collectBatchMetrics(s.opts.Batch),
 	))
 }
 

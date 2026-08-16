@@ -39,6 +39,7 @@ func TestMetrics_ControlQuorum(t *testing.T) {
 	if !strings.Contains(body, "# TYPE procmesh_cluster_control_quorum gauge") {
 		t.Fatalf("missing TYPE: %q", body)
 	}
+	assertBatchMetricsPresent(t, body)
 }
 
 func TestMetrics_ForwardTotal(t *testing.T) {
@@ -93,5 +94,36 @@ func TestMetrics_ForwardTotal(t *testing.T) {
 	}
 	if !strings.Contains(body, "# TYPE procmesh_rpc_forward_total counter") {
 		t.Fatalf("missing TYPE: %q", body)
+	}
+	assertBatchMetricsPresent(t, body)
+}
+
+func TestMetrics_IncludesBatchGauges(t *testing.T) {
+	m, st, _ := newTestManager(t)
+	srv, err := NewServer(Options{Mgr: m, Store: st, Started: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	srv.Engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("metrics %d %q", rec.Code, rec.Body.String())
+	}
+	assertBatchMetricsPresent(t, rec.Body.String())
+}
+
+func assertBatchMetricsPresent(t *testing.T, body string) {
+	t.Helper()
+	if !strings.Contains(body, "procmesh_batch_running") {
+		t.Fatalf("missing procmesh_batch_running:\n%s", body)
+	}
+	if !strings.Contains(body, "procmesh_batch_targets_total") {
+		t.Fatalf("missing procmesh_batch_targets_total:\n%s", body)
+	}
+	for _, status := range []string{"success", "failed", "timeout", "denied", "conflict", "unavailable", "invalid"} {
+		want := `procmesh_batch_targets_total{status="` + status + `"}`
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %s:\n%s", want, body)
+		}
 	}
 }
