@@ -6,6 +6,7 @@ import { withTarget } from "../lib/headers";
 import { newOperationId } from "../lib/opid";
 import { useMetricsClient, useNodeClient, useProcessClient } from "../lib/rpc";
 import { session } from "../lib/session";
+import { useI18n } from "../lib/useI18n";
 import {
   flattenClusterProcesses,
   formatRemoteError,
@@ -14,6 +15,8 @@ import {
 } from "./processView";
 import ProcessConfigPanel from "./ProcessConfigPanel.vue";
 import ProcessLogsPanel from "./ProcessLogsPanel.vue";
+
+const { t } = useI18n();
 
 const POLL_MS = 5000;
 const route = useRoute();
@@ -91,7 +94,7 @@ const errorText = computed(() => {
     return formatRemoteError(processQuery.error.value);
   }
   if (!ownerNodeId.value && nodesQuery.isFetched.value) {
-    return "Owner node is required.";
+    return t("processDetail.ownerNodeRequired");
   }
   if (nodesQuery.error.value && !processQuery.data.value) {
     return formatRemoteError(nodesQuery.error.value);
@@ -170,20 +173,20 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
   <div class="page">
     <div class="head">
       <div>
-        <RouterLink class="back" to="/processes">← Processes</RouterLink>
+        <RouterLink class="back" to="/processes">{{ t("processDetail.back") }}</RouterLink>
         <h1>{{ detail?.name || idOrName }}</h1>
       </div>
       <div class="actions">
-        <button type="button" class="btn" :disabled="!canStart || acting || !ownerNodeId" @click="run(startMut)">Start</button>
-        <button type="button" class="btn" :disabled="!canStop || acting || !ownerNodeId" @click="run(stopMut)">Stop</button>
-        <button type="button" class="btn" :disabled="!canRestart || acting || !ownerNodeId" @click="run(restartMut)">Restart</button>
+        <button type="button" class="btn" :disabled="!canStart || acting || !ownerNodeId" @click="run(startMut)">{{ t("processDetail.actions.start") }}</button>
+        <button type="button" class="btn" :disabled="!canStop || acting || !ownerNodeId" @click="run(stopMut)">{{ t("processDetail.actions.stop") }}</button>
+        <button type="button" class="btn" :disabled="!canRestart || acting || !ownerNodeId" @click="run(restartMut)">{{ t("processDetail.actions.restart") }}</button>
         <button type="button" class="btn btn-danger" :disabled="!canStop || acting || !ownerNodeId" @click="run(killMut)">
-          Force Stop
+          {{ t("processDetail.actions.forceStop") }}
         </button>
       </div>
     </div>
 
-    <p v-if="processQuery.isPending && !detail && ownerNodeId" class="muted">Loading…</p>
+    <p v-if="processQuery.isPending && !detail && ownerNodeId" class="muted">{{ t("processDetail.loading") }}</p>
     <p v-else-if="errorText && !detail" class="error" role="alert">{{ errorText }}</p>
     <template v-else-if="detail">
       <p v-if="errorText" class="error" role="alert">{{ errorText }}</p>
@@ -198,7 +201,7 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
           :aria-selected="tab === 'overview'"
           @click="tab = 'overview'"
         >
-          Overview
+          {{ t("processDetail.tabs.overview") }}
         </button>
         <button
           type="button"
@@ -207,7 +210,7 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
           :aria-selected="tab === 'config'"
           @click="tab = 'config'"
         >
-          Config
+          {{ t("processDetail.tabs.config") }}
         </button>
         <button
           type="button"
@@ -216,7 +219,7 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
           :aria-selected="tab === 'logs'"
           @click="tab = 'logs'"
         >
-          Logs
+          {{ t("processDetail.tabs.logs") }}
         </button>
       </div>
       <ProcessConfigPanel v-if="tab === 'config'" :id-or-name="idOrName" :target-node-id="ownerNodeId" />
@@ -228,69 +231,69 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
       />
       <template v-else>
       <section class="card">
-        <h2>Process</h2>
+        <h2>{{ t("processDetail.process.title") }}</h2>
         <dl class="facts">
           <div>
-            <dt>Name</dt>
+            <dt>{{ t("processDetail.process.name") }}</dt>
             <dd>{{ detail.name || "—" }}</dd>
           </div>
           <div>
-            <dt>Process ID</dt>
+            <dt>{{ t("processDetail.process.processId") }}</dt>
             <dd class="mono">{{ detail.processId || "—" }}</dd>
           </div>
           <div>
-            <dt>Owner</dt>
+            <dt>{{ t("processDetail.process.owner") }}</dt>
             <dd>{{ detail.owner || "—" }}</dd>
           </div>
           <div>
-            <dt>Instances</dt>
+            <dt>{{ t("processDetail.process.instances") }}</dt>
             <dd>{{ detail.instances }}</dd>
           </div>
           <div>
-            <dt>Desired</dt>
+            <dt>{{ t("processDetail.process.desired") }}</dt>
             <dd>{{ detail.desired || "—" }}</dd>
           </div>
           <div>
-            <dt>Observed</dt>
+            <dt>{{ t("processDetail.process.observed") }}</dt>
             <dd>{{ detail.observed || "—" }}</dd>
           </div>
           <div>
-            <dt>Health</dt>
+            <dt>{{ t("processDetail.process.health") }}</dt>
             <dd>{{ detail.health || "—" }}</dd>
           </div>
           <div>
-            <dt>PID</dt>
+            <dt>{{ t("processDetail.process.pid") }}</dt>
             <dd>{{ detail.pid }}</dd>
           </div>
           <div>
-            <dt>Uptime</dt>
+            <dt>{{ t("processDetail.process.uptime") }}</dt>
             <dd>{{ detail.uptime }}</dd>
           </div>
           <div>
-            <dt>Restart Count</dt>
+            <dt>{{ t("processDetail.process.restartCount") }}</dt>
             <dd>{{ detail.restartCount }}</dd>
           </div>
           <div>
-            <dt>Exit Code</dt>
+            <dt>{{ t("processDetail.process.exitCode") }}</dt>
             <dd>{{ detail.exitCode }}</dd>
           </div>
           <div>
-            <dt>Active Revision</dt>
+            <dt>{{ t("processDetail.process.activeRevision") }}</dt>
             <dd>{{ detail.activeRevision }}</dd>
           </div>
           <div>
-            <dt>Latest Revision</dt>
+            <dt>{{ t("processDetail.process.latestRevision") }}</dt>
             <dd>{{ detail.latestRevision }}</dd>
           </div>
           <div>
-            <dt>CPU</dt>
+            <dt>{{ t("processDetail.process.cpu") }}</dt>
             <dd>
               {{ detail.cpu }}
               <span v-if="detail.cpuNote || metricsNote" class="muted note">{{ detail.cpuNote || metricsNote }}</span>
             </dd>
           </div>
           <div>
-            <dt>Memory</dt>
+            <dt>{{ t("processDetail.process.memory") }}</dt>
             <dd>
               {{ detail.memory }}
               <span v-if="detail.memoryNote || metricsNote" class="muted note">{{ detail.memoryNote || metricsNote }}</span>
@@ -300,21 +303,21 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
       </section>
 
       <section v-if="detail.instanceRows.length" class="card">
-        <h2>Instances</h2>
+        <h2>{{ t("processDetail.instances.title") }}</h2>
         <table class="table">
           <thead>
             <tr>
-              <th>Instance</th>
-              <th>Desired</th>
-              <th>Observed</th>
-              <th>Health</th>
-              <th>PID</th>
-              <th>Uptime</th>
-              <th>Restarts</th>
-              <th>Exit</th>
-              <th>Revision</th>
-              <th>CPU</th>
-              <th>Memory</th>
+              <th>{{ t("processDetail.instances.table.instance") }}</th>
+              <th>{{ t("processDetail.instances.table.desired") }}</th>
+              <th>{{ t("processDetail.instances.table.observed") }}</th>
+              <th>{{ t("processDetail.instances.table.health") }}</th>
+              <th>{{ t("processDetail.instances.table.pid") }}</th>
+              <th>{{ t("processDetail.instances.table.uptime") }}</th>
+              <th>{{ t("processDetail.instances.table.restarts") }}</th>
+              <th>{{ t("processDetail.instances.table.exit") }}</th>
+              <th>{{ t("processDetail.instances.table.revision") }}</th>
+              <th>{{ t("processDetail.instances.table.cpu") }}</th>
+              <th>{{ t("processDetail.instances.table.memory") }}</th>
             </tr>
           </thead>
           <tbody>

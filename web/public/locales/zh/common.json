@@ -196,5 +196,55 @@
       },
       "rollbackConfirm": "回滚到版本 {revision}？这将写入一个新版本。"
     }
+  },
+  "processDetail": {
+    "back": "← 进程",
+    "loading": "加载中…",
+    "ownerNodeRequired": "需要所有者节点。",
+    "actions": {
+      "start": "启动",
+      "stop": "停止",
+      "restart": "重启",
+      "forceStop": "强制停止"
+    },
+    "tabs": {
+      "overview": "概览",
+      "config": "配置",
+      "logs": "日志"
+    },
+    "process": {
+      "title": "进程",
+      "name": "名称",
+      "processId": "进程ID",
+      "owner": "所有者",
+      "instances": "实例",
+      "desired": "期望状态",
+      "observed": "观察状态",
+      "health": "健康状态",
+      "pid": "PID",
+      "uptime": "运行时间",
+      "restartCount": "重启次数",
+      "exitCode": "退出码",
+      "activeRevision": "活动版本",
+      "latestRevision": "最新版本",
+      "cpu": "CPU",
+      "memory": "内存"
+    },
+    "instances": {
+      "title": "实例",
+      "table": {
+        "instance": "实例",
+        "desired": "期望状态",
+        "observed": "观察状态",
+        "health": "健康状态",
+        "pid": "PID",
+        "uptime": "运行时间",
+        "restarts": "重启",
+        "exit": "退出",
+        "revision": "版本",
+        "cpu": "CPU",
+        "memory": "内存"
+      }
+    }
   }
 }

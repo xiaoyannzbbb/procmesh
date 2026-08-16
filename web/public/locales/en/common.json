@@ -196,5 +196,55 @@
       },
       "rollbackConfirm": "Rollback to revision {revision}? This writes a new revision."
     }
+  },
+  "processDetail": {
+    "back": "← Processes",
+    "loading": "Loading…",
+    "ownerNodeRequired": "Owner node is required.",
+    "actions": {
+      "start": "Start",
+      "stop": "Stop",
+      "restart": "Restart",
+      "forceStop": "Force Stop"
+    },
+    "tabs": {
+      "overview": "Overview",
+      "config": "Config",
+      "logs": "Logs"
+    },
+    "process": {
+      "title": "Process",
+      "name": "Name",
+      "processId": "Process ID",
+      "owner": "Owner",
+      "instances": "Instances",
+      "desired": "Desired",
+      "observed": "Observed",
+      "health": "Health",
+      "pid": "PID",
+      "uptime": "Uptime",
+      "restartCount": "Restart Count",
+      "exitCode": "Exit Code",
+      "activeRevision": "Active Revision",
+      "latestRevision": "Latest Revision",
+      "cpu": "CPU",
+      "memory": "Memory"
+    },
+    "instances": {
+      "title": "Instances",
+      "table": {
+        "instance": "Instance",
+        "desired": "Desired",
+        "observed": "Observed",
+        "health": "Health",
+        "pid": "PID",
+        "uptime": "Uptime",
+        "restarts": "Restarts",
+        "exit": "Exit",
+        "revision": "Revision",
+        "cpu": "CPU",
+        "memory": "Memory"
+      }
+    }
   }
 }
