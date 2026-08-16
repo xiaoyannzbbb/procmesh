@@ -103,6 +103,11 @@ func (s *RoleAPI) GrantRole(ctx context.Context, req *connect.Request[procmeshv1
 		return nil, err
 	}
 	st := s.Auth.Store().View()
+	if scope == control.ScopeAgentGroup {
+		if _, ok := st.AgentGroups[req.Msg.GetScopeId()]; !ok {
+			return nil, ToConnect(errcode.E(errcode.NOT_FOUND, "agent group not found"))
+		}
+	}
 	if _, ok := userFromState(st, userID); !ok {
 		return nil, ToConnect(errcode.E(errcode.NOT_FOUND, "user not found"))
 	}
@@ -140,9 +145,33 @@ func parseScope(scopeType, scopeID string) (control.ScopeType, error) {
 			return "", ToConnect(errcode.E(errcode.INVALID, "scope_id required for AGENT"))
 		}
 		return control.ScopeAgent, nil
+	case control.ScopeAgentGroup:
+		if scopeID == "" {
+			return "", ToConnect(errcode.E(errcode.INVALID, "scope_id required for AGENT_GROUP"))
+		}
+		return control.ScopeAgentGroup, nil
+	case control.ScopeProcessGroup:
+		id := strings.TrimSpace(scopeID)
+		if !processGroupNameOK(id) {
+			return "", ToConnect(errcode.E(errcode.INVALID, "scope_id"))
+		}
+		return control.ScopeProcessGroup, nil
 	default:
 		return "", ToConnect(errcode.E(errcode.INVALID, "invalid scope_type"))
 	}
+}
+
+func processGroupNameOK(s string) bool {
+	if len(s) < 1 || len(s) > 64 {
+		return false
+	}
+	for _, r := range s {
+		ok := (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-'
+		if !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func knownPerm(p string) bool {

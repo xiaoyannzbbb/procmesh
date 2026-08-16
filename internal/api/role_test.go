@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/auth"
@@ -114,6 +115,57 @@ func TestRole_CreateAndGrant(t *testing.T) {
 	}
 }
 
+func TestRoleAPI_GrantGroupScopes(t *testing.T) {
+	ctx := context.Background()
+	_, svc := newBootstrappedAuth(t)
+	api := &RoleAPI{Auth: svc}
+	now := time.Unix(1_700_000_000, 0)
+	applyAuthCmd(t, svc, control.CmdMemberPut, control.MemberPutBody{NodeID: "node-1"})
+	applyAuthCmd(t, svc, control.CmdGroupPut, control.GroupPutBody{GroupID: "g-fin", Name: "finance", NowUnix: now.Unix()})
+
+	created, err := api.CreateRole(ctx, connect.NewRequest(&procmeshv1.CreateRoleRequest{
+		Meta:        &procmeshv1.MutationMeta{OperationId: "op-role", Operator: "t"},
+		Name:        "ops",
+		Permissions: []string{auth.PermProcessRead},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	role := created.Msg.GetRole()
+
+	_, err = api.GrantRole(ctx, connect.NewRequest(&procmeshv1.GrantRoleRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-ag", Operator: "t"},
+		UserId: "user-admin", RoleId: role.GetRoleId(),
+		ScopeType: "AGENT_GROUP", ScopeId: "g-fin",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = api.GrantRole(ctx, connect.NewRequest(&procmeshv1.GrantRoleRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-ag-miss", Operator: "t"},
+		UserId: "user-admin", RoleId: role.GetRoleId(),
+		ScopeType: "AGENT_GROUP", ScopeId: "missing",
+	}))
+	assertInvalidOrNotFound(t, err)
+
+	_, err = api.GrantRole(ctx, connect.NewRequest(&procmeshv1.GrantRoleRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-pg", Operator: "t"},
+		UserId: "user-admin", RoleId: role.GetRoleId(),
+		ScopeType: "PROCESS_GROUP", ScopeId: "finance",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = api.GrantRole(ctx, connect.NewRequest(&procmeshv1.GrantRoleRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-pg-bad", Operator: "t"},
+		UserId: "user-admin", RoleId: role.GetRoleId(),
+		ScopeType: "PROCESS_GROUP", ScopeId: "bad name",
+	}))
+	assertInvalidMsg(t, err, "scope_id")
+}
+
 func assertInvalidMsg(t *testing.T, err error, msg string) {
 	t.Helper()
 	code, detail := connectDetail(t, err)
@@ -123,6 +175,15 @@ func assertInvalidMsg(t *testing.T, err error, msg string) {
 	if !strings.Contains(err.Error(), msg) {
 		t.Fatalf("want %q: %v", msg, err)
 	}
+}
+
+func assertInvalidOrNotFound(t *testing.T, err error) {
+	t.Helper()
+	code, detail := connectDetail(t, err)
+	if (code == connect.CodeInvalidArgument && detail == "INVALID") || (code == connect.CodeNotFound && detail == "NOT_FOUND") {
+		return
+	}
+	t.Fatalf("want INVALID or NOT_FOUND: code=%v detail=%s err=%v", code, detail, err)
 }
 
 func findRole(roles []*procmeshv1.Role, name string) *procmeshv1.Role {
