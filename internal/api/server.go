@@ -19,6 +19,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/localhttp"
 	"github.com/qleelulu/procmesh/internal/logmgr"
+	"github.com/qleelulu/procmesh/internal/metrics"
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/store"
 	"github.com/qleelulu/procmesh/internal/web"
@@ -58,6 +59,7 @@ type Options struct {
 	CertExpires   func() int64
 	CAExpires     func() int64
 	Members       func() []cluster.NodeSummary
+	Metrics       *metrics.Collector
 }
 
 func NewServer(opts Options) (*Server, error) {
@@ -134,7 +136,7 @@ func NewServer(opts Options) (*Server, error) {
 	mp, mh := procmeshv1connect.NewMetricsServiceHandler(&MetricsAPI{
 		Mgr: opts.Mgr, Auth: opts.Auth, Started: opts.Started, Cluster: opts.Cluster,
 		LocalOnly: opts.LocalOnly, LocalID: opts.LocalID, Router: opts.Router, Forward: opts.Forward,
-		Degraded: degraded,
+		Degraded: degraded, Metrics: opts.Metrics,
 	}, intercept)
 	mountConnect(engine, mp, mh)
 

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"net/http/httptest"
 	"os"
 	"runtime"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/cluster"
+	"github.com/qleelulu/procmesh/internal/metrics"
 	"github.com/qleelulu/procmesh/internal/process"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
@@ -134,10 +136,72 @@ func TestMetrics_GetProcessMetricsStartedAt(t *testing.T) {
 	if pm.GetUptimeSeconds() < 3600 {
 		t.Fatalf("uptime=%d want >= 3600", pm.GetUptimeSeconds())
 	}
-	if runtime.GOOS != "linux" {
-		if pm.GetCpuPercent() != -1 || pm.GetMemoryBytes() != -1 {
-			t.Logf("warning: non-linux got cpu=%d mem=%d", pm.GetCpuPercent(), pm.GetMemoryBytes())
-		}
+	if pm.GetCpuPercent() != -1 || pm.GetMemoryBytes() != -1 {
+		t.Fatalf("without collector cpu=%d mem=%d want -1; note=%q", pm.GetCpuPercent(), pm.GetMemoryBytes(), pm.GetNote())
+	}
+	if pm.GetNote() == "" {
+		t.Fatal("expected note when collector is missing")
+	}
+}
+
+func TestServer_GetProcessMetricsWiresCollector(t *testing.T) {
+	ctx := context.Background()
+	mgr, st, _ := newTestManager(t)
+	spec, err := mgr.ApplySpec(ctx, process.ProcessSpec{Name: "web", Command: "/bin/true"}, 0, "op-metrics-wire", "t", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	insts, err := mgr.ListInstances(ctx, spec.ProcessID)
+	if err != nil || len(insts) == 0 {
+		t.Fatalf("instances=%v err=%v", insts, err)
+	}
+	started := time.Now().Add(-time.Minute)
+	inst := insts[0]
+	inst.PID = os.Getpid()
+	inst.StartedAt = &started
+	inst.Observed = process.ObservedRunning
+	if err := st.PutInstance(ctx, inst); err != nil {
+		t.Fatal(err)
+	}
+
+	collector := metrics.New(t.TempDir(), time.Second)
+	if err := collector.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(collector.Stop)
+
+	srv, err := NewServer(Options{
+		Mgr:     mgr,
+		Store:   st,
+		Started: time.Now(),
+		Metrics: collector,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hs := httptest.NewServer(srv.Engine)
+	t.Cleanup(hs.Close)
+
+	client := procmeshv1connect.NewMetricsServiceClient(hs.Client(), hs.URL)
+	resp, err := client.GetProcessMetrics(ctx, connect.NewRequest(&procmeshv1.GetProcessMetricsRequest{
+		IdOrName: "web",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := resp.Msg.GetMetrics()
+	if len(got) != 1 {
+		t.Fatalf("metrics=%d want 1: %+v", len(got), got)
+	}
+	pm := got[0]
+	if pm.GetNote() != "" {
+		t.Fatalf("note=%q want empty (collector should be wired)", pm.GetNote())
+	}
+	if pm.GetMemoryBytes() <= 0 {
+		t.Fatalf("memory=%d want > 0 on %s", pm.GetMemoryBytes(), runtime.GOOS)
+	}
+	if pm.GetCpuPercent() < 0 {
+		t.Fatalf("cpu=%d want >= 0 on %s", pm.GetCpuPercent(), runtime.GOOS)
 	}
 }
 

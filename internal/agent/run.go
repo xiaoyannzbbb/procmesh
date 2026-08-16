@@ -381,6 +381,7 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		CertExpires:   func() int64 { return api.CertNotAfterUnix(clusterDeps.Dir, "agent.crt") },
 		CAExpires:     func() int64 { return api.CertNotAfterUnix(clusterDeps.Dir, "ca.crt") },
 		Members:       members,
+		Metrics:       collector,
 	})
 	if err != nil {
 		_ = ln.Close()

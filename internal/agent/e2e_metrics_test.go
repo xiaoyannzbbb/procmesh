@@ -129,15 +129,9 @@ func TestE2E_MetricsWithProcess(t *testing.T) {
 
 	assert.Greater(t, pm.Pid, int32(0), "PID should be > 0")
 	assert.GreaterOrEqual(t, pm.UptimeSeconds, int64(0), "uptime should be >= 0")
-
-	// CPU and memory might be -1 if collection hasn't completed yet
-	if pm.CpuPercent >= 0 {
-		assert.GreaterOrEqual(t, pm.CpuPercent, int32(0), "process CPU should be >= 0")
-		assert.LessOrEqual(t, pm.CpuPercent, int32(100), "process CPU should be <= 100")
-	}
-	if pm.MemoryBytes >= 0 {
-		assert.Greater(t, pm.MemoryBytes, int64(0), "process memory should be > 0")
-	}
+	assert.Empty(t, pm.Note, "collector should be wired; note=%s", pm.Note)
+	assert.GreaterOrEqual(t, pm.CpuPercent, int32(0), "process CPU should be collected")
+	assert.Greater(t, pm.MemoryBytes, int64(0), "process memory should be collected")
 
 	// 5. Stop process
 	code, _, errb = runP1CLI("--server", addr, "process", "stop", name)
