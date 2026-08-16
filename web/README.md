@@ -1,12 +1,75 @@
 # ProcMesh Web
 
-## i18n Bundle Size
+Vue 3 web interface for ProcMesh distributed process management.
 
-After implementing i18n support:
+## Features
 
-- i18n libraries: ~15KB gzipped (i18next + plugins)
-- Initial translation files: ~3KB gzipped (common.json only)
-- Total i18n impact: ~18KB gzipped
-- Additional namespaces loaded on-demand: ~2-3KB each
+- ✅ Real-time cluster monitoring
+- ✅ Process management (start, stop, restart)
+- ✅ User authentication and authorization
+- ✅ Audit logging
+- ✅ **Internationalization (English + 简体中文)**
 
-Target: <20KB initial bundle impact ✓
+## Development
+
+```bash
+# Install dependencies
+npm install
+
+# Start dev server
+npm run dev
+
+# Run tests
+npm test
+
+# Run E2E tests
+npm run test:e2e
+
+# Build for production
+npm run build
+
+# Check i18n completeness
+npm run i18n:check
+
+# Analyze bundle size
+npm run analyze
+```
+
+## i18n Support
+
+See [docs/I18N_GUIDE.md](docs/I18N_GUIDE.md) for detailed documentation.
+
+**Quick Start:**
+
+```typescript
+// In any component
+import { useI18n } from '@/lib/useI18n'
+const { t } = useI18n()
+
+// Use in template
+{{ t('common:actions.start') }}
+```
+
+## Project Structure
+
+```
+web/
+├── public/
+│   └── locales/          # Translation files
+│       ├── en/           # English
+│       └── zh/           # Chinese
+├── src/
+│   ├── components/       # Vue components
+│   ├── pages/            # Page components
+│   ├── lib/              # Utilities and composables
+│   │   ├── i18n.ts       # i18n configuration
+│   │   ├── useI18n.ts    # Translation composable
+│   │   └── ...
+│   └── types/            # TypeScript types
+├── scripts/
+│   ├── generate-i18n-types.ts
+│   └── check-i18n-completeness.js
+└── tests/
+    ├── e2e/              # Playwright E2E tests
+    └── ...
+```
