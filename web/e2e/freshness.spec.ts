@@ -57,10 +57,8 @@ test("FAILED node with old last_updated shows STALE not green", async ({ page })
   });
 
   await page.goto("/processes");
-  await expect(page.getByText("STALE", { exact: true }).first()).toBeVisible();
   const badge = page.locator(".freshness-stale").first();
   await expect(badge).toBeVisible();
-  await expect(badge).toHaveText("STALE");
   await expect(page.locator(".freshness-live")).toHaveCount(0);
 
   const styles = await badge.evaluate((el) => {

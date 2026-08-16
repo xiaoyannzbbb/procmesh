@@ -106,11 +106,16 @@ describe('translation files', () => {
     const zhContent = readFileSync(zhPath, 'utf-8')
     const zhData = JSON.parse(zhContent)
 
-    const checkNesting = (enObj: any, zhObj: any, path = '') => {
+    const checkNesting = (enObj: Record<string, unknown>, zhObj: Record<string, unknown>) => {
       for (const key in enObj) {
         expect(zhObj).toHaveProperty(key)
-        if (typeof enObj[key] === 'object') {
-          checkNesting(enObj[key], zhObj[key], `${path}.${key}`)
+        const enValue = enObj[key]
+        const zhValue = zhObj[key]
+        if (enValue && typeof enValue === 'object' && zhValue && typeof zhValue === 'object') {
+          checkNesting(
+            enValue as Record<string, unknown>,
+            zhValue as Record<string, unknown>,
+          )
         }
       }
     }

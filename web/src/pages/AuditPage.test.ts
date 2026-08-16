@@ -3,6 +3,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import i18next from "i18next";
 import I18NextVue from "i18next-vue";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Plugin } from "vue";
 import { session } from "../lib/session";
 import AuditPage from "./AuditPage.vue";
 
@@ -22,7 +23,7 @@ async function mountAudit(entries: unknown[], i18n?: typeof i18next) {
     listAudit: vi.fn().mockResolvedValue({ entries }),
   };
 
-  const plugins: any[] = [[VueQueryPlugin, { queryClient }]];
+  const plugins: Array<Plugin | [Plugin, ...unknown[]]> = [[VueQueryPlugin, { queryClient }]];
   if (i18n) {
     plugins.push([I18NextVue, { i18next: i18n }]);
   }

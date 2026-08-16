@@ -101,26 +101,26 @@ function formatMs(ms: bigint | number | undefined): string {
 
 <template>
   <div class="page">
-    <h1>{{ t("common:audit.title") }}</h1>
-    <p class="muted notice">{{ t("common:audit.notice") }}</p>
+    <h1>{{ t("audit.title") }}</h1>
+    <p class="muted notice">{{ t("audit.notice") }}</p>
     <label class="field">
-      {{ t("common:audit.resourceLabel") }}
-      <input v-model="resource" class="input" name="resource" type="text" :placeholder="t('common:audit.resourcePlaceholder')" />
+      {{ t("audit.resourceLabel") }}
+      <input v-model="resource" class="input" name="resource" type="text" :placeholder="t('audit.resourcePlaceholder')" />
     </label>
-    <p v-if="query.isPending && !query.data" class="muted">{{ t("common:audit.loading") }}</p>
+    <p v-if="query.isPending && !query.data" class="muted">{{ t("audit.loading") }}</p>
     <p v-else-if="errorText" class="error" role="alert">{{ errorText }}</p>
     <div v-else class="card">
       <table class="table">
         <thead>
           <tr>
-            <th>{{ t("common:audit.table.time") }}</th>
-            <th>{{ t("common:audit.table.user") }}</th>
-            <th>{{ t("common:audit.table.action") }}</th>
-            <th>{{ t("common:audit.table.resource") }}</th>
-            <th>{{ t("common:audit.table.sourceNode") }}</th>
-            <th>{{ t("common:audit.table.targetAgent") }}</th>
-            <th>{{ t("common:audit.table.result") }}</th>
-            <th>{{ t("common:audit.table.freshness") }}</th>
+            <th>{{ t("audit.table.time") }}</th>
+            <th>{{ t("audit.table.user") }}</th>
+            <th>{{ t("audit.table.action") }}</th>
+            <th>{{ t("audit.table.resource") }}</th>
+            <th>{{ t("audit.table.sourceNode") }}</th>
+            <th>{{ t("audit.table.targetAgent") }}</th>
+            <th>{{ t("audit.table.result") }}</th>
+            <th>{{ t("audit.table.freshness") }}</th>
           </tr>
         </thead>
         <tbody>
@@ -137,7 +137,7 @@ function formatMs(ms: bigint | number | undefined): string {
             </td>
           </tr>
           <tr v-if="!entries.length">
-            <td colspan="8" class="muted">{{ t("common:audit.noEntries") }}</td>
+            <td colspan="8" class="muted">{{ t("audit.noEntries") }}</td>
           </tr>
         </tbody>
       </table>

@@ -1,9 +1,8 @@
 import { test, expect } from "@playwright/test";
-import { loginAdmin } from "./helpers";
 
 test.describe("i18n functionality", () => {
   test.beforeEach(async ({ page }) => {
-    await loginAdmin(page);
+    await page.goto("/");
   });
 
   test("should default to English", async ({ page }) => {

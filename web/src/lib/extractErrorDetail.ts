@@ -1,4 +1,5 @@
 import { ConnectError } from '@connectrpc/connect'
+import { ErrorInfoSchema } from '../gen/procmesh/v1/api_pb'
 
 export interface ErrorDetail {
   code: string
@@ -16,28 +17,25 @@ export function extractErrorDetail(error: unknown): ErrorDetail | null {
   }
 
   // ConnectError stores ErrorDetail in the cause field
-  const cause = (error as any).cause
+  const cause = error.cause
 
   if (cause && typeof cause === 'object' && 'code' in cause) {
+    const detail = cause as Record<string, unknown>
     return {
-      code: String(cause.code),
-      message: String(cause.message || error.message),
-      params: (cause.params as Record<string, string>) || {}
+      code: String(detail.code),
+      message: String(detail.message || error.message),
+      params: (detail.params as Record<string, string>) || {}
     }
   }
 
   // Try findDetails for protobuf-encoded details
   try {
-    const details = error.findDetails?.()
-    if (details && details.length > 0) {
-      for (const detail of details) {
-        if (detail && typeof detail === 'object' && 'code' in detail) {
-          return {
-            code: String(detail.code),
-            message: String(detail.message || error.message),
-            params: (detail.params as Record<string, string>) || {}
-          }
-        }
+    const detail = error.findDetails(ErrorInfoSchema)[0]
+    if (detail) {
+      return {
+        code: detail.code,
+        message: detail.message || error.rawMessage,
+        params: {}
       }
     }
   } catch {

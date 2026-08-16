@@ -1,11 +1,7 @@
 import { defineConfig } from "vitest/config";
 import vue from "@vitejs/plugin-vue";
 import tailwindcss from "@tailwindcss/vite";
-import { fileURLToPath } from "url";
-import { dirname } from "path";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+import { fileURLToPath, URL } from "node:url";
 
 export default defineConfig({
   plugins: [vue(), tailwindcss()],

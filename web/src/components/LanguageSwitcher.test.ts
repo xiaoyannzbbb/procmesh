@@ -11,12 +11,13 @@ testI18n.init({
   lng: 'en',
   fallbackLng: 'en',
   supportedLngs: ['en', 'zh'],
+  load: 'languageOnly',
   resources: {
     en: {
-      common: {}
+      common: { languageName: 'English' }
     },
     zh: {
-      common: {}
+      common: { languageName: '中文' }
     }
   },
   interpolation: {
@@ -44,6 +45,19 @@ describe('LanguageSwitcher', () => {
     })
 
     expect(wrapper.text()).toContain('English')
+    expect(wrapper.find('[data-testid="lang-en"]').classes()).toContain('active')
+  })
+
+  it('should mark English active for a regional English locale', async () => {
+    await testI18n.changeLanguage('en-US')
+    await nextTick()
+
+    const wrapper = mount(LanguageSwitcher, {
+      global: {
+        plugins: [[I18NextVue, { i18next: testI18n }]]
+      }
+    })
+
     expect(wrapper.find('[data-testid="lang-en"]').classes()).toContain('active')
   })
 

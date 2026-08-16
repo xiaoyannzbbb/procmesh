@@ -5,14 +5,9 @@ import { i18n } from './i18n'
 export function useI18n() {
   const { t, i18next } = useTranslation('common')
 
-  const tError = (code: string, fallback: string, params?: Record<string, any>) => {
+  const tError = (code: string, fallback: string, params?: Record<string, unknown>) => {
     const key = `errors:${code}`
-    const translated = t(key, params)
-    // Check if translation wasn't found (returns the key or just the code)
-    if (translated === key || translated === code) {
-      return fallback
-    }
-    return translated
+    return t(key, { ...params, defaultValue: fallback })
   }
 
   const setLanguage = async (lang: 'en' | 'zh') => {
@@ -23,11 +18,10 @@ export function useI18n() {
   return {
     t,
     tError,
-    currentLanguage: computed(() => i18next.language),
+    currentLanguage: computed(() => i18next.resolvedLanguage ?? i18next.language),
     setLanguage,
   }
 }
 
 // Preload errors namespace on module load
 i18n.loadNamespaces(['errors'])
-

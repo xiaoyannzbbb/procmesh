@@ -32,6 +32,11 @@ export default [
         performance: 'readonly',
         process: 'readonly',
         crypto: 'readonly',
+        AbortController: 'readonly',
+        TextDecoder: 'readonly',
+        BlobPart: 'readonly',
+        Blob: 'readonly',
+        URL: 'readonly',
       }
     },
     plugins: {

@@ -215,15 +215,29 @@ func TestAuthn_LoginThenList(t *testing.T) {
 	}
 }
 
-func TestAuthn_BadPasswordDenied(t *testing.T) {
+func TestAuthn_InvalidCredentialsDenied(t *testing.T) {
 	e := newAuthnEnv(t, true)
-	_, err := e.authc.Login(context.Background(), connect.NewRequest(&procmeshv1.LoginRequest{
-		Username: "admin",
-		Password: "wrong-password",
-	}))
-	assertDenied(t, err)
-	if !strings.Contains(err.Error(), "invalid credentials") {
-		t.Fatalf("want invalid credentials: %v", err)
+	for _, tc := range []struct {
+		name     string
+		username string
+		password string
+	}{
+		{name: "wrong password", username: "admin", password: "wrong-password"},
+		{name: "unknown username", username: "missing", password: "wrong-password"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := e.authc.Login(context.Background(), connect.NewRequest(&procmeshv1.LoginRequest{
+				Username: tc.username,
+				Password: tc.password,
+			}))
+			code, detail := connectDetail(t, err)
+			if code != connect.CodePermissionDenied || detail != "INVALID_CREDENTIALS" {
+				t.Fatalf("code=%v detail=%s err=%v", code, detail, err)
+			}
+			if !strings.Contains(err.Error(), "invalid credentials") {
+				t.Fatalf("want invalid credentials: %v", err)
+			}
+		})
 	}
 }
 

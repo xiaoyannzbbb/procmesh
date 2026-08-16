@@ -29,7 +29,7 @@ const { currentLanguage, setLanguage } = useI18n()
 const languages = [
   { code: 'en', name: 'English' },
   { code: 'zh', name: '中文' }
-]
+] as const
 </script>
 
 <style scoped>

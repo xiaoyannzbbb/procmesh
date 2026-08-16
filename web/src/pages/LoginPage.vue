@@ -47,17 +47,17 @@ async function onSubmit(): Promise<void> {
 <template>
   <div class="login-page">
     <form class="login-card" @submit.prevent="onSubmit">
-      <h1>{{ t("common:login.title") }}</h1>
+      <h1>{{ t("login.title") }}</h1>
       <label class="field">
-        {{ t("common:login.username") }}
+        {{ t("login.username") }}
         <input v-model="username" class="input" name="username" type="text" autocomplete="username" />
       </label>
       <label class="field">
-        {{ t("common:login.password") }}
+        {{ t("login.password") }}
         <input v-model="password" class="input" name="password" type="password" autocomplete="current-password" />
       </label>
       <p v-if="error" class="login-error" role="alert">{{ error }}</p>
-      <button class="btn btn-primary" type="submit" :disabled="pending">{{ t("common:actions.signIn") }}</button>
+      <button class="btn btn-primary" type="submit" :disabled="pending">{{ t("actions.signIn") }}</button>
     </form>
   </div>
 </template>

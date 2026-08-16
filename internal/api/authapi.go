@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sort"
 	"time"
@@ -27,7 +28,7 @@ func (s *AuthAPI) Login(_ context.Context, req *connect.Request[procmeshv1.Login
 	}
 	sid, csrf, userID, exp, err := s.Auth.Login(req.Msg.GetUsername(), req.Msg.GetPassword())
 	if err != nil {
-		return nil, ToConnect(err)
+		return nil, toLoginConnect(err)
 	}
 	resp := connect.NewResponse(&procmeshv1.LoginResponse{
 		SessionId:   sid,
@@ -38,6 +39,14 @@ func (s *AuthAPI) Login(_ context.Context, req *connect.Request[procmeshv1.Login
 	})
 	setSessionCookie(resp.Header(), sid, sessionCookieMaxAge)
 	return resp, nil
+}
+
+func toLoginConnect(err error) error {
+	var coded *errcode.Error
+	if errors.As(err, &coded) && coded.Code == errcode.DENIED && coded.Msg == "invalid credentials" {
+		return toConnectWithDetailCode(err, "INVALID_CREDENTIALS")
+	}
+	return ToConnect(err)
 }
 
 func (s *AuthAPI) Logout(ctx context.Context, _ *connect.Request[procmeshv1.LogoutRequest]) (*connect.Response[procmeshv1.LogoutResponse], error) {

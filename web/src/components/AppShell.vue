@@ -42,18 +42,18 @@ const perms = computed(() => new Set(session.value?.permissions ?? []));
 
 const navItems = computed(() => {
   const items = [
-    { to: "/", label: t("common:nav.overview"), icon: LayoutDashboard },
-    { to: "/nodes", label: t("common:nav.nodes"), icon: Server },
-    { to: "/processes", label: t("common:nav.processes"), icon: Layers },
+    { to: "/", label: t("nav.overview"), icon: LayoutDashboard },
+    { to: "/nodes", label: t("nav.nodes"), icon: Server },
+    { to: "/processes", label: t("nav.processes"), icon: Layers },
   ];
   if (perms.value.has("user.read")) {
-    items.push({ to: "/users", label: t("common:nav.users"), icon: Users });
+    items.push({ to: "/users", label: t("nav.users"), icon: Users });
   }
   if (perms.value.has("role.read")) {
-    items.push({ to: "/roles", label: t("common:nav.roles"), icon: ShieldCheck });
+    items.push({ to: "/roles", label: t("nav.roles"), icon: ShieldCheck });
   }
   if (perms.value.has("audit.read")) {
-    items.push({ to: "/audit", label: t("common:nav.audit"), icon: FileSearch });
+    items.push({ to: "/audit", label: t("nav.audit"), icon: FileSearch });
   }
   return items;
 });
@@ -92,8 +92,8 @@ async function onLogout(): Promise<void> {
           type="button"
           class="collapse-btn"
           @click="toggleCollapse"
-          :aria-label="isCollapsed ? t('common:actions.expand') : t('common:actions.collapse')"
-          :title="isCollapsed ? t('common:actions.expand') : t('common:actions.collapse')"
+          :aria-label="isCollapsed ? t('actions.expand') : t('actions.collapse')"
+          :title="isCollapsed ? t('actions.expand') : t('actions.collapse')"
         >
           <ChevronLeft v-if="!isCollapsed" :size="20" />
           <ChevronRight v-else :size="20" />
@@ -121,10 +121,10 @@ async function onLogout(): Promise<void> {
           type="button"
           class="btn logout"
           @click="onLogout"
-          :title="isCollapsed ? t('common:actions.logout') : ''"
+          :title="isCollapsed ? t('actions.logout') : ''"
         >
           <LogOut :size="18" />
-          <span class="btn-label">{{ t("common:actions.logout") }}</span>
+          <span class="btn-label">{{ t("actions.logout") }}</span>
         </button>
       </div>
     </aside>

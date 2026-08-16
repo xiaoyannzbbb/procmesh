@@ -28,7 +28,7 @@ beforeEach(async () => {
 
 const mounted: Array<{ unmount: () => void }> = [];
 
-async function mountNodeDetailPage(node: any = null) {
+async function mountNodeDetailPage(node: unknown = null) {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [

@@ -22,11 +22,11 @@ const value = computed<Freshness>(() => {
 const displayText = computed(() => {
   switch (value.value) {
     case LIVE:
-      return t("common:status.live");
+      return t("status.live");
     case STALE:
-      return t("common:status.stale");
+      return t("status.stale");
     case UNKNOWN:
-      return t("common:status.unknown");
+      return t("status.unknown");
     default:
       return value.value;
   }

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { Code, ConnectError } from '@connectrpc/connect'
+import { ErrorInfoSchema } from '../gen/procmesh/v1/api_pb'
 import { extractErrorDetail } from './extractErrorDetail'
 
 describe('extractErrorDetail', () => {
@@ -34,6 +35,21 @@ describe('extractErrorDetail', () => {
     const error = new ConnectError('Network error', Code.Unavailable)
     const detail = extractErrorDetail(error)
     expect(detail).toBeNull()
+  })
+
+  it('should extract a protobuf ErrorInfo detail', () => {
+    const error = new ConnectError('Process not found', Code.NotFound, undefined, [
+      {
+        desc: ErrorInfoSchema,
+        value: { code: 'PROCESS_NOT_FOUND', message: 'Process nginx not found' }
+      }
+    ])
+
+    expect(extractErrorDetail(error)).toEqual({
+      code: 'PROCESS_NOT_FOUND',
+      message: 'Process nginx not found',
+      params: {}
+    })
   })
 
   it('should extract multiple params', () => {

@@ -1,5 +1,5 @@
 import { mount } from '@vue/test-utils'
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { defineComponent } from 'vue'
 import i18next from 'i18next'
 import { I18NextVue } from './i18n'

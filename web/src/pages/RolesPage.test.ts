@@ -22,7 +22,7 @@ beforeEach(async () => {
 
 const mounted: Array<{ unmount: () => void }> = [];
 
-async function mountRolesPage(roles: any[] = [], bindings: any[] = []) {
+async function mountRolesPage(roles: unknown[] = [], bindings: unknown[] = []) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });

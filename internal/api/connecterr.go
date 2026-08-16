@@ -24,6 +24,10 @@ func unimplemented() error {
 // ToConnect maps err to a Connect error with ErrorInfo detail.
 // nil is returned unchanged.
 func ToConnect(err error) error {
+	return toConnectWithDetailCode(err, string(CodeOf(err)))
+}
+
+func toConnectWithDetailCode(err error, detailCode string) error {
 	if err == nil {
 		return nil
 	}
@@ -34,7 +38,7 @@ func ToConnect(err error) error {
 	c := CodeOf(err)
 	ce = connect.NewError(toConnectCode(c), err)
 	detail, detailErr := connect.NewErrorDetail(&procmeshv1.ErrorInfo{
-		Code:    string(c),
+		Code:    detailCode,
 		Message: err.Error(),
 	})
 	if detailErr == nil {

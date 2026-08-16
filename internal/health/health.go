@@ -154,7 +154,15 @@ func checkTCP(ctx context.Context, spec HealthCheckSpec) error {
 		timeout = defaultTimeout
 	}
 	d := net.Dialer{Timeout: timeout}
-	conn, err := d.DialContext(ctx, "tcp", spec.Address)
+	return checkTCPWithDialer(ctx, spec.Address, &d)
+}
+
+type contextDialer interface {
+	DialContext(context.Context, string, string) (net.Conn, error)
+}
+
+func checkTCPWithDialer(ctx context.Context, address string, dialer contextDialer) error {
+	conn, err := dialer.DialContext(ctx, "tcp", address)
 	if err != nil {
 		return err
 	}

@@ -23,7 +23,7 @@ beforeEach(async () => {
 
 const mounted: Array<{ unmount: () => void }> = [];
 
-async function mountProcessDetailPage(process: any = null, nodes: any[] = []) {
+async function mountProcessDetailPage(process: unknown = null, nodes: unknown[] = []) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
