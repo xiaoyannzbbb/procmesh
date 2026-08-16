@@ -71,3 +71,38 @@ func TestBatch_ListIncompleteTargets(t *testing.T) {
 		t.Fatalf("%+v %v", inc, err)
 	}
 }
+
+func TestBatch_ReplaceTargetOp(t *testing.T) {
+	ctx := context.Background()
+	s, err := store.Open(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	rec := store.BatchRecord{
+		BatchID: "b1", Operator: "a", SourceAgent: "n", Type: "START",
+		SelectorJSON: `{}`, CreatedAt: time.Now().UTC(), Status: "FAILED", SummaryJSON: `{}`,
+	}
+	targets := []store.BatchTargetRecord{{
+		BatchID: "b1", OperationID: "op-old", NodeID: "n", ProcessID: "p",
+		ProcessName: "x", Status: "FAILED", Error: "boom",
+		FinishedAt: time.Now().UTC(),
+	}}
+	if err := s.InsertBatch(ctx, rec, targets); err != nil {
+		t.Fatal(err)
+	}
+	newRec := store.BatchTargetRecord{
+		BatchID: "b1", OperationID: "op-new", NodeID: "n", ProcessID: "p",
+		ProcessName: "x", Status: "PENDING",
+	}
+	if err := s.ReplaceTargetOp(ctx, "b1", "op-old", newRec); err != nil {
+		t.Fatal(err)
+	}
+	_, ts, err := s.GetBatch(ctx, "b1")
+	if err != nil || len(ts) != 1 || ts[0].OperationID != "op-new" || ts[0].Status != "PENDING" {
+		t.Fatalf("%+v %v", ts, err)
+	}
+	if err := s.ReplaceTargetOp(ctx, "b1", "missing", newRec); !errcode.Is(err, errcode.NOT_FOUND) {
+		t.Fatalf("want NOT_FOUND, got %v", err)
+	}
+}

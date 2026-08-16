@@ -304,6 +304,122 @@ func toStoreTarget(batchID string, t Target) store.BatchTargetRecord {
 	}
 }
 
+// RetryFailed resets FAILED/DENIED/CONFLICT/UNAVAILABLE/INVALID targets to PENDING
+// with new operation_ids, sets the batch RUNNING, and enqueues it.
+// SUCCESS and TIMEOUT targets are left unchanged.
+func (e *Engine) RetryFailed(ctx context.Context, id, operator string) (Batch, error) {
+	_ = operator
+	b, err := e.Get(ctx, id)
+	if err != nil {
+		return Batch{}, err
+	}
+	n := 0
+	for _, t := range b.Targets {
+		if !isRetryableTarget(t.Status) {
+			continue
+		}
+		newOp := e.NewID()
+		rec := store.BatchTargetRecord{
+			BatchID:          id,
+			OperationID:      newOp,
+			NodeID:           t.NodeID,
+			ProcessID:        t.ProcessID,
+			ProcessName:      t.ProcessName,
+			Status:           string(TargetPending),
+			Error:            "",
+			ExpectedRevision: t.ExpectedRevision,
+			PayloadJSON:      t.PayloadJSON,
+		}
+		if err := e.DB.ReplaceTargetOp(ctx, id, t.OperationID, rec); err != nil {
+			return Batch{}, err
+		}
+		n++
+	}
+	if n == 0 {
+		return Batch{}, errcode.E(errcode.INVALID, "nothing to retry")
+	}
+	return e.requeueBatch(ctx, id)
+}
+
+// ReplayTimeout resets TIMEOUT targets to PENDING reusing the original operation_id,
+// sets the batch RUNNING, and enqueues it. SUCCESS targets are left unchanged.
+func (e *Engine) ReplayTimeout(ctx context.Context, id, operator string) (Batch, error) {
+	_ = operator
+	b, err := e.Get(ctx, id)
+	if err != nil {
+		return Batch{}, err
+	}
+	n := 0
+	for _, t := range b.Targets {
+		if t.Status != TargetTimeout {
+			continue
+		}
+		rec := store.BatchTargetRecord{
+			BatchID:          id,
+			OperationID:      t.OperationID,
+			NodeID:           t.NodeID,
+			ProcessID:        t.ProcessID,
+			ProcessName:      t.ProcessName,
+			Status:           string(TargetPending),
+			Error:            "",
+			ExpectedRevision: t.ExpectedRevision,
+			PayloadJSON:      t.PayloadJSON,
+		}
+		if err := e.DB.UpdateTarget(ctx, id, t.OperationID, rec); err != nil {
+			return Batch{}, err
+		}
+		n++
+	}
+	if n == 0 {
+		return Batch{}, errcode.E(errcode.INVALID, "nothing to replay")
+	}
+	return e.requeueBatch(ctx, id)
+}
+
+// Resume re-enqueues batches that still have PENDING/RUNNING targets.
+// Does not change operation_ids and does not replay TIMEOUT or SUCCESS.
+func (e *Engine) Resume(ctx context.Context) error {
+	targets, err := e.DB.ListIncompleteTargets(ctx)
+	if err != nil {
+		return err
+	}
+	seen := make(map[string]struct{})
+	for _, t := range targets {
+		if _, ok := seen[t.BatchID]; ok {
+			continue
+		}
+		seen[t.BatchID] = struct{}{}
+		e.enqueue(t.BatchID)
+	}
+	return nil
+}
+
+func (e *Engine) requeueBatch(ctx context.Context, id string) (Batch, error) {
+	b, err := e.Get(ctx, id)
+	if err != nil {
+		return Batch{}, err
+	}
+	summary := CountSummary(b.Targets)
+	sumJSON, err := json.Marshal(summary)
+	if err != nil {
+		return Batch{}, fmt.Errorf("marshal summary: %w", err)
+	}
+	if err := e.DB.UpdateBatchStatus(ctx, id, string(StatusRunning), string(sumJSON)); err != nil {
+		return Batch{}, err
+	}
+	e.enqueue(id)
+	return e.Get(ctx, id)
+}
+
+func isRetryableTarget(s TargetStatus) bool {
+	switch s {
+	case TargetFailed, TargetDenied, TargetConflict, TargetUnavailable, TargetInvalid:
+		return true
+	default:
+		return false
+	}
+}
+
 // Get returns a batch with targets.
 func (e *Engine) Get(ctx context.Context, id string) (Batch, error) {
 	rec, targets, err := e.DB.GetBatch(ctx, id)

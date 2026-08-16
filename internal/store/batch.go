@@ -184,6 +184,52 @@ func (s *Store) UpdateTarget(ctx context.Context, batchID, opID string, rec Batc
 	return nil
 }
 
+// ReplaceTargetOp deletes the target row keyed by (batchID, oldOp) and inserts rec
+// in one transaction. Used when RetryFailed assigns a new operation_id.
+func (s *Store) ReplaceTargetOp(ctx context.Context, batchID, oldOp string, rec BatchTargetRecord) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin replace batch target: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx, `
+		DELETE FROM batch_targets WHERE batch_id = ? AND operation_id = ?
+	`, batchID, oldOp)
+	if err != nil {
+		return fmt.Errorf("delete batch target: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("delete batch target rows: %w", err)
+	}
+	if n == 0 {
+		return errcode.E(errcode.NOT_FOUND, "batch_target")
+	}
+
+	if rec.BatchID == "" {
+		rec.BatchID = batchID
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO batch_targets(
+			batch_id, operation_id, node_id, process_id, process_name, status, error,
+			expected_revision, payload_json, started_at, finished_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, rec.BatchID, rec.OperationID, rec.NodeID, rec.ProcessID, rec.ProcessName, rec.Status, rec.Error,
+		rec.ExpectedRevision, rec.PayloadJSON, formatTime(rec.StartedAt), formatTime(rec.FinishedAt))
+	if err != nil {
+		if isUniqueViolation(err) {
+			return errcode.E(errcode.CONFLICT, "batch_target")
+		}
+		return fmt.Errorf("insert batch target: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit replace batch target: %w", err)
+	}
+	return nil
+}
+
 // ListIncompleteTargets returns targets still PENDING or RUNNING.
 func (s *Store) ListIncompleteTargets(ctx context.Context) ([]BatchTargetRecord, error) {
 	rows, err := s.db.QueryContext(ctx, `

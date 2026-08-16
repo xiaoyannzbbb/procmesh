@@ -245,3 +245,136 @@ func TestMapExecError(t *testing.T) {
 		t.Fatal("conflict")
 	}
 }
+
+func TestEngine_RetryFailedNewOperationID(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	ids := []string{"b1", "op-old"}
+	e := &batch.Engine{
+		DB: st, SourceAgent: "n1",
+		Expand: stubExpand{targets: []batch.Target{{NodeID: "n", ProcessID: "p", ProcessName: "x"}}},
+		Exec:   stubExec{fn: func(context.Context, batch.Target) error { return errcode.E(errcode.INVALID, "boom") }},
+		NewID:  func() string { id := ids[0]; ids = ids[1:]; return id },
+	}
+	e.Start(ctx)
+	b, err := e.Create(ctx, "admin", batch.TypeStart, batch.Selector{ProcessIDs: []string{"p"}}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitBatch(t, e, b.BatchID, batch.StatusFailed)
+	ids = []string{"op-new"}
+	e.Exec = stubExec{fn: func(context.Context, batch.Target) error { return nil }}
+	got, err := e.RetryFailed(ctx, b.BatchID, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = got
+	waitBatch(t, e, b.BatchID, batch.StatusCompleted)
+	got, _ = e.Get(ctx, b.BatchID)
+	if len(got.Targets) != 1 {
+		t.Fatalf("want 1 target row, got %d", len(got.Targets))
+	}
+	if got.Targets[0].OperationID != "op-new" {
+		t.Fatalf("want new op, got %s", got.Targets[0].OperationID)
+	}
+}
+
+func TestEngine_ReplayTimeoutReusesOperationID(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	ids := []string{"b1", "op-to"}
+	e := &batch.Engine{
+		DB: st, SourceAgent: "n1", TargetTimeout: 20 * time.Millisecond,
+		Expand: stubExpand{targets: []batch.Target{{NodeID: "n", ProcessID: "p", ProcessName: "x"}}},
+		Exec: stubExec{fn: func(ctx context.Context, _ batch.Target) error {
+			<-ctx.Done()
+			return ctx.Err()
+		}},
+		NewID: func() string { id := ids[0]; ids = ids[1:]; return id },
+	}
+	e.Start(ctx)
+	b, _ := e.Create(ctx, "admin", batch.TypeRestart, batch.Selector{ProcessIDs: []string{"p"}}, "")
+	waitBatch(t, e, b.BatchID, batch.StatusPartial)
+	before, _ := e.Get(ctx, b.BatchID)
+	old := before.Targets[0].OperationID
+	e.Exec = stubExec{fn: func(context.Context, batch.Target) error { return nil }}
+	if _, err := e.ReplayTimeout(ctx, b.BatchID, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	waitBatch(t, e, b.BatchID, batch.StatusCompleted)
+	after, _ := e.Get(ctx, b.BatchID)
+	if after.Targets[0].OperationID != old {
+		t.Fatalf("replay must reuse %s, got %s", old, after.Targets[0].OperationID)
+	}
+}
+
+func TestEngine_ResumeDoesNotReplaySuccessOrTimeout(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	// Manual insert: one SUCCESS, one TIMEOUT, one PENDING
+	_ = st.InsertBatch(ctx, store.BatchRecord{
+		BatchID: "b1", Operator: "a", SourceAgent: "n", Type: "RESTART",
+		SelectorJSON: `{}`, CreatedAt: time.Now().UTC(), Status: "RUNNING", SummaryJSON: `{}`,
+	}, []store.BatchTargetRecord{
+		{BatchID: "b1", OperationID: "op-s", NodeID: "n", ProcessID: "s", Status: "SUCCESS"},
+		{BatchID: "b1", OperationID: "op-t", NodeID: "n", ProcessID: "t", Status: "TIMEOUT"},
+		{BatchID: "b1", OperationID: "op-p", NodeID: "n", ProcessID: "p", Status: "PENDING"},
+	})
+	var ran []string
+	e := &batch.Engine{DB: st, SourceAgent: "n", Exec: stubExec{fn: func(_ context.Context, t batch.Target) error {
+		ran = append(ran, t.OperationID)
+		return nil
+	}}}
+	e.Start(ctx)
+	if err := e.Resume(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitBatch(t, e, "b1", batch.StatusPartial)
+	if len(ran) != 1 || ran[0] != "op-p" {
+		t.Fatalf("ran %v", ran)
+	}
+}
+
+func TestEngine_RetryFailedNothingToRetry(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	ids := []string{"b1", "op-1"}
+	e := &batch.Engine{
+		DB: st, SourceAgent: "n1",
+		Expand: stubExpand{targets: []batch.Target{{NodeID: "n", ProcessID: "p", ProcessName: "x"}}},
+		Exec:   stubExec{fn: func(context.Context, batch.Target) error { return nil }},
+		NewID:  func() string { id := ids[0]; ids = ids[1:]; return id },
+	}
+	e.Start(ctx)
+	b, err := e.Create(ctx, "admin", batch.TypeStart, batch.Selector{ProcessIDs: []string{"p"}}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitBatch(t, e, b.BatchID, batch.StatusCompleted)
+	_, err = e.RetryFailed(ctx, b.BatchID, "admin")
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("want INVALID, got %v", err)
+	}
+}
+
+func TestEngine_ReplayTimeoutNothingToReplay(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	ids := []string{"b1", "op-1"}
+	e := &batch.Engine{
+		DB: st, SourceAgent: "n1",
+		Expand: stubExpand{targets: []batch.Target{{NodeID: "n", ProcessID: "p", ProcessName: "x"}}},
+		Exec:   stubExec{fn: func(context.Context, batch.Target) error { return nil }},
+		NewID:  func() string { id := ids[0]; ids = ids[1:]; return id },
+	}
+	e.Start(ctx)
+	b, err := e.Create(ctx, "admin", batch.TypeStart, batch.Selector{ProcessIDs: []string{"p"}}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitBatch(t, e, b.BatchID, batch.StatusCompleted)
+	_, err = e.ReplayTimeout(ctx, b.BatchID, "admin")
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("want INVALID, got %v", err)
+	}
+}
