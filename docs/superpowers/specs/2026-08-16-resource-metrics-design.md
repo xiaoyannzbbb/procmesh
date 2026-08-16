@@ -121,7 +121,7 @@ type Collector struct {
 package metrics
 
 // New 创建 Collector（未启动）
-func New(interval time.Duration) *Collector
+func New(dataDir string, interval time.Duration) *Collector
 
 // Start 启动后台采集协程
 func (c *Collector) Start(ctx context.Context) error
@@ -299,8 +299,7 @@ func (a *Agent) Start(ctx context.Context) error {
     // ... 现有启动逻辑
     
     // 启动 metrics collector
-    a.metrics = metrics.New(5 * time.Second)
-    a.metrics.SetDataDir(a.cfg.DataDir) // 设置数据目录路径
+    a.metrics = metrics.New(a.cfg.DataDir, 5 * time.Second)
     if err := a.metrics.Start(ctx); err != nil {
         return fmt.Errorf("start metrics collector: %w", err)
     }
