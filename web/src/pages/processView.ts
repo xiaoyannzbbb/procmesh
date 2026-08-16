@@ -1,6 +1,6 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import { appCode } from "../lib/connecterr";
-import type { Freshness } from "../lib/freshness";
+import { LIVE, type Freshness } from "../lib/freshness";
 import { mapNode } from "./clusterView";
 
 export const RESTART_REQUIRED_BANNER = "Configuration changed. Restart required.";
@@ -128,6 +128,55 @@ export function flattenClusterProcesses(nodes: unknown[], nowMs: number): Cluste
     return a.ownerNodeId.localeCompare(b.ownerNodeId);
   });
   return rows;
+}
+
+export function rowsFromProcessViews(processes: unknown[], nowMs: number): ClusterProcessRow[] {
+  const rows: ClusterProcessRow[] = [];
+  for (const raw of processes) {
+    const rec = asRecord(raw);
+    const spec = pick(rec, "spec") ?? rec;
+    const instancesRaw = pick(rec, "instances");
+    const instances = Array.isArray(instancesRaw) ? instancesRaw : [];
+    const first = asRecord(instances[0]);
+    rows.push({
+      name: toStr(pick(spec, "name")),
+      group: toStr(pick(spec, "group")),
+      ownerNodeId: toStr(pick(spec, "ownerAgentId", "owner_agent_id")),
+      ownerHostname: "",
+      ownerState: "ALIVE",
+      desired: toStr(pick(first, "desired")),
+      observed: toStr(pick(first, "observed")),
+      health: toStr(pick(first, "health")),
+      latestRevision: toNum(pick(spec, "latestRevision", "latest_revision")),
+      activeRevision: toNum(
+        pick(first, "activeRevision", "active_revision") ?? pick(spec, "activeRevision", "active_revision"),
+      ),
+      freshness: LIVE,
+      freshnessUnixMs: nowMs,
+    });
+  }
+  return rows;
+}
+
+export function mergeProcessRows(gossip: ClusterProcessRow[], listed: ClusterProcessRow[]): ClusterProcessRow[] {
+  const seen = new Set(gossip.map(rowKey));
+  const out = gossip.slice();
+  for (const row of listed) {
+    const key = rowKey(row);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    out.push(row);
+  }
+  out.sort((a, b) => {
+    const byName = a.name.localeCompare(b.name);
+    if (byName !== 0) {
+      return byName;
+    }
+    return a.ownerNodeId.localeCompare(b.ownerNodeId);
+  });
+  return out;
 }
 
 export function needsRestartBanner(latestRevision: number, activeRevision: number): boolean {

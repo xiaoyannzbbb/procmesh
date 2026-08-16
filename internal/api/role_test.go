@@ -134,7 +134,7 @@ func TestRoleAPI_GrantGroupScopes(t *testing.T) {
 	role := created.Msg.GetRole()
 
 	_, err = api.GrantRole(ctx, connect.NewRequest(&procmeshv1.GrantRoleRequest{
-		Meta: &procmeshv1.MutationMeta{OperationId: "op-ag", Operator: "t"},
+		Meta:   &procmeshv1.MutationMeta{OperationId: "op-ag", Operator: "t"},
 		UserId: "user-admin", RoleId: role.GetRoleId(),
 		ScopeType: "AGENT_GROUP", ScopeId: "g-fin",
 	}))
@@ -143,14 +143,14 @@ func TestRoleAPI_GrantGroupScopes(t *testing.T) {
 	}
 
 	_, err = api.GrantRole(ctx, connect.NewRequest(&procmeshv1.GrantRoleRequest{
-		Meta: &procmeshv1.MutationMeta{OperationId: "op-ag-miss", Operator: "t"},
+		Meta:   &procmeshv1.MutationMeta{OperationId: "op-ag-miss", Operator: "t"},
 		UserId: "user-admin", RoleId: role.GetRoleId(),
 		ScopeType: "AGENT_GROUP", ScopeId: "missing",
 	}))
 	assertInvalidOrNotFound(t, err)
 
 	_, err = api.GrantRole(ctx, connect.NewRequest(&procmeshv1.GrantRoleRequest{
-		Meta: &procmeshv1.MutationMeta{OperationId: "op-pg", Operator: "t"},
+		Meta:   &procmeshv1.MutationMeta{OperationId: "op-pg", Operator: "t"},
 		UserId: "user-admin", RoleId: role.GetRoleId(),
 		ScopeType: "PROCESS_GROUP", ScopeId: "finance",
 	}))
@@ -159,11 +159,62 @@ func TestRoleAPI_GrantGroupScopes(t *testing.T) {
 	}
 
 	_, err = api.GrantRole(ctx, connect.NewRequest(&procmeshv1.GrantRoleRequest{
-		Meta: &procmeshv1.MutationMeta{OperationId: "op-pg-bad", Operator: "t"},
+		Meta:   &procmeshv1.MutationMeta{OperationId: "op-pg-bad", Operator: "t"},
 		UserId: "user-admin", RoleId: role.GetRoleId(),
 		ScopeType: "PROCESS_GROUP", ScopeId: "bad name",
 	}))
 	assertInvalidMsg(t, err, "scope_id")
+}
+
+func TestRoleAPI_GrantProcessGroupTrimsScopeID(t *testing.T) {
+	ctx := context.Background()
+	st, svc := newBootstrappedAuth(t)
+	api := &RoleAPI{Auth: svc}
+
+	applyAuthCmd(t, svc, control.CmdUserPut, control.UserPutBody{
+		ID: "u-fin", Username: "finop", PasswordHash: testAdminHash(t),
+	})
+	created, err := api.CreateRole(ctx, connect.NewRequest(&procmeshv1.CreateRoleRequest{
+		Meta:        &procmeshv1.MutationMeta{OperationId: "op-role-trim", Operator: "t"},
+		Name:        "fin-ops",
+		Permissions: []string{auth.PermProcessRead},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	roleID := created.Msg.GetRole().GetRoleId()
+
+	grant, err := api.GrantRole(ctx, connect.NewRequest(&procmeshv1.GrantRoleRequest{
+		Meta:      &procmeshv1.MutationMeta{OperationId: "op-pg-trim", Operator: "t"},
+		UserId:    "u-fin",
+		RoleId:    roleID,
+		ScopeType: "PROCESS_GROUP",
+		ScopeId:   " finance ",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := grant.Msg.GetBinding().GetScopeId(); got != "finance" {
+		t.Fatalf("response scope_id=%q want finance", got)
+	}
+
+	listed, err := api.ListRoles(ctx, connect.NewRequest(&procmeshv1.ListRolesRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasBinding(listed.Msg.GetBindings(), "u-fin", roleID, "PROCESS_GROUP", "finance") {
+		t.Fatalf("stored binding missing trimmed finance: %+v", listed.Msg.GetBindings())
+	}
+	if hasBinding(listed.Msg.GetBindings(), "u-fin", roleID, "PROCESS_GROUP", " finance ") {
+		t.Fatalf("raw padded scope_id persisted: %+v", listed.Msg.GetBindings())
+	}
+	view := st.View()
+	if !view.CheckTarget("u-fin", auth.PermProcessRead, control.CheckTarget{ProcessGroup: "finance"}) {
+		t.Fatal("trimmed scope_id must match CheckTarget ProcessGroup=finance")
+	}
+	if view.CheckTarget("u-fin", auth.PermProcessRead, control.CheckTarget{ProcessGroup: " finance "}) {
+		t.Fatal("padded scope must not match CheckTarget")
+	}
 }
 
 func assertInvalidMsg(t *testing.T, err error, msg string) {

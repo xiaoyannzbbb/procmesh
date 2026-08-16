@@ -28,6 +28,7 @@ async function mountProcessDetailPage(process: unknown = null, nodes: unknown[] 
     defaultOptions: { queries: { retry: false } },
   });
   const processClient = {
+    listProcesses: vi.fn().mockResolvedValue({ processes: [] }),
     getProcess: vi.fn().mockResolvedValue({ process }),
     startProcess: vi.fn().mockResolvedValue({}),
     stopProcess: vi.fn().mockResolvedValue({}),

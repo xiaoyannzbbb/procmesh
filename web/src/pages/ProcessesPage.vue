@@ -2,27 +2,42 @@
 import { useQuery } from "@tanstack/vue-query";
 import { computed, ref } from "vue";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
-import { useNodeClient } from "../lib/rpc";
+import { useNodeClient, useProcessClient } from "../lib/rpc";
 import { useI18n } from "../lib/useI18n";
 import { useProcessState } from "../lib/useProcessState";
-import { flattenClusterProcesses, formatRemoteError, ownerDisplay, rowKey } from "./processView";
+import {
+  flattenClusterProcesses,
+  formatRemoteError,
+  mergeProcessRows,
+  ownerDisplay,
+  rowKey,
+  rowsFromProcessViews,
+} from "./processView";
 
 const { t } = useI18n();
 const { translateDesiredState, translateObservedState, translateHealthState } = useProcessState();
 
 const POLL_MS = 5000;
-const client = useNodeClient();
+const nodes = useNodeClient();
+const processes = useProcessClient();
 const groupFilter = ref("");
 
-const query = useQuery({
+const nodesQuery = useQuery({
   queryKey: ["nodes"],
-  queryFn: () => client.listNodes({}),
+  queryFn: () => nodes.listNodes({}),
+  refetchInterval: POLL_MS,
+});
+
+const processesQuery = useQuery({
+  queryKey: ["processes"],
+  queryFn: () => processes.listProcesses({}),
   refetchInterval: POLL_MS,
 });
 
 const rows = computed(() => {
-  const list = query.data.value?.nodes ?? [];
-  const all = flattenClusterProcesses(list, Date.now());
+  const gossip = flattenClusterProcesses(nodesQuery.data.value?.nodes ?? [], Date.now());
+  const listed = rowsFromProcessViews(processesQuery.data.value?.processes ?? [], Date.now());
+  const all = mergeProcessRows(gossip, listed);
   const filter = groupFilter.value.trim();
   if (!filter) {
     return all;
@@ -30,8 +45,17 @@ const rows = computed(() => {
   return all.filter((row) => row.group === filter);
 });
 
+const loading = computed(
+  () =>
+    (nodesQuery.isPending.value && !nodesQuery.data.value) &&
+    (processesQuery.isPending.value && !processesQuery.data.value),
+);
+
 const errorText = computed(() => {
-  const err = query.error.value;
+  if (processesQuery.data.value || nodesQuery.data.value) {
+    return "";
+  }
+  const err = processesQuery.error.value ?? nodesQuery.error.value;
   if (!err) {
     return "";
   }
@@ -52,7 +76,7 @@ const errorText = computed(() => {
         :placeholder="t('processes.filterGroupPlaceholder')"
       />
     </label>
-    <p v-if="query.isPending && !query.data" class="muted">{{ t("processes.loading") }}</p>
+    <p v-if="loading" class="muted">{{ t("processes.loading") }}</p>
     <p v-else-if="errorText" class="error" role="alert">{{ errorText }}</p>
     <div v-else class="card">
       <table class="table">

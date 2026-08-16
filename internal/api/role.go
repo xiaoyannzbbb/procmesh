@@ -98,13 +98,13 @@ func (s *RoleAPI) GrantRole(ctx context.Context, req *connect.Request[procmeshv1
 	if userID == "" || roleID == "" {
 		return nil, ToConnect(errcode.E(errcode.INVALID, "user_id and role_id required"))
 	}
-	scope, err := parseScope(req.Msg.GetScopeType(), req.Msg.GetScopeId())
+	scope, scopeID, err := parseScope(req.Msg.GetScopeType(), req.Msg.GetScopeId())
 	if err != nil {
 		return nil, err
 	}
 	st := s.Auth.Store().View()
 	if scope == control.ScopeAgentGroup {
-		if _, ok := st.AgentGroups[req.Msg.GetScopeId()]; !ok {
+		if _, ok := st.AgentGroups[scopeID]; !ok {
 			return nil, ToConnect(errcode.E(errcode.NOT_FOUND, "agent group not found"))
 		}
 	}
@@ -117,7 +117,7 @@ func (s *RoleAPI) GrantRole(ctx context.Context, req *connect.Request[procmeshv1
 	if err := applyAuth(s.Auth, control.CmdBindPut, control.BindPutBody{
 		UserID:  userID,
 		RoleID:  roleID,
-		ScopeID: req.Msg.GetScopeId(),
+		ScopeID: scopeID,
 		Scope:   scope,
 	}); err != nil {
 		return nil, err
@@ -127,37 +127,37 @@ func (s *RoleAPI) GrantRole(ctx context.Context, req *connect.Request[procmeshv1
 			UserId:    userID,
 			RoleId:    roleID,
 			ScopeType: string(scope),
-			ScopeId:   req.Msg.GetScopeId(),
+			ScopeId:   scopeID,
 		},
 	}), nil
 }
 
-func parseScope(scopeType, scopeID string) (control.ScopeType, error) {
+func parseScope(scopeType, scopeID string) (control.ScopeType, string, error) {
 	s := strings.ToUpper(strings.TrimSpace(scopeType))
+	id := strings.TrimSpace(scopeID)
 	if s == "" {
 		s = string(control.ScopeCluster)
 	}
 	switch control.ScopeType(s) {
 	case control.ScopeCluster:
-		return control.ScopeCluster, nil
+		return control.ScopeCluster, "", nil
 	case control.ScopeAgent:
-		if scopeID == "" {
-			return "", ToConnect(errcode.E(errcode.INVALID, "scope_id required for AGENT"))
+		if id == "" {
+			return "", "", ToConnect(errcode.E(errcode.INVALID, "scope_id required for AGENT"))
 		}
-		return control.ScopeAgent, nil
+		return control.ScopeAgent, id, nil
 	case control.ScopeAgentGroup:
-		if scopeID == "" {
-			return "", ToConnect(errcode.E(errcode.INVALID, "scope_id required for AGENT_GROUP"))
+		if id == "" {
+			return "", "", ToConnect(errcode.E(errcode.INVALID, "scope_id required for AGENT_GROUP"))
 		}
-		return control.ScopeAgentGroup, nil
+		return control.ScopeAgentGroup, id, nil
 	case control.ScopeProcessGroup:
-		id := strings.TrimSpace(scopeID)
 		if !processGroupNameOK(id) {
-			return "", ToConnect(errcode.E(errcode.INVALID, "scope_id"))
+			return "", "", ToConnect(errcode.E(errcode.INVALID, "scope_id"))
 		}
-		return control.ScopeProcessGroup, nil
+		return control.ScopeProcessGroup, id, nil
 	default:
-		return "", ToConnect(errcode.E(errcode.INVALID, "invalid scope_type"))
+		return "", "", ToConnect(errcode.E(errcode.INVALID, "invalid scope_type"))
 	}
 }
 

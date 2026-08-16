@@ -66,7 +66,7 @@ func (s *MetricsAPI) GetProcessMetrics(ctx context.Context, req *connect.Request
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	if err := requireRoutePerm(ctx, s.Auth, auth.PermProcessRead, local, rt, s.LocalID, false); err != nil {
+	if err := authorizeProcessRoute(ctx, s.Auth, s.Router, auth.PermProcessRead, req.Msg.GetIdOrName(), local, rt, false); err != nil {
 		return nil, err
 	}
 	if !local {
@@ -86,6 +86,9 @@ func (s *MetricsAPI) GetProcessMetrics(ctx context.Context, req *connect.Request
 	spec, err := s.Mgr.Resolve(ctx, req.Msg.GetIdOrName())
 	if err != nil {
 		return nil, ToConnect(err)
+	}
+	if err := authorizeProcessSpec(ctx, s.Auth, auth.PermProcessRead, s.LocalID, spec.Group, false); err != nil {
+		return nil, err
 	}
 	insts, err := s.Mgr.ListInstances(ctx, spec.ProcessID)
 	if err != nil {

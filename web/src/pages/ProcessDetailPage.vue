@@ -13,6 +13,7 @@ import {
   formatRemoteError,
   mapProcessDetail,
   ownerDisplay,
+  rowsFromProcessViews,
 } from "./processView";
 import ProcessConfigPanel from "./ProcessConfigPanel.vue";
 import ProcessLogsPanel from "./ProcessLogsPanel.vue";
@@ -46,14 +47,25 @@ const nodesQuery = useQuery({
   refetchInterval: POLL_MS,
 });
 
+const processesQuery = useQuery({
+  queryKey: ["processes"],
+  queryFn: () => processes.listProcesses({}),
+  refetchInterval: POLL_MS,
+});
+
 const gossipRows = computed(() => flattenClusterProcesses(nodesQuery.data.value?.nodes ?? [], Date.now()));
+const listedRows = computed(() => rowsFromProcessViews(processesQuery.data.value?.processes ?? [], Date.now()));
 
 const ownerNodeId = computed(() => {
   if (routeNode.value) {
     return routeNode.value;
   }
   const matches = gossipRows.value.filter((r) => r.name === idOrName.value);
-  return matches.length === 1 ? matches[0].ownerNodeId : "";
+  if (matches.length === 1) {
+    return matches[0].ownerNodeId;
+  }
+  const listed = listedRows.value.filter((r) => r.name === idOrName.value);
+  return listed.length === 1 ? listed[0].ownerNodeId : "";
 });
 
 const ownerLabel = computed(() => {
@@ -70,14 +82,14 @@ const processQuery = useQuery({
   queryKey: computed(() => ["process", idOrName.value, ownerNodeId.value]),
   queryFn: () => processes.getProcess({ idOrName: idOrName.value }, targetOpts.value),
   refetchInterval: POLL_MS,
-  enabled: computed(() => idOrName.value.length > 0 && ownerNodeId.value.length > 0),
+  enabled: computed(() => idOrName.value.length > 0),
 });
 
 const metricsQuery = useQuery({
   queryKey: computed(() => ["process-metrics", idOrName.value, ownerNodeId.value]),
   queryFn: () => metrics.getProcessMetrics({ idOrName: idOrName.value }, targetOpts.value),
   refetchInterval: POLL_MS,
-  enabled: computed(() => idOrName.value.length > 0 && ownerNodeId.value.length > 0),
+  enabled: computed(() => idOrName.value.length > 0),
 });
 
 const detail = computed(() => {
@@ -95,10 +107,10 @@ const errorText = computed(() => {
   if (processQuery.error.value) {
     return formatRemoteError(processQuery.error.value);
   }
-  if (!ownerNodeId.value && nodesQuery.isFetched.value) {
+  if (!ownerNodeId.value && nodesQuery.isFetched.value && processesQuery.isFetched.value && !processQuery.data.value) {
     return t("processDetail.ownerNodeRequired");
   }
-  if (nodesQuery.error.value && !processQuery.data.value) {
+  if (nodesQuery.error.value && processesQuery.error.value && !processQuery.data.value) {
     return formatRemoteError(nodesQuery.error.value);
   }
   return "";

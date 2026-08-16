@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/metrics"
 	"github.com/qleelulu/procmesh/internal/process"
@@ -202,6 +203,32 @@ func TestServer_GetProcessMetricsWiresCollector(t *testing.T) {
 	}
 	if pm.GetCpuPercent() < 0 {
 		t.Fatalf("cpu=%d want >= 0 on %s", pm.GetCpuPercent(), runtime.GOOS)
+	}
+}
+
+func TestMetrics_GetProcessMetricsProcessGroup(t *testing.T) {
+	ctx := context.Background()
+	mgr, _, _ := newTestManager(t)
+	if _, err := mgr.ApplySpec(ctx, process.ProcessSpec{Name: "api", Group: "finance", Command: "/bin/true"}, 0, "op-api", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mgr.ApplySpec(ctx, process.ProcessSpec{Name: "ads", Group: "adsys", Command: "/bin/true"}, 0, "op-ads", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	svc := newTestAuthService(t)
+	putProcessGroupOperator(t, svc, "u-fin", "finop", "finance")
+	api := &MetricsAPI{Mgr: mgr, Auth: svc, LocalID: "node-1", LocalOnly: true}
+	pctx := WithPrincipal(ctx, auth.Principal{UserID: "u-fin", Username: "finop"})
+
+	_, err := api.GetProcessMetrics(pctx, connect.NewRequest(&procmeshv1.GetProcessMetricsRequest{IdOrName: "ads"}))
+	assertDenied(t, err)
+
+	got, err := api.GetProcessMetrics(pctx, connect.NewRequest(&procmeshv1.GetProcessMetricsRequest{IdOrName: "api"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Msg == nil {
+		t.Fatal("nil metrics response")
 	}
 }
 

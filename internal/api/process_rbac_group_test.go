@@ -18,6 +18,8 @@ func TestProcessAPI_ProcessGroupScope(t *testing.T) {
 	t.Run("local", testProcessAPIProcessGroupScopeLocal)
 	t.Run("remoteEntry", testProcessAPIProcessGroupScopeRemote)
 	t.Run("ownerHop", testProcessAPIProcessGroupScopeHop)
+	t.Run("applyUpdateLocal", testProcessAPIProcessGroupApplyUpdateLocal)
+	t.Run("applyUpdateRemote", testProcessAPIProcessGroupApplyUpdateRemote)
 }
 
 func testProcessAPIProcessGroupScopeLocal(t *testing.T) {
@@ -96,7 +98,7 @@ func testProcessAPIProcessGroupScopeRemote(t *testing.T) {
 		Mgr:     m,
 		Auth:    svc,
 		LocalID: "aaa",
-		Router:  routerWithProcessGroups("aaa", "ccc", []cluster.ProcessSummary{
+		Router: routerWithProcessGroups("aaa", "ccc", []cluster.ProcessSummary{
 			{Name: "api", Group: "finance"},
 			{Name: "ads", Group: "adsys"},
 		}),
@@ -125,6 +127,83 @@ func testProcessAPIProcessGroupScopeRemote(t *testing.T) {
 	}
 	if fwd.processCalls() != 2 {
 		t.Fatalf("finance remote must forward, calls=%d", fwd.processCalls())
+	}
+}
+
+func testProcessAPIProcessGroupApplyUpdateLocal(t *testing.T) {
+	ctx := context.Background()
+	e := newRBACEnv(t)
+	putProcessGroupWriter(t, e.svc, "u-fin", "finop", "finance")
+
+	adminSID := e.loginAs(t, "admin", testAdminPass)
+	applyNamedProcess(t, e.proc, adminSID, "op-api", "api", "finance")
+	applyNamedProcess(t, e.proc, adminSID, "op-ads", "ads", "adsys")
+	sid := e.loginAs(t, "finop", testAdminPass)
+
+	_, err := e.proc.ApplyProcess(ctx, bearerReq(sid, &procmeshv1.ApplyProcessRequest{
+		Meta:             &procmeshv1.MutationMeta{OperationId: "op-steal", Operator: "finop"},
+		ExpectedRevision: 1,
+		Spec:             &procmeshv1.ProcessSpec{Name: "ads", Group: "finance", Command: "/bin/true"},
+	}))
+	assertDenied(t, err)
+
+	_, err = e.proc.ApplyProcess(ctx, bearerReq(sid, &procmeshv1.ApplyProcessRequest{
+		Meta:             &procmeshv1.MutationMeta{OperationId: "op-move", Operator: "finop"},
+		ExpectedRevision: 1,
+		Spec:             &procmeshv1.ProcessSpec{Name: "api", Group: "adsys", Command: "/bin/true"},
+	}))
+	assertDenied(t, err)
+
+	if _, err := e.proc.ApplyProcess(ctx, bearerReq(sid, &procmeshv1.ApplyProcessRequest{
+		Meta:             &procmeshv1.MutationMeta{OperationId: "op-ok", Operator: "finop"},
+		ExpectedRevision: 1,
+		Spec:             &procmeshv1.ProcessSpec{Name: "api", Group: "finance", Command: "/bin/true"},
+	})); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func testProcessAPIProcessGroupApplyUpdateRemote(t *testing.T) {
+	ctx := context.Background()
+	m, _, _ := newTestManager(t)
+	svc := newTestAuthService(t)
+	putProcessGroupWriter(t, svc, "u-fin", "finop", "finance")
+	sid, _, _, _, err := svc.Login("finop", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fwd := &fakeForwarder{proc: &fakeProcessClient{}}
+	c := serveProcessAPI(t, &ProcessAPI{
+		Mgr:     m,
+		Auth:    svc,
+		LocalID: "aaa",
+		Router: routerWithProcessGroups("aaa", "ccc", []cluster.ProcessSummary{
+			{Name: "api", Group: "finance"},
+			{Name: "ads", Group: "adsys"},
+		}),
+		Forward: fwd,
+	}, AuthInterceptor(svc, func() bool { return true }))
+
+	_, err = c.ApplyProcess(ctx, bearerReq(sid, &procmeshv1.ApplyProcessRequest{
+		Meta:             &procmeshv1.MutationMeta{OperationId: "op-steal", Operator: "finop"},
+		ExpectedRevision: 1,
+		Spec:             &procmeshv1.ProcessSpec{Name: "ads", Group: "finance", Command: "/bin/true"},
+	}))
+	assertDenied(t, err)
+	if fwd.processCalls() != 0 {
+		t.Fatalf("denied remote apply must not forward, calls=%d", fwd.processCalls())
+	}
+
+	if _, err := c.ApplyProcess(ctx, bearerReq(sid, &procmeshv1.ApplyProcessRequest{
+		Meta:             &procmeshv1.MutationMeta{OperationId: "op-ok", Operator: "finop"},
+		ExpectedRevision: 1,
+		Spec:             &procmeshv1.ProcessSpec{Name: "api", Group: "finance", Command: "/bin/true"},
+	})); err != nil {
+		t.Fatal(err)
+	}
+	if fwd.processCalls() != 1 {
+		t.Fatalf("in-scope remote apply must forward, calls=%d", fwd.processCalls())
 	}
 }
 
@@ -172,6 +251,20 @@ func testProcessAPIProcessGroupScopeHop(t *testing.T) {
 	if got.Msg.GetProcess().GetSpec().GetName() != "api" {
 		t.Fatalf("hop restart %+v", got.Msg.GetProcess())
 	}
+}
+
+func putProcessGroupWriter(t *testing.T, svc *auth.Service, userID, username, group string) {
+	t.Helper()
+	applyAuthCmd(t, svc, control.CmdUserPut, control.UserPutBody{
+		ID: userID, Username: username, PasswordHash: testAdminHash(t),
+	})
+	applyAuthCmd(t, svc, control.CmdRolePut, control.RolePutBody{
+		ID: "pg-writer", Name: "pg-writer",
+		Perms: []string{auth.PermProcessRead, auth.PermProcessCreate, auth.PermProcessUpdate},
+	})
+	applyAuthCmd(t, svc, control.CmdBindPut, control.BindPutBody{
+		UserID: userID, RoleID: "pg-writer", Scope: control.ScopeProcessGroup, ScopeID: group,
+	})
 }
 
 func putProcessGroupOperator(t *testing.T, svc *auth.Service, userID, username, group string) {

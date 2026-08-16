@@ -8,6 +8,7 @@ import {
   formatRemoteError,
   needsRestartBanner,
   RESTART_REQUIRED_BANNER,
+  rowsFromProcessViews,
 } from "./processView";
 
 const nowMs = 1_700_000_010_000;
@@ -80,6 +81,25 @@ describe("flattenClusterProcesses", () => {
     expect(failedApi?.observed).toBe("RUNNING");
     expect(failedApi?.freshness).toBe(STALE);
     expect(failedApi?.freshness).not.toBe("LIVE");
+  });
+});
+
+describe("rowsFromProcessViews", () => {
+  it("maps ListProcesses views without requiring node.read", () => {
+    const rows = rowsFromProcessViews(
+      [
+        {
+          processId: "p-pay",
+          spec: { name: "pay", group: "finance", ownerAgentId: "node-fin", latestRevision: 2 },
+          instances: [{ desired: "RUNNING", observed: "RUNNING", health: "HEALTHY", activeRevision: 2 }],
+        },
+      ],
+      nowMs,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].name).toBe("pay");
+    expect(rows[0].group).toBe("finance");
+    expect(rows[0].ownerNodeId).toBe("node-fin");
   });
 });
 

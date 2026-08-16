@@ -148,10 +148,39 @@ func (r *rpcRuntime) startRaft(bootstrap bool) error {
 	} else {
 		r.mu.Unlock()
 	}
-	if !bootstrap {
+	if bootstrap {
+		if err := r.bootstrapFSM(); err != nil {
+			return err
+		}
+	}
+	return r.ensureLocalMemberAdmitted()
+}
+
+func (r *rpcRuntime) ensureLocalMemberAdmitted() error {
+	if r == nil {
 		return nil
 	}
-	return r.bootstrapFSM()
+	n := r.control()
+	if n == nil || r.dir == "" {
+		return nil
+	}
+	meta, err := control.LoadMeta(r.dir)
+	if err != nil || !meta.ControlMember || meta.NodeID == "" {
+		return nil
+	}
+	view := n.View()
+	if view.ClusterID == "" {
+		return nil
+	}
+	if m, ok := view.Member(meta.NodeID); ok && m.Status == control.MemberAdmitted {
+		return nil
+	}
+	if !(n.IsLeader() && n.HasQuorum()) {
+		if err := waitRaftLeader(n, raftStartTO); err != nil {
+			return nil
+		}
+	}
+	return admitBootstrapMember(n, r.dir)
 }
 
 func (r *rpcRuntime) lookupClusterIDLocked() string {

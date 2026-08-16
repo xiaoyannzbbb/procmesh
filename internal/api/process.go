@@ -192,23 +192,28 @@ func (s *ProcessAPI) ApplyProcess(ctx context.Context, req *connect.Request[proc
 	if err != nil {
 		return nil, ToConnect(err)
 	}
+	newGroup := ""
+	if spec := req.Msg.GetSpec(); spec != nil {
+		newGroup = spec.GetGroup()
+	}
+	existingGroup := gossipGroup(s.Router, hopTarget(local, rt, s.LocalID), idOrName)
+	if local && s.processExists(ctx, idOrName) {
+		if existing, err := s.Mgr.Resolve(ctx, idOrName); err == nil {
+			existingGroup = existing.Group
+		}
+	}
+	exists := req.Msg.GetExpectedRevision() != 0 || existingGroup != "" || s.processExists(ctx, idOrName)
 	perm := auth.PermProcessCreate
-	if req.Msg.GetExpectedRevision() != 0 || s.processExists(ctx, idOrName) {
+	if exists {
 		perm = auth.PermProcessUpdate
 	}
 	if err := requireAnyPerm(ctx, s.Auth, perm); err != nil {
 		return nil, err
 	}
+	if err := authorizeApplyGroups(ctx, s.Auth, perm, hopTarget(local, rt, s.LocalID), existingGroup, newGroup, exists, true, local); err != nil {
+		return nil, err
+	}
 	if !local {
-		group := req.Msg.GetSpec().GetGroup()
-		if group == "" {
-			group = gossipGroup(s.Router, rt.NodeID, idOrName)
-		}
-		if err := requirePermOn(ctx, s.Auth, perm, control.CheckTarget{
-			NodeID: rt.NodeID, ProcessGroup: group,
-		}, true, false); err != nil {
-			return nil, err
-		}
 		cli, err := s.remoteProcess(ctx, rt, req.Header())
 		if err != nil {
 			return nil, err
@@ -220,15 +225,6 @@ func (s *ProcessAPI) ApplyProcess(ctx context.Context, req *connect.Request[proc
 		return out, nil
 	}
 	if err := s.rejectMutation(); err != nil {
-		return nil, err
-	}
-	group := req.Msg.GetSpec().GetGroup()
-	if s.processExists(ctx, idOrName) {
-		if existing, err := s.Mgr.Resolve(ctx, idOrName); err == nil {
-			group = existing.Group
-		}
-	}
-	if err := authorizeProcessSpec(ctx, s.Auth, perm, s.LocalID, group, true); err != nil {
 		return nil, err
 	}
 	if spec := req.Msg.GetSpec(); spec != nil && spec.GetOwnerAgentId() == "" && s.LocalID != "" {
@@ -593,6 +589,25 @@ func authorizeProcessSpec(ctx context.Context, svc *auth.Service, perm, localID,
 	return requirePermOn(ctx, svc, perm, control.CheckTarget{
 		NodeID: localID, ProcessGroup: processGroup,
 	}, write, true)
+}
+
+func authorizeApplyGroups(ctx context.Context, svc *auth.Service, perm, nodeID, existingGroup, newGroup string, exists, write, local bool) error {
+	if exists {
+		if err := requirePermOn(ctx, svc, perm, control.CheckTarget{
+			NodeID: nodeID, ProcessGroup: existingGroup,
+		}, write, local); err != nil {
+			return err
+		}
+		if newGroup != "" && newGroup != existingGroup {
+			return requirePermOn(ctx, svc, perm, control.CheckTarget{
+				NodeID: nodeID, ProcessGroup: newGroup,
+			}, write, local)
+		}
+		return nil
+	}
+	return requirePermOn(ctx, svc, perm, control.CheckTarget{
+		NodeID: nodeID, ProcessGroup: newGroup,
+	}, write, local)
 }
 
 func specFromJournal(result []byte) (process.ProcessSpec, bool) {
