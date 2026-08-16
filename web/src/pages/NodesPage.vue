@@ -3,7 +3,10 @@ import { useQuery } from "@tanstack/vue-query";
 import { computed } from "vue";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
 import { useNodeClient } from "../lib/rpc";
+import { useI18n } from "../lib/useI18n";
 import { formatResources, mapNode } from "./clusterView";
+
+const { t } = useI18n();
 
 const POLL_MS = 5000;
 const client = useNodeClient();
@@ -31,21 +34,21 @@ const errorText = computed(() => {
 
 <template>
   <div class="page">
-    <h1>Nodes</h1>
-    <p v-if="query.isPending && !query.data" class="muted">Loading…</p>
+    <h1>{{ t("nodes.title") }}</h1>
+    <p v-if="query.isPending && !query.data" class="muted">{{ t("nodes.loading") }}</p>
     <p v-else-if="errorText" class="error" role="alert">{{ errorText }}</p>
     <div v-else class="card">
       <table class="table">
         <thead>
           <tr>
-            <th>Hostname</th>
-            <th>Node ID</th>
-            <th>State</th>
-            <th>Version</th>
-            <th>Resources</th>
-            <th>Processes</th>
-            <th>Freshness</th>
-            <th>Updated</th>
+            <th>{{ t("nodes.table.hostname") }}</th>
+            <th>{{ t("nodes.table.nodeId") }}</th>
+            <th>{{ t("nodes.table.state") }}</th>
+            <th>{{ t("nodes.table.version") }}</th>
+            <th>{{ t("nodes.table.resources") }}</th>
+            <th>{{ t("nodes.table.processes") }}</th>
+            <th>{{ t("nodes.table.freshness") }}</th>
+            <th>{{ t("nodes.table.updated") }}</th>
           </tr>
         </thead>
         <tbody>
@@ -72,7 +75,7 @@ const errorText = computed(() => {
             <td>{{ node.lastUpdated }}</td>
           </tr>
           <tr v-if="!nodes.length">
-            <td colspan="8" class="muted">No nodes</td>
+            <td colspan="8" class="muted">{{ t("nodes.noNodes") }}</td>
           </tr>
         </tbody>
       </table>

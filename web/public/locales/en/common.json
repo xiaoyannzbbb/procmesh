@@ -117,5 +117,20 @@
       "revisions": "Revisions",
       "freshness": "Freshness"
     }
+  },
+  "nodes": {
+    "title": "Nodes",
+    "loading": "Loading…",
+    "noNodes": "No nodes",
+    "table": {
+      "hostname": "Hostname",
+      "nodeId": "Node ID",
+      "state": "State",
+      "version": "Version",
+      "resources": "Resources",
+      "processes": "Processes",
+      "freshness": "Freshness",
+      "updated": "Updated"
+    }
   }
 }

@@ -117,5 +117,20 @@
       "revisions": "版本",
       "freshness": "新鲜度"
     }
+  },
+  "nodes": {
+    "title": "节点",
+    "loading": "加载中…",
+    "noNodes": "无节点",
+    "table": {
+      "hostname": "主机名",
+      "nodeId": "节点ID",
+      "state": "状态",
+      "version": "版本",
+      "resources": "资源",
+      "processes": "进程",
+      "freshness": "新鲜度",
+      "updated": "更新时间"
+    }
   }
 }
