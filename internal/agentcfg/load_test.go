@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/qleelulu/procmesh/internal/agentcfg"
 	"github.com/qleelulu/procmesh/internal/logmgr"
@@ -130,5 +131,31 @@ func TestDefaultPath_DarwinOrLinux(t *testing.T) {
 		}
 	} else if p != "/etc/procmesh/agent.yaml" {
 		t.Fatalf("%s", p)
+	}
+}
+
+func TestLoadAll_BatchDefaultsAndOverride(t *testing.T) {
+	cfg, err := agentcfg.LoadAll(filepath.Join(t.TempDir(), "nope.yaml"), false)
+	if err != nil || cfg.Batch.MaxConcurrency != 16 || cfg.Batch.TargetTimeout != 30*time.Second {
+		t.Fatalf("%+v %v", cfg.Batch, err)
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent.yaml")
+	if err := os.WriteFile(path, []byte("batch:\n  max_concurrency: 4\n  target_timeout: 2s\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = agentcfg.LoadAll(path, true)
+	if err != nil || cfg.Batch.MaxConcurrency != 4 || cfg.Batch.TargetTimeout != 2*time.Second {
+		t.Fatalf("%+v %v", cfg.Batch, err)
+	}
+}
+
+func TestLoadAll_BatchRejectsOutOfRange(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	if err := os.WriteFile(path, []byte("batch:\n  max_concurrency: 99\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentcfg.LoadAll(path, true); err == nil {
+		t.Fatal("expected INVALID")
 	}
 }
