@@ -4,10 +4,12 @@
     "tagline": "分布式进程管理平台"
   },
   "nav": {
+    "overview": "概览",
     "cluster": "集群",
     "nodes": "节点",
     "processes": "进程",
     "users": "用户",
+    "roles": "角色",
     "audit": "审计"
   },
   "actions": {
@@ -19,7 +21,12 @@
     "save": "保存",
     "cancel": "取消",
     "confirm": "确认",
-    "close": "关闭"
+    "close": "关闭",
+    "logout": "退出登录",
+    "signIn": "登录",
+    "tail": "查看最后100行",
+    "stream": "流式查看",
+    "download": "下载"
   },
   "status": {
     "live": "实时",
@@ -31,5 +38,21 @@
     "error": "错误",
     "success": "成功",
     "noData": "暂无数据"
+  },
+  "logs": {
+    "title": "日志",
+    "stream": "流",
+    "instance": "实例",
+    "allInstances": "所有实例",
+    "stdout": "标准输出",
+    "stderr": "标准错误"
+  },
+  "login": {
+    "title": "ProcMesh",
+    "username": "用户名",
+    "password": "密码",
+    "invalidCredentials": "用户名或密码错误",
+    "rateLimited": "登录请求过于频繁",
+    "userLocked": "用户已锁定"
   }
 }

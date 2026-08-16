@@ -3,28 +3,30 @@ import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { newOperationId } from "../lib/opid";
 import { clearSession, session, useAuthClient } from "../lib/session";
+import { useI18n } from "../lib/useI18n";
 
 const route = useRoute();
 const router = useRouter();
 const client = useAuthClient();
+const { t } = useI18n();
 
 const username = computed(() => session.value?.username ?? "");
 const perms = computed(() => new Set(session.value?.permissions ?? []));
 
 const navItems = computed(() => {
   const items = [
-    { to: "/", label: "Overview" },
-    { to: "/nodes", label: "Nodes" },
-    { to: "/processes", label: "Processes" },
+    { to: "/", label: t("common:nav.overview") },
+    { to: "/nodes", label: t("common:nav.nodes") },
+    { to: "/processes", label: t("common:nav.processes") },
   ];
   if (perms.value.has("user.read")) {
-    items.push({ to: "/users", label: "Users" });
+    items.push({ to: "/users", label: t("common:nav.users") });
   }
   if (perms.value.has("role.read")) {
-    items.push({ to: "/roles", label: "Roles" });
+    items.push({ to: "/roles", label: t("common:nav.roles") });
   }
   if (perms.value.has("audit.read")) {
-    items.push({ to: "/audit", label: "Audit" });
+    items.push({ to: "/audit", label: t("common:nav.audit") });
   }
   return items;
 });
@@ -68,7 +70,7 @@ async function onLogout(): Promise<void> {
       </nav>
       <div class="sidebar-foot">
         <div class="username">{{ username }}</div>
-        <button type="button" class="btn logout" @click="onLogout">Logout</button>
+        <button type="button" class="btn logout" @click="onLogout">{{ t("common:actions.logout") }}</button>
       </div>
     </aside>
     <main class="content">

@@ -4,10 +4,12 @@
     "tagline": "Distributed Process Management Platform"
   },
   "nav": {
+    "overview": "Overview",
     "cluster": "Cluster",
     "nodes": "Nodes",
     "processes": "Processes",
     "users": "Users",
+    "roles": "Roles",
     "audit": "Audit"
   },
   "actions": {
@@ -19,7 +21,12 @@
     "save": "Save",
     "cancel": "Cancel",
     "confirm": "Confirm",
-    "close": "Close"
+    "close": "Close",
+    "logout": "Logout",
+    "signIn": "Sign in",
+    "tail": "Tail 100",
+    "stream": "Stream",
+    "download": "Download"
   },
   "status": {
     "live": "Live",
@@ -31,5 +38,21 @@
     "error": "Error",
     "success": "Success",
     "noData": "No data available"
+  },
+  "logs": {
+    "title": "Logs",
+    "stream": "Stream",
+    "instance": "Instance",
+    "allInstances": "All instances",
+    "stdout": "stdout",
+    "stderr": "stderr"
+  },
+  "login": {
+    "title": "ProcMesh",
+    "username": "Username",
+    "password": "Password",
+    "invalidCredentials": "invalid credentials",
+    "rateLimited": "login rate limited",
+    "userLocked": "user locked"
   }
 }
