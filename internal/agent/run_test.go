@@ -130,9 +130,12 @@ func TestRun_CorruptDBAtOpenStillServesReadyz503(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- Run(ctx, Options{
-			DataDir:  root,
-			Listen:   "127.0.0.1:0",
-			OnListen: func(addr string) { got <- addr },
+			DataDir:       root,
+			Listen:        "127.0.0.1:0",
+			GossipListen:  "127.0.0.1:0",
+			RPCListen:     "127.0.0.1:0",
+			ControlListen: "127.0.0.1:0",
+			OnListen:      func(addr string) { got <- addr },
 		})
 	}()
 	var addr string
@@ -219,10 +222,13 @@ func TestRun_ReconcilesImmediatelyAfterRecover(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- Run(ctx, Options{
-			DataDir:  root,
-			Listen:   "127.0.0.1:0",
-			ShimBin:  testShimBin,
-			OnListen: func(addr string) { got <- addr },
+			DataDir:       root,
+			Listen:        "127.0.0.1:0",
+			GossipListen:  "127.0.0.1:0",
+			RPCListen:     "127.0.0.1:0",
+			ControlListen: "127.0.0.1:0",
+			ShimBin:       testShimBin,
+			OnListen:      func(addr string) { got <- addr },
 		})
 	}()
 	var addr string
@@ -273,9 +279,12 @@ func TestRun_BlocksUntilCancelAndServesHealthz(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- Run(ctx, Options{
-			DataDir:  dir,
-			Listen:   "127.0.0.1:0",
-			OnListen: func(addr string) { got <- addr },
+			DataDir:       dir,
+			Listen:        "127.0.0.1:0",
+			GossipListen:  "127.0.0.1:0",
+			RPCListen:     "127.0.0.1:0",
+			ControlListen: "127.0.0.1:0",
+			OnListen:      func(addr string) { got <- addr },
 		})
 	}()
 	var addr string
