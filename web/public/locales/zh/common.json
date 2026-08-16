@@ -26,7 +26,9 @@
     "signIn": "登录",
     "tail": "查看最后100行",
     "stream": "流式查看",
-    "download": "下载"
+    "download": "下载",
+    "expand": "展开侧边栏",
+    "collapse": "收起侧边栏"
   },
   "status": {
     "live": "实时",

@@ -4,10 +4,12 @@
     "tagline": "分布式进程管理平台"
   },
   "nav": {
+    "overview": "概览",
     "cluster": "集群",
     "nodes": "节点",
     "processes": "进程",
     "users": "用户",
+    "roles": "角色",
     "audit": "审计"
   },
   "actions": {
@@ -19,7 +21,14 @@
     "save": "保存",
     "cancel": "取消",
     "confirm": "确认",
-    "close": "关闭"
+    "close": "关闭",
+    "logout": "退出登录",
+    "signIn": "登录",
+    "tail": "查看最后100行",
+    "stream": "流式查看",
+    "download": "下载",
+    "expand": "展开侧边栏",
+    "collapse": "收起侧边栏"
   },
   "status": {
     "live": "实时",
@@ -31,5 +40,290 @@
     "error": "错误",
     "success": "成功",
     "noData": "暂无数据"
+  },
+  "logs": {
+    "title": "日志",
+    "stream": "流",
+    "instance": "实例",
+    "allInstances": "所有实例",
+    "stdout": "标准输出",
+    "stderr": "标准错误"
+  },
+  "login": {
+    "title": "ProcMesh",
+    "username": "用户名",
+    "password": "密码",
+    "invalidCredentials": "用户名或密码错误",
+    "rateLimited": "登录请求过于频繁",
+    "userLocked": "用户已锁定"
+  },
+  "audit": {
+    "title": "审计",
+    "notice": "审计按节点进行；无法访问的节点标记为 STALE。",
+    "resourceLabel": "资源",
+    "resourcePlaceholder": "过滤资源",
+    "loading": "加载中…",
+    "noEntries": "无审计条目",
+    "table": {
+      "time": "时间",
+      "user": "用户",
+      "action": "操作",
+      "resource": "资源",
+      "sourceNode": "源节点",
+      "targetAgent": "目标代理",
+      "result": "结果",
+      "freshness": "新鲜度"
+    }
+  },
+  "overview": {
+    "title": "概览",
+    "loading": "加载中…",
+    "cluster": "集群",
+    "procMesh": {
+      "title": "ProcMesh",
+      "controlQuorum": "控制仲裁",
+      "gossip": "Gossip",
+      "rpc": "RPC",
+      "certExpiry": "证书过期时间",
+      "caExpiry": "CA过期时间",
+      "controlLeader": "控制领导者",
+      "healthy": "健康",
+      "unhealthy": "不健康",
+      "versions": "版本"
+    },
+    "workload": {
+      "title": "工作负载",
+      "agentTotal": "代理总数",
+      "alive": "存活",
+      "suspect": "可疑",
+      "failed": "失败",
+      "processTotal": "进程总数",
+      "running": "运行中",
+      "unhealthy": "不健康",
+      "fatal": "致命",
+      "cpu": "CPU",
+      "memory": "内存",
+      "disk": "磁盘"
+    }
+  },
+  "processes": {
+    "title": "进程",
+    "loading": "加载中…",
+    "noProcesses": "无进程",
+    "table": {
+      "name": "名称",
+      "owner": "所有者",
+      "desired": "期望状态",
+      "observed": "观察状态",
+      "health": "健康状态",
+      "revisions": "版本",
+      "freshness": "新鲜度"
+    }
+  },
+  "nodes": {
+    "title": "节点",
+    "loading": "加载中…",
+    "noNodes": "无节点",
+    "table": {
+      "hostname": "主机名",
+      "nodeId": "节点ID",
+      "state": "状态",
+      "version": "版本",
+      "resources": "资源",
+      "processes": "进程",
+      "freshness": "新鲜度",
+      "updated": "更新时间"
+    }
+  },
+  "nodeDetail": {
+    "back": "← 节点",
+    "loading": "加载中…",
+    "removeAgent": "移除代理",
+    "node": {
+      "title": "节点",
+      "hostname": "主机名",
+      "nodeId": "节点ID",
+      "address": "地址",
+      "version": "版本",
+      "status": "状态",
+      "bootId": "启动ID",
+      "cpu": "CPU",
+      "memory": "内存",
+      "disk": "磁盘",
+      "processCount": "进程数",
+      "labels": "标签"
+    },
+    "processes": {
+      "title": "进程",
+      "noProcesses": "无进程",
+      "table": {
+        "name": "名称",
+        "desired": "期望状态",
+        "observed": "观察状态",
+        "health": "健康状态",
+        "revisions": "版本",
+        "freshness": "新鲜度"
+      }
+    }
+  },
+  "processConfig": {
+    "loading": "加载中…",
+    "conflictBanner": "409 冲突 — 重新加载后重试",
+    "config": {
+      "title": "配置",
+      "reload": "重新加载",
+      "processId": "进程ID",
+      "latestRevision": "最新版本",
+      "readOnlyNote": "process_id 和 latest_revision 是只读的。",
+      "specLabel": "ProcessSpec JSON",
+      "commentLabel": "备注",
+      "save": "保存"
+    },
+    "history": {
+      "title": "历史",
+      "loading": "加载历史中…",
+      "noRevisions": "无版本",
+      "table": {
+        "select": "选择",
+        "revision": "版本",
+        "operator": "操作者",
+        "time": "时间",
+        "comment": "备注",
+        "rollback": "回滚"
+      },
+      "diff": {
+        "title": "差异",
+        "loading": "加载差异中…",
+        "empty": "(空)"
+      },
+      "rollbackConfirm": "回滚到版本 {revision}？这将写入一个新版本。"
+    }
+  },
+  "processDetail": {
+    "back": "← 进程",
+    "loading": "加载中…",
+    "ownerNodeRequired": "需要所有者节点。",
+    "actions": {
+      "start": "启动",
+      "stop": "停止",
+      "restart": "重启",
+      "forceStop": "强制停止"
+    },
+    "tabs": {
+      "overview": "概览",
+      "config": "配置",
+      "logs": "日志"
+    },
+    "process": {
+      "title": "进程",
+      "name": "名称",
+      "processId": "进程ID",
+      "owner": "所有者",
+      "instances": "实例",
+      "desired": "期望状态",
+      "observed": "观察状态",
+      "health": "健康状态",
+      "pid": "PID",
+      "uptime": "运行时间",
+      "restartCount": "重启次数",
+      "exitCode": "退出码",
+      "activeRevision": "活动版本",
+      "latestRevision": "最新版本",
+      "cpu": "CPU",
+      "memory": "内存"
+    },
+    "instances": {
+      "title": "实例",
+      "table": {
+        "instance": "实例",
+        "desired": "期望状态",
+        "observed": "观察状态",
+        "health": "健康状态",
+        "pid": "PID",
+        "uptime": "运行时间",
+        "restarts": "重启",
+        "exit": "退出",
+        "revision": "版本",
+        "cpu": "CPU",
+        "memory": "内存"
+      }
+    }
+  },
+  "processLogs": {
+    "title": "日志",
+    "stream": "流",
+    "instance": "实例",
+    "allInstances": "所有实例",
+    "stdout": "标准输出",
+    "stderr": "标准错误",
+    "tail": "查看最后100行",
+    "streamButton": "流式查看",
+    "stop": "停止",
+    "download": "下载"
+  },
+  "roles": {
+    "title": "角色",
+    "loading": "加载中…",
+    "noRoles": "无角色",
+    "table": {
+      "name": "名称",
+      "type": "类型",
+      "permissions": "权限"
+    },
+    "type": {
+      "builtin": "内置",
+      "custom": "自定义"
+    },
+    "bindings": {
+      "title": "绑定",
+      "noBindings": "无绑定",
+      "table": {
+        "userId": "用户ID",
+        "role": "角色",
+        "scope": "范围",
+        "scopeId": "范围ID"
+      }
+    },
+    "createRole": {
+      "title": "创建角色",
+      "name": "名称",
+      "permissions": "权限",
+      "create": "创建"
+    },
+    "grant": {
+      "title": "授予",
+      "userId": "用户ID",
+      "role": "角色",
+      "selectRole": "选择角色",
+      "scope": "范围",
+      "scopeId": "范围ID",
+      "scopeIdPlaceholder": {
+        "required": "必填",
+        "optional": "可选"
+      },
+      "grant": "授予"
+    }
+  },
+  "users": {
+    "title": "用户",
+    "loading": "加载中…",
+    "noUsers": "无用户",
+    "table": {
+      "username": "用户名",
+      "display": "显示名称",
+      "email": "邮箱",
+      "status": "状态",
+      "lastLogin": "最后登录",
+      "actions": "操作"
+    },
+    "disable": "禁用",
+    "createUser": {
+      "title": "创建",
+      "username": "用户名",
+      "password": "密码",
+      "display": "显示名称",
+      "email": "邮箱",
+      "create": "创建"
+    }
   }
 }

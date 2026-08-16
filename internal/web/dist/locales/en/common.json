@@ -4,10 +4,12 @@
     "tagline": "Distributed Process Management Platform"
   },
   "nav": {
+    "overview": "Overview",
     "cluster": "Cluster",
     "nodes": "Nodes",
     "processes": "Processes",
     "users": "Users",
+    "roles": "Roles",
     "audit": "Audit"
   },
   "actions": {
@@ -19,7 +21,14 @@
     "save": "Save",
     "cancel": "Cancel",
     "confirm": "Confirm",
-    "close": "Close"
+    "close": "Close",
+    "logout": "Logout",
+    "signIn": "Sign in",
+    "tail": "Tail 100",
+    "stream": "Stream",
+    "download": "Download",
+    "expand": "Expand sidebar",
+    "collapse": "Collapse sidebar"
   },
   "status": {
     "live": "Live",
@@ -31,5 +40,290 @@
     "error": "Error",
     "success": "Success",
     "noData": "No data available"
+  },
+  "logs": {
+    "title": "Logs",
+    "stream": "Stream",
+    "instance": "Instance",
+    "allInstances": "All instances",
+    "stdout": "stdout",
+    "stderr": "stderr"
+  },
+  "login": {
+    "title": "ProcMesh",
+    "username": "Username",
+    "password": "Password",
+    "invalidCredentials": "invalid credentials",
+    "rateLimited": "login rate limited",
+    "userLocked": "user locked"
+  },
+  "audit": {
+    "title": "Audit",
+    "notice": "Audit is per-node; unreachable nodes are marked STALE.",
+    "resourceLabel": "Resource",
+    "resourcePlaceholder": "Filter resource",
+    "loading": "Loading…",
+    "noEntries": "No audit entries",
+    "table": {
+      "time": "Time",
+      "user": "User",
+      "action": "Action",
+      "resource": "Resource",
+      "sourceNode": "Source node",
+      "targetAgent": "Target agent",
+      "result": "Result",
+      "freshness": "Freshness"
+    }
+  },
+  "overview": {
+    "title": "Overview",
+    "loading": "Loading…",
+    "cluster": "Cluster",
+    "procMesh": {
+      "title": "ProcMesh",
+      "controlQuorum": "Control quorum",
+      "gossip": "Gossip",
+      "rpc": "RPC",
+      "certExpiry": "Cert expiry",
+      "caExpiry": "CA expiry",
+      "controlLeader": "Control leader",
+      "healthy": "healthy",
+      "unhealthy": "unhealthy",
+      "versions": "Versions"
+    },
+    "workload": {
+      "title": "Workload",
+      "agentTotal": "Agent Total",
+      "alive": "Alive",
+      "suspect": "Suspect",
+      "failed": "Failed",
+      "processTotal": "Process Total",
+      "running": "Running",
+      "unhealthy": "Unhealthy",
+      "fatal": "Fatal",
+      "cpu": "CPU",
+      "memory": "Memory",
+      "disk": "Disk"
+    }
+  },
+  "processes": {
+    "title": "Processes",
+    "loading": "Loading…",
+    "noProcesses": "No processes",
+    "table": {
+      "name": "Name",
+      "owner": "Owner",
+      "desired": "Desired",
+      "observed": "Observed",
+      "health": "Health",
+      "revisions": "Revisions",
+      "freshness": "Freshness"
+    }
+  },
+  "nodes": {
+    "title": "Nodes",
+    "loading": "Loading…",
+    "noNodes": "No nodes",
+    "table": {
+      "hostname": "Hostname",
+      "nodeId": "Node ID",
+      "state": "State",
+      "version": "Version",
+      "resources": "Resources",
+      "processes": "Processes",
+      "freshness": "Freshness",
+      "updated": "Updated"
+    }
+  },
+  "nodeDetail": {
+    "back": "← Nodes",
+    "loading": "Loading…",
+    "removeAgent": "Remove Agent",
+    "node": {
+      "title": "Node",
+      "hostname": "Hostname",
+      "nodeId": "Node ID",
+      "address": "Address",
+      "version": "Version",
+      "status": "Status",
+      "bootId": "Boot ID",
+      "cpu": "CPU",
+      "memory": "Memory",
+      "disk": "Disk",
+      "processCount": "Process Count",
+      "labels": "Labels"
+    },
+    "processes": {
+      "title": "Processes",
+      "noProcesses": "No processes",
+      "table": {
+        "name": "Name",
+        "desired": "Desired",
+        "observed": "Observed",
+        "health": "Health",
+        "revisions": "Revisions",
+        "freshness": "Freshness"
+      }
+    }
+  },
+  "processConfig": {
+    "loading": "Loading…",
+    "conflictBanner": "409 Conflict — reload and retry",
+    "config": {
+      "title": "Config",
+      "reload": "Reload",
+      "processId": "Process ID",
+      "latestRevision": "Latest Revision",
+      "readOnlyNote": "process_id and latest_revision are read-only.",
+      "specLabel": "ProcessSpec JSON",
+      "commentLabel": "Comment",
+      "save": "Save"
+    },
+    "history": {
+      "title": "History",
+      "loading": "Loading history…",
+      "noRevisions": "No revisions",
+      "table": {
+        "select": "Select",
+        "revision": "Revision",
+        "operator": "Operator",
+        "time": "Time",
+        "comment": "Comment",
+        "rollback": "Rollback"
+      },
+      "diff": {
+        "title": "Diff",
+        "loading": "Loading diff…",
+        "empty": "(empty)"
+      },
+      "rollbackConfirm": "Rollback to revision {revision}? This writes a new revision."
+    }
+  },
+  "processDetail": {
+    "back": "← Processes",
+    "loading": "Loading…",
+    "ownerNodeRequired": "Owner node is required.",
+    "actions": {
+      "start": "Start",
+      "stop": "Stop",
+      "restart": "Restart",
+      "forceStop": "Force Stop"
+    },
+    "tabs": {
+      "overview": "Overview",
+      "config": "Config",
+      "logs": "Logs"
+    },
+    "process": {
+      "title": "Process",
+      "name": "Name",
+      "processId": "Process ID",
+      "owner": "Owner",
+      "instances": "Instances",
+      "desired": "Desired",
+      "observed": "Observed",
+      "health": "Health",
+      "pid": "PID",
+      "uptime": "Uptime",
+      "restartCount": "Restart Count",
+      "exitCode": "Exit Code",
+      "activeRevision": "Active Revision",
+      "latestRevision": "Latest Revision",
+      "cpu": "CPU",
+      "memory": "Memory"
+    },
+    "instances": {
+      "title": "Instances",
+      "table": {
+        "instance": "Instance",
+        "desired": "Desired",
+        "observed": "Observed",
+        "health": "Health",
+        "pid": "PID",
+        "uptime": "Uptime",
+        "restarts": "Restarts",
+        "exit": "Exit",
+        "revision": "Revision",
+        "cpu": "CPU",
+        "memory": "Memory"
+      }
+    }
+  },
+  "processLogs": {
+    "title": "Logs",
+    "stream": "Stream",
+    "instance": "Instance",
+    "allInstances": "All instances",
+    "stdout": "stdout",
+    "stderr": "stderr",
+    "tail": "Tail 100",
+    "streamButton": "Stream",
+    "stop": "Stop",
+    "download": "Download"
+  },
+  "roles": {
+    "title": "Roles",
+    "loading": "Loading…",
+    "noRoles": "No roles",
+    "table": {
+      "name": "Name",
+      "type": "Type",
+      "permissions": "Permissions"
+    },
+    "type": {
+      "builtin": "Built-in",
+      "custom": "Custom"
+    },
+    "bindings": {
+      "title": "Bindings",
+      "noBindings": "No bindings",
+      "table": {
+        "userId": "User ID",
+        "role": "Role",
+        "scope": "Scope",
+        "scopeId": "Scope ID"
+      }
+    },
+    "createRole": {
+      "title": "Create role",
+      "name": "Name",
+      "permissions": "Permissions",
+      "create": "Create"
+    },
+    "grant": {
+      "title": "Grant",
+      "userId": "User ID",
+      "role": "Role",
+      "selectRole": "Select role",
+      "scope": "Scope",
+      "scopeId": "Scope ID",
+      "scopeIdPlaceholder": {
+        "required": "required",
+        "optional": "optional"
+      },
+      "grant": "Grant"
+    }
+  },
+  "users": {
+    "title": "Users",
+    "loading": "Loading…",
+    "noUsers": "No users",
+    "table": {
+      "username": "Username",
+      "display": "Display",
+      "email": "Email",
+      "status": "Status",
+      "lastLogin": "Last login",
+      "actions": "Actions"
+    },
+    "disable": "Disable",
+    "createUser": {
+      "title": "Create",
+      "username": "Username",
+      "password": "Password",
+      "display": "Display",
+      "email": "Email",
+      "create": "Create"
+    }
   }
 }

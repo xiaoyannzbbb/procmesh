@@ -1,0 +1,31 @@
+{
+  "desiredState": {
+    "RUNNING": "Running",
+    "STOPPED": "Stopped"
+  },
+  "observedState": {
+    "STOPPED": "Stopped",
+    "STARTING": "Starting",
+    "RUNNING": "Running",
+    "STOPPING": "Stopping",
+    "EXITED": "Exited",
+    "BACKOFF": "Backoff",
+    "FATAL": "Fatal",
+    "UNKNOWN": "Unknown"
+  },
+  "healthState": {
+    "HEALTHY": "Healthy",
+    "UNHEALTHY": "Unhealthy",
+    "UNKNOWN": "Unknown"
+  },
+  "labels": {
+    "name": "Name",
+    "state": "State",
+    "health": "Health",
+    "uptime": "Uptime",
+    "restarts": "Restarts",
+    "pid": "PID",
+    "cpu": "CPU",
+    "memory": "Memory"
+  }
+}

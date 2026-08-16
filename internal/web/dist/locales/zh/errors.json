@@ -1,0 +1,11 @@
+{
+  "PROCESS_NOT_FOUND": "未找到进程 {{name}}",
+  "INVALID_CREDENTIALS": "用户名或密码无效",
+  "CONFLICT": "配置冲突：期望版本 {{expected}}，实际版本 {{actual}}",
+  "UNAVAILABLE": "目标代理 {{agent}} 不可用",
+  "DENIED": "权限被拒绝：{{action}} 需要 {{permission}} 权限",
+  "TIMEOUT": "操作超时（{{seconds}}秒）",
+  "DUPLICATE_NODE_ID": "节点 ID {{nodeId}} 已存在",
+  "DEGRADED": "代理处于降级模式：{{reason}}",
+  "UNKNOWN_ERROR": "发生未知错误"
+}

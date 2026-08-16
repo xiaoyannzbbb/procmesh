@@ -1,12 +1,10 @@
 <script setup lang="ts">
-import LanguageSwitcher from './components/LanguageSwitcher.vue'
+// App.vue is the root component - no language switcher needed here
+// It's now integrated into AppShell sidebar
 </script>
 
 <template>
   <div id="app">
-    <header>
-      <LanguageSwitcher />
-    </header>
     <RouterView />
   </div>
 </template>

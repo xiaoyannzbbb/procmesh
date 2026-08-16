@@ -1,0 +1,11 @@
+{
+  "PROCESS_NOT_FOUND": "Process {{name}} not found",
+  "INVALID_CREDENTIALS": "Invalid username or password",
+  "CONFLICT": "Configuration conflict: expected revision {{expected}}, got {{actual}}",
+  "UNAVAILABLE": "Target agent {{agent}} is unavailable",
+  "DENIED": "Permission denied: {{action}} requires {{permission}}",
+  "TIMEOUT": "Operation timed out after {{seconds}}s",
+  "DUPLICATE_NODE_ID": "Node ID {{nodeId}} already exists",
+  "DEGRADED": "Agent is in degraded mode: {{reason}}",
+  "UNKNOWN_ERROR": "An unexpected error occurred"
+}

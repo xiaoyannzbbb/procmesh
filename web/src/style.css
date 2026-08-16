@@ -16,9 +16,12 @@
   --color-unknown: #e5e7eb;
   --color-unknown-fg: #374151;
   --radius-lg: 16px;
+  --radius-sm: 5px;
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --sidebar-width: 244px;
-  --content-max: 1080px;
+  --content-max: 1400px;
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.08);
 }
 
 html,
@@ -28,6 +31,11 @@ body,
   background-color: var(--color-bg);
   color: var(--color-text);
   font-family: var(--font-sans);
+}
+
+*:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 .btn {
@@ -43,6 +51,27 @@ body,
   font-size: 0.875rem;
   font-weight: 500;
   cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: var(--shadow-sm);
+}
+
+.btn:hover {
+  background: color-mix(in srgb, var(--color-text) 6%, var(--color-card));
+  border-color: color-mix(in srgb, var(--color-text) 30%, transparent);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.btn:active {
+  transform: translateY(0);
+  box-shadow: var(--shadow-sm);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
 }
 
 .btn-primary {
@@ -51,10 +80,20 @@ body,
   color: #fff;
 }
 
+.btn-primary:hover {
+  background: color-mix(in srgb, var(--color-accent) 90%, black);
+  border-color: var(--color-accent);
+}
+
 .btn-danger {
   border-color: var(--color-danger);
   background: var(--color-danger);
   color: #fff;
+}
+
+.btn-danger:hover {
+  background: color-mix(in srgb, var(--color-danger) 90%, black);
+  border-color: var(--color-danger);
 }
 
 .input {
@@ -65,6 +104,17 @@ body,
   color: var(--color-text);
   padding: 0.5rem 0.75rem;
   font-size: 0.875rem;
+  transition: all 0.2s;
+}
+
+.input:hover {
+  border-color: color-mix(in srgb, var(--color-text) 40%, var(--color-border));
+}
+
+.input:focus {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-color: var(--color-accent);
 }
 
 .badge {
@@ -74,6 +124,7 @@ body,
   padding: 0.125rem 0.5rem;
   font-size: 0.75rem;
   font-weight: 600;
+  transition: all 0.2s;
 }
 
 .table {
@@ -85,6 +136,51 @@ body,
 .table th,
 .table td {
   border-bottom: 1px solid var(--color-border);
-  padding: 0.625rem 0.75rem;
+  padding: 0.75rem;
   text-align: left;
 }
+
+.table th {
+  font-weight: 600;
+  color: var(--color-muted);
+  font-size: 0.8125rem;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+}
+
+.table tbody tr {
+  transition: background 0.15s;
+}
+
+.table tbody tr:hover {
+  background: color-mix(in srgb, var(--color-text) 3%, transparent);
+}
+
+.card {
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.2s;
+}
+
+.card:hover {
+  box-shadow: var(--shadow-md);
+}
+
+/* Page transitions */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.page {
+  animation: fadeIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
