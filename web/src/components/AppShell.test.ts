@@ -25,7 +25,8 @@ testI18n.init({
           groups: 'Groups',
           users: 'Users',
           roles: 'Roles',
-          audit: 'Audit'
+          audit: 'Audit',
+          batches: 'Batches',
         },
         actions: {
           logout: 'Logout'
@@ -41,7 +42,8 @@ testI18n.init({
           groups: '分组',
           users: '用户',
           roles: '角色',
-          audit: '审计'
+          audit: '审计',
+          batches: '批次',
         },
         actions: {
           logout: '退出登录'
@@ -77,6 +79,7 @@ async function mountShell(current: Me, provide: Record<string, unknown> = {}) {
           { path: "nodes", component: Blank },
           { path: "processes", component: Blank },
           { path: "groups", component: Blank },
+          { path: "batches", component: Blank },
           { path: "users", component: Blank },
           { path: "roles", component: Blank },
           { path: "audit", component: Blank },
@@ -125,6 +128,26 @@ describe("AppShell", () => {
   it("hides Groups nav without node.read", async () => {
     const wrapper = await mountShell(me({ permissions: ["process.read"] }));
     expect(wrapper.text()).not.toContain("Groups");
+  });
+
+  it("shows Batches nav when batch.execute", async () => {
+    const wrapper = await mountShell(me({ permissions: ["node.read", "batch.execute"] }));
+    expect(wrapper.text()).toContain("Batches");
+  });
+
+  it("hides Batches nav without batch.execute", async () => {
+    const wrapper = await mountShell(me({ permissions: ["node.read", "user.read"] }));
+    expect(wrapper.text()).not.toContain("Batches");
+  });
+
+  it("places Batches after Groups and before Users", async () => {
+    const wrapper = await mountShell(
+      me({ permissions: ["node.read", "batch.execute", "user.read"] }),
+    );
+    const labels = wrapper.findAll(".nav-label").map((n) => n.text());
+    expect(labels.indexOf("Groups")).toBeGreaterThan(-1);
+    expect(labels.indexOf("Batches")).toBeGreaterThan(labels.indexOf("Groups"));
+    expect(labels.indexOf("Users")).toBeGreaterThan(labels.indexOf("Batches"));
   });
 
   it("shows Users, Roles, and Audit when permitted", async () => {

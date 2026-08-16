@@ -46,7 +46,10 @@ beforeEach(async () => {
               memory: "Memory",
               disk: "Disk",
             },
+            recentBatches: "Recent batches",
+            recentBatchesHint: "Only batches created on this entry agent.",
           },
+          batch: { timeout: "timeout" },
         },
       },
     },
@@ -81,24 +84,31 @@ const overview = {
 
 const mounted: Array<{ unmount: () => void }> = [];
 
-async function mountOverview(overrides: Partial<typeof overview> = {}) {
+async function mountOverview(
+  overrides: Partial<typeof overview> = {},
+  batches: unknown[] = [],
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   const clusterClient = { overview: vi.fn().mockResolvedValue({ ...overview, ...overrides }) };
+  const batchClient = { listBatches: vi.fn().mockResolvedValue({ batches }) };
   const wrapper = mount(OverviewPage, {
     global: {
       plugins: [
         [VueQueryPlugin, { queryClient }],
         [I18NextVue, { i18next: i18n }],
       ],
-      provide: { clusterClient },
+      provide: { clusterClient, batchClient },
+      stubs: {
+        RouterLink: { template: "<a><slot /></a>" },
+      },
     },
   });
   mounted.push(wrapper);
   await flushPromises();
   await wrapper.vm.$nextTick();
-  return wrapper;
+  return { wrapper, batchClient };
 }
 
 afterEach(() => {
@@ -109,14 +119,14 @@ afterEach(() => {
 
 describe("OverviewPage", () => {
   it("renders ProcMesh and Workload sections from mock overview", async () => {
-    const wrapper = await mountOverview();
+    const { wrapper } = await mountOverview();
     const text = wrapper.text();
     expect(text).toContain("ProcMesh");
     expect(text).toContain("Workload");
   });
 
   it("shows No quorum when control_quorum is false", async () => {
-    const wrapper = await mountOverview();
+    const { wrapper } = await mountOverview();
     expect(wrapper.text()).toContain("No quorum");
     const quorum = wrapper.get(".quorum");
     expect(quorum.classes()).toContain("danger");
@@ -124,7 +134,7 @@ describe("OverviewPage", () => {
   });
 
   it("does not describe agent degraded as process down", async () => {
-    const wrapper = await mountOverview();
+    const { wrapper } = await mountOverview();
     const text = wrapper.text();
     expect(text).toContain("Agent DEGRADED — local store impaired; business processes are not stopped.");
     expect(text.toLowerCase()).not.toMatch(/process (down|fault|failure)/);
@@ -132,7 +142,7 @@ describe("OverviewPage", () => {
   });
 
   it("shows STALE badge and last updated for FAILED last-known workload counts", async () => {
-    const wrapper = await mountOverview();
+    const { wrapper } = await mountOverview();
     const badge = wrapper.get(".freshness-badge");
     expect(badge.text()).toBe("STALE");
     expect(badge.classes()).toContain("freshness-stale");
@@ -143,11 +153,29 @@ describe("OverviewPage", () => {
   });
 
   it("renders uncollected resources as unknown instead of 0%", async () => {
-    const wrapper = await mountOverview({ cpuPercent: -1, memoryPercent: -1, diskPercent: -1 });
+    const { wrapper } = await mountOverview({ cpuPercent: -1, memoryPercent: -1, diskPercent: -1 });
     const text = wrapper.text();
     expect(text).toContain("unknown");
     expect(text).not.toMatch(/CPU\s*0%/);
     expect(text).not.toMatch(/Memory\s*0%/);
+  });
+
+  it("shows recent batches hint and timeout count", async () => {
+    const { wrapper, batchClient } = await mountOverview({}, [
+      {
+        batchId: "b-recent",
+        type: "START",
+        status: "PARTIAL",
+        summary: { success: 1, failed: 0, timeout: 2, denied: 0, conflict: 0, unavailable: 0, invalid: 0 },
+      },
+    ]);
+    expect(batchClient.listBatches).toHaveBeenCalledWith({ limit: 5 });
+    expect(wrapper.text()).toContain("Recent batches");
+    expect(wrapper.text()).toContain("Only batches created on this entry agent.");
+    const timeout = wrapper.get('[data-status="TIMEOUT"]');
+    expect(timeout.text()).toContain("2");
+    expect(timeout.classes()).toContain("status-timeout");
+    expect(timeout.classes()).not.toContain("status-success");
   });
 });
 
@@ -189,7 +217,7 @@ describe("OverviewPage i18n", () => {
       status: { stale: "STALE" },
     });
 
-    const wrapper = await mountOverview();
+    const { wrapper } = await mountOverview();
     const text = wrapper.text();
     expect(text).toContain("Overview");
     expect(text).toContain("ProcMesh");
@@ -237,7 +265,7 @@ describe("OverviewPage i18n", () => {
       status: { stale: "STALE" },
     });
 
-    const wrapper = await mountOverview();
+    const { wrapper } = await mountOverview();
     const text = wrapper.text();
     expect(text).toContain("概览");
     expect(text).toContain("工作负载");

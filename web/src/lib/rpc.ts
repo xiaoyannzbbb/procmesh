@@ -2,6 +2,7 @@ import { createClient, type Client } from "@connectrpc/connect";
 import { inject } from "vue";
 import {
   AuditService,
+  BatchService,
   ClusterService,
   ConfigService,
   GroupService,
@@ -33,6 +34,10 @@ export type GroupClient = Pick<
   "listAgentGroups" | "createAgentGroup" | "deleteAgentGroup" | "addAgentGroupMember" | "removeAgentGroupMember"
 >;
 export type AuditClient = Pick<Client<typeof AuditService>, "listAudit">;
+export type BatchClient = Pick<
+  Client<typeof BatchService>,
+  "createBatch" | "getBatch" | "listBatches" | "retryFailed" | "replayTimeout" | "exportBatch"
+>;
 
 export function useClusterClient(): ClusterClient {
   return inject<ClusterClient | null>("clusterClient", null) ?? createClient(ClusterService, transport);
@@ -72,4 +77,8 @@ export function useGroupClient(): GroupClient {
 
 export function useAuditClient(): AuditClient {
   return inject<AuditClient | null>("auditClient", null) ?? createClient(AuditService, transport);
+}
+
+export function useBatchClient(): BatchClient {
+  return inject<BatchClient | null>("batchClient", null) ?? createClient(BatchService, transport);
 }

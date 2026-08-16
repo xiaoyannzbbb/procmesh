@@ -2,7 +2,7 @@
 import { useQuery } from "@tanstack/vue-query";
 import { computed } from "vue";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
-import { useClusterClient } from "../lib/rpc";
+import { useBatchClient, useClusterClient } from "../lib/rpc";
 import { useI18n } from "../lib/useI18n";
 import { formatPercent, mapOverview } from "./clusterView";
 
@@ -10,12 +10,21 @@ const { t } = useI18n();
 
 const POLL_MS = 5000;
 const client = useClusterClient();
+const batchClient = useBatchClient();
 
 const query = useQuery({
   queryKey: ["cluster", "overview"],
   queryFn: () => client.overview({}),
   refetchInterval: POLL_MS,
 });
+
+const recentQuery = useQuery({
+  queryKey: ["batches", "recent"],
+  queryFn: () => batchClient.listBatches({ limit: 5 }),
+  refetchInterval: POLL_MS,
+});
+
+const recentBatches = computed(() => recentQuery.data.value?.batches ?? []);
 
 const view = computed(() => {
   const data = query.data.value;
@@ -139,6 +148,38 @@ const errorText = computed(() => {
             <dd>{{ formatPercent(view.workload.diskPercent) }}</dd>
           </div>
         </dl>
+      </section>
+
+      <section v-if="recentQuery.data" class="card">
+        <h2>{{ t("overview.recentBatches") }}</h2>
+        <p class="muted recent-hint">{{ t("overview.recentBatchesHint") }}</p>
+        <table v-if="recentBatches.length" class="table">
+          <thead>
+            <tr>
+              <th>{{ t("batch.batchId") }}</th>
+              <th>{{ t("batch.type") }}</th>
+              <th>{{ t("batch.status") }}</th>
+              <th>{{ t("batch.timeout") }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="batch in recentBatches" :key="batch.batchId">
+              <td>
+                <RouterLink :to="`/batches/${encodeURIComponent(batch.batchId)}`">{{ batch.batchId }}</RouterLink>
+              </td>
+              <td>{{ batch.type }}</td>
+              <td>{{ batch.status }}</td>
+              <td>
+                <span
+                  class="status-timeout"
+                  data-status="TIMEOUT"
+                  style="background-color: #FEF3C7; color: #92400E"
+                >{{ t("batch.timeout") }} {{ batch.summary?.timeout ?? 0 }}</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p v-else class="muted">{{ t("batch.noBatches") }}</p>
       </section>
     </template>
   </div>
@@ -265,5 +306,16 @@ h3 {
 }
 .resources {
   margin-top: 1rem;
+}
+.recent-hint {
+  margin: -0.375rem 0 0.75rem;
+}
+.status-timeout {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.125rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
 }
 </style>

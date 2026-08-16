@@ -6,6 +6,7 @@ import {
   Server,
   Layers,
   FolderTree,
+  ListTodo,
   Users,
   ShieldCheck,
   FileSearch,
@@ -49,6 +50,9 @@ const navItems = computed(() => {
   ];
   if (perms.value.has("node.read")) {
     items.push({ to: "/groups", label: t("nav.groups"), icon: FolderTree });
+  }
+  if (perms.value.has("batch.execute")) {
+    items.push({ to: "/batches", label: t("nav.batches"), icon: ListTodo });
   }
   if (perms.value.has("user.read")) {
     items.push({ to: "/users", label: t("nav.users"), icon: Users });
