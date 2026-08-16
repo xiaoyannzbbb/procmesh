@@ -2,9 +2,11 @@
 import { ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { saveCsrf, useAuthClient } from "../lib/session";
+import { useI18n } from "../lib/useI18n";
 
 const LOGIN_ERRORS = ["invalid credentials", "login rate limited", "user locked"] as const;
 
+const { t } = useI18n();
 const username = ref("");
 const password = ref("");
 const error = ref("");
@@ -60,17 +62,17 @@ async function onSubmit(): Promise<void> {
 <template>
   <div class="login-page">
     <form class="login-card" @submit.prevent="onSubmit">
-      <h1>ProcMesh</h1>
+      <h1>{{ t("common:login.title") }}</h1>
       <label class="field">
-        Username
+        {{ t("common:login.username") }}
         <input v-model="username" class="input" name="username" type="text" autocomplete="username" />
       </label>
       <label class="field">
-        Password
+        {{ t("common:login.password") }}
         <input v-model="password" class="input" name="password" type="password" autocomplete="current-password" />
       </label>
       <p v-if="error" class="login-error" role="alert">{{ error }}</p>
-      <button class="btn btn-primary" type="submit" :disabled="pending">Sign in</button>
+      <button class="btn btn-primary" type="submit" :disabled="pending">{{ t("common:actions.signIn") }}</button>
     </form>
   </div>
 </template>

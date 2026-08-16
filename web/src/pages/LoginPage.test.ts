@@ -3,8 +3,53 @@ import { createMemoryHistory, createRouter } from "vue-router";
 import { describe, expect, it, vi } from "vitest";
 import { defineComponent, h } from "vue";
 import LoginPage from "./LoginPage.vue";
+import { I18NextVue } from "../lib/i18n";
+import i18next from 'i18next';
 
 const Blank = defineComponent({ setup: () => () => h("div") });
+
+// Create a test-specific i18n instance without HTTP backend
+const testI18n = i18next.createInstance();
+testI18n.init({
+  lng: 'en',
+  fallbackLng: 'en',
+  supportedLngs: ['en', 'zh'],
+  resources: {
+    en: {
+      common: {
+        login: {
+          title: 'ProcMesh',
+          username: 'Username',
+          password: 'Password',
+          invalidCredentials: 'invalid credentials',
+          rateLimited: 'login rate limited',
+          userLocked: 'user locked'
+        },
+        actions: {
+          signIn: 'Sign in'
+        }
+      }
+    },
+    zh: {
+      common: {
+        login: {
+          title: 'ProcMesh',
+          username: '用户名',
+          password: '密码',
+          invalidCredentials: '用户名或密码错误',
+          rateLimited: '登录请求过于频繁',
+          userLocked: '用户已锁定'
+        },
+        actions: {
+          signIn: '登录'
+        }
+      }
+    }
+  },
+  interpolation: {
+    escapeValue: false
+  }
+});
 
 async function mountLogin(provide: Record<string, unknown> = {}) {
   const router = createRouter({
@@ -18,7 +63,7 @@ async function mountLogin(provide: Record<string, unknown> = {}) {
   await router.isReady();
   return mount(LoginPage, {
     global: {
-      plugins: [router],
+      plugins: [router, [I18NextVue, { i18next: testI18n }]],
       provide,
     },
   });
@@ -48,5 +93,21 @@ describe("LoginPage", () => {
     await wrapper.vm.$nextTick();
     expect(login).toHaveBeenCalled();
     expect(wrapper.text()).toContain("invalid credentials");
+  });
+
+  it("renders login form in English", async () => {
+    await testI18n.changeLanguage('en');
+    const wrapper = await mountLogin();
+    expect(wrapper.text()).toContain('Username');
+    expect(wrapper.text()).toContain('Password');
+    expect(wrapper.text()).toContain('Sign in');
+  });
+
+  it("renders login form in Chinese", async () => {
+    await testI18n.changeLanguage('zh');
+    const wrapper = await mountLogin();
+    expect(wrapper.text()).toContain('用户名');
+    expect(wrapper.text()).toContain('密码');
+    expect(wrapper.text()).toContain('登录');
   });
 });
