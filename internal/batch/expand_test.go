@@ -172,6 +172,72 @@ func TestExpand_ProcessNames(t *testing.T) {
 	}
 }
 
+func TestExpand_OwnerUnavailableKept(t *testing.T) {
+	x := &batch.RealExpander{
+		Specs: keyedSpecs{
+			specs: map[string]batch.OwnerSpec{
+				"nA/local": {ProcessID: "p-local", Name: "local", NodeID: "nA"},
+			},
+			errs: map[string]error{
+				"nC/remote": errcode.E(errcode.UNAVAILABLE, "owner unreachable"),
+			},
+		},
+		Auth: allowAuth{},
+	}
+	ts, err := x.Expand(context.Background(), batch.Selector{ProcessNames: []batch.ProcessNameRef{
+		{NodeID: "nA", ProcessName: "local"},
+		{NodeID: "nC", ProcessName: "remote"},
+	}}, batch.TypeRestart)
+	if err != nil {
+		t.Fatalf("expand: %v", err)
+	}
+	if len(ts) != 2 {
+		t.Fatalf("targets %+v", ts)
+	}
+	byName := map[string]batch.Target{}
+	for _, tg := range ts {
+		byName[tg.ProcessName] = tg
+	}
+	if byName["local"].ProcessID != "p-local" || (byName["local"].Status != "" && byName["local"].Status != batch.TargetPending) {
+		t.Fatalf("local %+v", byName["local"])
+	}
+	if byName["remote"].Status != batch.TargetUnavailable || byName["remote"].NodeID != "nC" {
+		t.Fatalf("remote %+v", byName["remote"])
+	}
+}
+
+func TestExpand_OwnerTimeoutKept(t *testing.T) {
+	x := &batch.RealExpander{
+		Specs: keyedSpecs{errs: map[string]error{
+			"nC/remote": errcode.E(errcode.TIMEOUT, "rpc timed out"),
+		}},
+		Auth: allowAuth{},
+	}
+	ts, err := x.Expand(context.Background(), batch.Selector{ProcessNames: []batch.ProcessNameRef{
+		{NodeID: "nC", ProcessName: "remote"},
+	}}, batch.TypeRestart)
+	if err != nil || len(ts) != 1 || ts[0].Status != batch.TargetTimeout || ts[0].ProcessName != "remote" {
+		t.Fatalf("%+v %v", ts, err)
+	}
+}
+
+type keyedSpecs struct {
+	specs map[string]batch.OwnerSpec
+	errs  map[string]error
+}
+
+func (m keyedSpecs) Get(_ context.Context, node, id string) (batch.OwnerSpec, error) {
+	key := node + "/" + id
+	if err, ok := m.errs[key]; ok {
+		return batch.OwnerSpec{}, err
+	}
+	s, ok := m.specs[key]
+	if !ok {
+		return batch.OwnerSpec{}, errcode.E(errcode.NOT_FOUND, "process")
+	}
+	return s, nil
+}
+
 func TestExpand_AgentGroupSnapshotsMembers(t *testing.T) {
 	x := &batch.RealExpander{
 		Cluster: memCluster{nodes: []batch.NodeView{

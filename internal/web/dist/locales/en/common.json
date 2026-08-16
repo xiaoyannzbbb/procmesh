@@ -9,6 +9,7 @@
     "nodes": "Nodes",
     "processes": "Processes",
     "groups": "Groups",
+    "batches": "Batches",
     "users": "Users",
     "roles": "Roles",
     "audit": "Audit"
@@ -105,7 +106,9 @@
       "cpu": "CPU",
       "memory": "Memory",
       "disk": "Disk"
-    }
+    },
+    "recentBatches": "Recent batches",
+    "recentBatchesHint": "Only batches created on this entry agent."
   },
   "processes": {
     "title": "Processes",
@@ -345,5 +348,35 @@
       "email": "Email",
       "create": "Create"
     }
+  },
+  "batch": {
+    "title": "Batches",
+    "localOnly": "Only batches created on this entry agent are listed.",
+    "loading": "Loading…",
+    "noBatches": "No batches",
+    "create": "Create batch",
+    "type": "Type",
+    "status": "Status",
+    "created": "Created",
+    "success": "success",
+    "failed": "failed",
+    "timeout": "timeout",
+    "denied": "denied",
+    "retryFailed": "Retry Failed",
+    "replayTimeout": "Replay Timeout",
+    "export": "Export JSON",
+    "back": "← Batches",
+    "targets": "Targets",
+    "batchId": "Batch ID",
+    "processId": "Process ID",
+    "processName": "Name",
+    "nodeId": "Node",
+    "error": "Error",
+    "selector": "Selector",
+    "selectorProcessIds": "Process IDs",
+    "selectorProcessGroup": "Process group",
+    "selectorAgentGroup": "Agent group ID",
+    "processIdsPlaceholder": "id1, id2",
+    "configUpdateCli": "CONFIG_UPDATE uses the CLI: procmesh batch create --type apply --file <spec.yaml>"
   }
 }

@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Status:** 已完成
+
 **Goal:** 任意入口可发起 Batch（start/stop/restart/config update），任务只存在该入口本地 SQLite；部分成功可见，TIMEOUT 不得画成成功或从列表消失；Case 7 可脚本化验收。
 
 **Architecture:** `CreateBatch` 在入口校验 + 展开 + 落库后立即返回 `PENDING`。后台 worker 并发扇出到各 Owner（V1.0 Write-to-Owner + 每 target 独立 `operation_id`）。记录不进 Raft / Gossip，不跨入口认领。Process Group 用 Gossip 初筛、执行前 RPC 读 Owner spec 核对 `group`。入口崩溃后只恢复尚未终态的 `PENDING`/`RUNNING` target，且必须复用原 `operation_id`。

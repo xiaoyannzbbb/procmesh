@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"strings"
 
@@ -143,6 +144,7 @@ func (x *RealExpander) expandProcessIDs(ctx context.Context, ids []string, typ T
 			continue
 		}
 		found := false
+		var retainErr error
 		for _, n := range nodes {
 			spec, err := x.getSpec(ctx, n.NodeID, id)
 			if err == nil {
@@ -160,11 +162,21 @@ func (x *RealExpander) expandProcessIDs(ctx context.Context, ids []string, typ T
 				found = true
 				break
 			}
-			if !errcode.Is(err, errcode.NOT_FOUND) {
-				return err
+			if errcode.Is(err, errcode.NOT_FOUND) {
+				continue
 			}
+			if _, ok := retainExpandStatus(err); ok {
+				retainErr = err
+				continue
+			}
+			return err
 		}
 		if !found {
+			if retainErr != nil {
+				st, _ := retainExpandStatus(retainErr)
+				acc.add(Target{ProcessID: id, Status: st, Error: retainErr.Error()})
+				continue
+			}
 			acc.add(Target{ProcessID: id, Status: TargetInvalid, Error: "process not found"})
 		}
 	}
@@ -240,6 +252,16 @@ func (x *RealExpander) addFromGet(ctx context.Context, node, idOrName string, ty
 			})
 			return nil
 		}
+		if st, ok := retainExpandStatus(err); ok {
+			acc.add(Target{
+				NodeID:      h.nodeID,
+				ProcessID:   h.processID,
+				ProcessName: h.processName,
+				Status:      st,
+				Error:       err.Error(),
+			})
+			return nil
+		}
 		return err
 	}
 	if spec.NodeID == "" {
@@ -305,6 +327,19 @@ func (x *RealExpander) finish(spec OwnerSpec, typ Type, status TargetStatus, err
 	t.PayloadJSON = payload
 	t.ExpectedRevision = rev
 	return t, nil
+}
+
+func retainExpandStatus(err error) (TargetStatus, bool) {
+	if err == nil {
+		return "", false
+	}
+	if errcode.Is(err, errcode.TIMEOUT) || errors.Is(err, context.DeadlineExceeded) {
+		return TargetTimeout, true
+	}
+	if errcode.Is(err, errcode.UNAVAILABLE) {
+		return TargetUnavailable, true
+	}
+	return "", false
 }
 
 func (x *RealExpander) getSpec(ctx context.Context, node, id string) (OwnerSpec, error) {

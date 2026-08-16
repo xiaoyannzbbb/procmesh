@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -138,6 +139,16 @@ func writeSleepSpec(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "sleep.yaml")
 	body := "name: sleep\nprocess_id: slp\ncommand: /bin/sleep\nargs:\n  - \"60\"\ninstances: 1\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func writeSleepSpecNamed(t *testing.T, name string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name+".yaml")
+	body := fmt.Sprintf("name: %s\nprocess_id: %s\ncommand: /bin/sleep\nargs:\n  - \"60\"\ninstances: 1\n", name, name)
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -9,6 +9,7 @@
     "nodes": "节点",
     "processes": "进程",
     "groups": "分组",
+    "batches": "批次",
     "users": "用户",
     "roles": "角色",
     "audit": "审计"
@@ -105,7 +106,9 @@
       "cpu": "CPU",
       "memory": "内存",
       "disk": "磁盘"
-    }
+    },
+    "recentBatches": "最近批次",
+    "recentBatchesHint": "只显示本入口创建的任务。"
   },
   "processes": {
     "title": "进程",
@@ -345,5 +348,35 @@
       "email": "邮箱",
       "create": "创建"
     }
+  },
+  "batch": {
+    "title": "批次",
+    "localOnly": "只显示本入口创建的任务。其他节点各自保留自己的批量任务记录。",
+    "loading": "加载中…",
+    "noBatches": "无批次",
+    "create": "创建批次",
+    "type": "类型",
+    "status": "状态",
+    "created": "创建时间",
+    "success": "成功",
+    "failed": "失败",
+    "timeout": "超时",
+    "denied": "拒绝",
+    "retryFailed": "重试失败项",
+    "replayTimeout": "重放超时项",
+    "export": "导出 JSON",
+    "back": "← 批次",
+    "targets": "目标",
+    "batchId": "批次 ID",
+    "processId": "进程 ID",
+    "processName": "名称",
+    "nodeId": "节点",
+    "error": "错误",
+    "selector": "选择器",
+    "selectorProcessIds": "进程 ID",
+    "selectorProcessGroup": "进程分组",
+    "selectorAgentGroup": "代理分组 ID",
+    "processIdsPlaceholder": "id1, id2",
+    "configUpdateCli": "CONFIG_UPDATE 请使用 CLI：procmesh batch create --type apply --file <spec.yaml>（V1.1 config overlay 走 CLI --file）"
   }
 }
