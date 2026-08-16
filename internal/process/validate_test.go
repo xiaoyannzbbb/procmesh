@@ -110,3 +110,26 @@ func TestValidateSpec_AllowsAnyStartupPriority(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestValidateSpec_RejectsInvalidGroup(t *testing.T) {
+	s := validSpec()
+	s.Group = "bad group"
+	if err := process.ValidateSpec(s); !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestValidateSpec_AcceptsEmptyAndValidGroup(t *testing.T) {
+	s := validSpec()
+	if err := process.ValidateSpec(s); err != nil {
+		t.Fatal(err)
+	}
+	s.Group = "finance"
+	if err := process.ValidateSpec(s); err != nil {
+		t.Fatal(err)
+	}
+	s.Group = "  finance  "
+	if err := process.ValidateSpec(s); err != nil {
+		t.Fatal(err)
+	}
+}

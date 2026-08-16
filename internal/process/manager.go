@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -85,6 +86,7 @@ func (m *Manager) ApplySpec(ctx context.Context, spec ProcessSpec, expectedRevis
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ApplyDefaults(&spec)
+	spec.Group = strings.TrimSpace(spec.Group)
 	if err := ValidateSpec(spec); err != nil {
 		return ProcessSpec{}, err
 	}
