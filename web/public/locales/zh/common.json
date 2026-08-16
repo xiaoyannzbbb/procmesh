@@ -103,5 +103,19 @@
       "memory": "内存",
       "disk": "磁盘"
     }
+  },
+  "processes": {
+    "title": "进程",
+    "loading": "加载中…",
+    "noProcesses": "无进程",
+    "table": {
+      "name": "名称",
+      "owner": "所有者",
+      "desired": "期望状态",
+      "observed": "观察状态",
+      "health": "健康状态",
+      "revisions": "版本",
+      "freshness": "新鲜度"
+    }
   }
 }

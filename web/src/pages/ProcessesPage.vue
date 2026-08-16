@@ -3,7 +3,10 @@ import { useQuery } from "@tanstack/vue-query";
 import { computed } from "vue";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
 import { useNodeClient } from "../lib/rpc";
+import { useI18n } from "../lib/useI18n";
 import { flattenClusterProcesses, formatRemoteError, ownerDisplay, rowKey } from "./processView";
+
+const { t } = useI18n();
 
 const POLL_MS = 5000;
 const client = useNodeClient();
@@ -30,20 +33,20 @@ const errorText = computed(() => {
 
 <template>
   <div class="page">
-    <h1>Processes</h1>
-    <p v-if="query.isPending && !query.data" class="muted">Loading…</p>
+    <h1>{{ t("processes.title") }}</h1>
+    <p v-if="query.isPending && !query.data" class="muted">{{ t("processes.loading") }}</p>
     <p v-else-if="errorText" class="error" role="alert">{{ errorText }}</p>
     <div v-else class="card">
       <table class="table">
         <thead>
           <tr>
-            <th>Name</th>
-            <th>Owner</th>
-            <th>Desired</th>
-            <th>Observed</th>
-            <th>Health</th>
-            <th>Revisions</th>
-            <th>Freshness</th>
+            <th>{{ t("processes.table.name") }}</th>
+            <th>{{ t("processes.table.owner") }}</th>
+            <th>{{ t("processes.table.desired") }}</th>
+            <th>{{ t("processes.table.observed") }}</th>
+            <th>{{ t("processes.table.health") }}</th>
+            <th>{{ t("processes.table.revisions") }}</th>
+            <th>{{ t("processes.table.freshness") }}</th>
           </tr>
         </thead>
         <tbody>
@@ -70,7 +73,7 @@ const errorText = computed(() => {
             </td>
           </tr>
           <tr v-if="!rows.length">
-            <td colspan="7" class="muted">No processes</td>
+            <td colspan="7" class="muted">{{ t("processes.noProcesses") }}</td>
           </tr>
         </tbody>
       </table>

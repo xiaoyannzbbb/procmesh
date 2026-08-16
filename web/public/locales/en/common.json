@@ -103,5 +103,19 @@
       "memory": "Memory",
       "disk": "Disk"
     }
+  },
+  "processes": {
+    "title": "Processes",
+    "loading": "Loading…",
+    "noProcesses": "No processes",
+    "table": {
+      "name": "Name",
+      "owner": "Owner",
+      "desired": "Desired",
+      "observed": "Observed",
+      "health": "Health",
+      "revisions": "Revisions",
+      "freshness": "Freshness"
+    }
   }
 }
