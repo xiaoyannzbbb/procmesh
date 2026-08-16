@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Status:** 已完成（2026-08-17）。14 个 TDD 任务均已落地；`internal/web/dist` 已按 Q1 Web 源码重建并提交。不要开始 Q2，直到本阶段合并。
+
 **Goal:** 让 Agent Group 成为 Raft 一等公民，Process Group 仍是 Owner `spec.group` 字符串，RBAC 增加 `AGENT_GROUP` / `PROCESS_GROUP`，使 Finance Operator 不能操作范围外的节点和进程。
 
 **Architecture:** 组成员与组对象只写 Raft FSM。`ProcessSpec.Group` 继续走 `ApplySpec` + CAS。Gossip `ProcessSummary` 增加 `process_id` 与 `group`（摘要，不是权威）。`State.Check` 保留三参数包装，新增 `CheckTarget` 做组求值。List API 先 `CanAny(perm)` 再按条 `CheckTarget` 过滤。不实现 Batch / Alert / Backup。
@@ -88,7 +90,7 @@ internal/agent/q1_accept_test.go      # 新建
 - Modify: `internal/process/validate.go`
 - Test: `internal/process/validate_test.go`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 在 `internal/process/validate_test.go` 追加：
 
@@ -117,13 +119,13 @@ func TestValidateSpec_AcceptsEmptyAndValidGroup(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/process -run 'TestValidateSpec_RejectsInvalidGroup|TestValidateSpec_AcceptsEmptyAndValidGroup' -count=1`
 
 Expected: `RejectsInvalidGroup` FAIL（非法 group 被接受）
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 在 `internal/process/validate.go`：
 
@@ -144,13 +146,13 @@ func ValidateSpec(s ProcessSpec) error {
 
 更好：校验用 trim 后的值，不写回。空或合法通过。
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `go test ./internal/process -count=1`
 
 Expected: PASS；包覆盖率仍 ≥ 80%
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/process/validate.go internal/process/validate_test.go
@@ -167,7 +169,7 @@ git commit -m "feat(process): validate ProcessSpec.Group name"
 - Modify: `internal/agent/summary.go`
 - Modify: `internal/api/node.go` (`nodeToProto`)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 在 `internal/cluster/codec_test.go` 的 `TestEncodeState_KeepsProcessSummary` 改为断言新字段，并追加：
 
@@ -199,13 +201,13 @@ if p := got.Processes[0]; p.ProcessID != "pid-1" || p.Group != "finance" || p.Na
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/cluster -run 'TestEncodeState_KeepsProcessSummary|TestDecodeState_IgnoresUnknownProcessFields' -count=1`
 
 Expected: FAIL（`ProcessID` / `Group` 字段不存在）
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `internal/cluster/summary.go`：
 
@@ -241,13 +243,13 @@ sum := cluster.ProcessSummary{
 
 若 `internal/agent/summary_test.go` 有 Snapshot 断言，同步补字段（没有则跳过）。
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `go test ./internal/cluster ./internal/agent -count=1`
 
 Expected: PASS（agent 包若只是多填字段，旧测试仍过）
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/cluster/summary.go internal/cluster/codec_test.go internal/agent/summary.go
@@ -263,7 +265,7 @@ git commit -m "feat(cluster): gossip process_id and group on ProcessSummary"
 - Modify: `internal/control/fsm.go`
 - Test: `internal/control/fsm_test.go`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 在 `internal/control/fsm_test.go` 追加（沿用已有 `mustBootstrap` / `mustEncode`）：
 
@@ -313,13 +315,13 @@ func TestFSM_GroupNameValidation(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/control -run 'TestFSM_AgentGroupCRUD|TestFSM_GroupNameValidation' -count=1`
 
 Expected: FAIL（unknown command type 或缺类型）
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `internal/control/command.go` 常量：
 
@@ -471,13 +473,13 @@ func (s *State) NodeInGroup(nodeID, groupID string) bool {
 
 `Apply` switch 加上四个 cmd。`ensure` 必须在 `Restore` 后创建空 map（已有 `s.ensure()`）。
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `go test ./internal/control -count=1`
 
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/control/command.go internal/control/fsm.go internal/control/fsm_test.go
@@ -492,7 +494,7 @@ git commit -m "feat(control): AgentGroup Raft commands"
 - Modify: `internal/control/fsm.go` `applyMemberRemove`
 - Test: `internal/control/fsm_test.go`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestFSM_MemberRemoveStripsGroups(t *testing.T) {
@@ -510,13 +512,13 @@ func TestFSM_MemberRemoveStripsGroups(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/control -run TestFSM_MemberRemoveStripsGroups -count=1`
 
 Expected: FAIL（成员仍在组内）
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 在 `applyMemberRemove` 末尾、改 Status/CRL 之后：
 
@@ -540,13 +542,13 @@ for id, g := range s.AgentGroups {
 
 注意：`filtered := g.MemberIDs[:0]` 会复用原切片；写成 `var filtered []string` 更安全。
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `go test ./internal/control -count=1`
 
 Expected: PASS（旧的 `TestFSM_*MemberRemove*` 仍过）
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/control/fsm.go internal/control/fsm_test.go
@@ -561,7 +563,7 @@ git commit -m "feat(control): strip AgentGroup members on node remove"
 - Modify: `internal/control/fsm.go`
 - Test: `internal/control/fsm_test.go`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestFSM_CheckAgentGroupAndProcessGroup(t *testing.T) {
@@ -603,13 +605,13 @@ func TestFSM_CheckAgentGroupAndProcessGroup(t *testing.T) {
 
 `fsm_test.go` 是 `package control_test`，只使用导出方法：`Check` / `CheckTarget` / `CanAny` / `NodeInGroup` / 导出字段 `AgentGroups`。
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/control -run TestFSM_CheckAgentGroupAndProcessGroup -count=1`
 
 Expected: FAIL（无 `CheckTarget` / `CanAny`）
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```go
 type CheckTarget struct {
@@ -674,13 +676,13 @@ func (s *State) CanAny(userID, perm string) bool {
 
 把原来的 `Check` 方法替换为上述包装（旧测试继续用三参数 `Check`）。
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `go test ./internal/control -count=1`
 
 Expected: PASS（`TestFSM_CheckAgentScope` 等旧测试仍过）
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/control/fsm.go internal/control/fsm_test.go
@@ -697,7 +699,7 @@ git commit -m "feat(control): RBAC AGENT_GROUP and PROCESS_GROUP scopes"
 - Modify: `internal/control/fsm_test.go` (`allPerms` / `clusterAdminPerms` / `operatorPerms` / `viewerPerms`)
 - Modify: `internal/api/role.go` `knownPerm`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestFSM_EnsureSyncsBuiltinAlertPerms(t *testing.T) {
@@ -736,13 +738,13 @@ func (s *State) EnsureForTest() { s.ensure() }
 
 只给 `control_test` 用，不要在生产路径另造同步入口（生产仍走 `Apply`/`Restore` 里的 `ensure`）。
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/control -run TestFSM_EnsureSyncsBuiltinAlertPerms -count=1`
 
 Expected: FAIL
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `internal/auth/perm.go` 增加：
 
@@ -778,13 +780,13 @@ for _, r := range builtinRoles() {
 
 `clusterAdminPerms` 测试列表需含 `batch.execute`、`alert.read`、`alert.manage`、`backup.read`、`backup.manage`。
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `go test ./internal/control ./internal/auth ./internal/api -count=1`
 
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/auth/perm.go internal/control/fsm.go internal/control/fsm_test.go internal/api/role.go
@@ -799,7 +801,7 @@ git commit -m "feat(auth): add V1.1 perms and resync builtin roles"
 - Modify: `internal/api/role.go` `parseScope`
 - Test: `internal/api/role_test.go`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 在现有 Grant 测试旁追加新函数：
 
@@ -858,13 +860,13 @@ func TestRoleAPI_GrantGroupScopes(t *testing.T) {
 
 `GROUP` 仍必须 `invalid scope_type`（旧测试保留）。
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/api -run TestRoleAPI_GrantGroupScopes -count=1`
 
 Expected: FAIL（`parseScope` 拒 AGENT_GROUP）
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 ```go
 func parseScope(scopeType, scopeID string) (control.ScopeType, error) {
@@ -922,13 +924,13 @@ if scope == control.ScopeAgentGroup {
 
 `st` 已在后面取；把 `st := s.Auth.Store().View()` 上移到 parse 之后。
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `go test ./internal/api -run 'TestRoleAPI_' -count=1`
 
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/api/role.go internal/api/role_test.go
@@ -943,7 +945,7 @@ git commit -m "feat(api): grant AGENT_GROUP and PROCESS_GROUP bindings"
 - Modify: `proto/procmesh/v1/api.proto`
 - Generate: `make proto` 与 `make proto-ts`（需 `cd web && npm ci` 若缺插件）
 
-- [ ] **Step 1: Edit proto（无单独红测；下一步 API 测试会红）**
+- [x] **Step 1: Edit proto（无单独红测；下一步 API 测试会红）**
 
 `ProcessSummary` 增加：
 
@@ -1021,7 +1023,7 @@ service GroupService {
 }
 ```
 
-- [ ] **Step 2: Generate**
+- [x] **Step 2: Generate**
 
 Run:
 
@@ -1032,7 +1034,7 @@ cd web && npm ci && cd .. && make proto-ts
 
 Expected: 生成物更新且 `go build ./...` 通过（尚未实现 handler，`var _ Handler` 还没加，build 应仍过）。
 
-- [ ] **Step 3: Commit proto + generated**
+- [x] **Step 3: Commit proto + generated**
 
 ```bash
 git add proto/procmesh/v1/api.proto proto/procmesh/v1/api.pb.go proto/procmesh/v1/procmeshv1connect/api.connect.go web/src/gen
@@ -1050,7 +1052,7 @@ git commit -m "feat(proto): GroupService and group summary fields"
 - Create: `internal/api/group_test.go`
 - Modify: `internal/api/server.go`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `internal/api/group_test.go` 仿 `role_test.go` 的 auth fixture：
 
@@ -1103,13 +1105,13 @@ func TestGroupAPI_CRUDAndRBAC(t *testing.T) {
 
 `newRBACEnv` / `loginAs` / `bearerReq` / `applyAuthCmd` / `testAdminPass` 已在 `internal/api/rbac_test.go` 与 `authn_test.go`。Create 无 Principal 时 `requirePerm` 会放行，所以必须走 HTTP + Bearer（完整 Server），不能只 new `GroupAPI{}`。
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/api -run TestGroupAPI_CRUDAndRBAC -count=1`
 
 Expected: FAIL（无 `GroupAPI`）
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `internal/api/group.go`：
 
@@ -1172,13 +1174,13 @@ func (s *GroupAPI) CreateAgentGroup(ctx context.Context, req *connect.Request[pr
 
 插在 `RoleService` 的 `mountConnect` 之后、`AuditService` 之前。
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `go test ./internal/api -count=1`
 
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/api/group.go internal/api/group_test.go internal/api/server.go
@@ -1194,7 +1196,7 @@ git commit -m "feat(api): GroupService for Agent Groups"
 - Modify: `internal/api/rbac.go`
 - Test: `internal/api/node_test.go`（已有则追加；否则 `node_rbac_test.go`）
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestNodeAPI_FiltersByAgentGroup(t *testing.T) {
@@ -1207,13 +1209,13 @@ func TestNodeAPI_FiltersByAgentGroup(t *testing.T) {
 
 夹具：`NodeAPI{Deps: fake members, Auth: svc}`。成员摘要含 `NodeID: node-fin` 与 `node-ads`。Raft 里 `g-fin` 只含 `node-fin`，用户绑定 `operator` + `AGENT_GROUP/g-fin`。
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/api -run TestNodeAPI_FiltersByAgentGroup -count=1`
 
 Expected: FAIL（ListNodes 用空 target 的 `node.read`，AGENT_GROUP 用户被整体 DENIED 或看到全部）
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `auth/rbac.go`：
 
@@ -1320,13 +1322,13 @@ func (s *Service) AllowWrite(p Principal, perm, targetNodeID string, local bool)
 
 `GetNode`：找到节点后 `requirePermOn(..., CheckTarget{NodeID: n.NodeID}, false, true)`。无权限 → `DENIED`。
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `go test ./internal/auth ./internal/api -count=1`
 
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/auth/rbac.go internal/auth/rbac_test.go internal/api/rbac.go internal/api/node.go internal/api/node_test.go
@@ -1341,7 +1343,7 @@ git commit -m "feat(api): filter nodes by AGENT_GROUP and attach group ids"
 - Modify: `internal/api/process.go`
 - Test: `internal/api/process_test.go` 或新建 `internal/api/process_rbac_group_test.go`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 单节点 Manager 上两个 spec：`api` group=`finance`，`ads` group=`adsys`。用户只有 `PROCESS_GROUP=finance` + operator。
 
@@ -1354,13 +1356,13 @@ git commit -m "feat(api): filter nodes by AGENT_GROUP and attach group ids"
 
 入口侧远程：用 gossip summary 的 group 做 `CheckTarget`；Owner 侧用 `spec.Group`。
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/api -run TestProcessAPI_ProcessGroupScope -count=1`
 
 Expected: FAIL（List 全量或 Restart 不看 group）
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `ListProcesses` 本地分支：
 
@@ -1385,13 +1387,13 @@ func gossipGroup(router *Router, nodeID, processName string) string {
 
 Apply 创建：用 `req.Msg.GetSpec().GetGroup()` 作为 target group。
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `go test ./internal/api ./internal/process -count=1`
 
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/api/process.go internal/api/process_rbac_group_test.go
@@ -1409,7 +1411,7 @@ git commit -m "feat(api): enforce PROCESS_GROUP on process list and mutations"
 - Modify: `internal/cli/user.go`（`--scope` 帮助）
 - Test: `internal/cli/root_test.go`（若有 parse 测试则扩）
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `internal/cli/root_test.go` 增加 usage 包含 `group list`，以及 `parseArgs` 识别：
 
@@ -1421,13 +1423,13 @@ role grant --scope AGENT_GROUP --scope-id GID
 
 若现有测试只查 `usageText` 字符串，把新行加进 `usageText` 后先让「未知命令 group」的解析测试红。
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/cli -count=1`
 
 Expected: FAIL（usage 缺 group 或 parse 失败）
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `usageText` 增加：
 
@@ -1451,13 +1453,13 @@ Expected: FAIL（usage 缺 group 或 parse 失败）
 
 `Main` switch 加 `case "group":`。
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `go test ./internal/cli -count=1`
 
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/cli
@@ -1479,7 +1481,7 @@ git commit -m "feat(cli): group commands and expanded role grant scopes"
 - Modify: `web/public/locales/en/common.json`、`web/public/locales/zh/common.json`
 - 可能：`web/src/pages/NodesPage.vue` 显示 `agentGroupIds`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `GroupsPage.test.ts`：mount 页面，mock `GroupService.listAgentGroups` 返回一个组，断言名字可见；有 `node.manage` 时显示 Create。
 
@@ -1487,13 +1489,13 @@ git commit -m "feat(cli): group commands and expanded role grant scopes"
 
 `AppShell.test.ts`：有 `node.read` 时出现 Groups 导航。
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd web && npm test -- GroupsPage RolesPage AppShell`
 
 Expected: FAIL（无页面 / 无 scope）
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 - `rpc.ts`：`GroupService` client，`useGroupClient()`。
 - `router.ts`：`{ path: "groups", component: GroupsPage }`。
@@ -1505,7 +1507,7 @@ Expected: FAIL（无页面 / 无 scope）
 - locales：`nav.groups`、`group.create`、`group.members`、`role.scopeAgentGroup`、`role.scopeProcessGroup`。
 - `cd web && npm run i18n:check`
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run:
 
@@ -1515,7 +1517,7 @@ cd web && npm test && npm run i18n:check
 
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add web
@@ -1529,7 +1531,7 @@ git commit -m "feat(web): Agent Groups page and group-scoped role grants"
 **Files:**
 - Create: `internal/agent/q1_accept_test.go`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 func TestQ1_FinanceOperatorCannotTouchAds(t *testing.T) {
@@ -1591,17 +1593,17 @@ func writeSpecWithGroup(t *testing.T, name, group string) string {
 
 另写 `TestQ1_AgentGroupScope`（同一文件）：创建组、**不** add-member，grant `operator` + `AGENT_GROUP`，login 后 `process restart pay` 必须 DENIED；再 `group add-member`，同一用户 restart 成功。不启第二节点。
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/agent -run TestQ1_ -count=1 -timeout 120s`
 
 Expected: FAIL（CLI group 或过滤未接通到真实 agent）
 
-- [ ] **Step 3: Fix wiring gaps only**
+- [x] **Step 3: Fix wiring gaps only**
 
 若失败原因是 Agent 没挂 GroupService：检查 `internal/agent` 是否用 `api.NewServer`（已在 Task 9 挂上）。若 CLI session 在 login 后没带 token，沿用 P4 的 `loginAdmin` / 会话文件逻辑。不要扩 scope。
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run:
 
@@ -1612,7 +1614,7 @@ go test ./internal/control ./internal/auth ./internal/process -count=1
 
 Expected: PASS；三包覆盖率 ≥ 80%
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/agent/q1_accept_test.go
