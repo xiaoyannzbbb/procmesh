@@ -596,8 +596,16 @@ func (s *State) userByID(id string) (User, bool) {
 	return u, ok
 }
 
-// Check reports whether userID may perform perm against targetNodeID.
+type CheckTarget struct {
+	NodeID       string
+	ProcessGroup string
+}
+
 func (s *State) Check(userID, perm, targetNodeID string) bool {
+	return s.CheckTarget(userID, perm, CheckTarget{NodeID: targetNodeID})
+}
+
+func (s *State) CheckTarget(userID, perm string, t CheckTarget) bool {
 	u, ok := s.userByID(userID)
 	if !ok || u.Status != UserActive {
 		return false
@@ -614,9 +622,34 @@ func (s *State) Check(userID, perm, targetNodeID string) bool {
 		case ScopeCluster:
 			return true
 		case ScopeAgent:
-			if targetNodeID != "" && b.ScopeID == targetNodeID {
+			if t.NodeID != "" && b.ScopeID == t.NodeID {
 				return true
 			}
+		case ScopeAgentGroup:
+			if t.NodeID != "" && s.NodeInGroup(t.NodeID, b.ScopeID) {
+				return true
+			}
+		case ScopeProcessGroup:
+			if t.ProcessGroup != "" && t.ProcessGroup == b.ScopeID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (s *State) CanAny(userID, perm string) bool {
+	u, ok := s.userByID(userID)
+	if !ok || u.Status != UserActive {
+		return false
+	}
+	for _, b := range s.Bindings {
+		if b.UserID != userID {
+			continue
+		}
+		role, ok := s.Roles[b.RoleID]
+		if ok && roleHasPerm(role, perm) {
+			return true
 		}
 	}
 	return false

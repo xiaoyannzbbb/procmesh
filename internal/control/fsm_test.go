@@ -768,6 +768,42 @@ func TestFSM_AgentGroupErrorsAndMemberRemove(t *testing.T) {
 	}
 }
 
+func TestFSM_CheckAgentGroupAndProcessGroup(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := mustBootstrap(t, now)
+	_ = s.Apply(mustEncode(t, "member_put", control.MemberPutBody{NodeID: "node-fin"}), now)
+	_ = s.Apply(mustEncode(t, "member_put", control.MemberPutBody{NodeID: "node-ads"}), now)
+	_ = s.Apply(mustEncode(t, "group_put", control.GroupPutBody{GroupID: "g-fin", Name: "finance", NowUnix: now.Unix()}), now)
+	_ = s.Apply(mustEncode(t, "group_member_add", control.GroupMemberBody{GroupID: "g-fin", NodeID: "node-fin"}), now)
+	_ = s.Apply(mustEncode(t, "user_put", control.UserPutBody{ID: "u-fin", Username: "finop", PasswordHash: "h"}), now)
+	_ = s.Apply(mustEncode(t, "bind_put", control.BindPutBody{
+		UserID: "u-fin", RoleID: "operator", Scope: control.ScopeAgentGroup, ScopeID: "g-fin",
+	}), now)
+	_ = s.Apply(mustEncode(t, "user_put", control.UserPutBody{ID: "u-pg", Username: "pgop", PasswordHash: "h"}), now)
+	_ = s.Apply(mustEncode(t, "bind_put", control.BindPutBody{
+		UserID: "u-pg", RoleID: "operator", Scope: control.ScopeProcessGroup, ScopeID: "finance",
+	}), now)
+
+	if !s.CheckTarget("u-fin", "process.restart", control.CheckTarget{NodeID: "node-fin"}) {
+		t.Fatal("agent group should allow finance node")
+	}
+	if s.CheckTarget("u-fin", "process.restart", control.CheckTarget{NodeID: "node-ads"}) {
+		t.Fatal("agent group must not allow ads node")
+	}
+	if !s.CheckTarget("u-pg", "process.restart", control.CheckTarget{NodeID: "node-ads", ProcessGroup: "finance"}) {
+		t.Fatal("process group matches spec.group regardless of node")
+	}
+	if s.CheckTarget("u-pg", "process.restart", control.CheckTarget{NodeID: "node-ads", ProcessGroup: "ads"}) {
+		t.Fatal("process group must not match other name")
+	}
+	if s.CheckTarget("u-pg", "process.restart", control.CheckTarget{NodeID: "node-ads"}) {
+		t.Fatal("empty process group must not match PROCESS_GROUP")
+	}
+	if !s.CanAny("u-fin", "process.read") {
+		t.Fatal("CanAny")
+	}
+}
+
 func TestFSM_MemberRemoveStripsGroups(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	s := mustBootstrap(t, now)
