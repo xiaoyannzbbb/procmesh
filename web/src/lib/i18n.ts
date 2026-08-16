@@ -1,10 +1,9 @@
 import i18n from 'i18next'
 import I18NextVue from 'i18next-vue'
 import LanguageDetector from 'i18next-browser-languagedetector'
-import Backend from 'i18next-http-backend'
+import { loadNamespace } from './i18nBackend'
 
 i18n
-  .use(Backend)
   .use(LanguageDetector)
   .init({
     fallbackLng: 'en',
@@ -19,9 +18,19 @@ i18n
       lookupLocalStorage: 'procmesh_language',
     },
 
-    backend: {
-      loadPath: '/locales/{{lng}}/{{ns}}.json',
-      requestOptions: { cache: 'default' },
+    resources: {
+      en: {
+        common: loadNamespace('en', 'common'),
+        errors: loadNamespace('en', 'errors'),
+        process: loadNamespace('en', 'process'),
+        audit: loadNamespace('en', 'audit'),
+      },
+      zh: {
+        common: loadNamespace('zh', 'common'),
+        errors: loadNamespace('zh', 'errors'),
+        process: loadNamespace('zh', 'process'),
+        audit: loadNamespace('zh', 'audit'),
+      },
     },
 
     interpolation: {

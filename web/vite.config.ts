@@ -26,7 +26,6 @@ export default defineConfig({
             "i18next-vue",
             "i18next-browser-languagedetector",
           ],
-          "i18n-backend": ["i18next-http-backend"],
           "vue-core": ["vue", "vue-router"],
           connect: ["@connectrpc/connect", "@connectrpc/connect-web"],
         },
