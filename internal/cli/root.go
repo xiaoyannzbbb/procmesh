@@ -58,6 +58,12 @@ commands:
   group delete GROUP_ID
   group add-member --group-id ID --node-id ID
   group remove-member --group-id ID --node-id ID
+  batch create --type start|stop|restart|apply [--process-id ID]... [--process-name NODE:NAME]... [--agent-group-id ID] [--process-group NAME] [--file spec.yaml]
+  batch get BATCH_ID
+  batch list
+  batch retry BATCH_ID
+  batch replay-timeout BATCH_ID
+  batch export BATCH_ID [--format json|csv]
 `
 
 type usageError string
@@ -102,6 +108,13 @@ type options struct {
 	description string
 	groupID     string
 	nodeID      string
+
+	batchType     string
+	processIDs    []string
+	processNames  []string
+	agentGroupID  string
+	processGroup  string
+	format        string
 
 	args []string
 }
@@ -183,6 +196,11 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return printUsage(stderr, usageError("missing group subcommand"))
 		}
 		runErr = runGroup(c, rest[0], rest[1:], opt, stdout)
+	case "batch":
+		if len(rest) == 0 {
+			return printUsage(stderr, usageError("missing batch subcommand"))
+		}
+		runErr = runBatch(c, rest[0], rest[1:], opt, stdout)
 	default:
 		return printUsage(stderr, usageError("unknown command"))
 	}
@@ -335,6 +353,18 @@ func applyFlag(opt *options, name, val string) error {
 		opt.groupID = val
 	case "node-id":
 		opt.nodeID = val
+	case "type":
+		opt.batchType = val
+	case "process-id":
+		opt.processIDs = append(opt.processIDs, val)
+	case "process-name":
+		opt.processNames = append(opt.processNames, val)
+	case "agent-group-id":
+		opt.agentGroupID = val
+	case "process-group":
+		opt.processGroup = val
+	case "format":
+		opt.format = val
 	default:
 		return usageError("unknown flag --" + name)
 	}

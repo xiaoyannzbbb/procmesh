@@ -161,6 +161,65 @@ func TestCLI_GroupUsageAndParse(t *testing.T) {
 	}
 }
 
+func TestCLI_BatchUsageAndParse(t *testing.T) {
+	if !strings.Contains(usageText, "batch create") {
+		t.Fatal("usage missing batch create")
+	}
+	if !strings.Contains(usageText, "batch replay-timeout") {
+		t.Fatal("usage missing batch replay-timeout")
+	}
+
+	opt, err := parseArgs([]string{"batch", "create", "--type", "restart", "--process-id", "p1"})
+	if err != nil {
+		t.Fatalf("batch create parse: %v", err)
+	}
+	if len(opt.args) != 2 || opt.args[0] != "batch" || opt.args[1] != "create" {
+		t.Fatalf("args=%v", opt.args)
+	}
+	if opt.batchType != "restart" {
+		t.Fatalf("type=%q", opt.batchType)
+	}
+	if len(opt.processIDs) != 1 || opt.processIDs[0] != "p1" {
+		t.Fatalf("processIDs=%v", opt.processIDs)
+	}
+
+	opt, err = parseArgs([]string{
+		"batch", "export", "BID",
+		"--format", "csv",
+		"--process-group", "finance",
+		"--agent-group-id", "g1",
+	})
+	if err != nil {
+		t.Fatalf("batch export parse: %v", err)
+	}
+	if opt.format != "csv" {
+		t.Fatalf("format=%q", opt.format)
+	}
+	if opt.processGroup != "finance" {
+		t.Fatalf("processGroup=%q", opt.processGroup)
+	}
+	if opt.agentGroupID != "g1" {
+		t.Fatalf("agentGroupID=%q", opt.agentGroupID)
+	}
+
+	opt, err = parseArgs([]string{
+		"batch", "create", "--type", "start",
+		"--process-name", "node-a:web",
+		"--process-name", "node-b:api",
+		"--process-id", "p1",
+		"--process-id", "p2",
+	})
+	if err != nil {
+		t.Fatalf("batch multi selector parse: %v", err)
+	}
+	if len(opt.processNames) != 2 || opt.processNames[0] != "node-a:web" || opt.processNames[1] != "node-b:api" {
+		t.Fatalf("processNames=%v", opt.processNames)
+	}
+	if len(opt.processIDs) != 2 || opt.processIDs[0] != "p1" || opt.processIDs[1] != "p2" {
+		t.Fatalf("processIDs=%v", opt.processIDs)
+	}
+}
+
 func TestCLI_ClusterInitAndNodeList(t *testing.T) {
 	url := newClusterTestServer(t)
 	code, out, errb := runCLI("--server", url, "cluster", "init")
