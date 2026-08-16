@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { classify, LIVE, STALE, UNKNOWN, type Freshness } from "../lib/freshness";
+import { useI18n } from "../lib/useI18n";
+
+const { t } = useI18n();
 
 const props = defineProps<{
   nowMs?: number;
@@ -14,6 +17,19 @@ const value = computed<Freshness>(() => {
     return props.status;
   }
   return classify(props.nowMs ?? 0, props.lastUpdatedUnixMs ?? 0, props.nodeState ?? "");
+});
+
+const displayText = computed(() => {
+  switch (value.value) {
+    case LIVE:
+      return t("common:status.live");
+    case STALE:
+      return t("common:status.stale");
+    case UNKNOWN:
+      return t("common:status.unknown");
+    default:
+      return value.value;
+  }
 });
 
 const badgeClass = computed(() => "freshness-" + value.value.toLowerCase());
@@ -31,7 +47,7 @@ const badgeStyle = computed(() => {
 </script>
 
 <template>
-  <span :class="['freshness-badge', badgeClass]" :style="badgeStyle">{{ value }}</span>
+  <span :class="['freshness-badge', badgeClass]" :style="badgeStyle">{{ displayText }}</span>
 </template>
 
 <style>
