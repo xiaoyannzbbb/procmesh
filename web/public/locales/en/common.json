@@ -72,5 +72,36 @@
       "result": "Result",
       "freshness": "Freshness"
     }
+  },
+  "overview": {
+    "title": "Overview",
+    "loading": "Loading…",
+    "cluster": "Cluster",
+    "procMesh": {
+      "title": "ProcMesh",
+      "controlQuorum": "Control quorum",
+      "gossip": "Gossip",
+      "rpc": "RPC",
+      "certExpiry": "Cert expiry",
+      "caExpiry": "CA expiry",
+      "controlLeader": "Control leader",
+      "healthy": "healthy",
+      "unhealthy": "unhealthy",
+      "versions": "Versions"
+    },
+    "workload": {
+      "title": "Workload",
+      "agentTotal": "Agent Total",
+      "alive": "Alive",
+      "suspect": "Suspect",
+      "failed": "Failed",
+      "processTotal": "Process Total",
+      "running": "Running",
+      "unhealthy": "Unhealthy",
+      "fatal": "Fatal",
+      "cpu": "CPU",
+      "memory": "Memory",
+      "disk": "Disk"
+    }
   }
 }

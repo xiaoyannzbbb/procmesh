@@ -16,6 +16,37 @@ beforeEach(async () => {
       en: {
         common: {
           status: { live: "LIVE", stale: "STALE", unknown: "UNKNOWN" },
+          overview: {
+            title: "Overview",
+            loading: "Loading…",
+            cluster: "Cluster",
+            procMesh: {
+              title: "ProcMesh",
+              controlQuorum: "Control quorum",
+              gossip: "Gossip",
+              rpc: "RPC",
+              certExpiry: "Cert expiry",
+              caExpiry: "CA expiry",
+              controlLeader: "Control leader",
+              healthy: "healthy",
+              unhealthy: "unhealthy",
+              versions: "Versions",
+            },
+            workload: {
+              title: "Workload",
+              agentTotal: "Agent Total",
+              alive: "Alive",
+              suspect: "Suspect",
+              failed: "Failed",
+              processTotal: "Process Total",
+              running: "Running",
+              unhealthy: "Unhealthy",
+              fatal: "Fatal",
+              cpu: "CPU",
+              memory: "Memory",
+              disk: "Disk",
+            },
+          },
         },
       },
     },
@@ -117,5 +148,101 @@ describe("OverviewPage", () => {
     expect(text).toContain("unknown");
     expect(text).not.toMatch(/CPU\s*0%/);
     expect(text).not.toMatch(/Memory\s*0%/);
+  });
+});
+
+describe("OverviewPage i18n", () => {
+  it("should render in English", async () => {
+    await i18n.changeLanguage("en");
+    await i18n.addResourceBundle("en", "common", {
+      overview: {
+        title: "Overview",
+        loading: "Loading…",
+        cluster: "Cluster",
+        procMesh: {
+          title: "ProcMesh",
+          controlQuorum: "Control quorum",
+          gossip: "Gossip",
+          rpc: "RPC",
+          certExpiry: "Cert expiry",
+          caExpiry: "CA expiry",
+          controlLeader: "Control leader",
+          healthy: "healthy",
+          unhealthy: "unhealthy",
+          versions: "Versions",
+        },
+        workload: {
+          title: "Workload",
+          agentTotal: "Agent Total",
+          alive: "Alive",
+          suspect: "Suspect",
+          failed: "Failed",
+          processTotal: "Process Total",
+          running: "Running",
+          unhealthy: "Unhealthy",
+          fatal: "Fatal",
+          cpu: "CPU",
+          memory: "Memory",
+          disk: "Disk",
+        },
+      },
+      status: { stale: "STALE" },
+    });
+
+    const wrapper = await mountOverview();
+    const text = wrapper.text();
+    expect(text).toContain("Overview");
+    expect(text).toContain("ProcMesh");
+    expect(text).toContain("Workload");
+    expect(text).toContain("Control quorum");
+    expect(text).toContain("Gossip");
+    expect(text).toContain("Agent Total");
+    expect(text).toContain("Running");
+  });
+
+  it("should render in Chinese", async () => {
+    await i18n.changeLanguage("zh");
+    await i18n.addResourceBundle("zh", "common", {
+      overview: {
+        title: "概览",
+        loading: "加载中…",
+        cluster: "集群",
+        procMesh: {
+          title: "ProcMesh",
+          controlQuorum: "控制仲裁",
+          gossip: "Gossip",
+          rpc: "RPC",
+          certExpiry: "证书过期时间",
+          caExpiry: "CA过期时间",
+          controlLeader: "控制领导者",
+          healthy: "健康",
+          unhealthy: "不健康",
+          versions: "版本",
+        },
+        workload: {
+          title: "工作负载",
+          agentTotal: "代理总数",
+          alive: "存活",
+          suspect: "可疑",
+          failed: "失败",
+          processTotal: "进程总数",
+          running: "运行中",
+          unhealthy: "不健康",
+          fatal: "致命",
+          cpu: "CPU",
+          memory: "内存",
+          disk: "磁盘",
+        },
+      },
+      status: { stale: "STALE" },
+    });
+
+    const wrapper = await mountOverview();
+    const text = wrapper.text();
+    expect(text).toContain("概览");
+    expect(text).toContain("工作负载");
+    expect(text).toContain("控制仲裁");
+    expect(text).toContain("代理总数");
+    expect(text).toContain("运行中");
   });
 });

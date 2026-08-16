@@ -72,5 +72,36 @@
       "result": "结果",
       "freshness": "新鲜度"
     }
+  },
+  "overview": {
+    "title": "概览",
+    "loading": "加载中…",
+    "cluster": "集群",
+    "procMesh": {
+      "title": "ProcMesh",
+      "controlQuorum": "控制仲裁",
+      "gossip": "Gossip",
+      "rpc": "RPC",
+      "certExpiry": "证书过期时间",
+      "caExpiry": "CA过期时间",
+      "controlLeader": "控制领导者",
+      "healthy": "健康",
+      "unhealthy": "不健康",
+      "versions": "版本"
+    },
+    "workload": {
+      "title": "工作负载",
+      "agentTotal": "代理总数",
+      "alive": "存活",
+      "suspect": "可疑",
+      "failed": "失败",
+      "processTotal": "进程总数",
+      "running": "运行中",
+      "unhealthy": "不健康",
+      "fatal": "致命",
+      "cpu": "CPU",
+      "memory": "内存",
+      "disk": "磁盘"
+    }
   }
 }

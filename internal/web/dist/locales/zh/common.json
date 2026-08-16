@@ -1,0 +1,35 @@
+{
+  "app": {
+    "name": "ProcMesh",
+    "tagline": "分布式进程管理平台"
+  },
+  "nav": {
+    "cluster": "集群",
+    "nodes": "节点",
+    "processes": "进程",
+    "users": "用户",
+    "audit": "审计"
+  },
+  "actions": {
+    "start": "启动",
+    "stop": "停止",
+    "restart": "重启",
+    "delete": "删除",
+    "edit": "编辑",
+    "save": "保存",
+    "cancel": "取消",
+    "confirm": "确认",
+    "close": "关闭"
+  },
+  "status": {
+    "live": "实时",
+    "stale": "过时",
+    "unknown": "未知"
+  },
+  "common": {
+    "loading": "加载中...",
+    "error": "错误",
+    "success": "成功",
+    "noData": "暂无数据"
+  }
+}

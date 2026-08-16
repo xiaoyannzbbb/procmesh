@@ -3,7 +3,10 @@ import { useQuery } from "@tanstack/vue-query";
 import { computed } from "vue";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
 import { useClusterClient } from "../lib/rpc";
+import { useI18n } from "../lib/useI18n";
 import { formatPercent, mapOverview } from "./clusterView";
+
+const { t } = useI18n();
 
 const POLL_MS = 5000;
 const client = useClusterClient();
@@ -30,8 +33,8 @@ const errorText = computed(() => {
 
 <template>
   <div class="page">
-    <h1>Overview</h1>
-    <p v-if="query.isPending && !view" class="muted">Loading…</p>
+    <h1>{{ t("overview.title") }}</h1>
+    <p v-if="query.isPending && !view" class="muted">{{ t("overview.loading") }}</p>
     <p v-else-if="errorText" class="error" role="alert">{{ errorText }}</p>
     <template v-else-if="view">
       <div v-if="view.procMesh.platformNote" class="banner platform-note" role="status">
@@ -42,38 +45,38 @@ const errorText = computed(() => {
       </div>
 
       <section class="card">
-        <h2>ProcMesh</h2>
-        <p v-if="view.clusterId" class="muted cluster-id">Cluster {{ view.clusterId }}</p>
+        <h2>{{ t("overview.procMesh.title") }}</h2>
+        <p v-if="view.clusterId" class="muted cluster-id">{{ t("overview.cluster") }} {{ view.clusterId }}</p>
         <dl class="facts">
           <div>
-            <dt>Control quorum</dt>
+            <dt>{{ t("overview.procMesh.controlQuorum") }}</dt>
             <dd class="quorum" :class="{ danger: !view.procMesh.controlQuorum }">
               {{ view.procMesh.controlQuorumLabel }}
             </dd>
           </div>
           <div>
-            <dt>Gossip</dt>
-            <dd>{{ view.procMesh.gossipHealthy ? "healthy" : "unhealthy" }}</dd>
+            <dt>{{ t("overview.procMesh.gossip") }}</dt>
+            <dd>{{ view.procMesh.gossipHealthy ? t("overview.procMesh.healthy") : t("overview.procMesh.unhealthy") }}</dd>
           </div>
           <div>
-            <dt>RPC</dt>
-            <dd>{{ view.procMesh.rpcHealthy ? "healthy" : "unhealthy" }}</dd>
+            <dt>{{ t("overview.procMesh.rpc") }}</dt>
+            <dd>{{ view.procMesh.rpcHealthy ? t("overview.procMesh.healthy") : t("overview.procMesh.unhealthy") }}</dd>
           </div>
           <div>
-            <dt>Cert expiry</dt>
+            <dt>{{ t("overview.procMesh.certExpiry") }}</dt>
             <dd>{{ view.procMesh.certExpires || "—" }}</dd>
           </div>
           <div>
-            <dt>CA expiry</dt>
+            <dt>{{ t("overview.procMesh.caExpiry") }}</dt>
             <dd>{{ view.procMesh.caExpires || "—" }}</dd>
           </div>
           <div v-if="view.procMesh.controlLeader">
-            <dt>Control leader</dt>
+            <dt>{{ t("overview.procMesh.controlLeader") }}</dt>
             <dd>{{ view.procMesh.controlLeader }}</dd>
           </div>
         </dl>
         <div v-if="view.procMesh.versionCounts.length" class="versions">
-          <h3>Versions</h3>
+          <h3>{{ t("overview.procMesh.versions") }}</h3>
           <ul>
             <li v-for="item in view.procMesh.versionCounts" :key="item.version">
               {{ item.version }} × {{ item.count }}
@@ -84,55 +87,55 @@ const errorText = computed(() => {
 
       <section class="card">
         <div class="title-row">
-          <h2>Workload</h2>
+          <h2>{{ t("overview.workload.title") }}</h2>
           <FreshnessBadge :status="view.workload.freshness" />
           <span class="muted">{{ view.workload.lastUpdated }}</span>
         </div>
         <div class="stats">
           <div class="stat">
-            <span class="stat-label">Agent Total</span>
+            <span class="stat-label">{{ t("overview.workload.agentTotal") }}</span>
             <span class="stat-value">{{ view.workload.agentTotal }}</span>
           </div>
           <div class="stat">
-            <span class="stat-label">Alive</span>
+            <span class="stat-label">{{ t("overview.workload.alive") }}</span>
             <span class="stat-value">{{ view.workload.agentAlive }}</span>
           </div>
           <div class="stat">
-            <span class="stat-label">Suspect</span>
+            <span class="stat-label">{{ t("overview.workload.suspect") }}</span>
             <span class="stat-value">{{ view.workload.agentSuspect }}</span>
           </div>
           <div class="stat">
-            <span class="stat-label">Failed</span>
+            <span class="stat-label">{{ t("overview.workload.failed") }}</span>
             <span class="stat-value">{{ view.workload.agentFailed }}</span>
           </div>
           <div class="stat">
-            <span class="stat-label">Process Total</span>
+            <span class="stat-label">{{ t("overview.workload.processTotal") }}</span>
             <span class="stat-value">{{ view.workload.processTotal }}</span>
           </div>
           <div class="stat">
-            <span class="stat-label">Running</span>
+            <span class="stat-label">{{ t("overview.workload.running") }}</span>
             <span class="stat-value">{{ view.workload.processRunning }}</span>
           </div>
           <div class="stat">
-            <span class="stat-label">Unhealthy</span>
+            <span class="stat-label">{{ t("overview.workload.unhealthy") }}</span>
             <span class="stat-value">{{ view.workload.processUnhealthy }}</span>
           </div>
           <div class="stat">
-            <span class="stat-label">Fatal</span>
+            <span class="stat-label">{{ t("overview.workload.fatal") }}</span>
             <span class="stat-value">{{ view.workload.processFatal }}</span>
           </div>
         </div>
         <dl class="facts resources">
           <div>
-            <dt>CPU</dt>
+            <dt>{{ t("overview.workload.cpu") }}</dt>
             <dd>{{ formatPercent(view.workload.cpuPercent) }}</dd>
           </div>
           <div>
-            <dt>Memory</dt>
+            <dt>{{ t("overview.workload.memory") }}</dt>
             <dd>{{ formatPercent(view.workload.memoryPercent) }}</dd>
           </div>
           <div>
-            <dt>Disk</dt>
+            <dt>{{ t("overview.workload.disk") }}</dt>
             <dd>{{ formatPercent(view.workload.diskPercent) }}</dd>
           </div>
         </dl>
