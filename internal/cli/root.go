@@ -52,7 +52,12 @@ commands:
   user disable USER_ID
   role list
   role create --name NAME --perm P [--perm P...]
-  role grant --user-id ID --role-id ID [--scope CLUSTER|AGENT] [--scope-id NODE]
+  role grant --user-id ID --role-id ID [--scope CLUSTER|AGENT|AGENT_GROUP|PROCESS_GROUP] [--scope-id NODE]
+  group list
+  group create --name NAME [--description T]
+  group delete GROUP_ID
+  group add-member --group-id ID --node-id ID
+  group remove-member --group-id ID --node-id ID
 `
 
 type usageError string
@@ -88,12 +93,15 @@ type options struct {
 	password  string
 	display   string
 	email     string
-	name      string
-	perms     []string
-	userID    string
-	roleID    string
-	scope     string
-	scopeID   string
+	name        string
+	perms       []string
+	userID      string
+	roleID      string
+	scope       string
+	scopeID     string
+	description string
+	groupID     string
+	nodeID      string
 
 	args []string
 }
@@ -170,6 +178,11 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return printUsage(stderr, usageError("missing role subcommand"))
 		}
 		runErr = runRole(c, rest[0], rest[1:], opt, stdout)
+	case "group":
+		if len(rest) == 0 {
+			return printUsage(stderr, usageError("missing group subcommand"))
+		}
+		runErr = runGroup(c, rest[0], rest[1:], opt, stdout)
 	default:
 		return printUsage(stderr, usageError("unknown command"))
 	}
@@ -316,6 +329,12 @@ func applyFlag(opt *options, name, val string) error {
 		opt.scope = val
 	case "scope-id":
 		opt.scopeID = val
+	case "description":
+		opt.description = val
+	case "group-id":
+		opt.groupID = val
+	case "node-id":
+		opt.nodeID = val
 	default:
 		return usageError("unknown flag --" + name)
 	}

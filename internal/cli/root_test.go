@@ -122,6 +122,45 @@ func TestCLI_UnknownCommand(t *testing.T) {
 	}
 }
 
+func TestCLI_GroupUsageAndParse(t *testing.T) {
+	if !strings.Contains(usageText, "group list") {
+		t.Fatal("usage missing group list")
+	}
+	if !strings.Contains(usageText, "group create --name NAME") {
+		t.Fatal("usage missing group create")
+	}
+	if !strings.Contains(usageText, "CLUSTER|AGENT|AGENT_GROUP|PROCESS_GROUP") {
+		t.Fatal("usage missing expanded role grant scopes")
+	}
+
+	opt, err := parseArgs([]string{"group", "create", "--name", "finance"})
+	if err != nil {
+		t.Fatalf("group create parse: %v", err)
+	}
+	if len(opt.args) != 2 || opt.args[0] != "group" || opt.args[1] != "create" {
+		t.Fatalf("args=%v", opt.args)
+	}
+	if opt.name != "finance" {
+		t.Fatalf("name=%q", opt.name)
+	}
+
+	opt, err = parseArgs([]string{"group", "add-member", "--group-id", "GID", "--node-id", "NID"})
+	if err != nil {
+		t.Fatalf("group add-member parse: %v", err)
+	}
+	if opt.groupID != "GID" || opt.nodeID != "NID" {
+		t.Fatalf("groupID=%q nodeID=%q", opt.groupID, opt.nodeID)
+	}
+
+	opt, err = parseArgs([]string{"role", "grant", "--scope", "AGENT_GROUP", "--scope-id", "GID"})
+	if err != nil {
+		t.Fatalf("role grant parse: %v", err)
+	}
+	if opt.scope != "AGENT_GROUP" || opt.scopeID != "GID" {
+		t.Fatalf("scope=%q scopeID=%q", opt.scope, opt.scopeID)
+	}
+}
+
 func TestCLI_ClusterInitAndNodeList(t *testing.T) {
 	url := newClusterTestServer(t)
 	code, out, errb := runCLI("--server", url, "cluster", "init")

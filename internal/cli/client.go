@@ -26,6 +26,7 @@ type client struct {
 	auth     procmeshv1connect.AuthServiceClient
 	user     procmeshv1connect.UserServiceClient
 	role     procmeshv1connect.RoleServiceClient
+	group    procmeshv1connect.GroupServiceClient
 	opID     string
 	operator string
 }
@@ -55,6 +56,7 @@ func newClient(server, opID, operator, node, authToken string) *client {
 		auth:     procmeshv1connect.NewAuthServiceClient(hc, base, opts...),
 		user:     procmeshv1connect.NewUserServiceClient(hc, base, opts...),
 		role:     procmeshv1connect.NewRoleServiceClient(hc, base, opts...),
+		group:    procmeshv1connect.NewGroupServiceClient(hc, base, opts...),
 		opID:     opID,
 		operator: operator,
 	}
