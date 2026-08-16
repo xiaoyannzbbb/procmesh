@@ -61,3 +61,34 @@ func TestProto_P5ServicesGenerated(t *testing.T) {
 	_ = (&procmeshv1.ClusterOverviewResponse{}).GetProcessTotal
 	_ = (&procmeshv1.Instance{}).GetStartedUnixMs
 }
+
+func TestProto_BatchServiceGenerated(t *testing.T) {
+	if procmeshv1connect.BatchServiceName != "procmesh.v1.BatchService" {
+		t.Fatalf("batch=%s", procmeshv1connect.BatchServiceName)
+	}
+	if procmeshv1connect.BatchServiceCreateBatchProcedure == "" {
+		t.Fatal("missing BatchService.CreateBatch")
+	}
+	if procmeshv1connect.BatchServiceGetBatchProcedure == "" {
+		t.Fatal("missing BatchService.GetBatch")
+	}
+	if procmeshv1connect.BatchServiceListBatchesProcedure == "" {
+		t.Fatal("missing BatchService.ListBatches")
+	}
+	if procmeshv1connect.BatchServiceRetryFailedProcedure == "" {
+		t.Fatal("missing BatchService.RetryFailed")
+	}
+	if procmeshv1connect.BatchServiceReplayTimeoutProcedure == "" {
+		t.Fatal("missing BatchService.ReplayTimeout")
+	}
+	if procmeshv1connect.BatchServiceExportBatchProcedure == "" {
+		t.Fatal("missing BatchService.ExportBatch")
+	}
+	_ = (&procmeshv1.Batch{}).GetBatchId
+	_ = (&procmeshv1.BatchSelector{}).GetProcessIds
+	_ = (&procmeshv1.ProcessNameRef{}).GetNodeId
+	_ = (&procmeshv1.BatchSummary{}).GetTimeout
+	_ = (&procmeshv1.BatchTarget{}).GetOperationId
+	_ = (&procmeshv1.CreateBatchRequest{}).GetType
+	var _ procmeshv1connect.BatchServiceHandler = (*BatchAPI)(nil)
+}

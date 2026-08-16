@@ -43,6 +43,8 @@ const (
 	AuditServiceName = "procmesh.v1.AuditService"
 	// MetricsServiceName is the fully-qualified name of the MetricsService service.
 	MetricsServiceName = "procmesh.v1.MetricsService"
+	// BatchServiceName is the fully-qualified name of the BatchService service.
+	BatchServiceName = "procmesh.v1.BatchService"
 )
 
 // These constants are the fully-qualified names of the RPCs defined in this package. They're
@@ -170,6 +172,23 @@ const (
 	// MetricsServiceGetProcessMetricsProcedure is the fully-qualified name of the MetricsService's
 	// GetProcessMetrics RPC.
 	MetricsServiceGetProcessMetricsProcedure = "/procmesh.v1.MetricsService/GetProcessMetrics"
+	// BatchServiceCreateBatchProcedure is the fully-qualified name of the BatchService's CreateBatch
+	// RPC.
+	BatchServiceCreateBatchProcedure = "/procmesh.v1.BatchService/CreateBatch"
+	// BatchServiceGetBatchProcedure is the fully-qualified name of the BatchService's GetBatch RPC.
+	BatchServiceGetBatchProcedure = "/procmesh.v1.BatchService/GetBatch"
+	// BatchServiceListBatchesProcedure is the fully-qualified name of the BatchService's ListBatches
+	// RPC.
+	BatchServiceListBatchesProcedure = "/procmesh.v1.BatchService/ListBatches"
+	// BatchServiceRetryFailedProcedure is the fully-qualified name of the BatchService's RetryFailed
+	// RPC.
+	BatchServiceRetryFailedProcedure = "/procmesh.v1.BatchService/RetryFailed"
+	// BatchServiceReplayTimeoutProcedure is the fully-qualified name of the BatchService's
+	// ReplayTimeout RPC.
+	BatchServiceReplayTimeoutProcedure = "/procmesh.v1.BatchService/ReplayTimeout"
+	// BatchServiceExportBatchProcedure is the fully-qualified name of the BatchService's ExportBatch
+	// RPC.
+	BatchServiceExportBatchProcedure = "/procmesh.v1.BatchService/ExportBatch"
 )
 
 // ProcessServiceClient is a client for the procmesh.v1.ProcessService service.
@@ -1876,4 +1895,204 @@ func (UnimplementedMetricsServiceHandler) GetAgentMetrics(context.Context, *conn
 
 func (UnimplementedMetricsServiceHandler) GetProcessMetrics(context.Context, *connect.Request[v1.GetProcessMetricsRequest]) (*connect.Response[v1.GetProcessMetricsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.MetricsService.GetProcessMetrics is not implemented"))
+}
+
+// BatchServiceClient is a client for the procmesh.v1.BatchService service.
+type BatchServiceClient interface {
+	CreateBatch(context.Context, *connect.Request[v1.CreateBatchRequest]) (*connect.Response[v1.CreateBatchResponse], error)
+	GetBatch(context.Context, *connect.Request[v1.GetBatchRequest]) (*connect.Response[v1.GetBatchResponse], error)
+	ListBatches(context.Context, *connect.Request[v1.ListBatchesRequest]) (*connect.Response[v1.ListBatchesResponse], error)
+	RetryFailed(context.Context, *connect.Request[v1.RetryBatchRequest]) (*connect.Response[v1.RetryBatchResponse], error)
+	ReplayTimeout(context.Context, *connect.Request[v1.RetryBatchRequest]) (*connect.Response[v1.RetryBatchResponse], error)
+	ExportBatch(context.Context, *connect.Request[v1.ExportBatchRequest]) (*connect.Response[v1.ExportBatchResponse], error)
+}
+
+// NewBatchServiceClient constructs a client for the procmesh.v1.BatchService service. By default,
+// it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses, and
+// sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the connect.WithGRPC()
+// or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewBatchServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) BatchServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	batchServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("BatchService").Methods()
+	return &batchServiceClient{
+		createBatch: connect.NewClient[v1.CreateBatchRequest, v1.CreateBatchResponse](
+			httpClient,
+			baseURL+BatchServiceCreateBatchProcedure,
+			connect.WithSchema(batchServiceMethods.ByName("CreateBatch")),
+			connect.WithClientOptions(opts...),
+		),
+		getBatch: connect.NewClient[v1.GetBatchRequest, v1.GetBatchResponse](
+			httpClient,
+			baseURL+BatchServiceGetBatchProcedure,
+			connect.WithSchema(batchServiceMethods.ByName("GetBatch")),
+			connect.WithClientOptions(opts...),
+		),
+		listBatches: connect.NewClient[v1.ListBatchesRequest, v1.ListBatchesResponse](
+			httpClient,
+			baseURL+BatchServiceListBatchesProcedure,
+			connect.WithSchema(batchServiceMethods.ByName("ListBatches")),
+			connect.WithClientOptions(opts...),
+		),
+		retryFailed: connect.NewClient[v1.RetryBatchRequest, v1.RetryBatchResponse](
+			httpClient,
+			baseURL+BatchServiceRetryFailedProcedure,
+			connect.WithSchema(batchServiceMethods.ByName("RetryFailed")),
+			connect.WithClientOptions(opts...),
+		),
+		replayTimeout: connect.NewClient[v1.RetryBatchRequest, v1.RetryBatchResponse](
+			httpClient,
+			baseURL+BatchServiceReplayTimeoutProcedure,
+			connect.WithSchema(batchServiceMethods.ByName("ReplayTimeout")),
+			connect.WithClientOptions(opts...),
+		),
+		exportBatch: connect.NewClient[v1.ExportBatchRequest, v1.ExportBatchResponse](
+			httpClient,
+			baseURL+BatchServiceExportBatchProcedure,
+			connect.WithSchema(batchServiceMethods.ByName("ExportBatch")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// batchServiceClient implements BatchServiceClient.
+type batchServiceClient struct {
+	createBatch   *connect.Client[v1.CreateBatchRequest, v1.CreateBatchResponse]
+	getBatch      *connect.Client[v1.GetBatchRequest, v1.GetBatchResponse]
+	listBatches   *connect.Client[v1.ListBatchesRequest, v1.ListBatchesResponse]
+	retryFailed   *connect.Client[v1.RetryBatchRequest, v1.RetryBatchResponse]
+	replayTimeout *connect.Client[v1.RetryBatchRequest, v1.RetryBatchResponse]
+	exportBatch   *connect.Client[v1.ExportBatchRequest, v1.ExportBatchResponse]
+}
+
+// CreateBatch calls procmesh.v1.BatchService.CreateBatch.
+func (c *batchServiceClient) CreateBatch(ctx context.Context, req *connect.Request[v1.CreateBatchRequest]) (*connect.Response[v1.CreateBatchResponse], error) {
+	return c.createBatch.CallUnary(ctx, req)
+}
+
+// GetBatch calls procmesh.v1.BatchService.GetBatch.
+func (c *batchServiceClient) GetBatch(ctx context.Context, req *connect.Request[v1.GetBatchRequest]) (*connect.Response[v1.GetBatchResponse], error) {
+	return c.getBatch.CallUnary(ctx, req)
+}
+
+// ListBatches calls procmesh.v1.BatchService.ListBatches.
+func (c *batchServiceClient) ListBatches(ctx context.Context, req *connect.Request[v1.ListBatchesRequest]) (*connect.Response[v1.ListBatchesResponse], error) {
+	return c.listBatches.CallUnary(ctx, req)
+}
+
+// RetryFailed calls procmesh.v1.BatchService.RetryFailed.
+func (c *batchServiceClient) RetryFailed(ctx context.Context, req *connect.Request[v1.RetryBatchRequest]) (*connect.Response[v1.RetryBatchResponse], error) {
+	return c.retryFailed.CallUnary(ctx, req)
+}
+
+// ReplayTimeout calls procmesh.v1.BatchService.ReplayTimeout.
+func (c *batchServiceClient) ReplayTimeout(ctx context.Context, req *connect.Request[v1.RetryBatchRequest]) (*connect.Response[v1.RetryBatchResponse], error) {
+	return c.replayTimeout.CallUnary(ctx, req)
+}
+
+// ExportBatch calls procmesh.v1.BatchService.ExportBatch.
+func (c *batchServiceClient) ExportBatch(ctx context.Context, req *connect.Request[v1.ExportBatchRequest]) (*connect.Response[v1.ExportBatchResponse], error) {
+	return c.exportBatch.CallUnary(ctx, req)
+}
+
+// BatchServiceHandler is an implementation of the procmesh.v1.BatchService service.
+type BatchServiceHandler interface {
+	CreateBatch(context.Context, *connect.Request[v1.CreateBatchRequest]) (*connect.Response[v1.CreateBatchResponse], error)
+	GetBatch(context.Context, *connect.Request[v1.GetBatchRequest]) (*connect.Response[v1.GetBatchResponse], error)
+	ListBatches(context.Context, *connect.Request[v1.ListBatchesRequest]) (*connect.Response[v1.ListBatchesResponse], error)
+	RetryFailed(context.Context, *connect.Request[v1.RetryBatchRequest]) (*connect.Response[v1.RetryBatchResponse], error)
+	ReplayTimeout(context.Context, *connect.Request[v1.RetryBatchRequest]) (*connect.Response[v1.RetryBatchResponse], error)
+	ExportBatch(context.Context, *connect.Request[v1.ExportBatchRequest]) (*connect.Response[v1.ExportBatchResponse], error)
+}
+
+// NewBatchServiceHandler builds an HTTP handler from the service implementation. It returns the
+// path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewBatchServiceHandler(svc BatchServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	batchServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("BatchService").Methods()
+	batchServiceCreateBatchHandler := connect.NewUnaryHandler(
+		BatchServiceCreateBatchProcedure,
+		svc.CreateBatch,
+		connect.WithSchema(batchServiceMethods.ByName("CreateBatch")),
+		connect.WithHandlerOptions(opts...),
+	)
+	batchServiceGetBatchHandler := connect.NewUnaryHandler(
+		BatchServiceGetBatchProcedure,
+		svc.GetBatch,
+		connect.WithSchema(batchServiceMethods.ByName("GetBatch")),
+		connect.WithHandlerOptions(opts...),
+	)
+	batchServiceListBatchesHandler := connect.NewUnaryHandler(
+		BatchServiceListBatchesProcedure,
+		svc.ListBatches,
+		connect.WithSchema(batchServiceMethods.ByName("ListBatches")),
+		connect.WithHandlerOptions(opts...),
+	)
+	batchServiceRetryFailedHandler := connect.NewUnaryHandler(
+		BatchServiceRetryFailedProcedure,
+		svc.RetryFailed,
+		connect.WithSchema(batchServiceMethods.ByName("RetryFailed")),
+		connect.WithHandlerOptions(opts...),
+	)
+	batchServiceReplayTimeoutHandler := connect.NewUnaryHandler(
+		BatchServiceReplayTimeoutProcedure,
+		svc.ReplayTimeout,
+		connect.WithSchema(batchServiceMethods.ByName("ReplayTimeout")),
+		connect.WithHandlerOptions(opts...),
+	)
+	batchServiceExportBatchHandler := connect.NewUnaryHandler(
+		BatchServiceExportBatchProcedure,
+		svc.ExportBatch,
+		connect.WithSchema(batchServiceMethods.ByName("ExportBatch")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/procmesh.v1.BatchService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case BatchServiceCreateBatchProcedure:
+			batchServiceCreateBatchHandler.ServeHTTP(w, r)
+		case BatchServiceGetBatchProcedure:
+			batchServiceGetBatchHandler.ServeHTTP(w, r)
+		case BatchServiceListBatchesProcedure:
+			batchServiceListBatchesHandler.ServeHTTP(w, r)
+		case BatchServiceRetryFailedProcedure:
+			batchServiceRetryFailedHandler.ServeHTTP(w, r)
+		case BatchServiceReplayTimeoutProcedure:
+			batchServiceReplayTimeoutHandler.ServeHTTP(w, r)
+		case BatchServiceExportBatchProcedure:
+			batchServiceExportBatchHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedBatchServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedBatchServiceHandler struct{}
+
+func (UnimplementedBatchServiceHandler) CreateBatch(context.Context, *connect.Request[v1.CreateBatchRequest]) (*connect.Response[v1.CreateBatchResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.BatchService.CreateBatch is not implemented"))
+}
+
+func (UnimplementedBatchServiceHandler) GetBatch(context.Context, *connect.Request[v1.GetBatchRequest]) (*connect.Response[v1.GetBatchResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.BatchService.GetBatch is not implemented"))
+}
+
+func (UnimplementedBatchServiceHandler) ListBatches(context.Context, *connect.Request[v1.ListBatchesRequest]) (*connect.Response[v1.ListBatchesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.BatchService.ListBatches is not implemented"))
+}
+
+func (UnimplementedBatchServiceHandler) RetryFailed(context.Context, *connect.Request[v1.RetryBatchRequest]) (*connect.Response[v1.RetryBatchResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.BatchService.RetryFailed is not implemented"))
+}
+
+func (UnimplementedBatchServiceHandler) ReplayTimeout(context.Context, *connect.Request[v1.RetryBatchRequest]) (*connect.Response[v1.RetryBatchResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.BatchService.ReplayTimeout is not implemented"))
+}
+
+func (UnimplementedBatchServiceHandler) ExportBatch(context.Context, *connect.Request[v1.ExportBatchRequest]) (*connect.Response[v1.ExportBatchResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.BatchService.ExportBatch is not implemented"))
 }
