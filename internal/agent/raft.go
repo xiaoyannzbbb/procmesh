@@ -271,6 +271,39 @@ func applyAdminBootstrap(n *control.Node, clusterDir string) error {
 	if err != nil {
 		return err
 	}
+	if err := n.Apply(cmd, raftApplyTO); err != nil {
+		return err
+	}
+	return admitBootstrapMember(n, clusterDir)
+}
+
+func admitBootstrapMember(n *control.Node, clusterDir string) error {
+	meta, err := control.LoadMeta(clusterDir)
+	if err != nil {
+		return err
+	}
+	if meta.NodeID == "" {
+		return nil
+	}
+	view := n.View()
+	if m, ok := view.Member(meta.NodeID); ok && m.Status == control.MemberAdmitted {
+		return nil
+	}
+	serial := ""
+	if b, err := control.LoadBundle(clusterDir); err == nil {
+		if s, err := control.CertSerial(b.AgentCertPEM); err == nil {
+			serial = s
+		}
+	}
+	cmd, err := control.EncodeCommand(control.CmdMemberPut, control.MemberPutBody{
+		NodeID:     meta.NodeID,
+		RaftAddr:   n.Advertise(),
+		CertSerial: serial,
+		Status:     control.MemberAdmitted,
+	})
+	if err != nil {
+		return err
+	}
 	return n.Apply(cmd, raftApplyTO)
 }
 
