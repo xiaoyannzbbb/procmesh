@@ -10,7 +10,7 @@ i18n
     fallbackLng: 'en',
     supportedLngs: ['en', 'zh'],
     defaultNS: 'common',
-    ns: ['common'],
+    ns: ['common', 'errors'],
 
     detection: {
       order: ['localStorage', 'navigator'],

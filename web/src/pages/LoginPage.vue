@@ -6,7 +6,7 @@ import { useI18n } from "../lib/useI18n";
 
 const LOGIN_ERRORS = ["invalid credentials", "login rate limited", "user locked"] as const;
 
-const { t } = useI18n();
+const { t, tError } = useI18n();
 const username = ref("");
 const password = ref("");
 const error = ref("");
@@ -22,6 +22,15 @@ function loginErrorMessage(err: unknown): string {
       : err instanceof Error
         ? err.message
         : String(err);
+
+  // Check if error has a code property for translation
+  if (err && typeof err === "object" && "code" in err && typeof (err as { code: unknown }).code === "string") {
+    const code = (err as { code: string }).code;
+    const params = (err as any).params || {};
+    return tError(code, text, params);
+  }
+
+  // Fallback to phrase matching for legacy errors
   for (const phrase of LOGIN_ERRORS) {
     if (text.includes(phrase)) {
       return phrase;
