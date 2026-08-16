@@ -13,11 +13,17 @@
     "@connectrpc/connect": "^2.0.2",
     "@connectrpc/connect-web": "^2.0.2",
     "@tanstack/vue-query": "^5.67.2",
+    "i18next": "^26.3.6",
+    "i18next-browser-languagedetector": "^8.0.2",
+    "i18next-http-backend": "^2.7.3",
+    "i18next-vue": "^5.0.0",
+    "lucide-vue-next": "^0.469.0",
     "vue": "^3.5.13",
-    "vue-router": "^4.5.0",
-    "lucide-vue-next": "^0.469.0"
+    "vue-router": "^4.5.0"
   },
   "devDependencies": {
+    "@bufbuild/protoc-gen-es": "^2.2.3",
+    "@playwright/test": "^1.50.1",
     "@tailwindcss/vite": "^4.0.9",
     "@vitejs/plugin-vue": "^5.2.1",
     "@vue/test-utils": "^2.4.6",
@@ -26,8 +32,6 @@
     "typescript": "^5.7.3",
     "vite": "^6.2.0",
     "vitest": "^3.0.7",
-    "vue-tsc": "^2.2.4",
-    "@playwright/test": "^1.50.1",
-    "@bufbuild/protoc-gen-es": "^2.2.3"
+    "vue-tsc": "^2.2.4"
   }
 }

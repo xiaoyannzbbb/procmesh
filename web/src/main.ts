@@ -2,6 +2,7 @@ import { QueryClient, VueQueryPlugin } from "@tanstack/vue-query";
 import { createApp } from "vue";
 import App from "./App.vue";
 import { router } from "./router";
+import { i18n, I18NextVue } from "./lib/i18n";
 import "./style.css";
 
 const queryClient = new QueryClient({
@@ -12,4 +13,8 @@ const queryClient = new QueryClient({
   },
 });
 
-createApp(App).use(router).use(VueQueryPlugin, { queryClient }).mount("#app");
+createApp(App)
+  .use(router)
+  .use(VueQueryPlugin, { queryClient })
+  .use(I18NextVue, { i18next: i18n })
+  .mount("#app");
