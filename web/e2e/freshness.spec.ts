@@ -18,21 +18,38 @@ test("FAILED node with old last_updated shows STALE not green", async ({ page })
         }>;
       }>;
     };
-    for (const node of body.nodes ?? []) {
-      node.state = "FAILED";
-      node.lastUpdatedUnixMs = String(staleMs);
-      if (!node.processes?.length) {
-        node.processes = [
-          {
-            name: "sleep",
-            observed: "RUNNING",
-            freshnessUnixMs: String(staleMs),
-          },
-        ];
-      } else {
-        for (const proc of node.processes) {
-          proc.observed = "RUNNING";
-          proc.freshnessUnixMs = String(staleMs);
+    // Ensure we have at least one node with processes
+    if (!body.nodes || body.nodes.length === 0) {
+      body.nodes = [
+        {
+          state: "FAILED",
+          lastUpdatedUnixMs: String(staleMs),
+          processes: [
+            {
+              name: "sleep",
+              observed: "RUNNING",
+              freshnessUnixMs: String(staleMs),
+            },
+          ],
+        },
+      ];
+    } else {
+      for (const node of body.nodes) {
+        node.state = "FAILED";
+        node.lastUpdatedUnixMs = String(staleMs);
+        if (!node.processes?.length) {
+          node.processes = [
+            {
+              name: "sleep",
+              observed: "RUNNING",
+              freshnessUnixMs: String(staleMs),
+            },
+          ];
+        } else {
+          for (const proc of node.processes) {
+            proc.observed = "RUNNING";
+            proc.freshnessUnixMs = String(staleMs);
+          }
         }
       }
     }
