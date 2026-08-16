@@ -7,7 +7,8 @@
     "build": "vue-tsc -b && vite build",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "i18n:types": "tsx scripts/generate-i18n-types.ts"
+    "i18n:types": "tsx scripts/generate-i18n-types.ts",
+    "i18n:check": "node scripts/check-i18n-completeness.js"
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.2.3",
