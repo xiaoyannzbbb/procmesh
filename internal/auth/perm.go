@@ -26,6 +26,11 @@ const (
 	PermAuditRead           = "audit.read"
 	PermCommandExecute      = "command.execute"
 	PermCommandExecuteBatch = "command.execute.batch"
+	PermBatchExecute        = "batch.execute"
+	PermAlertRead           = "alert.read"
+	PermAlertManage         = "alert.manage"
+	PermBackupRead          = "backup.read"
+	PermBackupManage        = "backup.manage"
 	CookieName              = "procmesh_session"
 	HeaderCSRF              = "X-CSRF-Token"
 )

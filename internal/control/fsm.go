@@ -144,7 +144,13 @@ func (s *State) ensure() {
 	if s.AgentGroups == nil {
 		s.AgentGroups = map[string]AgentGroup{}
 	}
+	for _, r := range builtinRoles() {
+		s.Roles[r.ID] = r
+	}
 }
+
+// EnsureForTest exposes ensure() for tests. Production still only calls ensure from Apply/Restore.
+func (s *State) EnsureForTest() { s.ensure() }
 
 // Apply mutates in-memory control state. now is the apply wall clock.
 func (s *State) Apply(cmd Command, now time.Time) error {
@@ -833,6 +839,7 @@ var allPermissions = []string{
 	"user.read", "user.create", "user.update", "user.delete",
 	"role.read", "role.manage",
 	"audit.read",
+	"batch.execute", "alert.read", "alert.manage", "backup.read", "backup.manage",
 	"command.execute", "command.execute.batch",
 }
 
@@ -840,9 +847,11 @@ var operatorPermissions = []string{
 	"cluster.read", "node.read", "process.read",
 	"process.start", "process.stop", "process.restart",
 	"process.config.read", "process.logs.read",
+	"batch.execute", "alert.read",
 }
 
 var viewerPermissions = []string{
 	"cluster.read", "node.read", "process.read",
 	"process.config.read", "process.logs.read",
+	"alert.read",
 }

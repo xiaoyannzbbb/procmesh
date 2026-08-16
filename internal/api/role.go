@@ -156,6 +156,8 @@ func knownPerm(p string) bool {
 		auth.PermUserRead, auth.PermUserCreate, auth.PermUserUpdate, auth.PermUserDelete,
 		auth.PermRoleRead, auth.PermRoleManage,
 		auth.PermAuditRead,
+		auth.PermBatchExecute, auth.PermAlertRead, auth.PermAlertManage,
+		auth.PermBackupRead, auth.PermBackupManage,
 		auth.PermCommandExecute, auth.PermCommandExecuteBatch:
 		return true
 	default:

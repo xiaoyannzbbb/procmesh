@@ -804,6 +804,33 @@ func TestFSM_CheckAgentGroupAndProcessGroup(t *testing.T) {
 	}
 }
 
+func TestFSM_EnsureSyncsBuiltinAlertPerms(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := mustBootstrap(t, now)
+	r := s.Roles["operator"]
+	r.Perms = []string{"cluster.read"} // 模拟升级前旧种子
+	s.Roles["operator"] = r
+	s.EnsureForTest()
+	if !hasPerm(s.Roles["operator"].Perms, "batch.execute") {
+		t.Fatal("operator should gain batch.execute")
+	}
+	if !hasPerm(s.Roles["viewer"].Perms, "alert.read") {
+		t.Fatal("viewer should gain alert.read")
+	}
+	if hasPerm(s.Roles["operator"].Perms, "alert.manage") {
+		t.Fatal("operator must not gain alert.manage")
+	}
+}
+
+func hasPerm(perms []string, want string) bool {
+	for _, p := range perms {
+		if p == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestFSM_MemberRemoveStripsGroups(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	s := mustBootstrap(t, now)
@@ -920,6 +947,7 @@ var allPerms = []string{
 	"user.read", "user.create", "user.update", "user.delete",
 	"role.read", "role.manage",
 	"audit.read",
+	"batch.execute", "alert.read", "alert.manage", "backup.read", "backup.manage",
 	"command.execute", "command.execute.batch",
 }
 
@@ -933,17 +961,20 @@ var clusterAdminPerms = []string{
 	"user.read", "user.create", "user.update",
 	"role.read",
 	"audit.read",
+	"batch.execute", "alert.read", "alert.manage", "backup.read", "backup.manage",
 }
 
 var operatorPerms = []string{
 	"cluster.read", "node.read", "process.read",
 	"process.start", "process.stop", "process.restart",
 	"process.config.read", "process.logs.read",
+	"batch.execute", "alert.read",
 }
 
 var viewerPerms = []string{
 	"cluster.read", "node.read", "process.read",
 	"process.config.read", "process.logs.read",
+	"alert.read",
 }
 
 func sameStrings(got, want []string) bool {
