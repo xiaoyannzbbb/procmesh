@@ -3,10 +3,10 @@ import { ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { saveCsrf, useAuthClient } from "../lib/session";
 import { useI18n } from "../lib/useI18n";
+import { useErrorHandler } from "../lib/useErrorHandler";
 
-const LOGIN_ERRORS = ["invalid credentials", "login rate limited", "user locked"] as const;
-
-const { t, tError } = useI18n();
+const { t } = useI18n();
+const { formatError } = useErrorHandler();
 const username = ref("");
 const password = ref("");
 const error = ref("");
@@ -14,30 +14,6 @@ const pending = ref(false);
 const router = useRouter();
 const route = useRoute();
 const client = useAuthClient();
-
-function loginErrorMessage(err: unknown): string {
-  const text =
-    err && typeof err === "object" && "rawMessage" in err && typeof (err as { rawMessage: unknown }).rawMessage === "string"
-      ? (err as { rawMessage: string }).rawMessage
-      : err instanceof Error
-        ? err.message
-        : String(err);
-
-  // Check if error has a code property for translation
-  if (err && typeof err === "object" && "code" in err && typeof (err as { code: unknown }).code === "string") {
-    const code = (err as { code: string }).code;
-    const params = (err as any).params || {};
-    return tError(code, text, params);
-  }
-
-  // Fallback to phrase matching for legacy errors
-  for (const phrase of LOGIN_ERRORS) {
-    if (text.includes(phrase)) {
-      return phrase;
-    }
-  }
-  return text;
-}
 
 function nextPath(): string {
   const raw = route.query.next;
@@ -61,7 +37,7 @@ async function onSubmit(): Promise<void> {
     saveCsrf(resp.csrfToken);
     await router.replace(nextPath());
   } catch (err) {
-    error.value = loginErrorMessage(err);
+    error.value = formatError(err);
   } finally {
     pending.value = false;
   }
