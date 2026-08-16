@@ -115,7 +115,9 @@ message ApplyProcessResponse { ProcessSpec spec = 1; }
 message GetProcessRequest { string id_or_name = 1; }
 message GetProcessResponse { ProcessView process = 1; }
 
-message ListProcessesRequest {}
+message ListProcessesRequest {
+  string group = 1; // optional process group name filter
+}
 message ListProcessesResponse { repeated ProcessView processes = 1; }
 
 message DeleteProcessRequest {
@@ -237,6 +239,8 @@ message ProcessSummary {
   int64 latest_revision = 5;
   int64 active_revision = 6;
   int64 freshness_unix_ms = 7;
+  string process_id = 8;
+  string group = 9;
 }
 
 message Node {
@@ -254,6 +258,7 @@ message Node {
   ResourceSummary resources = 12;
   repeated ProcessSummary processes = 13;
   int64 last_updated_unix_ms = 14;
+  repeated string agent_group_ids = 15;
 }
 
 message ListNodesRequest {}
@@ -468,7 +473,7 @@ message Role {
 message Binding {
   string user_id = 1;
   string role_id = 2;
-  string scope_type = 3; // CLUSTER | AGENT
+  string scope_type = 3; // CLUSTER | AGENT | AGENT_GROUP | PROCESS_GROUP
   string scope_id = 4;
 }
 
@@ -489,7 +494,7 @@ message GrantRoleRequest {
   MutationMeta meta = 1;
   string user_id = 2;
   string role_id = 3;
-  string scope_type = 4; // CLUSTER | AGENT
+  string scope_type = 4; // CLUSTER | AGENT | AGENT_GROUP | PROCESS_GROUP
   string scope_id = 5;
 }
 message GrantRoleResponse { Binding binding = 1; }
@@ -498,6 +503,46 @@ service RoleService {
   rpc ListRoles(ListRolesRequest) returns (ListRolesResponse);
   rpc CreateRole(CreateRoleRequest) returns (CreateRoleResponse);
   rpc GrantRole(GrantRoleRequest) returns (GrantRoleResponse);
+}
+
+message AgentGroup {
+  string group_id = 1;
+  string name = 2;
+  string description = 3;
+  repeated string member_node_ids = 4;
+  int64 created_unix = 5;
+  int64 updated_unix = 6;
+}
+
+message ListAgentGroupsRequest {}
+message ListAgentGroupsResponse { repeated AgentGroup groups = 1; }
+
+message CreateAgentGroupRequest {
+  MutationMeta meta = 1;
+  string name = 2;
+  string description = 3;
+}
+message CreateAgentGroupResponse { AgentGroup group = 1; }
+
+message DeleteAgentGroupRequest {
+  MutationMeta meta = 1;
+  string group_id = 2;
+}
+message DeleteAgentGroupResponse {}
+
+message AgentGroupMemberRequest {
+  MutationMeta meta = 1;
+  string group_id = 2;
+  string node_id = 3;
+}
+message AgentGroupMemberResponse { AgentGroup group = 1; }
+
+service GroupService {
+  rpc ListAgentGroups(ListAgentGroupsRequest) returns (ListAgentGroupsResponse);
+  rpc CreateAgentGroup(CreateAgentGroupRequest) returns (CreateAgentGroupResponse);
+  rpc DeleteAgentGroup(DeleteAgentGroupRequest) returns (DeleteAgentGroupResponse);
+  rpc AddAgentGroupMember(AgentGroupMemberRequest) returns (AgentGroupMemberResponse);
+  rpc RemoveAgentGroupMember(AgentGroupMemberRequest) returns (AgentGroupMemberResponse);
 }
 
 message AuditEvent {

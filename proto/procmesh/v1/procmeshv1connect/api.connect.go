@@ -37,6 +37,8 @@ const (
 	UserServiceName = "procmesh.v1.UserService"
 	// RoleServiceName is the fully-qualified name of the RoleService service.
 	RoleServiceName = "procmesh.v1.RoleService"
+	// GroupServiceName is the fully-qualified name of the GroupService service.
+	GroupServiceName = "procmesh.v1.GroupService"
 	// AuditServiceName is the fully-qualified name of the AuditService service.
 	AuditServiceName = "procmesh.v1.AuditService"
 	// MetricsServiceName is the fully-qualified name of the MetricsService service.
@@ -145,6 +147,21 @@ const (
 	RoleServiceCreateRoleProcedure = "/procmesh.v1.RoleService/CreateRole"
 	// RoleServiceGrantRoleProcedure is the fully-qualified name of the RoleService's GrantRole RPC.
 	RoleServiceGrantRoleProcedure = "/procmesh.v1.RoleService/GrantRole"
+	// GroupServiceListAgentGroupsProcedure is the fully-qualified name of the GroupService's
+	// ListAgentGroups RPC.
+	GroupServiceListAgentGroupsProcedure = "/procmesh.v1.GroupService/ListAgentGroups"
+	// GroupServiceCreateAgentGroupProcedure is the fully-qualified name of the GroupService's
+	// CreateAgentGroup RPC.
+	GroupServiceCreateAgentGroupProcedure = "/procmesh.v1.GroupService/CreateAgentGroup"
+	// GroupServiceDeleteAgentGroupProcedure is the fully-qualified name of the GroupService's
+	// DeleteAgentGroup RPC.
+	GroupServiceDeleteAgentGroupProcedure = "/procmesh.v1.GroupService/DeleteAgentGroup"
+	// GroupServiceAddAgentGroupMemberProcedure is the fully-qualified name of the GroupService's
+	// AddAgentGroupMember RPC.
+	GroupServiceAddAgentGroupMemberProcedure = "/procmesh.v1.GroupService/AddAgentGroupMember"
+	// GroupServiceRemoveAgentGroupMemberProcedure is the fully-qualified name of the GroupService's
+	// RemoveAgentGroupMember RPC.
+	GroupServiceRemoveAgentGroupMemberProcedure = "/procmesh.v1.GroupService/RemoveAgentGroupMember"
 	// AuditServiceListAuditProcedure is the fully-qualified name of the AuditService's ListAudit RPC.
 	AuditServiceListAuditProcedure = "/procmesh.v1.AuditService/ListAudit"
 	// MetricsServiceGetAgentMetricsProcedure is the fully-qualified name of the MetricsService's
@@ -1519,6 +1536,180 @@ func (UnimplementedRoleServiceHandler) CreateRole(context.Context, *connect.Requ
 
 func (UnimplementedRoleServiceHandler) GrantRole(context.Context, *connect.Request[v1.GrantRoleRequest]) (*connect.Response[v1.GrantRoleResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.RoleService.GrantRole is not implemented"))
+}
+
+// GroupServiceClient is a client for the procmesh.v1.GroupService service.
+type GroupServiceClient interface {
+	ListAgentGroups(context.Context, *connect.Request[v1.ListAgentGroupsRequest]) (*connect.Response[v1.ListAgentGroupsResponse], error)
+	CreateAgentGroup(context.Context, *connect.Request[v1.CreateAgentGroupRequest]) (*connect.Response[v1.CreateAgentGroupResponse], error)
+	DeleteAgentGroup(context.Context, *connect.Request[v1.DeleteAgentGroupRequest]) (*connect.Response[v1.DeleteAgentGroupResponse], error)
+	AddAgentGroupMember(context.Context, *connect.Request[v1.AgentGroupMemberRequest]) (*connect.Response[v1.AgentGroupMemberResponse], error)
+	RemoveAgentGroupMember(context.Context, *connect.Request[v1.AgentGroupMemberRequest]) (*connect.Response[v1.AgentGroupMemberResponse], error)
+}
+
+// NewGroupServiceClient constructs a client for the procmesh.v1.GroupService service. By default,
+// it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses, and
+// sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the connect.WithGRPC()
+// or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewGroupServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) GroupServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	groupServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("GroupService").Methods()
+	return &groupServiceClient{
+		listAgentGroups: connect.NewClient[v1.ListAgentGroupsRequest, v1.ListAgentGroupsResponse](
+			httpClient,
+			baseURL+GroupServiceListAgentGroupsProcedure,
+			connect.WithSchema(groupServiceMethods.ByName("ListAgentGroups")),
+			connect.WithClientOptions(opts...),
+		),
+		createAgentGroup: connect.NewClient[v1.CreateAgentGroupRequest, v1.CreateAgentGroupResponse](
+			httpClient,
+			baseURL+GroupServiceCreateAgentGroupProcedure,
+			connect.WithSchema(groupServiceMethods.ByName("CreateAgentGroup")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteAgentGroup: connect.NewClient[v1.DeleteAgentGroupRequest, v1.DeleteAgentGroupResponse](
+			httpClient,
+			baseURL+GroupServiceDeleteAgentGroupProcedure,
+			connect.WithSchema(groupServiceMethods.ByName("DeleteAgentGroup")),
+			connect.WithClientOptions(opts...),
+		),
+		addAgentGroupMember: connect.NewClient[v1.AgentGroupMemberRequest, v1.AgentGroupMemberResponse](
+			httpClient,
+			baseURL+GroupServiceAddAgentGroupMemberProcedure,
+			connect.WithSchema(groupServiceMethods.ByName("AddAgentGroupMember")),
+			connect.WithClientOptions(opts...),
+		),
+		removeAgentGroupMember: connect.NewClient[v1.AgentGroupMemberRequest, v1.AgentGroupMemberResponse](
+			httpClient,
+			baseURL+GroupServiceRemoveAgentGroupMemberProcedure,
+			connect.WithSchema(groupServiceMethods.ByName("RemoveAgentGroupMember")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// groupServiceClient implements GroupServiceClient.
+type groupServiceClient struct {
+	listAgentGroups        *connect.Client[v1.ListAgentGroupsRequest, v1.ListAgentGroupsResponse]
+	createAgentGroup       *connect.Client[v1.CreateAgentGroupRequest, v1.CreateAgentGroupResponse]
+	deleteAgentGroup       *connect.Client[v1.DeleteAgentGroupRequest, v1.DeleteAgentGroupResponse]
+	addAgentGroupMember    *connect.Client[v1.AgentGroupMemberRequest, v1.AgentGroupMemberResponse]
+	removeAgentGroupMember *connect.Client[v1.AgentGroupMemberRequest, v1.AgentGroupMemberResponse]
+}
+
+// ListAgentGroups calls procmesh.v1.GroupService.ListAgentGroups.
+func (c *groupServiceClient) ListAgentGroups(ctx context.Context, req *connect.Request[v1.ListAgentGroupsRequest]) (*connect.Response[v1.ListAgentGroupsResponse], error) {
+	return c.listAgentGroups.CallUnary(ctx, req)
+}
+
+// CreateAgentGroup calls procmesh.v1.GroupService.CreateAgentGroup.
+func (c *groupServiceClient) CreateAgentGroup(ctx context.Context, req *connect.Request[v1.CreateAgentGroupRequest]) (*connect.Response[v1.CreateAgentGroupResponse], error) {
+	return c.createAgentGroup.CallUnary(ctx, req)
+}
+
+// DeleteAgentGroup calls procmesh.v1.GroupService.DeleteAgentGroup.
+func (c *groupServiceClient) DeleteAgentGroup(ctx context.Context, req *connect.Request[v1.DeleteAgentGroupRequest]) (*connect.Response[v1.DeleteAgentGroupResponse], error) {
+	return c.deleteAgentGroup.CallUnary(ctx, req)
+}
+
+// AddAgentGroupMember calls procmesh.v1.GroupService.AddAgentGroupMember.
+func (c *groupServiceClient) AddAgentGroupMember(ctx context.Context, req *connect.Request[v1.AgentGroupMemberRequest]) (*connect.Response[v1.AgentGroupMemberResponse], error) {
+	return c.addAgentGroupMember.CallUnary(ctx, req)
+}
+
+// RemoveAgentGroupMember calls procmesh.v1.GroupService.RemoveAgentGroupMember.
+func (c *groupServiceClient) RemoveAgentGroupMember(ctx context.Context, req *connect.Request[v1.AgentGroupMemberRequest]) (*connect.Response[v1.AgentGroupMemberResponse], error) {
+	return c.removeAgentGroupMember.CallUnary(ctx, req)
+}
+
+// GroupServiceHandler is an implementation of the procmesh.v1.GroupService service.
+type GroupServiceHandler interface {
+	ListAgentGroups(context.Context, *connect.Request[v1.ListAgentGroupsRequest]) (*connect.Response[v1.ListAgentGroupsResponse], error)
+	CreateAgentGroup(context.Context, *connect.Request[v1.CreateAgentGroupRequest]) (*connect.Response[v1.CreateAgentGroupResponse], error)
+	DeleteAgentGroup(context.Context, *connect.Request[v1.DeleteAgentGroupRequest]) (*connect.Response[v1.DeleteAgentGroupResponse], error)
+	AddAgentGroupMember(context.Context, *connect.Request[v1.AgentGroupMemberRequest]) (*connect.Response[v1.AgentGroupMemberResponse], error)
+	RemoveAgentGroupMember(context.Context, *connect.Request[v1.AgentGroupMemberRequest]) (*connect.Response[v1.AgentGroupMemberResponse], error)
+}
+
+// NewGroupServiceHandler builds an HTTP handler from the service implementation. It returns the
+// path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewGroupServiceHandler(svc GroupServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	groupServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("GroupService").Methods()
+	groupServiceListAgentGroupsHandler := connect.NewUnaryHandler(
+		GroupServiceListAgentGroupsProcedure,
+		svc.ListAgentGroups,
+		connect.WithSchema(groupServiceMethods.ByName("ListAgentGroups")),
+		connect.WithHandlerOptions(opts...),
+	)
+	groupServiceCreateAgentGroupHandler := connect.NewUnaryHandler(
+		GroupServiceCreateAgentGroupProcedure,
+		svc.CreateAgentGroup,
+		connect.WithSchema(groupServiceMethods.ByName("CreateAgentGroup")),
+		connect.WithHandlerOptions(opts...),
+	)
+	groupServiceDeleteAgentGroupHandler := connect.NewUnaryHandler(
+		GroupServiceDeleteAgentGroupProcedure,
+		svc.DeleteAgentGroup,
+		connect.WithSchema(groupServiceMethods.ByName("DeleteAgentGroup")),
+		connect.WithHandlerOptions(opts...),
+	)
+	groupServiceAddAgentGroupMemberHandler := connect.NewUnaryHandler(
+		GroupServiceAddAgentGroupMemberProcedure,
+		svc.AddAgentGroupMember,
+		connect.WithSchema(groupServiceMethods.ByName("AddAgentGroupMember")),
+		connect.WithHandlerOptions(opts...),
+	)
+	groupServiceRemoveAgentGroupMemberHandler := connect.NewUnaryHandler(
+		GroupServiceRemoveAgentGroupMemberProcedure,
+		svc.RemoveAgentGroupMember,
+		connect.WithSchema(groupServiceMethods.ByName("RemoveAgentGroupMember")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/procmesh.v1.GroupService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case GroupServiceListAgentGroupsProcedure:
+			groupServiceListAgentGroupsHandler.ServeHTTP(w, r)
+		case GroupServiceCreateAgentGroupProcedure:
+			groupServiceCreateAgentGroupHandler.ServeHTTP(w, r)
+		case GroupServiceDeleteAgentGroupProcedure:
+			groupServiceDeleteAgentGroupHandler.ServeHTTP(w, r)
+		case GroupServiceAddAgentGroupMemberProcedure:
+			groupServiceAddAgentGroupMemberHandler.ServeHTTP(w, r)
+		case GroupServiceRemoveAgentGroupMemberProcedure:
+			groupServiceRemoveAgentGroupMemberHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedGroupServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedGroupServiceHandler struct{}
+
+func (UnimplementedGroupServiceHandler) ListAgentGroups(context.Context, *connect.Request[v1.ListAgentGroupsRequest]) (*connect.Response[v1.ListAgentGroupsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.GroupService.ListAgentGroups is not implemented"))
+}
+
+func (UnimplementedGroupServiceHandler) CreateAgentGroup(context.Context, *connect.Request[v1.CreateAgentGroupRequest]) (*connect.Response[v1.CreateAgentGroupResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.GroupService.CreateAgentGroup is not implemented"))
+}
+
+func (UnimplementedGroupServiceHandler) DeleteAgentGroup(context.Context, *connect.Request[v1.DeleteAgentGroupRequest]) (*connect.Response[v1.DeleteAgentGroupResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.GroupService.DeleteAgentGroup is not implemented"))
+}
+
+func (UnimplementedGroupServiceHandler) AddAgentGroupMember(context.Context, *connect.Request[v1.AgentGroupMemberRequest]) (*connect.Response[v1.AgentGroupMemberResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.GroupService.AddAgentGroupMember is not implemented"))
+}
+
+func (UnimplementedGroupServiceHandler) RemoveAgentGroupMember(context.Context, *connect.Request[v1.AgentGroupMemberRequest]) (*connect.Response[v1.AgentGroupMemberResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.GroupService.RemoveAgentGroupMember is not implemented"))
 }
 
 // AuditServiceClient is a client for the procmesh.v1.AuditService service.
