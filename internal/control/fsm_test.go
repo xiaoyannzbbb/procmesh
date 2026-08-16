@@ -632,6 +632,142 @@ func TestEncodeCommand_RejectsBadBody(t *testing.T) {
 	}
 }
 
+func TestFSM_AgentGroupCRUD(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := mustBootstrap(t, now)
+	if err := s.Apply(mustEncode(t, "member_put", control.MemberPutBody{NodeID: "node-a"}), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Apply(mustEncode(t, "group_put", control.GroupPutBody{
+		GroupID: "g-fin", Name: "finance", Description: "fin", NowUnix: now.Unix(),
+	}), now); err != nil {
+		t.Fatal(err)
+	}
+	g, ok := s.AgentGroups["g-fin"]
+	if !ok || g.Name != "finance" {
+		t.Fatalf("group %+v ok=%v", g, ok)
+	}
+	if err := s.Apply(mustEncode(t, "group_member_add", control.GroupMemberBody{GroupID: "g-fin", NodeID: "node-a"}), now); err != nil {
+		t.Fatal(err)
+	}
+	if !s.NodeInGroup("node-a", "g-fin") {
+		t.Fatal("expected member")
+	}
+	if err := s.Apply(mustEncode(t, "group_member_add", control.GroupMemberBody{GroupID: "g-fin", NodeID: "missing"}), now); err == nil || !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("missing node: %v", err)
+	}
+	if err := s.Apply(mustEncode(t, "group_put", control.GroupPutBody{GroupID: "g2", Name: "finance", NowUnix: now.Unix()}), now); err == nil || !errcode.Is(err, errcode.CONFLICT) {
+		t.Fatalf("dup name: %v", err)
+	}
+	if err := s.Apply(mustEncode(t, "group_delete", control.GroupDeleteBody{GroupID: "g-fin"}), now); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.AgentGroups["g-fin"]; ok {
+		t.Fatal("group should be gone")
+	}
+}
+
+func TestFSM_GroupNameValidation(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := mustBootstrap(t, now)
+	err := s.Apply(mustEncode(t, "group_put", control.GroupPutBody{GroupID: "g1", Name: "bad name", NowUnix: now.Unix()}), now)
+	if err == nil || !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestFSM_AgentGroupErrorsAndMemberRemove(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := mustBootstrap(t, now)
+	if err := s.Apply(mustEncode(t, "member_put", control.MemberPutBody{NodeID: "node-a"}), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Apply(mustEncode(t, "member_put", control.MemberPutBody{NodeID: "node-rev", Status: control.MemberRevoked}), now); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.Apply(mustEncode(t, "group_put", control.GroupPutBody{GroupID: "", Name: "ok", NowUnix: now.Unix()}), now)
+	if err == nil || !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("empty group id: %v", err)
+	}
+	err = s.Apply(mustEncode(t, "group_put", control.GroupPutBody{GroupID: "g1", Name: "   ", NowUnix: now.Unix()}), now)
+	if err == nil || !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("blank name: %v", err)
+	}
+	err = s.Apply(mustEncode(t, "group_put", control.GroupPutBody{GroupID: "g1", Name: strings.Repeat("a", 65), NowUnix: now.Unix()}), now)
+	if err == nil || !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("long name: %v", err)
+	}
+	err = s.Apply(mustEncode(t, "group_put", control.GroupPutBody{
+		GroupID: "g1", Name: "ok", Description: strings.Repeat("d", 257), NowUnix: now.Unix(),
+	}), now)
+	if err == nil || !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("long description: %v", err)
+	}
+
+	if err := s.Apply(mustEncode(t, "group_put", control.GroupPutBody{
+		GroupID: "g-fin", Name: " finance ", Description: "fin", NowUnix: now.Unix(),
+	}), now); err != nil {
+		t.Fatal(err)
+	}
+	g := s.AgentGroups["g-fin"]
+	if g.Name != "finance" || g.CreatedUnix != now.Unix() || g.UpdatedUnix != now.Unix() {
+		t.Fatalf("create %+v", g)
+	}
+	later := now.Add(time.Minute)
+	if err := s.Apply(mustEncode(t, "group_put", control.GroupPutBody{
+		GroupID: "g-fin", Name: "finance", Description: "updated", NowUnix: later.Unix(),
+	}), now); err != nil {
+		t.Fatal(err)
+	}
+	g = s.AgentGroups["g-fin"]
+	if g.Description != "updated" || g.CreatedUnix != now.Unix() || g.UpdatedUnix != later.Unix() {
+		t.Fatalf("update %+v", g)
+	}
+
+	if !errcode.Is(s.Apply(mustEncode(t, "group_delete", control.GroupDeleteBody{GroupID: "missing"}), now), errcode.NOT_FOUND) {
+		t.Fatal("delete missing")
+	}
+	if !errcode.Is(s.Apply(mustEncode(t, "group_member_add", control.GroupMemberBody{GroupID: "missing", NodeID: "node-a"}), now), errcode.NOT_FOUND) {
+		t.Fatal("add missing group")
+	}
+	if !errcode.Is(s.Apply(mustEncode(t, "group_member_remove", control.GroupMemberBody{GroupID: "missing", NodeID: "node-a"}), now), errcode.NOT_FOUND) {
+		t.Fatal("remove missing group")
+	}
+	if err := s.Apply(mustEncode(t, "group_member_add", control.GroupMemberBody{GroupID: "g-fin", NodeID: "node-rev"}), now); err == nil || !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("revoked member: %v", err)
+	}
+
+	if err := s.Apply(mustEncode(t, "group_member_add", control.GroupMemberBody{GroupID: "g-fin", NodeID: "node-a"}), now); err != nil {
+		t.Fatal(err)
+	}
+	n := len(s.AgentGroups["g-fin"].MemberIDs)
+	if err := s.Apply(mustEncode(t, "group_member_add", control.GroupMemberBody{GroupID: "g-fin", NodeID: "node-a"}), now); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.AgentGroups["g-fin"].MemberIDs) != n {
+		t.Fatal("add member not idempotent")
+	}
+	if s.NodeInGroup("node-a", "missing") || s.NodeInGroup("nope", "g-fin") {
+		t.Fatal("NodeInGroup false positives")
+	}
+	if err := s.Apply(mustEncode(t, "group_member_remove", control.GroupMemberBody{GroupID: "g-fin", NodeID: "node-a"}), now); err != nil {
+		t.Fatal(err)
+	}
+	if s.NodeInGroup("node-a", "g-fin") {
+		t.Fatal("member still present")
+	}
+
+	if err := s.Apply(mustEncode(t, "bind_put", control.BindPutBody{
+		UserID: "user-admin", RoleID: "operator", Scope: control.ScopeAgentGroup, ScopeID: "g-fin",
+	}), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Apply(mustEncode(t, "group_delete", control.GroupDeleteBody{GroupID: "g-fin"}), now); err == nil || !errcode.Is(err, errcode.CONFLICT) {
+		t.Fatalf("delete with binding: %v", err)
+	}
+}
+
 type failSink struct{}
 
 func (failSink) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }

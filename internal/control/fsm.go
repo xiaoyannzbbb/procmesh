@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"io"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -23,9 +24,13 @@ const (
 type ScopeType string
 
 const (
-	ScopeCluster ScopeType = "CLUSTER"
-	ScopeAgent   ScopeType = "AGENT"
+	ScopeCluster      ScopeType = "CLUSTER"
+	ScopeAgent        ScopeType = "AGENT"
+	ScopeAgentGroup   ScopeType = "AGENT_GROUP"
+	ScopeProcessGroup ScopeType = "PROCESS_GROUP"
 )
+
+var agentGroupNameRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
 type UserStatus string
 
@@ -88,17 +93,18 @@ type Policy struct {
 }
 
 type State struct {
-	ClusterID  string               `json:"cluster_id"`
-	Users      map[string]User      `json:"users"`       // by username
-	UsersByID  map[string]string    `json:"users_by_id"` // id → username
-	Roles      map[string]Role      `json:"roles"`
-	Bindings   []Binding            `json:"bindings"`
-	Sessions   map[string]Session   `json:"sessions"`
-	APITokens  map[string]APIToken  `json:"api_tokens"`
-	JoinTokens map[string]JoinToken `json:"join_tokens"` // by id
-	Members    map[string]Member    `json:"members"`     // by node_id
-	CRL        map[string]struct{}  `json:"crl"`         // cert serial hex
-	Policy     Policy               `json:"policy"`
+	ClusterID   string                `json:"cluster_id"`
+	Users       map[string]User       `json:"users"`       // by username
+	UsersByID   map[string]string     `json:"users_by_id"` // id → username
+	Roles       map[string]Role       `json:"roles"`
+	Bindings    []Binding             `json:"bindings"`
+	Sessions    map[string]Session    `json:"sessions"`
+	APITokens   map[string]APIToken   `json:"api_tokens"`
+	JoinTokens  map[string]JoinToken  `json:"join_tokens"`  // by id
+	Members     map[string]Member     `json:"members"`      // by node_id
+	CRL         map[string]struct{}   `json:"crl"`          // cert serial hex
+	AgentGroups map[string]AgentGroup `json:"agent_groups"` // by group_id
+	Policy      Policy                `json:"policy"`
 }
 
 func NewState() *State {
@@ -134,6 +140,9 @@ func (s *State) ensure() {
 	}
 	if s.CRL == nil {
 		s.CRL = map[string]struct{}{}
+	}
+	if s.AgentGroups == nil {
+		s.AgentGroups = map[string]AgentGroup{}
 	}
 }
 
@@ -175,6 +184,14 @@ func (s *State) Apply(cmd Command, now time.Time) error {
 		return applyJSON(cmd.Body, s.applyMemberRemove)
 	case CmdCRLAdd:
 		return applyJSON(cmd.Body, s.applyCRLAdd)
+	case CmdGroupPut:
+		return applyJSON(cmd.Body, s.applyGroupPut)
+	case CmdGroupDelete:
+		return applyJSON(cmd.Body, s.applyGroupDelete)
+	case CmdGroupMemberAdd:
+		return applyJSON(cmd.Body, s.applyGroupMemberAdd)
+	case CmdGroupMemberRemove:
+		return applyJSON(cmd.Body, s.applyGroupMemberRemove)
 	default:
 		return errcode.E(errcode.INVALID, "unknown command type")
 	}
@@ -467,6 +484,92 @@ func (s *State) applyCRLAdd(b CRLAddBody) error {
 	}
 	s.CRL[strings.ToUpper(b.Serial)] = struct{}{}
 	return nil
+}
+
+func (s *State) applyGroupPut(b GroupPutBody) error {
+	name := strings.TrimSpace(b.Name)
+	if b.GroupID == "" || !agentGroupNameRE.MatchString(name) {
+		return errcode.E(errcode.INVALID, "group name")
+	}
+	if len(b.Description) > 256 {
+		return errcode.E(errcode.INVALID, "description")
+	}
+	for id, g := range s.AgentGroups {
+		if g.Name == name && id != b.GroupID {
+			return errcode.E(errcode.CONFLICT, "group name already exists")
+		}
+	}
+	cur := s.AgentGroups[b.GroupID]
+	if cur.GroupID == "" {
+		cur.GroupID = b.GroupID
+		cur.CreatedUnix = b.NowUnix
+	}
+	cur.Name = name
+	cur.Description = b.Description
+	cur.UpdatedUnix = b.NowUnix
+	s.AgentGroups[b.GroupID] = cur
+	return nil
+}
+
+func (s *State) applyGroupDelete(b GroupDeleteBody) error {
+	if _, ok := s.AgentGroups[b.GroupID]; !ok {
+		return errcode.E(errcode.NOT_FOUND, "group not found")
+	}
+	for _, bind := range s.Bindings {
+		if bind.Scope == ScopeAgentGroup && bind.ScopeID == b.GroupID {
+			return errcode.E(errcode.CONFLICT, "group still has role bindings")
+		}
+	}
+	delete(s.AgentGroups, b.GroupID)
+	return nil
+}
+
+func (s *State) applyGroupMemberAdd(b GroupMemberBody) error {
+	g, ok := s.AgentGroups[b.GroupID]
+	if !ok {
+		return errcode.E(errcode.NOT_FOUND, "group not found")
+	}
+	m, ok := s.Members[b.NodeID]
+	if !ok || m.Status != MemberAdmitted {
+		return errcode.E(errcode.INVALID, "node is not an admitted member")
+	}
+	for _, id := range g.MemberIDs {
+		if id == b.NodeID {
+			return nil
+		}
+	}
+	g.MemberIDs = append(g.MemberIDs, b.NodeID)
+	s.AgentGroups[b.GroupID] = g
+	return nil
+}
+
+func (s *State) applyGroupMemberRemove(b GroupMemberBody) error {
+	g, ok := s.AgentGroups[b.GroupID]
+	if !ok {
+		return errcode.E(errcode.NOT_FOUND, "group not found")
+	}
+	out := make([]string, 0, len(g.MemberIDs))
+	for _, id := range g.MemberIDs {
+		if id != b.NodeID {
+			out = append(out, id)
+		}
+	}
+	g.MemberIDs = append([]string(nil), out...)
+	s.AgentGroups[b.GroupID] = g
+	return nil
+}
+
+func (s *State) NodeInGroup(nodeID, groupID string) bool {
+	g, ok := s.AgentGroups[groupID]
+	if !ok {
+		return false
+	}
+	for _, id := range g.MemberIDs {
+		if id == nodeID {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *State) userByID(id string) (User, bool) {

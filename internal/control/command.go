@@ -3,23 +3,27 @@ package control
 import "encoding/json"
 
 const (
-	CmdBootstrap        = "bootstrap"
-	CmdUserPut          = "user_put"
-	CmdUserDisable      = "user_disable"
-	CmdLoginOK          = "login_ok"
-	CmdLoginFail        = "login_fail"
-	CmdSessionPut       = "session_put"
-	CmdSessionDel       = "session_del"
-	CmdTokenPut         = "token_put"
-	CmdTokenRevoke      = "token_revoke"
-	CmdRolePut          = "role_put"
-	CmdBindPut          = "bind_put"
-	CmdJoinTokenPut     = "join_token_put"
-	CmdJoinTokenConsume = "join_token_consume"
-	CmdJoinTokenRevoke  = "join_token_revoke"
-	CmdMemberPut        = "member_put"
-	CmdMemberRemove     = "member_remove"
-	CmdCRLAdd           = "crl_add"
+	CmdBootstrap         = "bootstrap"
+	CmdUserPut           = "user_put"
+	CmdUserDisable       = "user_disable"
+	CmdLoginOK           = "login_ok"
+	CmdLoginFail         = "login_fail"
+	CmdSessionPut        = "session_put"
+	CmdSessionDel        = "session_del"
+	CmdTokenPut          = "token_put"
+	CmdTokenRevoke       = "token_revoke"
+	CmdRolePut           = "role_put"
+	CmdBindPut           = "bind_put"
+	CmdJoinTokenPut      = "join_token_put"
+	CmdJoinTokenConsume  = "join_token_consume"
+	CmdJoinTokenRevoke   = "join_token_revoke"
+	CmdMemberPut         = "member_put"
+	CmdMemberRemove      = "member_remove"
+	CmdCRLAdd            = "crl_add"
+	CmdGroupPut          = "group_put"
+	CmdGroupDelete       = "group_delete"
+	CmdGroupMemberAdd    = "group_member_add"
+	CmdGroupMemberRemove = "group_member_remove"
 )
 
 // Command is a Raft log payload: type + JSON body.
@@ -120,6 +124,28 @@ type MemberRemoveBody struct {
 
 type CRLAddBody struct {
 	Serial string `json:"serial"`
+}
+
+type AgentGroup struct {
+	GroupID     string   `json:"group_id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	MemberIDs   []string `json:"member_node_ids,omitempty"`
+	CreatedUnix int64    `json:"created_unix"`
+	UpdatedUnix int64    `json:"updated_unix"`
+}
+
+type GroupPutBody struct {
+	GroupID, Name, Description string
+	NowUnix                    int64
+}
+
+type GroupDeleteBody struct {
+	GroupID string `json:"group_id"`
+}
+
+type GroupMemberBody struct {
+	GroupID, NodeID string
 }
 
 // EncodeCommand marshals body as the Command payload.
