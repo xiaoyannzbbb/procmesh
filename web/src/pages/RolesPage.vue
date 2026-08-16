@@ -4,7 +4,10 @@ import { computed, ref } from "vue";
 import { newOperationId } from "../lib/opid";
 import { useRoleClient } from "../lib/rpc";
 import { session } from "../lib/session";
+import { useI18n } from "../lib/useI18n";
 import { formatRemoteError } from "./processView";
+
+const { t } = useI18n();
 
 const POLL_MS = 5000;
 const BUILTIN_ROLE_IDS = new Set(["super_admin", "cluster_admin", "operator", "viewer"]);
@@ -174,8 +177,8 @@ async function onGrant(): Promise<void> {
 
 <template>
   <div class="page">
-    <h1>Roles</h1>
-    <p v-if="query.isPending && !query.data" class="muted">Loading…</p>
+    <h1>{{ t("roles.title") }}</h1>
+    <p v-if="query.isPending && !query.data" class="muted">{{ t("roles.loading") }}</p>
     <p v-else-if="errorText && !query.data" class="error" role="alert">{{ errorText }}</p>
     <template v-else>
       <p v-if="errorText" class="error" role="alert">{{ errorText }}</p>
@@ -183,33 +186,33 @@ async function onGrant(): Promise<void> {
         <table class="table">
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Type</th>
-              <th>Permissions</th>
+              <th>{{ t("roles.table.name") }}</th>
+              <th>{{ t("roles.table.type") }}</th>
+              <th>{{ t("roles.table.permissions") }}</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="role in roles" :key="role.roleId">
               <td>{{ role.name }}</td>
-              <td>{{ isBuiltin(role.roleId) ? "Built-in" : "Custom" }}</td>
+              <td>{{ isBuiltin(role.roleId) ? t("roles.type.builtin") : t("roles.type.custom") }}</td>
               <td class="perms">{{ role.permissions.length ? role.permissions.join(", ") : "—" }}</td>
             </tr>
             <tr v-if="!roles.length">
-              <td colspan="3" class="muted">No roles</td>
+              <td colspan="3" class="muted">{{ t("roles.noRoles") }}</td>
             </tr>
           </tbody>
         </table>
       </div>
 
       <div class="card">
-        <h2>Bindings</h2>
+        <h2>{{ t("roles.bindings.title") }}</h2>
         <table class="table">
           <thead>
             <tr>
-              <th>User ID</th>
-              <th>Role</th>
-              <th>Scope</th>
-              <th>Scope ID</th>
+              <th>{{ t("roles.bindings.table.userId") }}</th>
+              <th>{{ t("roles.bindings.table.role") }}</th>
+              <th>{{ t("roles.bindings.table.scope") }}</th>
+              <th>{{ t("roles.bindings.table.scopeId") }}</th>
             </tr>
           </thead>
           <tbody>
@@ -220,20 +223,20 @@ async function onGrant(): Promise<void> {
               <td>{{ b.scopeId || "—" }}</td>
             </tr>
             <tr v-if="!bindings.length">
-              <td colspan="4" class="muted">No bindings</td>
+              <td colspan="4" class="muted">{{ t("roles.bindings.noBindings") }}</td>
             </tr>
           </tbody>
         </table>
       </div>
 
       <form v-if="canManage" class="card form-card" @submit.prevent="onCreate">
-        <h2>Create role</h2>
+        <h2>{{ t("roles.createRole.title") }}</h2>
         <label class="field">
-          Name
+          {{ t("roles.createRole.name") }}
           <input v-model="roleName" class="input" name="role_name" type="text" />
         </label>
         <fieldset class="perms-fieldset">
-          <legend>Permissions</legend>
+          <legend>{{ t("roles.createRole.permissions") }}</legend>
           <label v-for="perm in ROLE_PERMISSIONS" :key="perm" class="check">
             <input
               type="checkbox"
@@ -245,34 +248,34 @@ async function onGrant(): Promise<void> {
             {{ perm }}
           </label>
         </fieldset>
-        <button class="btn btn-primary" type="submit" :disabled="!createReady || acting">Create</button>
+        <button class="btn btn-primary" type="submit" :disabled="!createReady || acting">{{ t("roles.createRole.create") }}</button>
       </form>
 
       <form v-if="canManage" class="card form-card" @submit.prevent="onGrant">
-        <h2>Grant</h2>
+        <h2>{{ t("roles.grant.title") }}</h2>
         <label class="field">
-          User ID
+          {{ t("roles.grant.userId") }}
           <input v-model="grantUserId" class="input" name="user_id" type="text" />
         </label>
         <label class="field">
-          Role
+          {{ t("roles.grant.role") }}
           <select v-model="grantRoleId" class="input" name="role_id">
-            <option value="">Select role</option>
+            <option value="">{{ t("roles.grant.selectRole") }}</option>
             <option v-for="role in roles" :key="role.roleId" :value="role.roleId">{{ role.name }}</option>
           </select>
         </label>
         <label class="field">
-          Scope
+          {{ t("roles.grant.scope") }}
           <select v-model="grantScope" class="input" name="scope_type">
             <option value="CLUSTER">CLUSTER</option>
             <option value="AGENT">AGENT</option>
           </select>
         </label>
         <label class="field">
-          Scope ID
-          <input v-model="grantScopeId" class="input" name="scope_id" type="text" :placeholder="grantScope === 'AGENT' ? 'required' : 'optional'" />
+          {{ t("roles.grant.scopeId") }}
+          <input v-model="grantScopeId" class="input" name="scope_id" type="text" :placeholder="grantScope === 'AGENT' ? t('roles.grant.scopeIdPlaceholder.required') : t('roles.grant.scopeIdPlaceholder.optional')" />
         </label>
-        <button class="btn btn-primary" type="submit" :disabled="!grantReady || acting">Grant</button>
+        <button class="btn btn-primary" type="submit" :disabled="!grantReady || acting">{{ t("roles.grant.grant") }}</button>
       </form>
     </template>
   </div>

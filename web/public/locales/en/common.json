@@ -258,5 +258,48 @@
     "streamButton": "Stream",
     "stop": "Stop",
     "download": "Download"
+  },
+  "roles": {
+    "title": "Roles",
+    "loading": "Loading…",
+    "noRoles": "No roles",
+    "table": {
+      "name": "Name",
+      "type": "Type",
+      "permissions": "Permissions"
+    },
+    "type": {
+      "builtin": "Built-in",
+      "custom": "Custom"
+    },
+    "bindings": {
+      "title": "Bindings",
+      "noBindings": "No bindings",
+      "table": {
+        "userId": "User ID",
+        "role": "Role",
+        "scope": "Scope",
+        "scopeId": "Scope ID"
+      }
+    },
+    "createRole": {
+      "title": "Create role",
+      "name": "Name",
+      "permissions": "Permissions",
+      "create": "Create"
+    },
+    "grant": {
+      "title": "Grant",
+      "userId": "User ID",
+      "role": "Role",
+      "selectRole": "Select role",
+      "scope": "Scope",
+      "scopeId": "Scope ID",
+      "scopeIdPlaceholder": {
+        "required": "required",
+        "optional": "optional"
+      },
+      "grant": "Grant"
+    }
   }
 }

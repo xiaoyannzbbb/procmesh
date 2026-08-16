@@ -258,5 +258,48 @@
     "streamButton": "流式查看",
     "stop": "停止",
     "download": "下载"
+  },
+  "roles": {
+    "title": "角色",
+    "loading": "加载中…",
+    "noRoles": "无角色",
+    "table": {
+      "name": "名称",
+      "type": "类型",
+      "permissions": "权限"
+    },
+    "type": {
+      "builtin": "内置",
+      "custom": "自定义"
+    },
+    "bindings": {
+      "title": "绑定",
+      "noBindings": "无绑定",
+      "table": {
+        "userId": "用户ID",
+        "role": "角色",
+        "scope": "范围",
+        "scopeId": "范围ID"
+      }
+    },
+    "createRole": {
+      "title": "创建角色",
+      "name": "名称",
+      "permissions": "权限",
+      "create": "创建"
+    },
+    "grant": {
+      "title": "授予",
+      "userId": "用户ID",
+      "role": "角色",
+      "selectRole": "选择角色",
+      "scope": "范围",
+      "scopeId": "范围ID",
+      "scopeIdPlaceholder": {
+        "required": "必填",
+        "optional": "可选"
+      },
+      "grant": "授予"
+    }
   }
 }
