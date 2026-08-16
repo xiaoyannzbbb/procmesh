@@ -132,5 +132,36 @@
       "freshness": "新鲜度",
       "updated": "更新时间"
     }
+  },
+  "nodeDetail": {
+    "back": "← 节点",
+    "loading": "加载中…",
+    "removeAgent": "移除代理",
+    "node": {
+      "title": "节点",
+      "hostname": "主机名",
+      "nodeId": "节点ID",
+      "address": "地址",
+      "version": "版本",
+      "status": "状态",
+      "bootId": "启动ID",
+      "cpu": "CPU",
+      "memory": "内存",
+      "disk": "磁盘",
+      "processCount": "进程数",
+      "labels": "标签"
+    },
+    "processes": {
+      "title": "进程",
+      "noProcesses": "无进程",
+      "table": {
+        "name": "名称",
+        "desired": "期望状态",
+        "observed": "观察状态",
+        "health": "健康状态",
+        "revisions": "版本",
+        "freshness": "新鲜度"
+      }
+    }
   }
 }

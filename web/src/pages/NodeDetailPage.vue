@@ -6,7 +6,10 @@ import FreshnessBadge from "../components/FreshnessBadge.vue";
 import { newOperationId } from "../lib/opid";
 import { useNodeClient } from "../lib/rpc";
 import { session } from "../lib/session";
+import { useI18n } from "../lib/useI18n";
 import { formatPercent, mapNode, REMOVE_CONFIRM } from "./clusterView";
+
+const { t } = useI18n();
 
 const POLL_MS = 5000;
 const route = useRoute();
@@ -78,34 +81,34 @@ async function onRemove(): Promise<void> {
   <div class="page">
     <div class="head">
       <div>
-        <RouterLink class="back" to="/nodes">← Nodes</RouterLink>
+        <RouterLink class="back" to="/nodes">{{ t("nodeDetail.back") }}</RouterLink>
         <h1>{{ node?.hostname || id }}</h1>
       </div>
       <button v-if="canRemove && node" type="button" class="btn btn-danger" :disabled="removing" @click="onRemove">
-        Remove Agent
+        {{ t("nodeDetail.removeAgent") }}
       </button>
     </div>
-    <p v-if="query.isPending && !node" class="muted">Loading…</p>
+    <p v-if="query.isPending && !node" class="muted">{{ t("nodeDetail.loading") }}</p>
     <p v-else-if="errorText && !node" class="error" role="alert">{{ errorText }}</p>
     <template v-else-if="node">
       <p v-if="errorText" class="error" role="alert">{{ errorText }}</p>
       <section class="card">
         <div class="title-row">
-          <h2>Node</h2>
+          <h2>{{ t("nodeDetail.node.title") }}</h2>
           <FreshnessBadge :status="node.freshness" />
           <span class="muted">{{ node.lastUpdated }}</span>
         </div>
         <dl class="facts">
           <div>
-            <dt>Hostname</dt>
+            <dt>{{ t("nodeDetail.node.hostname") }}</dt>
             <dd>{{ node.hostname || "—" }}</dd>
           </div>
           <div>
-            <dt>Node ID</dt>
+            <dt>{{ t("nodeDetail.node.nodeId") }}</dt>
             <dd class="mono">{{ node.nodeId }}</dd>
           </div>
           <div>
-            <dt>Address</dt>
+            <dt>{{ t("nodeDetail.node.address") }}</dt>
             <dd>
               <div>api {{ node.apiAddress || "—" }}</div>
               <div>rpc {{ node.rpcAddress || "—" }}</div>
@@ -113,35 +116,35 @@ async function onRemove(): Promise<void> {
             </dd>
           </div>
           <div>
-            <dt>Version</dt>
+            <dt>{{ t("nodeDetail.node.version") }}</dt>
             <dd>{{ node.agentVersion || "—" }}</dd>
           </div>
           <div>
-            <dt>Status</dt>
+            <dt>{{ t("nodeDetail.node.status") }}</dt>
             <dd>{{ node.state || "—" }}</dd>
           </div>
           <div>
-            <dt>Boot ID</dt>
+            <dt>{{ t("nodeDetail.node.bootId") }}</dt>
             <dd class="mono">{{ node.bootId || "—" }}</dd>
           </div>
           <div>
-            <dt>CPU</dt>
+            <dt>{{ t("nodeDetail.node.cpu") }}</dt>
             <dd>{{ formatPercent(node.resources.cpuPercent) }}</dd>
           </div>
           <div>
-            <dt>Memory</dt>
+            <dt>{{ t("nodeDetail.node.memory") }}</dt>
             <dd>{{ formatPercent(node.resources.memoryPercent) }}</dd>
           </div>
           <div>
-            <dt>Disk</dt>
+            <dt>{{ t("nodeDetail.node.disk") }}</dt>
             <dd>{{ formatPercent(node.resources.diskPercent) }}</dd>
           </div>
           <div>
-            <dt>Process Count</dt>
+            <dt>{{ t("nodeDetail.node.processCount") }}</dt>
             <dd>{{ node.processCount }}</dd>
           </div>
           <div>
-            <dt>Labels</dt>
+            <dt>{{ t("nodeDetail.node.labels") }}</dt>
             <dd>
               <ul v-if="node.labels.length" class="labels">
                 <li v-for="label in node.labels" :key="label.key">{{ label.key }}={{ label.value }}</li>
@@ -153,16 +156,16 @@ async function onRemove(): Promise<void> {
       </section>
 
       <section class="card">
-        <h2>Processes</h2>
+        <h2>{{ t("nodeDetail.processes.title") }}</h2>
         <table class="table">
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Desired</th>
-              <th>Observed</th>
-              <th>Health</th>
-              <th>Revisions</th>
-              <th>Freshness</th>
+              <th>{{ t("nodeDetail.processes.table.name") }}</th>
+              <th>{{ t("nodeDetail.processes.table.desired") }}</th>
+              <th>{{ t("nodeDetail.processes.table.observed") }}</th>
+              <th>{{ t("nodeDetail.processes.table.health") }}</th>
+              <th>{{ t("nodeDetail.processes.table.revisions") }}</th>
+              <th>{{ t("nodeDetail.processes.table.freshness") }}</th>
             </tr>
           </thead>
           <tbody>
@@ -177,7 +180,7 @@ async function onRemove(): Promise<void> {
               </td>
             </tr>
             <tr v-if="!node.processes.length">
-              <td colspan="6" class="muted">No processes</td>
+              <td colspan="6" class="muted">{{ t("nodeDetail.processes.noProcesses") }}</td>
             </tr>
           </tbody>
         </table>

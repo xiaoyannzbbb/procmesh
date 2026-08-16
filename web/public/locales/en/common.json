@@ -132,5 +132,36 @@
       "freshness": "Freshness",
       "updated": "Updated"
     }
+  },
+  "nodeDetail": {
+    "back": "← Nodes",
+    "loading": "Loading…",
+    "removeAgent": "Remove Agent",
+    "node": {
+      "title": "Node",
+      "hostname": "Hostname",
+      "nodeId": "Node ID",
+      "address": "Address",
+      "version": "Version",
+      "status": "Status",
+      "bootId": "Boot ID",
+      "cpu": "CPU",
+      "memory": "Memory",
+      "disk": "Disk",
+      "processCount": "Process Count",
+      "labels": "Labels"
+    },
+    "processes": {
+      "title": "Processes",
+      "noProcesses": "No processes",
+      "table": {
+        "name": "Name",
+        "desired": "Desired",
+        "observed": "Observed",
+        "health": "Health",
+        "revisions": "Revisions",
+        "freshness": "Freshness"
+      }
+    }
   }
 }
