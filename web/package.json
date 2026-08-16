@@ -4,11 +4,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc -b && vite build",
+    "build": "vite build",
+    "build:check": "vue-tsc -b && vite build",
     "test": "vitest run",
     "test:e2e": "playwright test",
     "lint": "eslint src --ext .vue,.ts,.tsx",
     "lint:fix": "eslint src --ext .vue,.ts,.tsx --fix",
+    "analyze": "npm run build && node scripts/analyze-bundle.js",
     "i18n:types": "tsx scripts/generate-i18n-types.ts",
     "i18n:check": "node scripts/check-i18n-completeness.js"
   },
