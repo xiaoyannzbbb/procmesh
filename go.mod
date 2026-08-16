@@ -1,6 +1,6 @@
 module github.com/qleelulu/procmesh
 
-go 1.23.0
+go 1.25.0
 
 require (
 	connectrpc.com/connect v1.18.1
@@ -9,9 +9,9 @@ require (
 	github.com/hashicorp/raft v1.7.3
 	github.com/hashicorp/raft-boltdb/v2 v2.3.1
 	go.etcd.io/bbolt v1.3.5
-	golang.org/x/crypto v0.32.0
-	golang.org/x/sync v0.15.0
-	golang.org/x/sys v0.34.0
+	golang.org/x/crypto v0.51.0
+	golang.org/x/sync v0.20.0
+	golang.org/x/sys v0.45.0
 	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.38.2
@@ -58,8 +58,10 @@ require (
 	github.com/ugorji/go/codec v1.2.12 // indirect
 	golang.org/x/arch v0.8.0 // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
-	golang.org/x/net v0.34.0 // indirect
-	golang.org/x/text v0.21.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
+	google.golang.org/grpc v1.83.0 // indirect
 	modernc.org/libc v1.66.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect

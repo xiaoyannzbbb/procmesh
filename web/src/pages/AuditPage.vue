@@ -178,7 +178,7 @@ h1 {
 }
 .card {
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-sm);
   background: var(--color-card);
   overflow: auto;
 }

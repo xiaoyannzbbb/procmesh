@@ -230,7 +230,7 @@ h2 {
 }
 .card {
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-sm);
   background: var(--color-card);
   padding: 1.25rem;
   overflow: auto;

@@ -1,4 +1,4 @@
-.PHONY: test proto proto-ts web test-e2e
+.PHONY: test proto proto-ts web test-e2e bin
 test:
 	go test ./...
 test-e2e:
@@ -19,3 +19,5 @@ proto-ts:
 		proto/procmesh/v1/api.proto
 web:
 	cd web && npm ci && npm run build
+bin:
+	go build -o bin/procmesh cmd/procmesh/main.go && go build -o bin/procmesh-agent cmd/procmesh-agent/main.go && go build -o bin/procmesh-shim cmd/procmesh-shim/main.go

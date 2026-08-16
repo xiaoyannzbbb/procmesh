@@ -23,6 +23,15 @@ export default [
         console: 'readonly',
         document: 'readonly',
         window: 'readonly',
+        localStorage: 'readonly',
+        sessionStorage: 'readonly',
+        fetch: 'readonly',
+        HTMLElement: 'readonly',
+        getComputedStyle: 'readonly',
+        HeadersInit: 'readonly',
+        performance: 'readonly',
+        process: 'readonly',
+        crypto: 'readonly',
       }
     },
     plugins: {

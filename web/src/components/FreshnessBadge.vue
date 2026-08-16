@@ -54,7 +54,7 @@ const badgeStyle = computed(() => {
 .freshness-badge {
   display: inline-flex;
   align-items: center;
-  border-radius: 999px;
+  border-radius: 3px;
   padding: 0.125rem 0.5rem;
   font-size: 0.75rem;
   font-weight: 600;

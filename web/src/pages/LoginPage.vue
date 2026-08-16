@@ -79,7 +79,7 @@ async function onSubmit(): Promise<void> {
   gap: 0.875rem;
   padding: 1.75rem;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-sm);
   background: var(--color-card);
 }
 .login-card h1 {
