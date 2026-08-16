@@ -28,6 +28,6 @@ export function useI18n() {
   }
 }
 
-// Preload errors and process namespaces on module load
-i18n.loadNamespaces(['errors', 'process'])
+// Preload errors namespace on module load
+i18n.loadNamespaces(['errors'])
 
