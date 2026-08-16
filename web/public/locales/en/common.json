@@ -246,5 +246,17 @@
         "memory": "Memory"
       }
     }
+  },
+  "processLogs": {
+    "title": "Logs",
+    "stream": "Stream",
+    "instance": "Instance",
+    "allInstances": "All instances",
+    "stdout": "stdout",
+    "stderr": "stderr",
+    "tail": "Tail 100",
+    "streamButton": "Stream",
+    "stop": "Stop",
+    "download": "Download"
   }
 }

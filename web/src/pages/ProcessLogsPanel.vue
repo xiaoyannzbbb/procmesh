@@ -3,7 +3,10 @@ import { computed, onUnmounted, ref } from "vue";
 import { withTarget } from "../lib/headers";
 import { useLogClient } from "../lib/rpc";
 import { session } from "../lib/session";
+import { useI18n } from "../lib/useI18n";
 import { formatRemoteError } from "./processView";
+
+const { t } = useI18n();
 
 const props = withDefaults(
   defineProps<{
@@ -137,25 +140,25 @@ void tail();
 <template>
   <section class="card">
     <div class="title-row">
-      <h2>Logs</h2>
+      <h2>{{ t("processLogs.title") }}</h2>
       <div class="controls">
         <label class="field">
-          <span>Stream</span>
+          <span>{{ t("processLogs.stream") }}</span>
           <select v-model="streamName" class="input" @change="tail">
-            <option value="stdout">stdout</option>
-            <option value="stderr">stderr</option>
+            <option value="stdout">{{ t("processLogs.stdout") }}</option>
+            <option value="stderr">{{ t("processLogs.stderr") }}</option>
           </select>
         </label>
         <label class="field">
-          <span>Instance</span>
+          <span>{{ t("processLogs.instance") }}</span>
           <select v-model="instanceId" class="input" @change="tail">
-            <option value="">All instances</option>
+            <option value="">{{ t("processLogs.allInstances") }}</option>
             <option v-for="id in instances" :key="id" :value="id">{{ id }}</option>
           </select>
         </label>
-        <button type="button" class="btn" :disabled="busy || !targetNodeId" @click="tail">Tail 100</button>
-        <button type="button" class="btn" :disabled="streaming || !targetNodeId" @click="startStream">Stream</button>
-        <button v-if="streaming" type="button" class="btn" @click="stopStream">Stop</button>
+        <button type="button" class="btn" :disabled="busy || !targetNodeId" @click="tail">{{ t("processLogs.tail") }}</button>
+        <button type="button" class="btn" :disabled="streaming || !targetNodeId" @click="startStream">{{ t("processLogs.streamButton") }}</button>
+        <button v-if="streaming" type="button" class="btn" @click="stopStream">{{ t("processLogs.stop") }}</button>
         <button
           v-if="canDownload"
           type="button"
@@ -163,7 +166,7 @@ void tail();
           :disabled="busy || !targetNodeId"
           @click="download"
         >
-          Download
+          {{ t("processLogs.download") }}
         </button>
       </div>
     </div>

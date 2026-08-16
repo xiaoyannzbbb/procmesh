@@ -246,5 +246,17 @@
         "memory": "内存"
       }
     }
+  },
+  "processLogs": {
+    "title": "日志",
+    "stream": "流",
+    "instance": "实例",
+    "allInstances": "所有实例",
+    "stdout": "标准输出",
+    "stderr": "标准错误",
+    "tail": "查看最后100行",
+    "streamButton": "流式查看",
+    "stop": "停止",
+    "download": "下载"
   }
 }
