@@ -193,6 +193,8 @@ func TestOpen_CreatesFileAndStubTables(t *testing.T) {
 		"config_revisions",
 		"operation_journal",
 		"audit_events",
+		"batches",
+		"batch_targets",
 	}
 	for _, name := range want {
 		var got string
