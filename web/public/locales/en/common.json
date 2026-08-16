@@ -54,5 +54,23 @@
     "invalidCredentials": "invalid credentials",
     "rateLimited": "login rate limited",
     "userLocked": "user locked"
+  },
+  "audit": {
+    "title": "Audit",
+    "notice": "Audit is per-node; unreachable nodes are marked STALE.",
+    "resourceLabel": "Resource",
+    "resourcePlaceholder": "Filter resource",
+    "loading": "Loading…",
+    "noEntries": "No audit entries",
+    "table": {
+      "time": "Time",
+      "user": "User",
+      "action": "Action",
+      "resource": "Resource",
+      "sourceNode": "Source node",
+      "targetAgent": "Target agent",
+      "result": "Result",
+      "freshness": "Freshness"
+    }
   }
 }

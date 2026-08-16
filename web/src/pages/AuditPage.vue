@@ -4,10 +4,11 @@ import { computed, ref } from "vue";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
 import { LIVE, STALE, UNKNOWN, type Freshness } from "../lib/freshness";
 import { useAuditClient } from "../lib/rpc";
+import { useI18n } from "../lib/useI18n";
 import { formatRemoteError } from "./processView";
 
+const { t } = useI18n();
 const POLL_MS = 5000;
-const NOTICE = "Audit is per-node; unreachable nodes are marked STALE.";
 const client = useAuditClient();
 const resource = ref("");
 
@@ -93,26 +94,26 @@ function formatMs(ms: bigint | number | undefined): string {
 
 <template>
   <div class="page">
-    <h1>Audit</h1>
-    <p class="muted notice">{{ NOTICE }}</p>
+    <h1>{{ t("common:audit.title") }}</h1>
+    <p class="muted notice">{{ t("common:audit.notice") }}</p>
     <label class="field">
-      Resource
-      <input v-model="resource" class="input" name="resource" type="text" placeholder="Filter resource" />
+      {{ t("common:audit.resourceLabel") }}
+      <input v-model="resource" class="input" name="resource" type="text" :placeholder="t('common:audit.resourcePlaceholder')" />
     </label>
-    <p v-if="query.isPending && !query.data" class="muted">Loading…</p>
+    <p v-if="query.isPending && !query.data" class="muted">{{ t("common:audit.loading") }}</p>
     <p v-else-if="errorText" class="error" role="alert">{{ errorText }}</p>
     <div v-else class="card">
       <table class="table">
         <thead>
           <tr>
-            <th>Time</th>
-            <th>User</th>
-            <th>Action</th>
-            <th>Resource</th>
-            <th>Source node</th>
-            <th>Target agent</th>
-            <th>Result</th>
-            <th>Freshness</th>
+            <th>{{ t("common:audit.table.time") }}</th>
+            <th>{{ t("common:audit.table.user") }}</th>
+            <th>{{ t("common:audit.table.action") }}</th>
+            <th>{{ t("common:audit.table.resource") }}</th>
+            <th>{{ t("common:audit.table.sourceNode") }}</th>
+            <th>{{ t("common:audit.table.targetAgent") }}</th>
+            <th>{{ t("common:audit.table.result") }}</th>
+            <th>{{ t("common:audit.table.freshness") }}</th>
           </tr>
         </thead>
         <tbody>
@@ -129,7 +130,7 @@ function formatMs(ms: bigint | number | undefined): string {
             </td>
           </tr>
           <tr v-if="!entries.length">
-            <td colspan="8" class="muted">No audit entries</td>
+            <td colspan="8" class="muted">{{ t("common:audit.noEntries") }}</td>
           </tr>
         </tbody>
       </table>

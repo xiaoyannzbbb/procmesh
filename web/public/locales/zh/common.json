@@ -54,5 +54,23 @@
     "invalidCredentials": "用户名或密码错误",
     "rateLimited": "登录请求过于频繁",
     "userLocked": "用户已锁定"
+  },
+  "audit": {
+    "title": "审计",
+    "notice": "审计按节点进行；无法访问的节点标记为 STALE。",
+    "resourceLabel": "资源",
+    "resourcePlaceholder": "过滤资源",
+    "loading": "加载中…",
+    "noEntries": "无审计条目",
+    "table": {
+      "time": "时间",
+      "user": "用户",
+      "action": "操作",
+      "resource": "资源",
+      "sourceNode": "源节点",
+      "targetAgent": "目标代理",
+      "result": "结果",
+      "freshness": "新鲜度"
+    }
   }
 }
