@@ -131,6 +131,8 @@ func NewServer(opts Options) (*Server, error) {
 	mountConnect(engine, up, uh)
 	rp, rh := procmeshv1connect.NewRoleServiceHandler(&RoleAPI{Auth: opts.Auth}, intercept)
 	mountConnect(engine, rp, rh)
+	gp, gh := procmeshv1connect.NewGroupServiceHandler(&GroupAPI{Auth: opts.Auth}, intercept)
+	mountConnect(engine, gp, gh)
 	adp, adh := procmeshv1connect.NewAuditServiceHandler(newAuditAPI(opts), intercept)
 	mountConnect(engine, adp, adh)
 	mp, mh := procmeshv1connect.NewMetricsServiceHandler(&MetricsAPI{
