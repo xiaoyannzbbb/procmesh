@@ -301,5 +301,27 @@
       },
       "grant": "授予"
     }
+  },
+  "users": {
+    "title": "用户",
+    "loading": "加载中…",
+    "noUsers": "无用户",
+    "table": {
+      "username": "用户名",
+      "display": "显示名称",
+      "email": "邮箱",
+      "status": "状态",
+      "lastLogin": "最后登录",
+      "actions": "操作"
+    },
+    "disable": "禁用",
+    "createUser": {
+      "title": "创建",
+      "username": "用户名",
+      "password": "密码",
+      "display": "显示名称",
+      "email": "邮箱",
+      "create": "创建"
+    }
   }
 }

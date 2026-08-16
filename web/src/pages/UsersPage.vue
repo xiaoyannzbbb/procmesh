@@ -4,7 +4,10 @@ import { computed, ref } from "vue";
 import { newOperationId } from "../lib/opid";
 import { useUserClient } from "../lib/rpc";
 import { session } from "../lib/session";
+import { useI18n } from "../lib/useI18n";
 import { formatRemoteError } from "./processView";
+
+const { t } = useI18n();
 
 const MIN_PASSWORD = 10;
 const POLL_MS = 5000;
@@ -121,8 +124,8 @@ async function onDisable(userId: string): Promise<void> {
 
 <template>
   <div class="page">
-    <h1>Users</h1>
-    <p v-if="query.isPending && !query.data" class="muted">Loading…</p>
+    <h1>{{ t("users.title") }}</h1>
+    <p v-if="query.isPending && !query.data" class="muted">{{ t("users.loading") }}</p>
     <p v-else-if="errorText && !query.data" class="error" role="alert">{{ errorText }}</p>
     <template v-else>
       <p v-if="errorText" class="error" role="alert">{{ errorText }}</p>
@@ -130,11 +133,11 @@ async function onDisable(userId: string): Promise<void> {
         <table class="table">
           <thead>
             <tr>
-              <th>Username</th>
-              <th>Display</th>
-              <th>Email</th>
-              <th>Status</th>
-              <th>Last login</th>
+              <th>{{ t("users.table.username") }}</th>
+              <th>{{ t("users.table.display") }}</th>
+              <th>{{ t("users.table.email") }}</th>
+              <th>{{ t("users.table.status") }}</th>
+              <th>{{ t("users.table.lastLogin") }}</th>
               <th v-if="canUpdate"></th>
             </tr>
           </thead>
@@ -153,36 +156,36 @@ async function onDisable(userId: string): Promise<void> {
                   :disabled="acting"
                   @click="onDisable(user.userId)"
                 >
-                  Disable
+                  {{ t("users.disable") }}
                 </button>
               </td>
             </tr>
             <tr v-if="!users.length">
-              <td :colspan="canUpdate ? 6 : 5" class="muted">No users</td>
+              <td :colspan="canUpdate ? 6 : 5" class="muted">{{ t("users.noUsers") }}</td>
             </tr>
           </tbody>
         </table>
       </div>
 
       <form v-if="canCreate" class="card create-user" @submit.prevent="onCreate">
-        <h2>Create</h2>
+        <h2>{{ t("users.createUser.title") }}</h2>
         <label class="field">
-          Username
+          {{ t("users.createUser.username") }}
           <input v-model="username" class="input" name="username" type="text" autocomplete="off" />
         </label>
         <label class="field">
-          Password
+          {{ t("users.createUser.password") }}
           <input v-model="password" class="input" name="password" type="password" autocomplete="new-password" />
         </label>
         <label class="field">
-          Display
+          {{ t("users.createUser.display") }}
           <input v-model="displayName" class="input" name="display_name" type="text" />
         </label>
         <label class="field">
-          Email
+          {{ t("users.createUser.email") }}
           <input v-model="email" class="input" name="email" type="email" />
         </label>
-        <button class="btn btn-primary" type="submit" :disabled="!createReady || acting">Create</button>
+        <button class="btn btn-primary" type="submit" :disabled="!createReady || acting">{{ t("users.createUser.create") }}</button>
       </form>
     </template>
   </div>

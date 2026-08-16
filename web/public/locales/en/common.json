@@ -301,5 +301,27 @@
       },
       "grant": "Grant"
     }
+  },
+  "users": {
+    "title": "Users",
+    "loading": "Loading…",
+    "noUsers": "No users",
+    "table": {
+      "username": "Username",
+      "display": "Display",
+      "email": "Email",
+      "status": "Status",
+      "lastLogin": "Last login",
+      "actions": "Actions"
+    },
+    "disable": "Disable",
+    "createUser": {
+      "title": "Create",
+      "username": "Username",
+      "password": "Password",
+      "display": "Display",
+      "email": "Email",
+      "create": "Create"
+    }
   }
 }
