@@ -475,6 +475,21 @@ func (s *State) applyMemberRemove(b MemberRemoveBody) error {
 	if m.CertSerial != "" {
 		s.CRL[strings.ToUpper(m.CertSerial)] = struct{}{}
 	}
+	for id, g := range s.AgentGroups {
+		var filtered []string
+		changed := false
+		for _, n := range g.MemberIDs {
+			if n == b.NodeID {
+				changed = true
+				continue
+			}
+			filtered = append(filtered, n)
+		}
+		if changed {
+			g.MemberIDs = append([]string(nil), filtered...)
+			s.AgentGroups[id] = g
+		}
+	}
 	return nil
 }
 

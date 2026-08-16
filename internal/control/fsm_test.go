@@ -768,6 +768,20 @@ func TestFSM_AgentGroupErrorsAndMemberRemove(t *testing.T) {
 	}
 }
 
+func TestFSM_MemberRemoveStripsGroups(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := mustBootstrap(t, now)
+	_ = s.Apply(mustEncode(t, "member_put", control.MemberPutBody{NodeID: "node-a", CertSerial: "AA"}), now)
+	_ = s.Apply(mustEncode(t, "group_put", control.GroupPutBody{GroupID: "g-fin", Name: "finance", NowUnix: now.Unix()}), now)
+	_ = s.Apply(mustEncode(t, "group_member_add", control.GroupMemberBody{GroupID: "g-fin", NodeID: "node-a"}), now)
+	if err := s.Apply(mustEncode(t, "member_remove", control.MemberRemoveBody{NodeID: "node-a"}), now); err != nil {
+		t.Fatal(err)
+	}
+	if s.NodeInGroup("node-a", "g-fin") {
+		t.Fatal("removed node must leave groups")
+	}
+}
+
 type failSink struct{}
 
 func (failSink) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
