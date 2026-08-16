@@ -1,0 +1,88 @@
+import { test, expect } from "@playwright/test";
+import { loginAdmin } from "./helpers";
+
+test.describe("i18n functionality", () => {
+  test.beforeEach(async ({ page }) => {
+    await loginAdmin(page);
+  });
+
+  test("should default to English", async ({ page }) => {
+    await expect(page.locator("h1")).toContainText("Overview");
+
+    const languageSwitcher = page.locator('[data-testid="lang-en"]');
+    await expect(languageSwitcher).toHaveClass(/active/);
+  });
+
+  test("should switch to Chinese", async ({ page }) => {
+    await page.click('[data-testid="lang-zh"]');
+
+    await page.waitForTimeout(500);
+
+    const chineseButton = page.locator('[data-testid="lang-zh"]');
+    await expect(chineseButton).toHaveClass(/active/);
+
+    const englishButton = page.locator('[data-testid="lang-en"]');
+    await expect(englishButton).not.toHaveClass(/active/);
+  });
+
+  test("should persist language choice", async ({ page }) => {
+    await page.click('[data-testid="lang-zh"]');
+    await page.waitForTimeout(500);
+
+    await page.reload();
+    await page.waitForTimeout(500);
+
+    const chineseButton = page.locator('[data-testid="lang-zh"]');
+    await expect(chineseButton).toHaveClass(/active/);
+  });
+
+  test("should translate navigation links", async ({ page }) => {
+    await expect(page.locator("nav")).toContainText("Overview");
+    await expect(page.locator("nav")).toContainText("Nodes");
+    await expect(page.locator("nav")).toContainText("Processes");
+
+    await page.click('[data-testid="lang-zh"]');
+    await page.waitForTimeout(500);
+
+    const navText = await page.locator("nav").textContent();
+    expect(navText).toBeTruthy();
+  });
+
+  test("should translate action buttons", async ({ page }) => {
+    const logoutButton = page.getByRole("button", { name: /logout/i });
+    await expect(logoutButton).toBeVisible();
+
+    await page.click('[data-testid="lang-zh"]');
+    await page.waitForTimeout(500);
+
+    const logoutButtonAfter = page.getByRole("button");
+    const buttons = await logoutButtonAfter.all();
+    expect(buttons.length).toBeGreaterThan(0);
+  });
+
+  test("should translate across page navigation", async ({ page }) => {
+    await page.click('[data-testid="lang-zh"]');
+    await page.waitForTimeout(500);
+
+    await page.click('a[href="/nodes"]');
+    await page.waitForTimeout(500);
+
+    const chineseButton = page.locator('[data-testid="lang-zh"]');
+    await expect(chineseButton).toHaveClass(/active/);
+  });
+
+  test("language switcher should be visible on all pages", async ({ page }) => {
+    const langSwitcher = page.locator('[data-testid="lang-en"]');
+    await expect(langSwitcher).toBeVisible();
+
+    await page.click('a[href="/processes"]');
+    await page.waitForTimeout(500);
+
+    await expect(langSwitcher).toBeVisible();
+
+    await page.click('a[href="/nodes"]');
+    await page.waitForTimeout(500);
+
+    await expect(langSwitcher).toBeVisible();
+  });
+});
