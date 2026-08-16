@@ -7,6 +7,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/auth"
+	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/rpc"
@@ -99,7 +100,7 @@ func (s *ProcessAPI) ListProcesses(ctx context.Context, req *connect.Request[pro
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	if err := requireRoutePerm(ctx, s.Auth, auth.PermProcessRead, local, rt, s.LocalID, false); err != nil {
+	if err := requireAnyPerm(ctx, s.Auth, auth.PermProcessRead); err != nil {
 		return nil, err
 	}
 	if !local {
@@ -123,7 +124,23 @@ func (s *ProcessAPI) ListProcesses(ctx context.Context, req *connect.Request[pro
 	out := &procmeshv1.ListProcessesResponse{
 		Processes: make([]*procmeshv1.ProcessView, 0, len(specs)),
 	}
+	filter := req.Msg.GetGroup()
+	p, hasP := PrincipalFrom(ctx)
+	nodeID := hopTarget(local, rt, s.LocalID)
 	for _, spec := range specs {
+		if filter != "" && spec.Group != filter {
+			continue
+		}
+		if s.Auth != nil && hasP {
+			if err := s.Auth.AllowOn(p, auth.PermProcessRead, control.CheckTarget{
+				NodeID: nodeID, ProcessGroup: spec.Group,
+			}); err != nil {
+				if errcode.Is(err, errcode.DENIED) {
+					continue
+				}
+				return nil, ToConnect(err)
+			}
+		}
 		view, err := s.viewOf(ctx, spec)
 		if err != nil {
 			return nil, err
@@ -138,7 +155,7 @@ func (s *ProcessAPI) GetProcess(ctx context.Context, req *connect.Request[procme
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	if err := requireRoutePerm(ctx, s.Auth, auth.PermProcessRead, local, rt, s.LocalID, false); err != nil {
+	if err := authorizeProcessRoute(ctx, s.Auth, s.Router, auth.PermProcessRead, req.Msg.GetIdOrName(), local, rt, false); err != nil {
 		return nil, err
 	}
 	if !local {
@@ -159,6 +176,9 @@ func (s *ProcessAPI) GetProcess(ctx context.Context, req *connect.Request[procme
 	if err != nil {
 		return nil, ToConnect(err)
 	}
+	if err := authorizeProcessSpec(ctx, s.Auth, auth.PermProcessRead, s.LocalID, spec.Group, false); err != nil {
+		return nil, err
+	}
 	view, err := s.viewOf(ctx, spec)
 	if err != nil {
 		return nil, err
@@ -176,10 +196,19 @@ func (s *ProcessAPI) ApplyProcess(ctx context.Context, req *connect.Request[proc
 	if req.Msg.GetExpectedRevision() != 0 || s.processExists(ctx, idOrName) {
 		perm = auth.PermProcessUpdate
 	}
-	if err := requireRoutePerm(ctx, s.Auth, perm, local, rt, s.LocalID, true); err != nil {
+	if err := requireAnyPerm(ctx, s.Auth, perm); err != nil {
 		return nil, err
 	}
 	if !local {
+		group := req.Msg.GetSpec().GetGroup()
+		if group == "" {
+			group = gossipGroup(s.Router, rt.NodeID, idOrName)
+		}
+		if err := requirePermOn(ctx, s.Auth, perm, control.CheckTarget{
+			NodeID: rt.NodeID, ProcessGroup: group,
+		}, true, false); err != nil {
+			return nil, err
+		}
 		cli, err := s.remoteProcess(ctx, rt, req.Header())
 		if err != nil {
 			return nil, err
@@ -191,6 +220,15 @@ func (s *ProcessAPI) ApplyProcess(ctx context.Context, req *connect.Request[proc
 		return out, nil
 	}
 	if err := s.rejectMutation(); err != nil {
+		return nil, err
+	}
+	group := req.Msg.GetSpec().GetGroup()
+	if s.processExists(ctx, idOrName) {
+		if existing, err := s.Mgr.Resolve(ctx, idOrName); err == nil {
+			group = existing.Group
+		}
+	}
+	if err := authorizeProcessSpec(ctx, s.Auth, perm, s.LocalID, group, true); err != nil {
 		return nil, err
 	}
 	if spec := req.Msg.GetSpec(); spec != nil && spec.GetOwnerAgentId() == "" && s.LocalID != "" {
@@ -233,7 +271,7 @@ func (s *ProcessAPI) DeleteProcess(ctx context.Context, req *connect.Request[pro
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	if err := requireRoutePerm(ctx, s.Auth, auth.PermProcessDelete, local, rt, s.LocalID, true); err != nil {
+	if err := authorizeProcessRoute(ctx, s.Auth, s.Router, auth.PermProcessDelete, req.Msg.GetIdOrName(), local, rt, true); err != nil {
 		return nil, err
 	}
 	if !local {
@@ -264,6 +302,9 @@ func (s *ProcessAPI) DeleteProcess(ctx context.Context, req *connect.Request[pro
 	spec, err := s.Mgr.Resolve(ctx, req.Msg.GetIdOrName())
 	if err != nil {
 		return nil, ToConnect(err)
+	}
+	if err := authorizeProcessSpec(ctx, s.Auth, auth.PermProcessDelete, s.LocalID, spec.Group, true); err != nil {
+		return nil, err
 	}
 	if err := s.Mgr.DeleteSpec(ctx, spec.ProcessID, req.Msg.GetExpectedRevision(), opID, operator); err != nil {
 		return nil, ToConnect(err)
@@ -325,7 +366,7 @@ func (s *ProcessAPI) AdoptInstance(ctx context.Context, req *connect.Request[pro
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	if err := requireRoutePerm(ctx, s.Auth, auth.PermProcessUpdate, local, rt, s.LocalID, true); err != nil {
+	if err := authorizeProcessRoute(ctx, s.Auth, s.Router, auth.PermProcessUpdate, req.Msg.GetInstanceId(), local, rt, true); err != nil {
 		return nil, err
 	}
 	if !local {
@@ -350,11 +391,6 @@ func (s *ProcessAPI) AdoptInstance(ctx context.Context, req *connect.Request[pro
 	if err != nil {
 		return nil, err
 	}
-	if !done {
-		if err := s.Mgr.Adopt(ctx, req.Msg.GetInstanceId(), int(req.Msg.GetPid()), opID, operator); err != nil {
-			return nil, ToConnect(err)
-		}
-	}
 	inst, err := s.Mgr.GetInstance(ctx, req.Msg.GetInstanceId())
 	if err != nil {
 		return nil, ToConnect(err)
@@ -362,6 +398,22 @@ func (s *ProcessAPI) AdoptInstance(ctx context.Context, req *connect.Request[pro
 	spec, err := s.Mgr.GetSpec(ctx, inst.ProcessID)
 	if err != nil {
 		return nil, ToConnect(err)
+	}
+	if err := authorizeProcessSpec(ctx, s.Auth, auth.PermProcessUpdate, s.LocalID, spec.Group, true); err != nil {
+		return nil, err
+	}
+	if !done {
+		if err := s.Mgr.Adopt(ctx, req.Msg.GetInstanceId(), int(req.Msg.GetPid()), opID, operator); err != nil {
+			return nil, ToConnect(err)
+		}
+		inst, err = s.Mgr.GetInstance(ctx, req.Msg.GetInstanceId())
+		if err != nil {
+			return nil, ToConnect(err)
+		}
+		spec, err = s.Mgr.GetSpec(ctx, inst.ProcessID)
+		if err != nil {
+			return nil, ToConnect(err)
+		}
 	}
 	view, err := s.viewOf(ctx, spec)
 	if err != nil {
@@ -375,7 +427,7 @@ func (s *ProcessAPI) mutateRef(ctx context.Context, req *connect.Request[procmes
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	if err := requireRoutePerm(ctx, s.Auth, perm, local, rt, s.LocalID, true); err != nil {
+	if err := authorizeProcessRoute(ctx, s.Auth, s.Router, perm, req.Msg.GetIdOrName(), local, rt, true); err != nil {
 		return nil, err
 	}
 	if !local {
@@ -403,6 +455,9 @@ func (s *ProcessAPI) mutateRef(ctx context.Context, req *connect.Request[procmes
 	spec, err := s.Mgr.Resolve(ctx, req.Msg.GetIdOrName())
 	if err != nil {
 		return nil, ToConnect(err)
+	}
+	if err := authorizeProcessSpec(ctx, s.Auth, perm, s.LocalID, spec.Group, true); err != nil {
+		return nil, err
 	}
 	if !done {
 		if err := fn(ctx, spec.ProcessID, opID, operator); err != nil {
@@ -503,6 +558,41 @@ func (s *ProcessAPI) resolveApplySpec(ctx context.Context, expectedRevision int6
 	}
 	spec.ProcessID = existing.ProcessID
 	return spec, nil
+}
+
+func gossipGroup(router *Router, nodeID, processName string) string {
+	if router == nil || processName == "" {
+		return ""
+	}
+	for _, n := range router.members() {
+		if n.NodeID != nodeID {
+			continue
+		}
+		for _, p := range n.Processes {
+			if p.Name == processName {
+				return p.Group
+			}
+		}
+	}
+	return ""
+}
+
+func authorizeProcessRoute(ctx context.Context, svc *auth.Service, router *Router, perm, idOrName string, local bool, rt Route, write bool) error {
+	if err := requireAnyPerm(ctx, svc, perm); err != nil {
+		return err
+	}
+	if local {
+		return nil
+	}
+	return requirePermOn(ctx, svc, perm, control.CheckTarget{
+		NodeID: rt.NodeID, ProcessGroup: gossipGroup(router, rt.NodeID, idOrName),
+	}, write, false)
+}
+
+func authorizeProcessSpec(ctx context.Context, svc *auth.Service, perm, localID, processGroup string, write bool) error {
+	return requirePermOn(ctx, svc, perm, control.CheckTarget{
+		NodeID: localID, ProcessGroup: processGroup,
+	}, write, true)
 }
 
 func specFromJournal(result []byte) (process.ProcessSpec, bool) {

@@ -66,7 +66,7 @@ func (s *LogAPI) TailLogs(ctx context.Context, req *connect.Request[procmeshv1.T
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	if err := requireRoutePerm(ctx, s.Auth, auth.PermProcessLogsRead, local, rt, s.LocalID, false); err != nil {
+	if err := authorizeProcessRoute(ctx, s.Auth, s.Router, auth.PermProcessLogsRead, req.Msg.GetIdOrName(), local, rt, false); err != nil {
 		return nil, err
 	}
 	if !local {
@@ -86,6 +86,9 @@ func (s *LogAPI) TailLogs(ctx context.Context, req *connect.Request[procmeshv1.T
 	spec, err := s.Mgr.Resolve(ctx, req.Msg.GetIdOrName())
 	if err != nil {
 		return nil, ToConnect(err)
+	}
+	if err := authorizeProcessSpec(ctx, s.Auth, auth.PermProcessLogsRead, s.LocalID, spec.Group, false); err != nil {
+		return nil, err
 	}
 	stream, err := normalizeLogStream(req.Msg.GetStream())
 	if err != nil {
@@ -124,7 +127,7 @@ func (s *LogAPI) StreamLogs(ctx context.Context, req *connect.Request[procmeshv1
 	if err != nil {
 		return ToConnect(err)
 	}
-	if err := requireRoutePerm(ctx, s.Auth, auth.PermProcessLogsRead, local, rt, s.LocalID, false); err != nil {
+	if err := authorizeProcessRoute(ctx, s.Auth, s.Router, auth.PermProcessLogsRead, req.Msg.GetIdOrName(), local, rt, false); err != nil {
 		return err
 	}
 	if !local {
@@ -138,6 +141,9 @@ func (s *LogAPI) StreamLogs(ctx context.Context, req *connect.Request[procmeshv1
 	spec, err := s.Mgr.Resolve(ctx, req.Msg.GetIdOrName())
 	if err != nil {
 		return ToConnect(err)
+	}
+	if err := authorizeProcessSpec(ctx, s.Auth, auth.PermProcessLogsRead, s.LocalID, spec.Group, false); err != nil {
+		return err
 	}
 	name, err := normalizeLogStream(req.Msg.GetStream())
 	if err != nil {
@@ -192,7 +198,7 @@ func (s *LogAPI) DownloadLogs(ctx context.Context, req *connect.Request[procmesh
 	if err != nil {
 		return ToConnect(err)
 	}
-	if err := requireRoutePerm(ctx, s.Auth, auth.PermProcessLogsDownload, local, rt, s.LocalID, false); err != nil {
+	if err := authorizeProcessRoute(ctx, s.Auth, s.Router, auth.PermProcessLogsDownload, req.Msg.GetIdOrName(), local, rt, false); err != nil {
 		return err
 	}
 	if !local {
@@ -206,6 +212,9 @@ func (s *LogAPI) DownloadLogs(ctx context.Context, req *connect.Request[procmesh
 	spec, err := s.Mgr.Resolve(ctx, req.Msg.GetIdOrName())
 	if err != nil {
 		return ToConnect(err)
+	}
+	if err := authorizeProcessSpec(ctx, s.Auth, auth.PermProcessLogsDownload, s.LocalID, spec.Group, false); err != nil {
+		return err
 	}
 	name, err := normalizeLogStream(req.Msg.GetStream())
 	if err != nil {

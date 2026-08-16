@@ -53,7 +53,7 @@ func (s *ConfigAPI) GetConfig(ctx context.Context, req *connect.Request[procmesh
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	if err := requireRoutePerm(ctx, s.Auth, auth.PermProcessConfigRead, local, rt, s.LocalID, false); err != nil {
+	if err := authorizeProcessRoute(ctx, s.Auth, s.Router, auth.PermProcessConfigRead, req.Msg.GetIdOrName(), local, rt, false); err != nil {
 		return nil, err
 	}
 	if !local {
@@ -74,6 +74,9 @@ func (s *ConfigAPI) GetConfig(ctx context.Context, req *connect.Request[procmesh
 	if err != nil {
 		return nil, ToConnect(err)
 	}
+	if err := authorizeProcessSpec(ctx, s.Auth, auth.PermProcessConfigRead, s.LocalID, spec.Group, false); err != nil {
+		return nil, err
+	}
 	return connect.NewResponse(&procmeshv1.GetConfigResponse{Spec: SpecToProto(spec)}), nil
 }
 
@@ -82,7 +85,7 @@ func (s *ConfigAPI) UpdateConfig(ctx context.Context, req *connect.Request[procm
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	if err := requireRoutePerm(ctx, s.Auth, auth.PermProcessConfigUpdate, local, rt, s.LocalID, true); err != nil {
+	if err := authorizeProcessRoute(ctx, s.Auth, s.Router, auth.PermProcessConfigUpdate, req.Msg.GetIdOrName(), local, rt, true); err != nil {
 		return nil, err
 	}
 	if !local {
@@ -110,6 +113,9 @@ func (s *ConfigAPI) UpdateConfig(ctx context.Context, req *connect.Request[procm
 	if err != nil {
 		return nil, ToConnect(err)
 	}
+	if err := authorizeProcessSpec(ctx, s.Auth, auth.PermProcessConfigUpdate, s.LocalID, existing.Group, true); err != nil {
+		return nil, err
+	}
 	spec := ProtoToSpec(req.Msg.GetSpec())
 	spec.ProcessID = existing.ProcessID
 	got, err := s.Mgr.ApplySpec(ctx, spec, req.Msg.GetExpectedRevision(), opID, operator, req.Msg.GetComment())
@@ -124,7 +130,7 @@ func (s *ConfigAPI) History(ctx context.Context, req *connect.Request[procmeshv1
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	if err := requireRoutePerm(ctx, s.Auth, auth.PermProcessConfigRead, local, rt, s.LocalID, false); err != nil {
+	if err := authorizeProcessRoute(ctx, s.Auth, s.Router, auth.PermProcessConfigRead, req.Msg.GetIdOrName(), local, rt, false); err != nil {
 		return nil, err
 	}
 	if !local {
@@ -144,6 +150,9 @@ func (s *ConfigAPI) History(ctx context.Context, req *connect.Request[procmeshv1
 	spec, err := s.Mgr.Resolve(ctx, req.Msg.GetIdOrName())
 	if err != nil {
 		return nil, ToConnect(err)
+	}
+	if err := authorizeProcessSpec(ctx, s.Auth, auth.PermProcessConfigRead, s.LocalID, spec.Group, false); err != nil {
+		return nil, err
 	}
 	revs, err := s.Mgr.ListRevisions(ctx, spec.ProcessID)
 	if err != nil {
@@ -167,7 +176,7 @@ func (s *ConfigAPI) Diff(ctx context.Context, req *connect.Request[procmeshv1.Di
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	if err := requireRoutePerm(ctx, s.Auth, auth.PermProcessConfigRead, local, rt, s.LocalID, false); err != nil {
+	if err := authorizeProcessRoute(ctx, s.Auth, s.Router, auth.PermProcessConfigRead, req.Msg.GetIdOrName(), local, rt, false); err != nil {
 		return nil, err
 	}
 	if !local {
@@ -191,6 +200,9 @@ func (s *ConfigAPI) Diff(ctx context.Context, req *connect.Request[procmeshv1.Di
 	if err != nil {
 		return nil, ToConnect(err)
 	}
+	if err := authorizeProcessSpec(ctx, s.Auth, auth.PermProcessConfigRead, s.LocalID, spec.Group, false); err != nil {
+		return nil, err
+	}
 	from, err := s.Revs.GetRevisionSpec(ctx, spec.ProcessID, req.Msg.GetFromRevision())
 	if err != nil {
 		return nil, ToConnect(err)
@@ -207,7 +219,7 @@ func (s *ConfigAPI) Rollback(ctx context.Context, req *connect.Request[procmeshv
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	if err := requireRoutePerm(ctx, s.Auth, auth.PermProcessConfigUpdate, local, rt, s.LocalID, true); err != nil {
+	if err := authorizeProcessRoute(ctx, s.Auth, s.Router, auth.PermProcessConfigUpdate, req.Msg.GetIdOrName(), local, rt, true); err != nil {
 		return nil, err
 	}
 	if !local {
@@ -231,6 +243,9 @@ func (s *ConfigAPI) Rollback(ctx context.Context, req *connect.Request[procmeshv
 	existing, err := s.Mgr.Resolve(ctx, req.Msg.GetIdOrName())
 	if err != nil {
 		return nil, ToConnect(err)
+	}
+	if err := authorizeProcessSpec(ctx, s.Auth, auth.PermProcessConfigUpdate, s.LocalID, existing.Group, true); err != nil {
+		return nil, err
 	}
 	got, err := s.Mgr.Rollback(ctx, existing.ProcessID, req.Msg.GetToRevision(), req.Msg.GetExpectedRevision(), opID, operator, req.Msg.GetComment())
 	if err != nil {

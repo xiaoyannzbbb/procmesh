@@ -80,6 +80,10 @@ func requireHopPerm(ctx context.Context, svc *auth.Service, procedure, localID s
 	if !ok {
 		return nil
 	}
+	// Process RPCs need spec.Group for CheckTarget; hop only proves the perm exists.
+	if strings.HasPrefix(perm, "process.") {
+		return requireAnyPerm(ctx, svc, perm)
+	}
 	return requirePerm(ctx, svc, perm, localID, write, true)
 }
 
