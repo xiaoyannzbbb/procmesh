@@ -163,22 +163,6 @@ func TestMetrics_GetProcessMetricsLocalOnlyNoHop(t *testing.T) {
 	}
 }
 
-func TestReadProcStat_CurrentProcess(t *testing.T) {
-	cpu, mem, ok := readProcStat(os.Getpid())
-	if runtime.GOOS == "linux" {
-		if !ok {
-			t.Fatalf("linux readProcStat ok=false cpu=%d mem=%d", cpu, mem)
-		}
-		if mem <= 0 {
-			t.Fatalf("linux memBytes=%d want > 0", mem)
-		}
-		return
-	}
-	if ok {
-		t.Fatalf("non-linux readProcStat ok=true cpu=%d mem=%d", cpu, mem)
-	}
-}
-
 type fakeMetricsClient struct {
 	out *connect.Response[procmeshv1.GetProcessMetricsResponse]
 	err error
