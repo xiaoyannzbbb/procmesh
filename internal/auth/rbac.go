@@ -1,20 +1,39 @@
 package auth
 
-import "github.com/qleelulu/procmesh/internal/errcode"
+import (
+	"github.com/qleelulu/procmesh/internal/control"
+	"github.com/qleelulu/procmesh/internal/errcode"
+)
 
 func (s *Service) Allow(p Principal, perm, targetNodeID string) error {
+	return s.AllowOn(p, perm, control.CheckTarget{NodeID: targetNodeID})
+}
+
+func (s *Service) AllowOn(p Principal, perm string, t control.CheckTarget) error {
 	st, err := s.storeOrErr()
 	if err != nil {
 		return err
 	}
 	view := st.View()
-	if !view.Check(p.UserID, perm, targetNodeID) {
+	if !view.CheckTarget(p.UserID, perm, t) {
 		return errcode.E(errcode.DENIED, "permission denied")
 	}
 	return nil
 }
 
-func (s *Service) AllowWrite(p Principal, perm, targetNodeID string, local bool) error {
+func (s *Service) AllowAny(p Principal, perm string) error {
+	st, err := s.storeOrErr()
+	if err != nil {
+		return err
+	}
+	view := st.View()
+	if !view.CanAny(p.UserID, perm) {
+		return errcode.E(errcode.DENIED, "permission denied")
+	}
+	return nil
+}
+
+func (s *Service) AllowWriteOn(p Principal, perm string, t control.CheckTarget, local bool) error {
 	st, err := s.storeOrErr()
 	if err != nil {
 		return err
@@ -27,7 +46,11 @@ func (s *Service) AllowWrite(p Principal, perm, targetNodeID string, local bool)
 			return errcode.E(errcode.DENIED, "rbac cache expired")
 		}
 	}
-	return s.Allow(p, perm, targetNodeID)
+	return s.AllowOn(p, perm, t)
+}
+
+func (s *Service) AllowWrite(p Principal, perm, targetNodeID string, local bool) error {
+	return s.AllowWriteOn(p, perm, control.CheckTarget{NodeID: targetNodeID}, local)
 }
 
 func isControlPlaneWrite(perm string) bool {

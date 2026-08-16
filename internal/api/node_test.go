@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
+	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
@@ -288,5 +290,64 @@ func TestListNodes_ZeroClusterUsesLocalIfProvided(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "cluster not configured") {
 		t.Fatalf("want cluster not configured: %v", err)
+	}
+}
+
+func TestNodeAPI_FiltersByAgentGroup(t *testing.T) {
+	// 两节点摘要 + 一组只含 node-fin
+	// finance operator principal
+	// ListNodes 只能看到 node-fin
+	// GetNode(node-ads) DENIED 或 NOT_FOUND（锁定：DENIED，避免探测）
+	_, svc := newBootstrappedAuth(t)
+	now := time.Unix(1_700_000_000, 0)
+	applyAuthCmd(t, svc, control.CmdMemberPut, control.MemberPutBody{NodeID: "node-fin"})
+	applyAuthCmd(t, svc, control.CmdMemberPut, control.MemberPutBody{NodeID: "node-ads"})
+	applyAuthCmd(t, svc, control.CmdGroupPut, control.GroupPutBody{GroupID: "g-fin", Name: "finance", NowUnix: now.Unix()})
+	applyAuthCmd(t, svc, control.CmdGroupMemberAdd, control.GroupMemberBody{GroupID: "g-fin", NodeID: "node-fin"})
+	applyAuthCmd(t, svc, control.CmdUserPut, control.UserPutBody{
+		ID: "u-fin", Username: "finop", PasswordHash: testAdminHash(t),
+	})
+	applyAuthCmd(t, svc, control.CmdBindPut, control.BindPutBody{
+		UserID: "u-fin", RoleID: "operator", Scope: control.ScopeAgentGroup, ScopeID: "g-fin",
+	})
+
+	api := &NodeAPI{
+		Deps: ClusterDeps{Mesh: &staticMesh{members: []cluster.NodeSummary{
+			{
+				NodeID: "node-fin", Hostname: "fin-host",
+				Processes: []cluster.ProcessSummary{{
+					ProcessID: "p-web", Name: "web", Group: "finance",
+				}},
+			},
+			{NodeID: "node-ads", Hostname: "ads-host"},
+		}}},
+		Auth: svc,
+	}
+	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "u-fin", Username: "finop"})
+
+	listed, err := api.ListNodes(ctx, connect.NewRequest(&procmeshv1.ListNodesRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Msg.GetNodes()) != 1 || listed.Msg.GetNodes()[0].GetNodeId() != "node-fin" {
+		t.Fatalf("list %+v", listed.Msg.GetNodes())
+	}
+	got := listed.Msg.GetNodes()[0]
+	if len(got.GetAgentGroupIds()) != 1 || got.GetAgentGroupIds()[0] != "g-fin" {
+		t.Fatalf("agent_group_ids %+v", got.GetAgentGroupIds())
+	}
+	if len(got.GetProcesses()) != 1 || got.GetProcesses()[0].GetProcessId() != "p-web" || got.GetProcesses()[0].GetGroup() != "finance" {
+		t.Fatalf("process summary %+v", got.GetProcesses())
+	}
+
+	_, err = api.GetNode(ctx, connect.NewRequest(&procmeshv1.GetNodeRequest{IdOrHostname: "node-ads"}))
+	assertDenied(t, err)
+
+	gotNode, err := api.GetNode(ctx, connect.NewRequest(&procmeshv1.GetNodeRequest{IdOrHostname: "node-fin"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotNode.Msg.GetNode().GetNodeId() != "node-fin" {
+		t.Fatalf("get %+v", gotNode.Msg.GetNode())
 	}
 }

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"time"
 
@@ -23,26 +24,35 @@ type NodeAPI struct {
 }
 
 func (s *NodeAPI) ListNodes(ctx context.Context, _ *connect.Request[procmeshv1.ListNodesRequest]) (*connect.Response[procmeshv1.ListNodesResponse], error) {
-	if err := requirePerm(ctx, s.Auth, auth.PermNodeRead, "", false, true); err != nil {
+	if err := requireAnyPerm(ctx, s.Auth, auth.PermNodeRead); err != nil {
 		return nil, err
 	}
 	members := s.Deps.members()
 	out := &procmeshv1.ListNodesResponse{Nodes: make([]*procmeshv1.Node, 0, len(members))}
+	p, hasP := PrincipalFrom(ctx)
 	for _, n := range members {
-		out.Nodes = append(out.Nodes, nodeToProto(n))
+		if s.Auth != nil && hasP {
+			if err := s.Auth.AllowOn(p, auth.PermNodeRead, control.CheckTarget{NodeID: n.NodeID}); err != nil {
+				if errcode.Is(err, errcode.DENIED) {
+					continue
+				}
+				return nil, ToConnect(err)
+			}
+		}
+		out.Nodes = append(out.Nodes, nodeToProto(n, s.Auth))
 	}
 	return connect.NewResponse(out), nil
 }
 
 func (s *NodeAPI) GetNode(ctx context.Context, req *connect.Request[procmeshv1.GetNodeRequest]) (*connect.Response[procmeshv1.GetNodeResponse], error) {
-	if err := requirePerm(ctx, s.Auth, auth.PermNodeRead, "", false, true); err != nil {
-		return nil, err
-	}
 	n, ok := findNode(s.Deps.members(), req.Msg.GetIdOrHostname())
 	if !ok {
 		return nil, ToConnect(errcode.E(errcode.NOT_FOUND, "node not found"))
 	}
-	return connect.NewResponse(&procmeshv1.GetNodeResponse{Node: nodeToProto(n)}), nil
+	if err := requirePermOn(ctx, s.Auth, auth.PermNodeRead, control.CheckTarget{NodeID: n.NodeID}, false, true); err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(&procmeshv1.GetNodeResponse{Node: nodeToProto(n, s.Auth)}), nil
 }
 
 func (s *NodeAPI) CreateJoinToken(ctx context.Context, req *connect.Request[procmeshv1.CreateJoinTokenRequest]) (*connect.Response[procmeshv1.CreateJoinTokenResponse], error) {
@@ -213,7 +223,7 @@ func findNode(members []cluster.NodeSummary, idOrHost string) (cluster.NodeSumma
 	return cluster.NodeSummary{}, false
 }
 
-func nodeToProto(n cluster.NodeSummary) *procmeshv1.Node {
+func nodeToProto(n cluster.NodeSummary, svc *auth.Service) *procmeshv1.Node {
 	procs := make([]*procmeshv1.ProcessSummary, 0, len(n.Processes))
 	for _, p := range n.Processes {
 		procs = append(procs, &procmeshv1.ProcessSummary{
@@ -224,6 +234,8 @@ func nodeToProto(n cluster.NodeSummary) *procmeshv1.Node {
 			LatestRevision:  p.LatestRevision,
 			ActiveRevision:  p.ActiveRevision,
 			FreshnessUnixMs: p.FreshnessUnixMs,
+			ProcessId:       p.ProcessID,
+			Group:           p.Group,
 		})
 	}
 	return &procmeshv1.Node{
@@ -241,5 +253,25 @@ func nodeToProto(n cluster.NodeSummary) *procmeshv1.Node {
 		Resources:         protoResources(n.Resources),
 		Processes:         procs,
 		LastUpdatedUnixMs: n.LastUpdatedUnixMs,
+		AgentGroupIds:     agentGroupIDsFor(svc, n.NodeID),
 	}
+}
+
+func agentGroupIDsFor(svc *auth.Service, nodeID string) []string {
+	if svc == nil {
+		return nil
+	}
+	st := svc.Store()
+	if st == nil {
+		return nil
+	}
+	view := st.View()
+	var ids []string
+	for id := range view.AgentGroups {
+		if view.NodeInGroup(nodeID, id) {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	return ids
 }

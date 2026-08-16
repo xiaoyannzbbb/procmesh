@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/qleelulu/procmesh/internal/auth"
+	"github.com/qleelulu/procmesh/internal/control"
 )
 
 // requirePerm 在 svc==nil 或无 Principal 时放行（旧单测 / 未入群）。
@@ -24,6 +25,40 @@ func requirePerm(ctx context.Context, svc *auth.Service, perm, targetNode string
 		err = svc.Allow(p, perm, targetNode)
 	}
 	if err != nil {
+		return ToConnect(err)
+	}
+	return nil
+}
+
+func requireAnyPerm(ctx context.Context, svc *auth.Service, perm string) error {
+	if svc == nil {
+		return nil
+	}
+	p, ok := PrincipalFrom(ctx)
+	if !ok {
+		return nil
+	}
+	if err := svc.AllowAny(p, perm); err != nil {
+		return ToConnect(err)
+	}
+	return nil
+}
+
+func requirePermOn(ctx context.Context, svc *auth.Service, perm string, t control.CheckTarget, write, local bool) error {
+	if svc == nil {
+		return nil
+	}
+	p, ok := PrincipalFrom(ctx)
+	if !ok {
+		return nil
+	}
+	if write {
+		if err := svc.AllowWriteOn(p, perm, t, local); err != nil {
+			return ToConnect(err)
+		}
+		return nil
+	}
+	if err := svc.AllowOn(p, perm, t); err != nil {
 		return ToConnect(err)
 	}
 	return nil
