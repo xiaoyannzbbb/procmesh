@@ -34,9 +34,12 @@ describe('i18n configuration', () => {
     expect(detection?.caches).toContain('localStorage')
   })
 
-  it('configures backend with correct loadPath', () => {
-    const backend = i18n.options.backend
-    expect(backend?.loadPath).toBe('/locales/{{lng}}/{{ns}}.json')
+  it('preloads all namespaces with inline resources', () => {
+    const resources = i18n.options.resources
+    expect(resources?.en).toBeDefined()
+    expect(resources?.zh).toBeDefined()
+    expect(resources?.en?.common).toBeDefined()
+    expect(resources?.zh?.common).toBeDefined()
   })
 
   it('disables escapeValue for interpolation', () => {
