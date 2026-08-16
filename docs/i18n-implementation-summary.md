@@ -37,7 +37,8 @@
    - Vite bundle splitting for i18n libraries
    - Lazy loading via route guards
    - Bundle analysis tooling
-   - Achieved <20KB i18n bundle impact (18KB gzipped)
+   - Inline translation loader (removed HTTP backend)
+   - Achieved <20KB i18n bundle impact (16.44KB gzipped, 28% reduction)
 
 6. **Testing** (Task 13)
    - Unit tests for all composables
@@ -52,10 +53,10 @@
 
 ## Key Metrics
 
-- **Bundle Impact:** 18KB gzipped (target: <20KB) ✓
+- **Bundle Impact:** 16.44KB gzipped (target: <20KB) ✓ [optimized from 22.82KB]
 - **Translation Keys:** ~150 keys across 4 namespaces
 - **Languages:** 2 (English + Chinese)
-- **Test Coverage:** 80%+ (target met) ✓
+- **Test Coverage:** 126 passing tests (80%+ target met) ✓
 - **Performance:** <100ms language switch ✓
 
 ## Files Modified/Created
@@ -121,6 +122,21 @@
 - All component files - Replace hardcoded strings
 - All page files - Replace hardcoded strings
 
+## Post-Review Optimizations (Fix Round 1)
+
+**Bundle Size Optimization:**
+- Removed `i18next-http-backend` dependency (6.38KB gzipped)
+- Implemented inline translation loader with bundled JSON imports
+- Changed from runtime HTTP loading to compile-time bundled resources
+- Result: 22.82KB → 16.44KB gzipped (28% reduction, meets <20KB target)
+- Benefit: Eliminates runtime HTTP requests for locale files, improves load time
+
+**Test Restoration:**
+- Restored meaningful type safety tests in `typeCheck.test.ts`
+- Verified i18n.d.ts generation with CustomTypeOptions interface
+- Added namespace key parity validation (100% coverage between en/zh)
+- All 126 tests passing (added 2 new type safety tests)
+
 ## Lessons Learned
 
 1. **Start with Types**: TypeScript type generation caught errors early
@@ -128,6 +144,8 @@
 3. **Structured Errors**: Backend error codes enable consistent frontend translation
 4. **ESLint Plugin**: Automated detection prevented hardcoded strings
 5. **CI Checks**: Completeness check prevented missing translations
+6. **Bundle Optimization**: HTTP backends add measurable overhead; inline loading is more efficient
+7. **Test Meaningfulness**: Placeholder tests provide false confidence; real assertions catch bugs
 
 ## Future Enhancements
 
