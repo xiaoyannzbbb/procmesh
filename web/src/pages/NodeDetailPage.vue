@@ -170,7 +170,16 @@ async function onRemove(): Promise<void> {
           </thead>
           <tbody>
             <tr v-for="proc in node.processes" :key="proc.name">
-              <td>{{ proc.name }}</td>
+              <td>
+                <RouterLink
+                  :to="{
+                    path: `/processes/${encodeURIComponent(proc.name)}`,
+                    query: { node: node.nodeId },
+                  }"
+                >
+                  {{ proc.name }}
+                </RouterLink>
+              </td>
               <td>{{ proc.desired || "—" }}</td>
               <td>{{ proc.observed || "—" }}</td>
               <td>{{ proc.health || "—" }}</td>
@@ -218,6 +227,13 @@ h2 {
 }
 .back:hover {
   color: var(--color-text);
+}
+a:not(.back) {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+a:not(.back):hover {
+  text-decoration: underline;
 }
 .muted {
   color: var(--color-muted);

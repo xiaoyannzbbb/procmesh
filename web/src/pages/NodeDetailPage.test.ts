@@ -32,7 +32,9 @@ async function mountNodeDetailPage(node: unknown = null) {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
+      { path: "/nodes", component: Blank },
       { path: "/nodes/:id", component: NodeDetailPage },
+      { path: "/processes/:idOrName", component: Blank },
       { path: "/", component: Blank },
     ],
   });
@@ -54,11 +56,6 @@ async function mountNodeDetailPage(node: unknown = null) {
         [I18NextVue, { i18next: i18n }],
       ],
       provide: { nodeClient },
-      stubs: {
-        RouterLink: {
-          template: '<a><slot /></a>',
-        },
-      },
     },
   });
   mounted.push(wrapper);
@@ -158,5 +155,65 @@ describe("NodeDetailPage i18n", () => {
     const text = wrapper.text();
     expect(text).toContain("← 节点");
     expect(text).toContain("加载中…");
+  });
+});
+
+describe("NodeDetailPage process list", () => {
+  it("links each process name to the process detail page", async () => {
+    await i18n.changeLanguage("en");
+    await i18n.addResourceBundle("en", "common", {
+      nodeDetail: {
+        back: "← Nodes",
+        loading: "Loading…",
+        removeAgent: "Remove Agent",
+        node: {
+          title: "Node",
+          hostname: "Hostname",
+          nodeId: "Node ID",
+          address: "Address",
+          version: "Version",
+          status: "Status",
+          bootId: "Boot ID",
+          cpu: "CPU",
+          memory: "Memory",
+          disk: "Disk",
+          processCount: "Process Count",
+          labels: "Labels",
+        },
+        processes: {
+          title: "Processes",
+          noProcesses: "No processes",
+          table: {
+            name: "Name",
+            desired: "Desired",
+            observed: "Observed",
+            health: "Health",
+            revisions: "Revisions",
+            freshness: "Freshness",
+          },
+        },
+      },
+      status: { live: "LIVE", stale: "STALE", unknown: "UNKNOWN" },
+    });
+
+    const wrapper = await mountNodeDetailPage({
+      nodeId: "a0ba0978-70ed-4664-8d80-133c6c862f86",
+      hostname: "agent-a",
+      state: "ALIVE",
+      lastUpdatedUnixMs: Date.now(),
+      processes: [
+        {
+          name: "web-api",
+          desired: "RUNNING",
+          observed: "RUNNING",
+          health: "HEALTHY",
+          latestRevision: 2,
+          activeRevision: 2,
+        },
+      ],
+    });
+
+    const link = wrapper.get('a[href="/processes/web-api?node=a0ba0978-70ed-4664-8d80-133c6c862f86"]');
+    expect(link.text()).toBe("web-api");
   });
 });
