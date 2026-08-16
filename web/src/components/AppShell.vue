@@ -5,6 +5,7 @@ import {
   LayoutDashboard,
   Server,
   Layers,
+  FolderTree,
   Users,
   ShieldCheck,
   FileSearch,
@@ -46,6 +47,9 @@ const navItems = computed(() => {
     { to: "/nodes", label: t("nav.nodes"), icon: Server },
     { to: "/processes", label: t("nav.processes"), icon: Layers },
   ];
+  if (perms.value.has("node.read")) {
+    items.push({ to: "/groups", label: t("nav.groups"), icon: FolderTree });
+  }
   if (perms.value.has("user.read")) {
     items.push({ to: "/users", label: t("nav.users"), icon: Users });
   }

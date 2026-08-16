@@ -7,6 +7,7 @@ export const RESTART_REQUIRED_BANNER = "Configuration changed. Restart required.
 
 export type ClusterProcessRow = {
   name: string;
+  group: string;
   ownerNodeId: string;
   ownerHostname: string;
   ownerState: string;
@@ -105,6 +106,7 @@ export function flattenClusterProcesses(nodes: unknown[], nowMs: number): Cluste
     for (const proc of node.processes) {
       rows.push({
         name: proc.name,
+        group: proc.group,
         ownerNodeId: node.nodeId,
         ownerHostname: node.hostname,
         ownerState: node.state,

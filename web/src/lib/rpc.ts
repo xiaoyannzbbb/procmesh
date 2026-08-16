@@ -4,6 +4,7 @@ import {
   AuditService,
   ClusterService,
   ConfigService,
+  GroupService,
   LogService,
   MetricsService,
   NodeService,
@@ -27,6 +28,10 @@ export type ConfigClient = Pick<
 export type LogClient = Pick<Client<typeof LogService>, "tailLogs" | "streamLogs" | "downloadLogs">;
 export type UserClient = Pick<Client<typeof UserService>, "listUsers" | "createUser" | "disableUser">;
 export type RoleClient = Pick<Client<typeof RoleService>, "listRoles" | "createRole" | "grantRole">;
+export type GroupClient = Pick<
+  Client<typeof GroupService>,
+  "listAgentGroups" | "createAgentGroup" | "deleteAgentGroup" | "addAgentGroupMember" | "removeAgentGroupMember"
+>;
 export type AuditClient = Pick<Client<typeof AuditService>, "listAudit">;
 
 export function useClusterClient(): ClusterClient {
@@ -59,6 +64,10 @@ export function useUserClient(): UserClient {
 
 export function useRoleClient(): RoleClient {
   return inject<RoleClient | null>("roleClient", null) ?? createClient(RoleService, transport);
+}
+
+export function useGroupClient(): GroupClient {
+  return inject<GroupClient | null>("groupClient", null) ?? createClient(GroupService, transport);
 }
 
 export function useAuditClient(): AuditClient {

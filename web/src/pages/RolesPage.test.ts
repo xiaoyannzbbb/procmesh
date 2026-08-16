@@ -3,6 +3,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import i18next from "i18next";
 import I18NextVue from "i18next-vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { session } from "../lib/session";
 import RolesPage from "./RolesPage.vue";
 
 let i18n: typeof i18next;
@@ -22,7 +23,17 @@ beforeEach(async () => {
 
 const mounted: Array<{ unmount: () => void }> = [];
 
-async function mountRolesPage(roles: unknown[] = [], bindings: unknown[] = []) {
+async function mountRolesPage(
+  roles: unknown[] = [],
+  bindings: unknown[] = [],
+  permissions: string[] = [],
+) {
+  session.value = {
+    userId: "u1",
+    username: "admin",
+    csrfToken: "csrf",
+    permissions,
+  };
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -50,6 +61,18 @@ afterEach(() => {
   while (mounted.length) {
     mounted.pop()?.unmount();
   }
+  session.value = null;
+});
+
+describe("RolesPage grant scope", () => {
+  it("includes AGENT_GROUP and PROCESS_GROUP in the scope dropdown", async () => {
+    const wrapper = await mountRolesPage([], [], ["role.read", "role.manage"]);
+    const values = wrapper.findAll('select[name="scope_type"] option').map((opt) => {
+      return (opt.element as HTMLOptionElement).value;
+    });
+    expect(values).toContain("AGENT_GROUP");
+    expect(values).toContain("PROCESS_GROUP");
+  });
 });
 
 describe("RolesPage i18n", () => {

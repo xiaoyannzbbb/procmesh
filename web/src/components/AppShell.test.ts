@@ -22,6 +22,7 @@ testI18n.init({
           overview: 'Overview',
           nodes: 'Nodes',
           processes: 'Processes',
+          groups: 'Groups',
           users: 'Users',
           roles: 'Roles',
           audit: 'Audit'
@@ -37,6 +38,7 @@ testI18n.init({
           overview: '概览',
           nodes: '节点',
           processes: '进程',
+          groups: '分组',
           users: '用户',
           roles: '角色',
           audit: '审计'
@@ -74,6 +76,7 @@ async function mountShell(current: Me, provide: Record<string, unknown> = {}) {
           { path: "", component: Blank },
           { path: "nodes", component: Blank },
           { path: "processes", component: Blank },
+          { path: "groups", component: Blank },
           { path: "users", component: Blank },
           { path: "roles", component: Blank },
           { path: "audit", component: Blank },
@@ -112,6 +115,16 @@ describe("AppShell", () => {
     expect(wrapper.text()).not.toContain("Users");
     expect(wrapper.text()).not.toContain("Roles");
     expect(wrapper.text()).not.toContain("Audit");
+  });
+
+  it("shows Groups nav when node.read", async () => {
+    const wrapper = await mountShell(me({ permissions: ["node.read"] }));
+    expect(wrapper.text()).toContain("Groups");
+  });
+
+  it("hides Groups nav without node.read", async () => {
+    const wrapper = await mountShell(me({ permissions: ["process.read"] }));
+    expect(wrapper.text()).not.toContain("Groups");
   });
 
   it("shows Users, Roles, and Audit when permitted", async () => {

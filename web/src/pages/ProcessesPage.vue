@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useQuery } from "@tanstack/vue-query";
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
 import { useNodeClient } from "../lib/rpc";
 import { useI18n } from "../lib/useI18n";
@@ -12,6 +12,7 @@ const { translateDesiredState, translateObservedState, translateHealthState } = 
 
 const POLL_MS = 5000;
 const client = useNodeClient();
+const groupFilter = ref("");
 
 const query = useQuery({
   queryKey: ["nodes"],
@@ -21,7 +22,12 @@ const query = useQuery({
 
 const rows = computed(() => {
   const list = query.data.value?.nodes ?? [];
-  return flattenClusterProcesses(list, Date.now());
+  const all = flattenClusterProcesses(list, Date.now());
+  const filter = groupFilter.value.trim();
+  if (!filter) {
+    return all;
+  }
+  return all.filter((row) => row.group === filter);
 });
 
 const errorText = computed(() => {
@@ -36,6 +42,16 @@ const errorText = computed(() => {
 <template>
   <div class="page">
     <h1>{{ t("processes.title") }}</h1>
+    <label class="field">
+      {{ t("processes.filterGroup") }}
+      <input
+        v-model="groupFilter"
+        class="input"
+        name="group"
+        type="text"
+        :placeholder="t('processes.filterGroupPlaceholder')"
+      />
+    </label>
     <p v-if="query.isPending && !query.data" class="muted">{{ t("processes.loading") }}</p>
     <p v-else-if="errorText" class="error" role="alert">{{ errorText }}</p>
     <div v-else class="card">
@@ -115,5 +131,13 @@ a {
 }
 a:hover {
   text-decoration: underline;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  font-size: 0.875rem;
+  color: var(--color-muted);
+  max-width: 20rem;
 }
 </style>

@@ -12,7 +12,7 @@ const { t } = useI18n();
 const POLL_MS = 5000;
 const BUILTIN_ROLE_IDS = new Set(["super_admin", "cluster_admin", "operator", "viewer"]);
 
-/** V1.0 permissions from internal/auth/perm.go; excludes batch.execute and alert.*. */
+/** V1.0 + Q1 permissions from internal/auth/perm.go. */
 const ROLE_PERMISSIONS = [
   "cluster.read",
   "cluster.manage",
@@ -39,6 +39,11 @@ const ROLE_PERMISSIONS = [
   "audit.read",
   "command.execute",
   "command.execute.batch",
+  "batch.execute",
+  "alert.read",
+  "alert.manage",
+  "backup.read",
+  "backup.manage",
 ] as const;
 
 const client = useRoleClient();
@@ -49,7 +54,8 @@ const roleName = ref("");
 const selectedPerms = ref<string[]>([]);
 const grantUserId = ref("");
 const grantRoleId = ref("");
-const grantScope = ref<"CLUSTER" | "AGENT">("CLUSTER");
+type GrantScope = "CLUSTER" | "AGENT" | "AGENT_GROUP" | "PROCESS_GROUP";
+const grantScope = ref<GrantScope>("CLUSTER");
 const grantScopeId = ref("");
 
 const canManage = computed(() => (session.value?.permissions ?? []).includes("role.manage"));
@@ -75,11 +81,14 @@ const errorText = computed(() => {
 });
 
 const createReady = computed(() => roleName.value.trim().length > 0);
+const scopeIdRequired = computed(
+  () => grantScope.value === "AGENT" || grantScope.value === "AGENT_GROUP" || grantScope.value === "PROCESS_GROUP",
+);
 const grantReady = computed(() => {
   if (!grantUserId.value.trim() || !grantRoleId.value) {
     return false;
   }
-  if (grantScope.value === "AGENT" && !grantScopeId.value.trim()) {
+  if (scopeIdRequired.value && !grantScopeId.value.trim()) {
     return false;
   }
   return true;
@@ -269,11 +278,13 @@ async function onGrant(): Promise<void> {
           <select v-model="grantScope" class="input" name="scope_type">
             <option value="CLUSTER">CLUSTER</option>
             <option value="AGENT">AGENT</option>
+            <option value="AGENT_GROUP">{{ t("role.scopeAgentGroup") }}</option>
+            <option value="PROCESS_GROUP">{{ t("role.scopeProcessGroup") }}</option>
           </select>
         </label>
         <label class="field">
           {{ t("roles.grant.scopeId") }}
-          <input v-model="grantScopeId" class="input" name="scope_id" type="text" :placeholder="grantScope === 'AGENT' ? t('roles.grant.scopeIdPlaceholder.required') : t('roles.grant.scopeIdPlaceholder.optional')" />
+          <input v-model="grantScopeId" class="input" name="scope_id" type="text" :placeholder="scopeIdRequired ? t('roles.grant.scopeIdPlaceholder.required') : t('roles.grant.scopeIdPlaceholder.optional')" />
         </label>
         <button class="btn btn-primary" type="submit" :disabled="!grantReady || acting">{{ t("roles.grant.grant") }}</button>
       </form>

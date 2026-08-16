@@ -8,6 +8,7 @@
     "cluster": "Cluster",
     "nodes": "Nodes",
     "processes": "Processes",
+    "groups": "Groups",
     "users": "Users",
     "roles": "Roles",
     "audit": "Audit"
@@ -110,6 +111,8 @@
     "title": "Processes",
     "loading": "Loading…",
     "noProcesses": "No processes",
+    "filterGroup": "Group",
+    "filterGroupPlaceholder": "Filter by group",
     "table": {
       "name": "Name",
       "owner": "Owner",
@@ -303,6 +306,23 @@
       },
       "grant": "Grant"
     }
+  },
+  "role": {
+    "scopeAgentGroup": "Agent group",
+    "scopeProcessGroup": "Process group"
+  },
+  "group": {
+    "title": "Groups",
+    "loading": "Loading…",
+    "noGroups": "No groups",
+    "create": "Create",
+    "members": "Members",
+    "name": "Name",
+    "description": "Description",
+    "addMember": "Add member",
+    "removeMember": "Remove member",
+    "delete": "Delete",
+    "nodeId": "Node ID"
   },
   "users": {
     "title": "Users",

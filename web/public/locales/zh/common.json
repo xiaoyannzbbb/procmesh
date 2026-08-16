@@ -8,6 +8,7 @@
     "cluster": "集群",
     "nodes": "节点",
     "processes": "进程",
+    "groups": "分组",
     "users": "用户",
     "roles": "角色",
     "audit": "审计"
@@ -110,6 +111,8 @@
     "title": "进程",
     "loading": "加载中…",
     "noProcesses": "无进程",
+    "filterGroup": "分组",
+    "filterGroupPlaceholder": "按分组筛选",
     "table": {
       "name": "名称",
       "owner": "所有者",
@@ -303,6 +306,23 @@
       },
       "grant": "授予"
     }
+  },
+  "role": {
+    "scopeAgentGroup": "代理分组",
+    "scopeProcessGroup": "进程分组"
+  },
+  "group": {
+    "title": "分组",
+    "loading": "加载中…",
+    "noGroups": "无分组",
+    "create": "创建",
+    "members": "成员",
+    "name": "名称",
+    "description": "描述",
+    "addMember": "添加成员",
+    "removeMember": "移除成员",
+    "delete": "删除",
+    "nodeId": "节点ID"
   },
   "users": {
     "title": "用户",

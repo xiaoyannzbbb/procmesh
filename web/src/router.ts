@@ -9,6 +9,7 @@ import NodesPage from "./pages/NodesPage.vue";
 import OverviewPage from "./pages/OverviewPage.vue";
 import ProcessDetailPage from "./pages/ProcessDetailPage.vue";
 import ProcessesPage from "./pages/ProcessesPage.vue";
+import GroupsPage from "./pages/GroupsPage.vue";
 import RolesPage from "./pages/RolesPage.vue";
 import UsersPage from "./pages/UsersPage.vue";
 
@@ -23,6 +24,7 @@ const routes: RouteRecordRaw[] = [
       { path: "nodes/:id", component: NodeDetailPage },
       { path: "processes", component: ProcessesPage, meta: { i18nNamespaces: ['process'] } },
       { path: "processes/:idOrName", component: ProcessDetailPage, meta: { i18nNamespaces: ['process'] } },
+      { path: "groups", component: GroupsPage },
       { path: "users", component: UsersPage },
       { path: "roles", component: RolesPage },
       { path: "audit", component: AuditPage, meta: { i18nNamespaces: ['audit'] } },
