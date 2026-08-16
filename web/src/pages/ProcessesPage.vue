@@ -4,9 +4,11 @@ import { computed } from "vue";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
 import { useNodeClient } from "../lib/rpc";
 import { useI18n } from "../lib/useI18n";
+import { useProcessState } from "../lib/useProcessState";
 import { flattenClusterProcesses, formatRemoteError, ownerDisplay, rowKey } from "./processView";
 
 const { t } = useI18n();
+const { translateDesiredState, translateObservedState, translateHealthState } = useProcessState();
 
 const POLL_MS = 5000;
 const client = useNodeClient();
@@ -64,9 +66,9 @@ const errorText = computed(() => {
             <td>
               <div>{{ ownerDisplay(row.ownerHostname, row.ownerNodeId) }}</div>
             </td>
-            <td>{{ row.desired || "—" }}</td>
-            <td>{{ row.observed || "—" }}</td>
-            <td>{{ row.health || "—" }}</td>
+            <td>{{ row.desired ? translateDesiredState(row.desired) : '—' }}</td>
+            <td>{{ row.observed ? translateObservedState(row.observed) : '—' }}</td>
+            <td>{{ row.health ? translateHealthState(row.health) : '—' }}</td>
             <td>{{ row.activeRevision }} / {{ row.latestRevision }}</td>
             <td>
               <FreshnessBadge :status="row.freshness" />

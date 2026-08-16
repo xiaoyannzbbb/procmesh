@@ -1,0 +1,31 @@
+{
+  "desiredState": {
+    "RUNNING": "运行中",
+    "STOPPED": "已停止"
+  },
+  "observedState": {
+    "STOPPED": "已停止",
+    "STARTING": "启动中",
+    "RUNNING": "运行中",
+    "STOPPING": "停止中",
+    "EXITED": "已退出",
+    "BACKOFF": "退避中",
+    "FATAL": "致命错误",
+    "UNKNOWN": "未知"
+  },
+  "healthState": {
+    "HEALTHY": "健康",
+    "UNHEALTHY": "不健康",
+    "UNKNOWN": "未知"
+  },
+  "labels": {
+    "name": "名称",
+    "state": "状态",
+    "health": "健康状态",
+    "uptime": "运行时间",
+    "restarts": "重启次数",
+    "pid": "进程ID",
+    "cpu": "CPU",
+    "memory": "内存"
+  }
+}

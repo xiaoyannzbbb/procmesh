@@ -7,6 +7,7 @@ import { newOperationId } from "../lib/opid";
 import { useMetricsClient, useNodeClient, useProcessClient } from "../lib/rpc";
 import { session } from "../lib/session";
 import { useI18n } from "../lib/useI18n";
+import { useProcessState } from "../lib/useProcessState";
 import {
   flattenClusterProcesses,
   formatRemoteError,
@@ -17,6 +18,7 @@ import ProcessConfigPanel from "./ProcessConfigPanel.vue";
 import ProcessLogsPanel from "./ProcessLogsPanel.vue";
 
 const { t } = useI18n();
+const { translateDesiredState, translateObservedState, translateHealthState } = useProcessState();
 
 const POLL_MS = 5000;
 const route = useRoute();
@@ -251,15 +253,15 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
           </div>
           <div>
             <dt>{{ t("processDetail.process.desired") }}</dt>
-            <dd>{{ detail.desired || "—" }}</dd>
+            <dd>{{ detail.desired ? translateDesiredState(detail.desired) : '—' }}</dd>
           </div>
           <div>
             <dt>{{ t("processDetail.process.observed") }}</dt>
-            <dd>{{ detail.observed || "—" }}</dd>
+            <dd>{{ detail.observed ? translateObservedState(detail.observed) : '—' }}</dd>
           </div>
           <div>
             <dt>{{ t("processDetail.process.health") }}</dt>
-            <dd>{{ detail.health || "—" }}</dd>
+            <dd>{{ detail.health ? translateHealthState(detail.health) : '—' }}</dd>
           </div>
           <div>
             <dt>{{ t("processDetail.process.pid") }}</dt>
@@ -323,9 +325,9 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
           <tbody>
             <tr v-for="inst in detail.instanceRows" :key="inst.instanceId || String(inst.ordinal)">
               <td class="mono">{{ inst.instanceId || inst.ordinal }}</td>
-              <td>{{ inst.desired || "—" }}</td>
-              <td>{{ inst.observed || "—" }}</td>
-              <td>{{ inst.health || "—" }}</td>
+              <td>{{ inst.desired ? translateDesiredState(inst.desired) : '—' }}</td>
+              <td>{{ inst.observed ? translateObservedState(inst.observed) : '—' }}</td>
+              <td>{{ inst.health ? translateHealthState(inst.health) : '—' }}</td>
               <td>{{ inst.pid }}</td>
               <td>{{ inst.uptime }}</td>
               <td>{{ inst.restartCount }}</td>
