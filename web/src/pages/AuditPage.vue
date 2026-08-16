@@ -5,9 +5,11 @@ import FreshnessBadge from "../components/FreshnessBadge.vue";
 import { LIVE, STALE, UNKNOWN, type Freshness } from "../lib/freshness";
 import { useAuditClient } from "../lib/rpc";
 import { useI18n } from "../lib/useI18n";
+import { useAudit } from "../lib/useAudit";
 import { formatRemoteError } from "./processView";
 
 const { t } = useI18n();
+const { formatAuditAction, formatAuditResult } = useAudit();
 const POLL_MS = 5000;
 const client = useAuditClient();
 const resource = ref("");
@@ -38,10 +40,12 @@ type AuditRow = {
   time: string;
   user: string;
   action: string;
+  actionCode: string;
   resource: string;
   sourceNode: string;
   targetAgent: string;
   result: string;
+  resultCode: string;
   freshness: Freshness;
 };
 
@@ -61,17 +65,20 @@ function mapEntry(entry: {
   lastUpdatedUnixMs?: bigint | number;
 }, index: number): AuditRow {
   const ev = entry.event ?? {};
-  const result = ev.result ?? "";
+  const resultCode = ev.result ?? "";
+  const actionCode = ev.action ?? "";
   return {
     key: ev.auditId || `${entry.sourceNode ?? ""}:${index}`,
     time: formatMs(ev.timestampUnixMs),
     user: ev.username || ev.userId || "—",
-    action: ev.action || "—",
+    action: actionCode ? formatAuditAction(actionCode, {}) : "—",
+    actionCode,
     resource: ev.resource || "—",
     sourceNode: entry.sourceNode || "—",
     targetAgent: ev.targetAgent || "—",
-    result: result || "—",
-    freshness: auditFreshness(entry.freshness, result),
+    result: resultCode ? formatAuditResult(resultCode) : "—",
+    resultCode,
+    freshness: auditFreshness(entry.freshness, resultCode),
   };
 }
 

@@ -1,0 +1,30 @@
+{
+  "action": {
+    "LOGIN": "User logged in",
+    "LOGOUT": "User logged out",
+    "PROCESS_START": "Started process {{name}}",
+    "PROCESS_STOP": "Stopped process {{name}}",
+    "PROCESS_RESTART": "Restarted process {{name}}",
+    "PROCESS_DELETE": "Deleted process {{name}}",
+    "CONFIG_UPDATE": "Updated configuration for {{name}} (rev {{revision}})",
+    "CONFIG_CREATE": "Created configuration for {{name}}",
+    "NODE_JOIN": "Node {{nodeId}} joined cluster",
+    "NODE_REMOVE": "Node {{nodeId}} removed from cluster",
+    "USER_CREATE": "Created user {{username}}",
+    "USER_DELETE": "Deleted user {{username}}",
+    "USER_UPDATE": "Updated user {{username}}"
+  },
+  "result": {
+    "SUCCESS": "Success",
+    "FAILED": "Failed",
+    "TIMEOUT": "Timeout",
+    "PARTIAL": "Partial"
+  },
+  "labels": {
+    "timestamp": "Timestamp",
+    "user": "User",
+    "action": "Action",
+    "result": "Result",
+    "details": "Details"
+  }
+}

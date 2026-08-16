@@ -1,0 +1,30 @@
+{
+  "action": {
+    "LOGIN": "用户登录",
+    "LOGOUT": "用户登出",
+    "PROCESS_START": "启动进程 {{name}}",
+    "PROCESS_STOP": "停止进程 {{name}}",
+    "PROCESS_RESTART": "重启进程 {{name}}",
+    "PROCESS_DELETE": "删除进程 {{name}}",
+    "CONFIG_UPDATE": "更新 {{name}} 配置（版本 {{revision}}）",
+    "CONFIG_CREATE": "创建 {{name}} 配置",
+    "NODE_JOIN": "节点 {{nodeId}} 加入集群",
+    "NODE_REMOVE": "节点 {{nodeId}} 移除集群",
+    "USER_CREATE": "创建用户 {{username}}",
+    "USER_DELETE": "删除用户 {{username}}",
+    "USER_UPDATE": "更新用户 {{username}}"
+  },
+  "result": {
+    "SUCCESS": "成功",
+    "FAILED": "失败",
+    "TIMEOUT": "超时",
+    "PARTIAL": "部分成功"
+  },
+  "labels": {
+    "timestamp": "时间",
+    "user": "用户",
+    "action": "操作",
+    "result": "结果",
+    "details": "详情"
+  }
+}

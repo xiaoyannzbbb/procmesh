@@ -25,7 +25,7 @@ const routes: RouteRecordRaw[] = [
       { path: "processes/:idOrName", component: ProcessDetailPage, meta: { i18nNamespaces: ['process'] } },
       { path: "users", component: UsersPage },
       { path: "roles", component: RolesPage },
-      { path: "audit", component: AuditPage },
+      { path: "audit", component: AuditPage, meta: { i18nNamespaces: ['audit'] } },
     ],
   },
 ];
