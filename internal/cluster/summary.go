@@ -13,7 +13,9 @@ const (
 )
 
 type ProcessSummary struct {
+	ProcessID       string `json:"process_id,omitempty"`
 	Name            string `json:"name"`
+	Group           string `json:"group,omitempty"`
 	Desired         string `json:"desired"`
 	Observed        string `json:"observed"`
 	Health          string `json:"health"`

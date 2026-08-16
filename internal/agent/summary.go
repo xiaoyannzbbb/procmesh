@@ -112,7 +112,9 @@ func processSummaries(mgr *process.Manager) []cluster.ProcessSummary {
 	out := make([]cluster.ProcessSummary, 0, len(specs))
 	for _, spec := range specs {
 		sum := cluster.ProcessSummary{
+			ProcessID:       spec.ProcessID,
 			Name:            spec.Name,
+			Group:           spec.Group,
 			LatestRevision:  spec.LatestRevision,
 			FreshnessUnixMs: now,
 		}
