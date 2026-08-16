@@ -30,9 +30,8 @@ type BatchAPI struct {
 	Members  func() []cluster.NodeSummary
 	Degraded func() bool
 
-	expandMu sync.Mutex
-	identMu  sync.Mutex
-	idents   map[string]auth.Principal
+	identMu sync.Mutex
+	idents  map[string]auth.Principal
 }
 
 func (s *BatchAPI) CreateBatch(ctx context.Context, req *connect.Request[procmeshv1.CreateBatchRequest]) (*connect.Response[procmeshv1.CreateBatchResponse], error) {
@@ -148,14 +147,11 @@ func (s *BatchAPI) mutateBatch(ctx context.Context, req *connect.Request[procmes
 }
 
 func (s *BatchAPI) create(ctx context.Context, operator string, typ batch.Type, sel batch.Selector, cfg *procmeshv1.ProcessSpec, comment string) (batch.Batch, error) {
-	if s.Engine.Expand != nil {
-		return s.Engine.Create(ctx, operator, typ, sel, comment)
+	expand := s.Engine.Expand
+	if expand == nil {
+		expand = s.newExpander(ctx, cfg)
 	}
-	s.expandMu.Lock()
-	defer s.expandMu.Unlock()
-	s.Engine.Expand = s.newExpander(ctx, cfg)
-	defer func() { s.Engine.Expand = nil }()
-	return s.Engine.Create(ctx, operator, typ, sel, comment)
+	return s.Engine.CreateWithExpand(ctx, operator, typ, sel, comment, expand)
 }
 
 func (s *BatchAPI) requireExecute(ctx context.Context) error {
@@ -177,8 +173,14 @@ func (s *BatchAPI) rejectMutation() error {
 }
 
 func (s *BatchAPI) ensureExec() {
-	if s.Engine != nil && s.Engine.Exec == nil {
+	if s.Engine == nil {
+		return
+	}
+	if s.Engine.Exec == nil {
 		s.Engine.Exec = &batchExecutor{api: s}
+	}
+	if s.Engine.BindTargets == nil {
+		s.Engine.BindTargets = s.bindTargets
 	}
 }
 
@@ -201,6 +203,10 @@ func (s *BatchAPI) audit(ctx context.Context, action, batchID, opID string) {
 }
 
 func (s *BatchAPI) rememberPrincipal(ctx context.Context, b batch.Batch) {
+	s.bindTargets(ctx, b.Targets)
+}
+
+func (s *BatchAPI) bindTargets(ctx context.Context, targets []batch.Target) {
 	p, ok := PrincipalFrom(ctx)
 	if !ok {
 		return
@@ -210,7 +216,7 @@ func (s *BatchAPI) rememberPrincipal(ctx context.Context, b batch.Batch) {
 	if s.idents == nil {
 		s.idents = make(map[string]auth.Principal)
 	}
-	for _, t := range b.Targets {
+	for _, t := range targets {
 		if t.OperationID != "" {
 			s.idents[t.OperationID] = p
 		}

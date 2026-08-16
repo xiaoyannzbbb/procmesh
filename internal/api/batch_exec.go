@@ -20,6 +20,9 @@ func (e *batchExecutor) Execute(ctx context.Context, t batch.Target, typ batch.T
 		return errcode.E(errcode.INVALID, "executor")
 	}
 	ctx = e.withIdentity(ctx, t)
+	if e.remoteMissingPrincipal(ctx, t) {
+		return errcode.E(errcode.TIMEOUT, "missing hop principal")
+	}
 	switch typ {
 	case batch.TypeStart, batch.TypeStop, batch.TypeRestart:
 		return e.execProcess(ctx, t, typ)
@@ -38,6 +41,19 @@ func (e *batchExecutor) withIdentity(ctx context.Context, t batch.Target) contex
 		return WithPrincipal(ctx, p)
 	}
 	return ctx
+}
+
+func (e *batchExecutor) remoteMissingPrincipal(ctx context.Context, t batch.Target) bool {
+	if _, ok := PrincipalFrom(ctx); ok {
+		return false
+	}
+	if e.api == nil || e.api.Router == nil {
+		return false
+	}
+	if t.NodeID == "" || t.NodeID == e.api.LocalID {
+		return false
+	}
+	return true
 }
 
 func (e *batchExecutor) execProcess(ctx context.Context, t batch.Target, typ batch.Type) error {

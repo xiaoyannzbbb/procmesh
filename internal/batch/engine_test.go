@@ -83,7 +83,7 @@ func TestEngine_CreateGetListExport(t *testing.T) {
 	e := &batch.Engine{
 		DB: st, SourceAgent: "n1",
 		Expand: stubExpand{targets: []batch.Target{{NodeID: "n1", ProcessID: "p1", ProcessName: "nginx"}}},
-		NewID: func() string { id := ids[0]; ids = ids[1:]; return id },
+		NewID:  func() string { id := ids[0]; ids = ids[1:]; return id },
 	}
 	b, err := e.Create(ctx, "admin", batch.TypeRestart, batch.Selector{ProcessIDs: []string{"p1"}}, "")
 	if err != nil || b.BatchID != "b1" || b.Status != batch.StatusPending || len(b.Targets) != 1 || b.Targets[0].OperationID != "op-1" {
@@ -172,7 +172,7 @@ func TestEngine_ExportJSONAndInvalidFormat(t *testing.T) {
 	e := &batch.Engine{
 		DB: st, SourceAgent: "n1",
 		Expand: stubExpand{targets: []batch.Target{{NodeID: "n1", ProcessID: "p1", ProcessName: "nginx"}}},
-		NewID: func() string { id := ids[0]; ids = ids[1:]; return id },
+		NewID:  func() string { id := ids[0]; ids = ids[1:]; return id },
 	}
 	if _, err := e.Create(ctx, "admin", batch.TypeRestart, batch.Selector{ProcessIDs: []string{"p1"}}, ""); err != nil {
 		t.Fatal(err)
@@ -354,6 +354,155 @@ func TestEngine_RetryFailedNothingToRetry(t *testing.T) {
 	_, err = e.RetryFailed(ctx, b.BatchID, "admin")
 	if !errcode.Is(err, errcode.INVALID) {
 		t.Fatalf("want INVALID, got %v", err)
+	}
+}
+
+func TestEngine_BindTargetsBeforeEnqueue(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	ids := []string{"b1", "op-1"}
+	var bound []string
+	execBeforeBind := false
+	e := &batch.Engine{
+		DB: st, SourceAgent: "n1",
+		Expand: stubExpand{targets: []batch.Target{{NodeID: "n1", ProcessID: "p1", ProcessName: "x"}}},
+		BindTargets: func(_ context.Context, targets []batch.Target) {
+			for _, tg := range targets {
+				bound = append(bound, tg.OperationID)
+			}
+		},
+		Exec: stubExec{fn: func(_ context.Context, t batch.Target) error {
+			if len(bound) == 0 || bound[0] != t.OperationID {
+				execBeforeBind = true
+			}
+			return nil
+		}},
+		NewID: func() string { id := ids[0]; ids = ids[1:]; return id },
+	}
+	e.Start(ctx)
+	if _, err := e.Create(ctx, "admin", batch.TypeRestart, batch.Selector{ProcessIDs: []string{"p1"}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	waitBatch(t, e, "b1", batch.StatusCompleted)
+	if execBeforeBind {
+		t.Fatal("Execute ran before BindTargets")
+	}
+	if len(bound) != 1 || bound[0] != "op-1" {
+		t.Fatalf("BindTargets=%v", bound)
+	}
+}
+
+func TestEngine_RetryFailedBindsRemintsBeforeEnqueue(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	ids := []string{"b1", "op-old"}
+	e := &batch.Engine{
+		DB: st, SourceAgent: "n1",
+		Expand: stubExpand{targets: []batch.Target{{NodeID: "n", ProcessID: "p", ProcessName: "x"}}},
+		Exec:   stubExec{fn: func(context.Context, batch.Target) error { return errcode.E(errcode.INVALID, "boom") }},
+		NewID:  func() string { id := ids[0]; ids = ids[1:]; return id },
+	}
+	e.Start(ctx)
+	b, err := e.Create(ctx, "admin", batch.TypeStart, batch.Selector{ProcessIDs: []string{"p"}}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitBatch(t, e, b.BatchID, batch.StatusFailed)
+
+	var bound []string
+	e.BindTargets = func(_ context.Context, targets []batch.Target) {
+		for _, tg := range targets {
+			bound = append(bound, tg.OperationID)
+		}
+	}
+	ids = []string{"op-new"}
+	e.Exec = stubExec{fn: func(context.Context, batch.Target) error { return nil }}
+	if _, err := e.RetryFailed(ctx, b.BatchID, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	waitBatch(t, e, b.BatchID, batch.StatusCompleted)
+	if len(bound) != 1 || bound[0] != "op-new" {
+		t.Fatalf("remint BindTargets=%v", bound)
+	}
+}
+
+func TestEngine_ReplayTimeoutBindsBeforeEnqueue(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	ids := []string{"b1", "op-to"}
+	e := &batch.Engine{
+		DB: st, SourceAgent: "n1", TargetTimeout: 20 * time.Millisecond,
+		Expand: stubExpand{targets: []batch.Target{{NodeID: "n", ProcessID: "p", ProcessName: "x"}}},
+		Exec: stubExec{fn: func(ctx context.Context, _ batch.Target) error {
+			<-ctx.Done()
+			return ctx.Err()
+		}},
+		NewID: func() string { id := ids[0]; ids = ids[1:]; return id },
+	}
+	e.Start(ctx)
+	b, err := e.Create(ctx, "admin", batch.TypeRestart, batch.Selector{ProcessIDs: []string{"p"}}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitBatch(t, e, b.BatchID, batch.StatusPartial)
+
+	var bound []string
+	e.BindTargets = func(_ context.Context, targets []batch.Target) {
+		for _, tg := range targets {
+			bound = append(bound, tg.OperationID)
+		}
+	}
+	e.Exec = stubExec{fn: func(context.Context, batch.Target) error { return nil }}
+	if _, err := e.ReplayTimeout(ctx, b.BatchID, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	waitBatch(t, e, b.BatchID, batch.StatusCompleted)
+	if len(bound) != 1 || bound[0] != "op-to" {
+		t.Fatalf("replay BindTargets=%v", bound)
+	}
+}
+
+func TestEngine_ParentCancelDoesNotFailRunningTarget(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st := openStore(t)
+	ids := []string{"b1", "op-1"}
+	started := make(chan struct{})
+	e := &batch.Engine{
+		DB: st, SourceAgent: "n1",
+		Expand: stubExpand{targets: []batch.Target{{NodeID: "n1", ProcessID: "p1", ProcessName: "x"}}},
+		Exec: stubExec{fn: func(ctx context.Context, _ batch.Target) error {
+			close(started)
+			<-ctx.Done()
+			return ctx.Err()
+		}},
+		NewID: func() string { id := ids[0]; ids = ids[1:]; return id },
+	}
+	e.Start(parent)
+	b, err := e.Create(context.Background(), "admin", batch.TypeRestart, batch.Selector{ProcessIDs: []string{"p1"}}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("execute did not start")
+	}
+	cancel()
+	deadline := time.Now().Add(time.Second)
+	var got batch.Batch
+	for time.Now().Before(deadline) {
+		got, err = e.Get(context.Background(), b.BatchID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Targets[0].Status == batch.TargetFailed {
+			t.Fatalf("parent cancel must not persist FAILED: %+v", got.Targets[0])
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got.Targets[0].Status != batch.TargetPending && got.Targets[0].Status != batch.TargetRunning {
+		t.Fatalf("want PENDING/RUNNING after parent cancel, got %s", got.Targets[0].Status)
 	}
 }
 

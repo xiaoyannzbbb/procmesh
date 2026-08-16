@@ -40,6 +40,9 @@ type Engine struct {
 	TargetTimeout time.Duration
 	SourceAgent   string
 	NewID         func() string
+	// BindTargets is invoked after operation_ids are assigned and persisted,
+	// before enqueue. Callers bind hop identity here.
+	BindTargets func(ctx context.Context, targets []Target)
 
 	startOnce sync.Once
 	mu        sync.Mutex
@@ -48,6 +51,12 @@ type Engine struct {
 
 // Create expands the selector, assigns IDs, and inserts a PENDING batch.
 func (e *Engine) Create(ctx context.Context, operator string, typ Type, sel Selector, comment string) (Batch, error) {
+	return e.CreateWithExpand(ctx, operator, typ, sel, comment, e.Expand)
+}
+
+// CreateWithExpand is Create using a request-scoped expander. The expander is
+// not stored on Engine.
+func (e *Engine) CreateWithExpand(ctx context.Context, operator string, typ Type, sel Selector, comment string, expand Expander) (Batch, error) {
 	_ = comment
 	if strings.TrimSpace(operator) == "" {
 		return Batch{}, errcode.E(errcode.INVALID, "operator")
@@ -58,11 +67,11 @@ func (e *Engine) Create(ctx context.Context, operator string, typ Type, sel Sele
 	if selectorEmpty(sel) {
 		return Batch{}, errcode.E(errcode.INVALID, "selector")
 	}
-	if e.Expand == nil {
+	if expand == nil {
 		return Batch{}, errcode.E(errcode.INVALID, "expander")
 	}
 
-	raw, err := e.Expand.Expand(ctx, sel, typ)
+	raw, err := expand.Expand(ctx, sel, typ)
 	if err != nil {
 		return Batch{}, err
 	}
@@ -121,8 +130,16 @@ func (e *Engine) Create(ctx context.Context, operator string, typ Type, sel Sele
 	if err := e.DB.InsertBatch(ctx, rec, storeTargets); err != nil {
 		return Batch{}, err
 	}
+	e.bindTargets(ctx, targets)
 	e.enqueue(batchID)
 	return e.Get(ctx, batchID)
+}
+
+func (e *Engine) bindTargets(ctx context.Context, targets []Target) {
+	if e == nil || e.BindTargets == nil || len(targets) == 0 {
+		return
+	}
+	e.BindTargets(ctx, targets)
 }
 
 // Start launches a single background worker loop. Safe to call multiple times.
@@ -260,12 +277,20 @@ func (e *Engine) runTarget(ctx context.Context, batchID string, typ Type, t Targ
 	}
 
 	var execErr error
+	deadlineExceeded := false
 	if e.Exec == nil {
 		execErr = errcode.E(errcode.INVALID, "executor")
 	} else {
 		tctx, cancel := context.WithTimeout(ctx, timeout)
 		execErr = e.Exec.Execute(tctx, t, typ)
+		deadlineExceeded = errors.Is(tctx.Err(), context.DeadlineExceeded)
 		cancel()
+	}
+
+	// Parent cancel (agent shutdown) is not a per-target failure. Leave
+	// PENDING/RUNNING so Resume can reuse the original operation_id.
+	if ctx.Err() != nil && !deadlineExceeded {
+		return
 	}
 
 	status := MapExecError(execErr)
@@ -276,7 +301,11 @@ func (e *Engine) runTarget(ctx context.Context, batchID string, typ Type, t Targ
 	} else {
 		t.Error = ""
 	}
-	_ = e.DB.UpdateTarget(ctx, batchID, t.OperationID, toStoreTarget(batchID, t))
+	writeCtx := ctx
+	if ctx.Err() != nil {
+		writeCtx = context.WithoutCancel(ctx)
+	}
+	_ = e.DB.UpdateTarget(writeCtx, batchID, t.OperationID, toStoreTarget(batchID, t))
 }
 
 func isTerminalTarget(s TargetStatus) bool {
@@ -314,6 +343,7 @@ func (e *Engine) RetryFailed(ctx context.Context, id, operator string) (Batch, e
 		return Batch{}, err
 	}
 	n := 0
+	reminted := make([]Target, 0, len(b.Targets))
 	for _, t := range b.Targets {
 		if !isRetryableTarget(t.Status) {
 			continue
@@ -333,11 +363,18 @@ func (e *Engine) RetryFailed(ctx context.Context, id, operator string) (Batch, e
 		if err := e.DB.ReplaceTargetOp(ctx, id, t.OperationID, rec); err != nil {
 			return Batch{}, err
 		}
+		t.OperationID = newOp
+		t.Status = TargetPending
+		t.Error = ""
+		t.StartedAt = time.Time{}
+		t.FinishedAt = time.Time{}
+		reminted = append(reminted, t)
 		n++
 	}
 	if n == 0 {
 		return Batch{}, errcode.E(errcode.INVALID, "nothing to retry")
 	}
+	e.bindTargets(ctx, reminted)
 	return e.requeueBatch(ctx, id)
 }
 
@@ -350,6 +387,7 @@ func (e *Engine) ReplayTimeout(ctx context.Context, id, operator string) (Batch,
 		return Batch{}, err
 	}
 	n := 0
+	replayed := make([]Target, 0, len(b.Targets))
 	for _, t := range b.Targets {
 		if t.Status != TargetTimeout {
 			continue
@@ -368,11 +406,17 @@ func (e *Engine) ReplayTimeout(ctx context.Context, id, operator string) (Batch,
 		if err := e.DB.UpdateTarget(ctx, id, t.OperationID, rec); err != nil {
 			return Batch{}, err
 		}
+		t.Status = TargetPending
+		t.Error = ""
+		t.StartedAt = time.Time{}
+		t.FinishedAt = time.Time{}
+		replayed = append(replayed, t)
 		n++
 	}
 	if n == 0 {
 		return Batch{}, errcode.E(errcode.INVALID, "nothing to replay")
 	}
+	e.bindTargets(ctx, replayed)
 	return e.requeueBatch(ctx, id)
 }
 

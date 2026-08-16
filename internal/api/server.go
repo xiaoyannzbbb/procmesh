@@ -156,6 +156,9 @@ func NewServer(opts Options) (*Server, error) {
 		if opts.Batch.Exec == nil {
 			opts.Batch.Exec = &batchExecutor{api: bapi}
 		}
+		if opts.Batch.BindTargets == nil {
+			opts.Batch.BindTargets = bapi.bindTargets
+		}
 		bp, bh := procmeshv1connect.NewBatchServiceHandler(bapi, intercept)
 		mountConnect(engine, bp, bh)
 	}

@@ -5,13 +5,18 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/batch"
+	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/rpc"
 	"github.com/qleelulu/procmesh/internal/store"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
@@ -419,7 +424,7 @@ func TestBatchExec_ConfigUpdateUsesPayload(t *testing.T) {
 		ExpectedRevision: 3,
 		Spec:             &procmeshv1.ProcessSpec{Command: "/bin/new", Group: "web"},
 	})
-	err := ex.Execute(context.Background(), batch.Target{
+	err := ex.Execute(operatorCtx(), batch.Target{
 		OperationID:      "op-cfg-1",
 		NodeID:           "ccc",
 		ProcessID:        "p1",
@@ -461,12 +466,199 @@ func TestBatchExec_MapsOwnerConflict(t *testing.T) {
 		ExpectedRevision: 3,
 		Spec:             &procmeshv1.ProcessSpec{Command: "/bin/new"},
 	})
-	err := ex.Execute(context.Background(), batch.Target{
+	err := ex.Execute(operatorCtx(), batch.Target{
 		OperationID: "op-cfg-2", NodeID: "ccc", ProcessID: "p1",
 		ExpectedRevision: 3, PayloadJSON: string(payload),
 	}, batch.TypeConfigUpdate)
 	if batch.MapExecError(err) != batch.TargetConflict {
 		t.Fatalf("status=%s err=%v", batch.MapExecError(err), err)
+	}
+}
+
+func TestBatchAPI_ConcurrentCreateDoesNotCrossOverlays(t *testing.T) {
+	mgr, st, _ := newTestManager(t)
+	_, svc := newBootstrappedAuth(t)
+	putOperatorUser(t, svc)
+	applyAuthCmd(t, svc, control.CmdUserPut, control.UserPutBody{
+		ID: "user-op2", Username: "operator2", PasswordHash: testAdminHash(t),
+	})
+	applyAuthCmd(t, svc, control.CmdBindPut, control.BindPutBody{
+		UserID: "user-op2", RoleID: "operator", Scope: control.ScopeCluster,
+	})
+	specA, err := mgr.ApplySpec(context.Background(), process.ProcessSpec{
+		Name: "proc-a", Command: "/bin/old", OwnerAgentID: "n1",
+	}, 0, "op-apply-a", "t", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	specB, err := mgr.ApplySpec(context.Background(), process.ProcessSpec{
+		Name: "proc-b", Command: "/bin/old", OwnerAgentID: "n1",
+	}, 0, "op-apply-b", "t", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var seq atomic.Int64
+	eng := &batch.Engine{
+		DB: st, SourceAgent: "n1",
+		NewID: func() string { return "id-" + strconv.FormatInt(seq.Add(1), 10) },
+	}
+	membersHit := make(chan struct{})
+	releaseMembers := make(chan struct{})
+	var hitOnce sync.Once
+	api := &BatchAPI{
+		Auth: svc, Engine: eng, Store: st, LocalID: "n1", Mgr: mgr,
+		Members: func() []cluster.NodeSummary {
+			hitOnce.Do(func() { close(membersHit) })
+			<-releaseMembers
+			return []cluster.NodeSummary{{
+				NodeID: "n1",
+				Processes: []cluster.ProcessSummary{
+					{ProcessID: specA.ProcessID, Name: specA.Name, LatestRevision: specA.LatestRevision},
+					{ProcessID: specB.ProcessID, Name: specB.Name, LatestRevision: specB.LatestRevision},
+				},
+			}}
+		},
+	}
+
+	ctxA := WithPrincipal(context.Background(), auth.Principal{UserID: "user-op", Username: "operator", SessionID: "sess-a"})
+	ctxB := WithPrincipal(context.Background(), auth.Principal{UserID: "user-op2", Username: "operator2", SessionID: "sess-b"})
+
+	type result struct {
+		b   *procmeshv1.Batch
+		err error
+	}
+	chA := make(chan result, 1)
+	chB := make(chan result, 1)
+	go func() {
+		resp, err := api.CreateBatch(ctxA, connect.NewRequest(&procmeshv1.CreateBatchRequest{
+			Meta:     &procmeshv1.MutationMeta{OperationId: "op-cu-a", Operator: "operator"},
+			Type:     "CONFIG_UPDATE",
+			Selector: &procmeshv1.BatchSelector{ProcessIds: []string{specA.ProcessID}},
+			Config:   &procmeshv1.ProcessSpec{Command: "/bin/alpha"},
+		}))
+		if err != nil {
+			chA <- result{err: err}
+			return
+		}
+		chA <- result{b: resp.Msg.GetBatch()}
+	}()
+	select {
+	case <-membersHit:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first expand did not hit Members")
+	}
+	go func() {
+		resp, err := api.CreateBatch(ctxB, connect.NewRequest(&procmeshv1.CreateBatchRequest{
+			Meta:     &procmeshv1.MutationMeta{OperationId: "op-cu-b", Operator: "operator2"},
+			Type:     "CONFIG_UPDATE",
+			Selector: &procmeshv1.BatchSelector{ProcessIds: []string{specB.ProcessID}},
+			Config:   &procmeshv1.ProcessSpec{Command: "/bin/bravo"},
+		}))
+		if err != nil {
+			chB <- result{err: err}
+			return
+		}
+		chB <- result{b: resp.Msg.GetBatch()}
+	}()
+	time.Sleep(30 * time.Millisecond)
+	close(releaseMembers)
+
+	ra := <-chA
+	rb := <-chB
+	if ra.err != nil {
+		t.Fatalf("create A: %v", ra.err)
+	}
+	if rb.err != nil {
+		t.Fatalf("create B: %v", rb.err)
+	}
+	if eng.Expand != nil {
+		t.Fatal("request-scoped expander must not stay on Engine.Expand")
+	}
+	if len(ra.b.GetTargets()) != 1 || len(rb.b.GetTargets()) != 1 {
+		t.Fatalf("targets A=%+v B=%+v", ra.b.GetTargets(), rb.b.GetTargets())
+	}
+	gotA, err := eng.Get(context.Background(), ra.b.GetBatchId())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotB, err := eng.Get(context.Background(), rb.b.GetBatchId())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(gotA.Targets[0].PayloadJSON, "/bin/alpha") {
+		t.Fatalf("A overlay crossed: %s", gotA.Targets[0].PayloadJSON)
+	}
+	if !strings.Contains(gotB.Targets[0].PayloadJSON, "/bin/bravo") {
+		t.Fatalf("B overlay crossed: %s", gotB.Targets[0].PayloadJSON)
+	}
+	if strings.Contains(gotA.Targets[0].PayloadJSON, "/bin/bravo") || strings.Contains(gotB.Targets[0].PayloadJSON, "/bin/alpha") {
+		t.Fatalf("overlays crossed A=%s B=%s", gotA.Targets[0].PayloadJSON, gotB.Targets[0].PayloadJSON)
+	}
+}
+
+func TestBatchAPI_RemoteExecuteSeesHopIdentityBeforeCreateReturns(t *testing.T) {
+	api, eng, _, _ := newBatchAPI(t, oneTargetExpand())
+	api.LocalID = "aaa"
+	api.Router = remoteOwnerRouter("aaa", "ccc", "nginx")
+	saw := make(chan string, 1)
+	hold := make(chan struct{})
+	fakeCli := &blockingRestartClient{saw: saw, hold: hold}
+	api.Forward = &fakeForwarder{proc: fakeCli}
+	eng.Expand = stubExpand{targets: []batch.Target{
+		{NodeID: "ccc", ProcessID: "p1", ProcessName: "nginx"},
+	}}
+	eng.Exec = nil
+	api.ensureExec()
+	eng.Start(context.Background())
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := api.CreateBatch(operatorCtx(), connect.NewRequest(&procmeshv1.CreateBatchRequest{
+			Meta:     &procmeshv1.MutationMeta{OperationId: "op-hop", Operator: "operator"},
+			Type:     "RESTART",
+			Selector: &procmeshv1.BatchSelector{ProcessIds: []string{"p1"}},
+		}))
+		done <- err
+	}()
+	var sess string
+	select {
+	case sess = <-saw:
+	case <-time.After(2 * time.Second):
+		t.Fatal("remote Execute did not start")
+	}
+	if sess != "sess-op" {
+		t.Fatalf("hop session=%q; identity must be bound before enqueue", sess)
+	}
+	close(hold)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBatchExec_RemoteNoPrincipalSkipsOwner(t *testing.T) {
+	fakeCli := &recordingProcessClient{}
+	fwd := &fakeForwarder{proc: fakeCli}
+	api := &BatchAPI{
+		LocalID: "aaa",
+		Router:  remoteOwnerRouter("aaa", "ccc", "nginx"),
+		Forward: fwd,
+	}
+	ex := &batchExecutor{api: api}
+	err := ex.Execute(context.Background(), batch.Target{
+		OperationID: "op-noprinc",
+		NodeID:      "ccc",
+		ProcessID:   "p1",
+		ProcessName: "nginx",
+	}, batch.TypeRestart)
+	if batch.MapExecError(err) != batch.TargetTimeout {
+		t.Fatalf("status=%s err=%v", batch.MapExecError(err), err)
+	}
+	if fwd.processCalls() != 0 {
+		t.Fatalf("must not hop to Owner: calls=%d", fwd.processCalls())
+	}
+	if len(fakeCli.restarts()) != 0 {
+		t.Fatalf("must not call Owner Restart: %d", len(fakeCli.restarts()))
 	}
 }
 
@@ -500,6 +692,23 @@ func assertAudit(t *testing.T, st *store.Store, resource, action, opID string) {
 		}
 	}
 	t.Fatalf("missing audit action=%s op=%s resource=%s evs=%+v", action, opID, resource, evs)
+}
+
+type blockingRestartClient struct {
+	fakeProcessClient
+	saw  chan string
+	hold chan struct{}
+}
+
+func (f *blockingRestartClient) RestartProcess(_ context.Context, req *connect.Request[procmeshv1.ProcessRefRequest]) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
+	select {
+	case f.saw <- rpc.SessionIDOf(req.Header()):
+	default:
+	}
+	if f.hold != nil {
+		<-f.hold
+	}
+	return connect.NewResponse(&procmeshv1.ProcessRefResponse{}), nil
 }
 
 type recordingProcessClient struct {
