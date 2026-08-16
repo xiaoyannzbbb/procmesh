@@ -8,9 +8,12 @@ import { withTarget } from "../lib/headers";
 import { newOperationId } from "../lib/opid";
 import { useConfigClient } from "../lib/rpc";
 import { session } from "../lib/session";
+import { useI18n } from "../lib/useI18n";
 import { formatRemoteError } from "./processView";
 
-const CONFLICT_BANNER = "409 Conflict — reload and retry";
+const { t } = useI18n();
+
+const CONFLICT_BANNER = computed(() => t("processConfig.conflictBanner"));
 
 const props = defineProps<{
   idOrName: string;
@@ -188,7 +191,7 @@ async function onSave(): Promise<void> {
     await queryClient.invalidateQueries({ queryKey: ["process", props.idOrName, props.targetNodeId] });
   } catch (err) {
     if (isConflict(err)) {
-      conflictText.value = CONFLICT_BANNER;
+      conflictText.value = CONFLICT_BANNER.value;
       return;
     }
     actionError.value = formatRemoteError(err);
@@ -204,7 +207,7 @@ async function onRollback(toRevision: bigint | number): Promise<void> {
     return;
   }
   const to = typeof toRevision === "bigint" ? toRevision : BigInt(toRevision);
-  if (!window.confirm(`Rollback to revision ${String(to)}? This writes a new revision.`)) {
+  if (!window.confirm(t("processConfig.history.rollbackConfirm", { revision: String(to) }))) {
     return;
   }
   rollingBack.value = true;
@@ -224,7 +227,7 @@ async function onRollback(toRevision: bigint | number): Promise<void> {
     await queryClient.invalidateQueries({ queryKey: ["process", props.idOrName, props.targetNodeId] });
   } catch (err) {
     if (isConflict(err)) {
-      conflictText.value = CONFLICT_BANNER;
+      conflictText.value = CONFLICT_BANNER.value;
       return;
     }
     actionError.value = formatRemoteError(err);
@@ -238,27 +241,27 @@ async function onRollback(toRevision: bigint | number): Promise<void> {
   <div class="panel">
     <div v-if="conflictText" class="banner conflict" role="alert">{{ conflictText }}</div>
     <p v-if="errorText" class="error" role="alert">{{ errorText }}</p>
-    <p v-if="configPending && !loadedSpec" class="muted">Loading…</p>
+    <p v-if="configPending && !loadedSpec" class="muted">{{ t("processConfig.loading") }}</p>
 
     <section v-if="loadedSpec" class="card">
       <div class="title-row">
-        <h2>Config</h2>
-        <button type="button" class="btn" @click="onReload">Reload</button>
+        <h2>{{ t("processConfig.config.title") }}</h2>
+        <button type="button" class="btn" @click="onReload">{{ t("processConfig.config.reload") }}</button>
       </div>
       <dl class="facts">
         <div>
-          <dt>Process ID</dt>
+          <dt>{{ t("processConfig.config.processId") }}</dt>
           <dd class="mono">{{ loadedSpec.processId || "—" }}</dd>
         </div>
         <div>
-          <dt>Latest Revision</dt>
+          <dt>{{ t("processConfig.config.latestRevision") }}</dt>
           <dd>{{ String(loadedSpec.latestRevision) }}</dd>
         </div>
       </dl>
-      <p class="muted note">process_id and latest_revision are read-only.</p>
+      <p class="muted note">{{ t("processConfig.config.readOnlyNote") }}</p>
       <form class="config-form" @submit.prevent="onSave">
         <label class="field">
-          <span>ProcessSpec JSON</span>
+          <span>{{ t("processConfig.config.specLabel") }}</span>
           <textarea
             v-model="editorText"
             class="input editor"
@@ -268,28 +271,28 @@ async function onRollback(toRevision: bigint | number): Promise<void> {
           />
         </label>
         <label class="field">
-          <span>Comment</span>
+          <span>{{ t("processConfig.config.commentLabel") }}</span>
           <input v-model="comment" class="input" type="text" :readonly="!canUpdate" />
         </label>
         <div class="actions">
           <button type="submit" class="btn btn-primary" :disabled="!canUpdate || saving || !targetNodeId">
-            Save
+            {{ t("processConfig.config.save") }}
           </button>
         </div>
       </form>
     </section>
 
     <section class="card">
-      <h2>History</h2>
-      <p v-if="historyPending && !revisions.length" class="muted">Loading history…</p>
+      <h2>{{ t("processConfig.history.title") }}</h2>
+      <p v-if="historyPending && !revisions.length" class="muted">{{ t("processConfig.history.loading") }}</p>
       <table v-else class="table">
         <thead>
           <tr>
-            <th>Select</th>
-            <th>Revision</th>
-            <th>Operator</th>
-            <th>Time</th>
-            <th>Comment</th>
+            <th>{{ t("processConfig.history.table.select") }}</th>
+            <th>{{ t("processConfig.history.table.revision") }}</th>
+            <th>{{ t("processConfig.history.table.operator") }}</th>
+            <th>{{ t("processConfig.history.table.time") }}</th>
+            <th>{{ t("processConfig.history.table.comment") }}</th>
             <th v-if="canUpdate"></th>
           </tr>
         </thead>
@@ -313,22 +316,22 @@ async function onRollback(toRevision: bigint | number): Promise<void> {
                 :disabled="rollingBack || !targetNodeId"
                 @click="onRollback(rev.revision)"
               >
-                Rollback
+                {{ t("processConfig.history.table.rollback") }}
               </button>
             </td>
           </tr>
           <tr v-if="!revisions.length">
-            <td :colspan="canUpdate ? 6 : 5" class="muted">No revisions</td>
+            <td :colspan="canUpdate ? 6 : 5" class="muted">{{ t("processConfig.history.noRevisions") }}</td>
           </tr>
         </tbody>
       </table>
       <div v-if="selected.length === 2" class="diff-block">
-        <h3>Diff {{ selected.slice().sort((a, b) => Number(a) - Number(b)).join(" → ") }}</h3>
-        <p v-if="diffPending" class="muted">Loading diff…</p>
+        <h3>{{ t("processConfig.history.diff.title") }} {{ selected.slice().sort((a, b) => Number(a) - Number(b)).join(" → ") }}</h3>
+        <p v-if="diffPending" class="muted">{{ t("processConfig.history.diff.loading") }}</p>
         <p v-else-if="diffError" class="error" role="alert">
           {{ formatRemoteError(diffError) }}
         </p>
-        <pre v-else class="diff">{{ diffText || "(empty)" }}</pre>
+        <pre v-else class="diff">{{ diffText || t("processConfig.history.diff.empty") }}</pre>
       </div>
     </section>
   </div>

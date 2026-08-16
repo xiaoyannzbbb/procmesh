@@ -2,10 +2,61 @@ import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { QueryClient, VueQueryPlugin } from "@tanstack/vue-query";
 import { flushPromises, mount } from "@vue/test-utils";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import i18next from "i18next";
+import I18NextVue from "i18next-vue";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ErrorInfoSchema, ProcessSpecSchema } from "../gen/procmesh/v1/api_pb";
 import { session } from "../lib/session";
 import ProcessConfigPanel from "./ProcessConfigPanel.vue";
+
+let i18n: typeof i18next;
+
+beforeEach(async () => {
+  i18n = i18next.createInstance();
+  await i18n.init({
+    lng: "en",
+    fallbackLng: "en",
+    resources: {
+      en: {
+        common: {
+          processConfig: {
+            conflictBanner: "409 Conflict — reload and retry",
+            loading: "Loading…",
+            config: {
+              title: "Config",
+              reload: "Reload",
+              processId: "Process ID",
+              latestRevision: "Latest Revision",
+              readOnlyNote: "process_id and latest_revision are read-only.",
+              specLabel: "ProcessSpec JSON",
+              commentLabel: "Comment",
+              save: "Save",
+            },
+            history: {
+              title: "History",
+              loading: "Loading history…",
+              noRevisions: "No revisions",
+              table: {
+                select: "Select",
+                revision: "Revision",
+                operator: "Operator",
+                time: "Time",
+                comment: "Comment",
+                rollback: "Rollback",
+              },
+              diff: {
+                title: "Diff",
+                loading: "Loading diff…",
+                empty: "(empty)",
+              },
+              rollbackConfirm: "Rollback to revision {revision}? This writes a new revision.",
+            },
+          },
+        },
+      },
+    },
+  });
+});
 
 const mounted: Array<{ unmount: () => void }> = [];
 
@@ -63,7 +114,7 @@ async function mountPanel(opts: MountOpts | ReturnType<typeof vi.fn> = {}) {
   const wrapper = mount(ProcessConfigPanel, {
     props: { idOrName: "web", targetNodeId: "n1" },
     global: {
-      plugins: [[VueQueryPlugin, { queryClient }]],
+      plugins: [[VueQueryPlugin, { queryClient }], [I18NextVue, { i18next: i18n }]],
       provide: { configClient },
     },
   });
@@ -181,5 +232,79 @@ describe("ProcessConfigPanel", () => {
     await second.wrapper.get("form.config-form").trigger("submit");
     await flushPromises();
     expect(updateConfig.mock.calls.at(-1)?.[0].expectedRevision).toBe(4n);
+  });
+});
+
+describe("ProcessConfigPanel i18n", () => {
+  it("should render in English", async () => {
+    await i18n.changeLanguage("en");
+    await i18n.addResourceBundle("en", "common", {
+      processConfig: {
+        loading: "Loading…",
+        config: {
+          title: "Config",
+          reload: "Reload",
+          processId: "Process ID",
+          latestRevision: "Latest Revision",
+          save: "Save",
+        },
+        history: {
+          title: "History",
+          loading: "Loading history…",
+          table: {
+            select: "Select",
+            revision: "Revision",
+            operator: "Operator",
+            time: "Time",
+            comment: "Comment",
+            rollback: "Rollback",
+          },
+        },
+      },
+    });
+
+    const { wrapper } = await mountPanel();
+    const text = wrapper.text();
+    expect(text).toContain("Config");
+    expect(text).toContain("Reload");
+    expect(text).toContain("Process ID");
+    expect(text).toContain("Latest Revision");
+    expect(text).toContain("History");
+  });
+
+  it("should render in Chinese", async () => {
+    await i18n.changeLanguage("zh");
+    await i18n.addResourceBundle("zh", "common", {
+      processConfig: {
+        loading: "加载中…",
+        config: {
+          title: "配置",
+          reload: "重新加载",
+          processId: "进程ID",
+          latestRevision: "最新版本",
+          save: "保存",
+        },
+        history: {
+          title: "历史",
+          loading: "加载历史中…",
+          table: {
+            select: "选择",
+            revision: "版本",
+            operator: "操作者",
+            time: "时间",
+            comment: "备注",
+            rollback: "回滚",
+          },
+        },
+      },
+    });
+
+    const { wrapper } = await mountPanel();
+    const text = wrapper.text();
+    expect(text).toContain("配置");
+    expect(text).toContain("重新加载");
+    expect(text).toContain("进程ID");
+    expect(text).toContain("最新版本");
+    expect(text).toContain("历史");
   });
 });

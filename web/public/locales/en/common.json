@@ -163,5 +163,38 @@
         "freshness": "Freshness"
       }
     }
+  },
+  "processConfig": {
+    "loading": "Loading…",
+    "conflictBanner": "409 Conflict — reload and retry",
+    "config": {
+      "title": "Config",
+      "reload": "Reload",
+      "processId": "Process ID",
+      "latestRevision": "Latest Revision",
+      "readOnlyNote": "process_id and latest_revision are read-only.",
+      "specLabel": "ProcessSpec JSON",
+      "commentLabel": "Comment",
+      "save": "Save"
+    },
+    "history": {
+      "title": "History",
+      "loading": "Loading history…",
+      "noRevisions": "No revisions",
+      "table": {
+        "select": "Select",
+        "revision": "Revision",
+        "operator": "Operator",
+        "time": "Time",
+        "comment": "Comment",
+        "rollback": "Rollback"
+      },
+      "diff": {
+        "title": "Diff",
+        "loading": "Loading diff…",
+        "empty": "(empty)"
+      },
+      "rollbackConfirm": "Rollback to revision {revision}? This writes a new revision."
+    }
   }
 }
