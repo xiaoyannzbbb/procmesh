@@ -21,6 +21,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/identity"
 	"github.com/qleelulu/procmesh/internal/logmgr"
+	"github.com/qleelulu/procmesh/internal/metrics"
 	"github.com/qleelulu/procmesh/internal/paths"
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/store"
@@ -88,7 +89,7 @@ func Run(ctx context.Context, opt Options) error {
 			logger.Warn("store reopen failed", "error", err)
 			return serveHTTP(ctx, opt, nil, nil, nil, true, func() error {
 				return errcode.E(errcode.DEGRADED, "store unavailable")
-			}, nil, nil, api.ClusterDeps{})
+			}, nil, nil, nil, api.ClusterDeps{})
 		}
 		degraded = true
 	}
@@ -133,6 +134,11 @@ func Run(ctx context.Context, opt Options) error {
 	}
 	if err := mgr.Reconcile(ctx); err != nil {
 		logger.Warn("process reconcile failed", "error", err)
+	}
+
+	collector := metrics.New(layout.Root, 5*time.Second)
+	if err := collector.Start(ctx); err != nil {
+		return fmt.Errorf("start metrics collector: %w", err)
 	}
 
 	gossipListen := opt.GossipListen
@@ -198,6 +204,7 @@ func Run(ctx context.Context, opt Options) error {
 		bootID:   hostBoot,
 		store:    st,
 		mgr:      mgr,
+		metrics:  collector,
 	}
 
 	if control.AlreadyInited(layout.ClusterDir) || agentCertExists(layout.ClusterDir) {
@@ -245,7 +252,7 @@ func Run(ctx context.Context, opt Options) error {
 		}
 		return nil
 	}
-	return serveHTTP(ctx, opt, mgr, logs, st, degraded, ready, mesh, src, api.ClusterDeps{
+	return serveHTTP(ctx, opt, mgr, logs, st, degraded, ready, mesh, src, collector, api.ClusterDeps{
 		Dir:        layout.ClusterDir,
 		Store:      st,
 		Mesh:       mesh,
@@ -257,7 +264,7 @@ func Run(ctx context.Context, opt Options) error {
 	})
 }
 
-func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *logmgr.Manager, st *store.Store, degraded bool, ready func() error, mesh *cluster.Mesh, src *liveSource, clusterDeps api.ClusterDeps) error {
+func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *logmgr.Manager, st *store.Store, degraded bool, ready func() error, mesh *cluster.Mesh, src *liveSource, collector *metrics.Collector, clusterDeps api.ClusterDeps) error {
 	ln, err := net.Listen("tcp", opt.Listen)
 	if err != nil {
 		shutdownMesh(mesh)
@@ -297,6 +304,7 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		controlAdv:  opt.ControlAdvertise,
 		started:     started,
 		logger:      opt.Logger,
+		metrics:     collector,
 	}
 	if control.AlreadyInited(clusterDeps.Dir) {
 		if err := rt.startRaft(false); err != nil {
@@ -430,6 +438,9 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		_ = srv.Shutdown(shutCtx)
 		rt.shutdown(shutCtx)
 		shutdownMesh(mesh)
+		if collector != nil {
+			collector.Stop()
+		}
 		opt.Logger.Info("agent stopped")
 		return nil
 	case err := <-errCh:
@@ -437,6 +448,9 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		defer cancel()
 		rt.shutdown(shutCtx)
 		shutdownMesh(mesh)
+		if collector != nil {
+			collector.Stop()
+		}
 		return err
 	}
 }

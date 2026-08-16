@@ -14,6 +14,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
+	"github.com/qleelulu/procmesh/internal/metrics"
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/rpc"
 	"github.com/qleelulu/procmesh/internal/store"
@@ -44,6 +45,7 @@ type rpcRuntime struct {
 	knownLeader string
 	started     time.Time
 	logger      *slog.Logger
+	metrics     *metrics.Collector
 }
 
 func (r *rpcRuntime) startRPC() error {
@@ -205,7 +207,8 @@ func (r *rpcRuntime) localHandler() http.Handler {
 			Dir: r.dir, Store: r.st, Mesh: r.mesh, Local: localFn,
 			ControlFn: r.control, NodeID: r.nodeID,
 		},
-		LocalOnly: true, LocalID: r.nodeID, Degraded: degraded,
+		LocalOnly: true, LocalID: r.nodeID, Degraded: r.degradedFn(),
+		Metrics:   r.metrics,
 	}, opts...)
 	mux.Handle(mp, mh)
 	return mux

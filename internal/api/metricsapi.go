@@ -2,13 +2,15 @@ package api
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"net/http"
-	"runtime"
 	"time"
 
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/cluster"
+	"github.com/qleelulu/procmesh/internal/metrics"
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/rpc"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
@@ -16,11 +18,6 @@ import (
 )
 
 var _ procmeshv1connect.MetricsServiceHandler = (*MetricsAPI)(nil)
-
-const (
-	procStatUnavailable    = "process cpu/memory unavailable"
-	procStatUnavailableMac = "macos: process cpu/memory unavailable"
-)
 
 type MetricsAPI struct {
 	Mgr       *process.Manager
@@ -32,6 +29,7 @@ type MetricsAPI struct {
 	Router    *Router
 	Forward   Forwarder
 	Degraded  func() bool
+	Metrics   *metrics.Collector
 }
 
 func (s *MetricsAPI) GetAgentMetrics(ctx context.Context, _ *connect.Request[procmeshv1.GetAgentMetricsRequest]) (*connect.Response[procmeshv1.GetAgentMetricsResponse], error) {
@@ -100,7 +98,7 @@ func (s *MetricsAPI) GetProcessMetrics(ctx context.Context, req *connect.Request
 		if wantInst != "" && inst.InstanceID != wantInst {
 			continue
 		}
-		out = append(out, processMetricsOf(inst, now))
+		out = append(out, processMetricsOf(s.Metrics, inst, now))
 	}
 	return connect.NewResponse(&procmeshv1.GetProcessMetricsResponse{Metrics: out}), nil
 }
@@ -129,7 +127,7 @@ func localResourceSummary(d ClusterDeps) *procmeshv1.ResourceSummary {
 	return protoResources(d.Local().Resources)
 }
 
-func processMetricsOf(inst process.Instance, now time.Time) *procmeshv1.ProcessMetrics {
+func processMetricsOf(c *metrics.Collector, inst process.Instance, now time.Time) *procmeshv1.ProcessMetrics {
 	out := &procmeshv1.ProcessMetrics{
 		InstanceId: inst.InstanceID,
 		Pid:        int32(inst.PID),
@@ -141,21 +139,25 @@ func processMetricsOf(inst process.Instance, now time.Time) *procmeshv1.ProcessM
 		}
 		out.UptimeSeconds = int64(u)
 	}
-	cpu, mem, ok := readProcStat(inst.PID)
-	if !ok {
+
+	// Collector 未初始化
+	if c == nil {
 		out.CpuPercent = -1
 		out.MemoryBytes = -1
-		out.Note = procStatNote()
+		out.Note = "metrics collector unavailable"
 		return out
 	}
-	out.CpuPercent = cpu
-	out.MemoryBytes = mem
-	return out
-}
 
-func procStatNote() string {
-	if runtime.GOOS == "linux" {
-		return procStatUnavailable
+	// 采集进程指标
+	pm, err := c.ProcessMetrics(inst.PID)
+	if err != nil {
+		out.CpuPercent = -1
+		out.MemoryBytes = -1
+		out.Note = fmt.Sprintf("metrics unavailable: %v", err)
+		return out
 	}
-	return procStatUnavailableMac
+
+	out.CpuPercent = int32(math.Round(pm.CPUPercent))
+	out.MemoryBytes = int64(pm.MemoryBytes)
+	return out
 }

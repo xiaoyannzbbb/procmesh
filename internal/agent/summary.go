@@ -2,10 +2,12 @@ package agent
 
 import (
 	"context"
+	"math"
 	"sync"
 	"time"
 
 	"github.com/qleelulu/procmesh/internal/cluster"
+	"github.com/qleelulu/procmesh/internal/metrics"
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/store"
 	"github.com/qleelulu/procmesh/internal/version"
@@ -23,6 +25,7 @@ type liveSource struct {
 	gossip   string
 	store    *store.Store
 	mgr      *process.Manager
+	metrics  *metrics.Collector
 }
 
 func (s *liveSource) Snapshot() cluster.NodeSummary {
@@ -34,23 +37,46 @@ func (s *liveSource) Snapshot() cluster.NodeSummary {
 			clusterID = id
 		}
 	}
-	return cluster.NodeSummary{
-		NodeID:          s.nodeID,
-		ClusterID:       clusterID,
-		Hostname:        s.hostname,
-		BootID:          s.bootID,
-		State:           cluster.StateAlive,
-		AgentVersion:    version.Agent,
-		ProtocolVersion: version.Protocol,
-		APIAddress:      s.apiAddr,
-		RPCAddress:      s.rpcAddr,
-		GossipAddress:   s.gossip,
-		Processes:       processSummaries(s.mgr),
-		Resources: cluster.ResourceSummary{
+
+	var res cluster.ResourceSummary
+	if s.metrics == nil {
+		// Collector 未初始化（降级模式）
+		res = cluster.ResourceSummary{
 			CPUPercent:    -1,
 			MemoryPercent: -1,
 			DiskPercent:   -1,
-		},
+		}
+	} else {
+		node, err := s.metrics.NodeMetrics()
+		if err != nil {
+			// 采集失败
+			res = cluster.ResourceSummary{
+				CPUPercent:    -1,
+				MemoryPercent: -1,
+				DiskPercent:   -1,
+			}
+		} else {
+			res = cluster.ResourceSummary{
+				CPUPercent:    int(math.Round(node.CPUPercent)),
+				MemoryPercent: int(math.Round(node.MemoryPercent)),
+				DiskPercent:   int(math.Round(node.DiskPercent)),
+			}
+		}
+	}
+
+	return cluster.NodeSummary{
+		NodeID:            s.nodeID,
+		ClusterID:         clusterID,
+		Hostname:          s.hostname,
+		BootID:            s.bootID,
+		State:             cluster.StateAlive,
+		AgentVersion:      version.Agent,
+		ProtocolVersion:   version.Protocol,
+		APIAddress:        s.apiAddr,
+		RPCAddress:        s.rpcAddr,
+		GossipAddress:     s.gossip,
+		Processes:         processSummaries(s.mgr),
+		Resources:         res,
 		LastUpdatedUnixMs: time.Now().UnixMilli(),
 	}
 }
