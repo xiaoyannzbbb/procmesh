@@ -36,10 +36,13 @@ func TestRun_AppliesAutoDeleteFromConfig(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- agent.Run(ctx, agent.Options{
-			DataDir:    dir,
-			Listen:     "127.0.0.1:0",
-			ConfigPath: cfg,
-			OnListen:   func(string) { cancel() },
+			DataDir:       dir,
+			Listen:        "127.0.0.1:0",
+			GossipListen:  "127.0.0.1:0",
+			RPCListen:     "127.0.0.1:0",
+			ControlListen: "127.0.0.1:0",
+			ConfigPath:    cfg,
+			OnListen:      func(string) { cancel() },
 		})
 	}()
 	select {
