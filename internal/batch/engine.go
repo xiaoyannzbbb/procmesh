@@ -4,12 +4,21 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/store"
+)
+
+const (
+	defaultConcurrency   = 16
+	maxConcurrency       = 64
+	defaultTargetTimeout = 30 * time.Second
+	jobQueueSize         = 128
 )
 
 // Expander resolves a selector into concrete targets.
@@ -17,12 +26,12 @@ type Expander interface {
 	Expand(ctx context.Context, sel Selector, typ Type) ([]Target, error)
 }
 
-// Executor runs one target operation (wired by later tasks; unused here).
+// Executor runs one target operation.
 type Executor interface {
 	Execute(ctx context.Context, t Target, typ Type) error
 }
 
-// Engine persists and serves entry-local batches. Create does not start a worker.
+// Engine persists and serves entry-local batches. Start launches one background worker.
 type Engine struct {
 	DB            *store.Store
 	Expand        Expander
@@ -31,6 +40,10 @@ type Engine struct {
 	TargetTimeout time.Duration
 	SourceAgent   string
 	NewID         func() string
+
+	startOnce sync.Once
+	mu        sync.Mutex
+	jobs      chan string
 }
 
 // Create expands the selector, assigns IDs, and inserts a PENDING batch.
@@ -108,7 +121,187 @@ func (e *Engine) Create(ctx context.Context, operator string, typ Type, sel Sele
 	if err := e.DB.InsertBatch(ctx, rec, storeTargets); err != nil {
 		return Batch{}, err
 	}
+	e.enqueue(batchID)
 	return e.Get(ctx, batchID)
+}
+
+// Start launches a single background worker loop. Safe to call multiple times.
+func (e *Engine) Start(ctx context.Context) {
+	e.startOnce.Do(func() {
+		jobs := make(chan string, jobQueueSize)
+		e.mu.Lock()
+		e.jobs = jobs
+		e.mu.Unlock()
+		go e.workerLoop(ctx, jobs)
+	})
+}
+
+// MapExecError maps an Execute error to a terminal TargetStatus.
+// TIMEOUT/DeadlineExceeded stay TIMEOUT (never rewritten as FAILED).
+func MapExecError(err error) TargetStatus {
+	if err == nil {
+		return TargetSuccess
+	}
+	if errcode.Is(err, errcode.TIMEOUT) || errors.Is(err, context.DeadlineExceeded) {
+		return TargetTimeout
+	}
+	if errcode.Is(err, errcode.DENIED) {
+		return TargetDenied
+	}
+	if errcode.Is(err, errcode.CONFLICT) {
+		return TargetConflict
+	}
+	if errcode.Is(err, errcode.INVALID) {
+		return TargetInvalid
+	}
+	if errcode.Is(err, errcode.UNAVAILABLE) {
+		return TargetUnavailable
+	}
+	return TargetFailed
+}
+
+func (e *Engine) enqueue(batchID string) {
+	e.mu.Lock()
+	jobs := e.jobs
+	e.mu.Unlock()
+	if jobs == nil {
+		return
+	}
+	select {
+	case jobs <- batchID:
+	default:
+		go func() { jobs <- batchID }()
+	}
+}
+
+func (e *Engine) workerLoop(ctx context.Context, jobs <-chan string) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case id, ok := <-jobs:
+			if !ok {
+				return
+			}
+			e.runBatch(ctx, id)
+		}
+	}
+}
+
+func (e *Engine) runBatch(ctx context.Context, batchID string) {
+	b, err := e.Get(ctx, batchID)
+	if err != nil {
+		return
+	}
+	if b.Status == StatusCompleted || b.Status == StatusPartial || b.Status == StatusFailed {
+		return
+	}
+
+	summaryJSON, err := json.Marshal(b.Summary)
+	if err != nil {
+		return
+	}
+	if err := e.DB.UpdateBatchStatus(ctx, batchID, string(StatusRunning), string(summaryJSON)); err != nil {
+		return
+	}
+
+	conc := e.Concurrency
+	if conc <= 0 {
+		conc = defaultConcurrency
+	}
+	if conc > maxConcurrency {
+		conc = maxConcurrency
+	}
+	timeout := e.TargetTimeout
+	if timeout <= 0 {
+		timeout = defaultTargetTimeout
+	}
+
+	sem := make(chan struct{}, conc)
+	var wg sync.WaitGroup
+	for _, t := range b.Targets {
+		if isTerminalTarget(t.Status) {
+			continue
+		}
+		if t.Status != TargetPending && t.Status != TargetRunning {
+			continue
+		}
+		tg := t
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			e.runTarget(ctx, batchID, b.Type, tg, timeout)
+		}()
+	}
+	wg.Wait()
+
+	finished, err := e.Get(ctx, batchID)
+	if err != nil {
+		return
+	}
+	status := Rollup(finished.Targets)
+	summary := CountSummary(finished.Targets)
+	sumJSON, err := json.Marshal(summary)
+	if err != nil {
+		return
+	}
+	_ = e.DB.UpdateBatchStatus(ctx, batchID, string(status), string(sumJSON))
+}
+
+func (e *Engine) runTarget(ctx context.Context, batchID string, typ Type, t Target, timeout time.Duration) {
+	now := time.Now().UTC()
+	t.Status = TargetRunning
+	t.StartedAt = now
+	t.Error = ""
+	if err := e.DB.UpdateTarget(ctx, batchID, t.OperationID, toStoreTarget(batchID, t)); err != nil {
+		return
+	}
+
+	var execErr error
+	if e.Exec == nil {
+		execErr = errcode.E(errcode.INVALID, "executor")
+	} else {
+		tctx, cancel := context.WithTimeout(ctx, timeout)
+		execErr = e.Exec.Execute(tctx, t, typ)
+		cancel()
+	}
+
+	status := MapExecError(execErr)
+	t.Status = status
+	t.FinishedAt = time.Now().UTC()
+	if execErr != nil {
+		t.Error = execErr.Error()
+	} else {
+		t.Error = ""
+	}
+	_ = e.DB.UpdateTarget(ctx, batchID, t.OperationID, toStoreTarget(batchID, t))
+}
+
+func isTerminalTarget(s TargetStatus) bool {
+	switch s {
+	case TargetSuccess, TargetFailed, TargetTimeout, TargetDenied, TargetConflict, TargetUnavailable, TargetInvalid:
+		return true
+	default:
+		return false
+	}
+}
+
+func toStoreTarget(batchID string, t Target) store.BatchTargetRecord {
+	return store.BatchTargetRecord{
+		BatchID:          batchID,
+		OperationID:      t.OperationID,
+		NodeID:           t.NodeID,
+		ProcessID:        t.ProcessID,
+		ProcessName:      t.ProcessName,
+		Status:           string(t.Status),
+		Error:            t.Error,
+		ExpectedRevision: t.ExpectedRevision,
+		PayloadJSON:      t.PayloadJSON,
+		StartedAt:        t.StartedAt,
+		FinishedAt:       t.FinishedAt,
+	}
 }
 
 // Get returns a batch with targets.

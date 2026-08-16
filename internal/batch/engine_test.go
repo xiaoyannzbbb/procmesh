@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/qleelulu/procmesh/internal/batch"
 	"github.com/qleelulu/procmesh/internal/errcode"
@@ -18,6 +19,33 @@ type stubExpand struct {
 
 func (s stubExpand) Expand(context.Context, batch.Selector, batch.Type) ([]batch.Target, error) {
 	return s.targets, s.err
+}
+
+type stubExec struct {
+	fn func(ctx context.Context, t batch.Target) error
+}
+
+func (s stubExec) Execute(ctx context.Context, t batch.Target, _ batch.Type) error {
+	return s.fn(ctx, t)
+}
+
+func waitBatch(t *testing.T, e *batch.Engine, id string, want batch.Status) batch.Batch {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	var last batch.Batch
+	for time.Now().Before(deadline) {
+		got, err := e.Get(context.Background(), id)
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		last = got
+		if got.Status == want {
+			return got
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("wait status %s: last=%+v", want, last)
+	return batch.Batch{}
 }
 
 func openStore(t *testing.T) *store.Store {
@@ -160,5 +188,60 @@ func TestEngine_ExportJSONAndInvalidFormat(t *testing.T) {
 	_, _, _, err = e.Export(ctx, "b1", "xml")
 	if !errcode.Is(err, errcode.INVALID) {
 		t.Fatalf("want INVALID, got %v", err)
+	}
+}
+
+func TestEngine_WorkerPartialTimeout(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	ids := []string{"b1", "op-ok", "op-to"}
+	e := &batch.Engine{
+		DB: st, SourceAgent: "n1", Concurrency: 2, TargetTimeout: 50 * time.Millisecond,
+		Expand: stubExpand{targets: []batch.Target{
+			{NodeID: "n1", ProcessID: "p-ok", ProcessName: "ok"},
+			{NodeID: "n2", ProcessID: "p-to", ProcessName: "to"},
+		}},
+		Exec: stubExec{fn: func(ctx context.Context, t batch.Target) error {
+			if t.ProcessID == "p-to" {
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			return nil
+		}},
+		NewID: func() string { id := ids[0]; ids = ids[1:]; return id },
+	}
+	e.Start(ctx)
+	b, err := e.Create(ctx, "admin", batch.TypeRestart, batch.Selector{ProcessIDs: []string{"p-ok", "p-to"}}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitBatch(t, e, b.BatchID, batch.StatusPartial)
+	got, _ := e.Get(ctx, b.BatchID)
+	var sawTO, sawOK bool
+	for _, tg := range got.Targets {
+		if tg.Status == batch.TargetTimeout {
+			sawTO = true
+		}
+		if tg.Status == batch.TargetSuccess {
+			sawOK = true
+		}
+	}
+	if !sawTO || !sawOK || got.Summary.Timeout != 1 || got.Summary.Success != 1 {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestMapExecError(t *testing.T) {
+	if batch.MapExecError(errcode.E(errcode.TIMEOUT, "x")) != batch.TargetTimeout {
+		t.Fatal("timeout")
+	}
+	if batch.MapExecError(errcode.E(errcode.UNAVAILABLE, "x")) != batch.TargetUnavailable {
+		t.Fatal("unavailable")
+	}
+	if batch.MapExecError(errcode.E(errcode.DENIED, "x")) != batch.TargetDenied {
+		t.Fatal("denied")
+	}
+	if batch.MapExecError(errcode.E(errcode.CONFLICT, "x")) != batch.TargetConflict {
+		t.Fatal("conflict")
 	}
 }
