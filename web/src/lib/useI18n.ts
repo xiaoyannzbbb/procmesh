@@ -1,4 +1,5 @@
 import { useTranslation } from 'i18next-vue'
+import { computed } from 'vue'
 
 export function useI18n() {
   const { t, i18next } = useTranslation('common')
@@ -17,7 +18,7 @@ export function useI18n() {
   return {
     t,
     tError,
-    currentLanguage: i18next.language,
+    currentLanguage: computed(() => i18next.language),
     setLanguage,
   }
 }

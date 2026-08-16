@@ -1,101 +1,121 @@
-import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
-import { ref } from 'vue'
-
-// Create shared mock state that persists across mounts
-const createMockI18n = () => {
-  const currentLanguageRef = ref('en')
-
-  return {
-    currentLanguageRef,
-    setLanguage: vi.fn(async (lang: string) => {
-      currentLanguageRef.value = lang
-      localStorage.setItem('procmesh_language', lang)
-    })
-  }
-}
-
-let mockI18nState: any
-
-// Mock useI18n before importing the component
-vi.mock('../lib/useI18n', () => ({
-  useI18n: () => ({
-    currentLanguage: mockI18nState.currentLanguageRef,
-    setLanguage: mockI18nState.setLanguage,
-    t: (key: string) => key,
-    tError: (code: string, fallback: string) => fallback
-  })
-}))
-
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import LanguageSwitcher from './LanguageSwitcher.vue'
+import { I18NextVue } from '../lib/i18n'
+import i18next from 'i18next'
+import { nextTick } from 'vue'
+
+// Create a test-specific i18n instance without HTTP backend
+const testI18n = i18next.createInstance()
+testI18n.init({
+  lng: 'en',
+  fallbackLng: 'en',
+  supportedLngs: ['en', 'zh'],
+  resources: {
+    en: {
+      common: {}
+    },
+    zh: {
+      common: {}
+    }
+  },
+  interpolation: {
+    escapeValue: false
+  }
+})
 
 describe('LanguageSwitcher', () => {
-  let setItemSpy: any
-
-  beforeEach(() => {
+  beforeEach(async () => {
     localStorage.clear()
-    mockI18nState = createMockI18n()
-    setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
-    vi.clearAllMocks()
+    // Set initial language to English using test i18n instance
+    await testI18n.changeLanguage('en')
+    await nextTick()
   })
 
   afterEach(() => {
-    vi.restoreAllMocks()
     localStorage.clear()
   })
 
   it('should display current language (English by default)', () => {
-    const wrapper = mount(LanguageSwitcher)
+    const wrapper = mount(LanguageSwitcher, {
+      global: {
+        plugins: [[I18NextVue, { i18next: testI18n }]]
+      }
+    })
 
     expect(wrapper.text()).toContain('English')
     expect(wrapper.find('[data-testid="lang-en"]').classes()).toContain('active')
   })
 
   it('should switch to Chinese when clicked and verify integration', async () => {
-    const wrapper = mount(LanguageSwitcher)
+    const wrapper = mount(LanguageSwitcher, {
+      global: {
+        plugins: [[I18NextVue, { i18next: testI18n }]]
+      }
+    })
 
     const zhButton = wrapper.find('[data-testid="lang-zh"]')
+
+    // Set up a promise to wait for language change event
+    const languageChanged = new Promise(resolve => {
+      testI18n.on('languageChanged', resolve)
+    })
+
     await zhButton.trigger('click')
 
-    // Verify setLanguage was called with 'zh'
-    expect(mockI18nState.setLanguage).toHaveBeenCalledWith('zh')
+    // Wait for i18n language change event
+    await languageChanged
+    await wrapper.vm.$nextTick()
 
-    // Verify localStorage was updated with 'zh'
-    expect(setItemSpy).toHaveBeenCalledWith('procmesh_language', 'zh')
+    // Verify i18n instance language changed
+    expect(testI18n.language).toBe('zh')
 
-    // Verify reactive state changed
-    expect(mockI18nState.currentLanguageRef.value).toBe('zh')
+    // Verify localStorage was updated
+    expect(localStorage.getItem('procmesh_language')).toBe('zh')
 
     // Verify UI updated: Chinese button now active, English not
-    await wrapper.vm.$nextTick()
-    expect(wrapper.find('[data-testid="lang-en"]').classes()).not.toContain('active')
     expect(wrapper.find('[data-testid="lang-zh"]').classes()).toContain('active')
+    expect(wrapper.find('[data-testid="lang-en"]').classes()).not.toContain('active')
     expect(wrapper.find('[data-testid="lang-zh"]').text()).toContain('中文')
   })
 
   it('should switch to English and verify integration', async () => {
-    // First switch to Chinese
-    const wrapper = mount(LanguageSwitcher)
+    const wrapper = mount(LanguageSwitcher, {
+      global: {
+        plugins: [[I18NextVue, { i18next: testI18n }]]
+      }
+    })
 
+    // First switch to Chinese
     let zhButton = wrapper.find('[data-testid="lang-zh"]')
+
+    let languageChanged = new Promise(resolve => {
+      testI18n.on('languageChanged', resolve)
+    })
+
     await zhButton.trigger('click')
+    await languageChanged
     await wrapper.vm.$nextTick()
 
     // Verify initial state is Chinese
-    expect(mockI18nState.currentLanguageRef.value).toBe('zh')
+    expect(testI18n.language).toBe('zh')
 
     // Now click English
     const enButton = wrapper.find('[data-testid="lang-en"]')
+
+    languageChanged = new Promise(resolve => {
+      testI18n.on('languageChanged', resolve)
+    })
+
     await enButton.trigger('click')
+    await languageChanged
+    await wrapper.vm.$nextTick()
 
-    // Verify setLanguage was called with 'en'
-    expect(mockI18nState.setLanguage).toHaveBeenCalledWith('en')
+    // Verify i18n instance language changed back to English
+    expect(testI18n.language).toBe('en')
 
-    // Verify localStorage was updated with 'en'
-    expect(setItemSpy).toHaveBeenCalledWith('procmesh_language', 'en')
-
-    // Verify reactive state changed
-    expect(mockI18nState.currentLanguageRef.value).toBe('en')
+    // Verify localStorage was updated
+    expect(localStorage.getItem('procmesh_language')).toBe('en')
 
     // Verify UI updated: English button now active, Chinese not
     await wrapper.vm.$nextTick()
