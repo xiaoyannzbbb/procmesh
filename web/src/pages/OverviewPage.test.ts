@@ -1,7 +1,26 @@
 import { VueQueryPlugin, QueryClient } from "@tanstack/vue-query";
 import { flushPromises, mount } from "@vue/test-utils";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import i18next from "i18next";
+import I18NextVue from "i18next-vue";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import OverviewPage from "./OverviewPage.vue";
+
+let i18n: typeof i18next;
+
+beforeEach(async () => {
+  i18n = i18next.createInstance();
+  await i18n.init({
+    lng: "en",
+    fallbackLng: "en",
+    resources: {
+      en: {
+        common: {
+          status: { live: "LIVE", stale: "STALE", unknown: "UNKNOWN" },
+        },
+      },
+    },
+  });
+});
 
 const overview = {
   clusterId: "c1",
@@ -38,7 +57,10 @@ async function mountOverview(overrides: Partial<typeof overview> = {}) {
   const clusterClient = { overview: vi.fn().mockResolvedValue({ ...overview, ...overrides }) };
   const wrapper = mount(OverviewPage, {
     global: {
-      plugins: [[VueQueryPlugin, { queryClient }]],
+      plugins: [
+        [VueQueryPlugin, { queryClient }],
+        [I18NextVue, { i18next: i18n }],
+      ],
       provide: { clusterClient },
     },
   });
