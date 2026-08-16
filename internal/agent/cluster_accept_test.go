@@ -3,12 +3,17 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"connectrpc.com/connect"
+	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
+	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
 
 func TestAccept_RPCAddressAfterInit(t *testing.T) {
@@ -219,6 +224,24 @@ func ensureTestSession(t *testing.T) {
 		return
 	}
 	t.Setenv("PROCMESH_SESSION", filepath.Join(t.TempDir(), "session"))
+}
+
+func waitClusterInited(t *testing.T, addr string) {
+	t.Helper()
+	hc := &http.Client{Timeout: 5 * time.Second}
+	cli := procmeshv1connect.NewAuthServiceClient(hc, "http://"+addr, testConnectOpts()...)
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) {
+		_, err := cli.GetMe(context.Background(), connect.NewRequest(&procmeshv1.GetMeRequest{}))
+		// 集群未初始化时，认证拦截器会放行请求（err == nil 或其他错误）
+		// 集群已初始化时，未认证请求会返回 DENIED 错误
+		if err != nil && connect.CodeOf(err) == connect.CodePermissionDenied {
+			// 认证拦截器已启用，集群已初始化
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("cluster never inited on %s (auth interceptor not enabled)", addr)
 }
 
 func loginAdmin(t *testing.T, server, password string) {

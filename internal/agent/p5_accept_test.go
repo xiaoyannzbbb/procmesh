@@ -32,6 +32,10 @@ func TestP5_Playwright_LoginListFreshness409(t *testing.T) {
 	if pw == "" {
 		t.Fatalf("missing admin_password in %q", out)
 	}
+
+	// 等待集群初始化完成（认证拦截器启用）
+	waitClusterInited(t, addr)
+
 	loginAdmin(t, addr, pw)
 
 	spec := writeSleepSpec(t)
