@@ -17,4 +17,5 @@ web/playwright-report/
 web/blob-report/
 web/playwright/.cache/
 web/playwright/.auth/
+web/src/types/i18n.d.ts
 *.exe

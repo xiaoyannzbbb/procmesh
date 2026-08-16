@@ -6,7 +6,8 @@
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
     "test": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "i18n:types": "tsx scripts/generate-i18n-types.ts"
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.2.3",
@@ -29,6 +30,7 @@
     "@vue/test-utils": "^2.4.6",
     "jsdom": "^26.0.0",
     "tailwindcss": "^4.0.9",
+    "tsx": "^4.23.12",
     "typescript": "^5.7.3",
     "vite": "^6.2.0",
     "vitest": "^3.0.7",
