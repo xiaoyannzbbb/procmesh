@@ -107,3 +107,21 @@ CREATE TABLE IF NOT EXISTS metric_samples (
 );
 CREATE INDEX IF NOT EXISTS metric_samples_query
     ON metric_samples(subject_id, layer, series, ts_unix);
+
+CREATE TABLE IF NOT EXISTS alerts (
+    alert_id TEXT PRIMARY KEY,
+    fingerprint TEXT NOT NULL UNIQUE,
+    type TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    process_id TEXT NOT NULL DEFAULT '',
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    state TEXT NOT NULL,
+    first_at TEXT NOT NULL,
+    last_at TEXT NOT NULL,
+    notified_at TEXT,
+    resolved_at TEXT,
+    last_error TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS alerts_last_at ON alerts(last_at DESC);
+CREATE INDEX IF NOT EXISTS alerts_state ON alerts(state);
