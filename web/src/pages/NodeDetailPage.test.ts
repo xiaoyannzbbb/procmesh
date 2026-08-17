@@ -1,3 +1,4 @@
+import { Code, ConnectError } from "@connectrpc/connect";
 import { VueQueryPlugin, QueryClient } from "@tanstack/vue-query";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createMemoryHistory, createRouter } from "vue-router";
@@ -8,6 +9,84 @@ import { defineComponent, h } from "vue";
 import NodeDetailPage from "./NodeDetailPage.vue";
 
 const Blank = defineComponent({ setup: () => () => h("div") });
+
+const GOSSIP_CPU = 87;
+
+const STALE_COPY = "History unavailable (STALE). Live gossip summary is not a chart.";
+
+const metricsHistoryEn = {
+  title: "History",
+  range24h: "24h",
+  range7d: "7d",
+  cpu: "CPU %",
+  memory: "Memory",
+  disk: "Disk %",
+  empty: "No samples in this range",
+  stale: STALE_COPY,
+  loading: "Loading history…",
+};
+
+const nodeDetailEn = {
+  back: "← Nodes",
+  loading: "Loading…",
+  removeAgent: "Remove Agent",
+  node: {
+    title: "Node",
+    hostname: "Hostname",
+    nodeId: "Node ID",
+    address: "Address",
+    version: "Version",
+    status: "Status",
+    bootId: "Boot ID",
+    cpu: "CPU",
+    memory: "Memory",
+    disk: "Disk",
+    processCount: "Process Count",
+    labels: "Labels",
+  },
+  processes: {
+    title: "Processes",
+    noProcesses: "No processes",
+    table: {
+      name: "Name",
+      desired: "Desired",
+      observed: "Observed",
+      health: "Health",
+      revisions: "Revisions",
+      freshness: "Freshness",
+    },
+  },
+};
+
+function gappedHistory() {
+  return {
+    nodeId: "a0ba0978-70ed-4664-8d80-133c6c862f86",
+    layer: "raw_min",
+    series: [
+      {
+        name: "cpu_percent",
+        layer: "raw_min",
+        points: [
+          { tsUnix: 1_700_000_000n, value: 10 },
+          { tsUnix: 1_700_000_060n, value: 11 },
+          { tsUnix: 1_700_000_180n, value: 12 },
+        ],
+      },
+    ],
+  };
+}
+
+function sampleNode(overrides: Record<string, unknown> = {}) {
+  return {
+    nodeId: "a0ba0978-70ed-4664-8d80-133c6c862f86",
+    hostname: "agent-a",
+    state: "ALIVE",
+    lastUpdatedUnixMs: Date.now(),
+    resources: { cpuPercent: GOSSIP_CPU, memoryPercent: 21, diskPercent: 15 },
+    processes: [],
+    ...overrides,
+  };
+}
 
 let i18n: typeof i18next;
 
@@ -28,7 +107,10 @@ beforeEach(async () => {
 
 const mounted: Array<{ unmount: () => void }> = [];
 
-async function mountNodeDetailPage(node: unknown = null) {
+async function mountNodeDetailPage(
+  node: unknown = null,
+  history?: { getNodeHistory?: ReturnType<typeof vi.fn> },
+) {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -48,6 +130,9 @@ async function mountNodeDetailPage(node: unknown = null) {
     getNode: vi.fn().mockResolvedValue({ node }),
     removeNode: vi.fn().mockResolvedValue({}),
   };
+  const getNodeHistory =
+    history?.getNodeHistory ?? vi.fn().mockResolvedValue({ nodeId: "", layer: "raw_min", series: [] });
+  const metricsClient = { getNodeHistory };
   const wrapper = mount(NodeDetailPage, {
     global: {
       plugins: [
@@ -55,10 +140,12 @@ async function mountNodeDetailPage(node: unknown = null) {
         [VueQueryPlugin, { queryClient }],
         [I18NextVue, { i18next: i18n }],
       ],
-      provide: { nodeClient },
+      provide: { nodeClient, metricsClient },
     },
   });
   mounted.push(wrapper);
+  await flushPromises();
+  await wrapper.vm.$nextTick();
   await flushPromises();
   await wrapper.vm.$nextTick();
   return wrapper;
@@ -215,5 +302,47 @@ describe("NodeDetailPage process list", () => {
 
     const link = wrapper.get('a[href="/processes/web-api?node=a0ba0978-70ed-4664-8d80-133c6c862f86"]');
     expect(link.text()).toBe("web-api");
+  });
+});
+
+describe("NodeDetailPage history", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    await i18n.addResourceBundle("en", "common", {
+      nodeDetail: nodeDetailEn,
+      metricsHistory: metricsHistoryEn,
+      status: { live: "LIVE", stale: "STALE", unknown: "UNKNOWN" },
+    });
+  });
+
+  it("shows 24h/7d and requests more than a day after clicking 7d", async () => {
+    const getNodeHistory = vi.fn().mockResolvedValue(gappedHistory());
+    const wrapper = await mountNodeDetailPage(sampleNode(), { getNodeHistory });
+
+    expect(wrapper.text()).toContain("24h");
+    expect(wrapper.text()).toContain("7d");
+
+    const sevenDay = wrapper.findAll("button").find((b) => b.text().trim() === "7d");
+    expect(sevenDay).toBeTruthy();
+    await sevenDay!.trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+    await flushPromises();
+
+    expect(getNodeHistory.mock.calls.length).toBeGreaterThanOrEqual(2);
+    const last = getNodeHistory.mock.calls.at(-1)?.[0] as { sinceUnix: bigint | number; untilUnix: bigint | number };
+    expect(Number(last.untilUnix) - Number(last.sinceUnix)).toBeGreaterThan(86400);
+  });
+
+  it("shows stale copy on UNAVAILABLE and does not draw Gossip CPU in SVG", async () => {
+    const getNodeHistory = vi.fn().mockRejectedValue(new ConnectError("UNAVAILABLE", Code.Unavailable));
+    const wrapper = await mountNodeDetailPage(sampleNode(), { getNodeHistory });
+
+    expect(wrapper.text()).toContain(STALE_COPY);
+    expect(wrapper.text()).toContain(`${GOSSIP_CPU}%`);
+    for (const svg of wrapper.findAll("svg")) {
+      expect(svg.html()).not.toContain(String(GOSSIP_CPU));
+    }
+    expect(wrapper.findAll("polyline")).toHaveLength(0);
   });
 });

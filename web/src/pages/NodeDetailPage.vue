@@ -3,8 +3,16 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
 import { computed, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
+import HistoryChart from "../components/HistoryChart.vue";
+import {
+  historyWindow,
+  isHistoryUnavailable,
+  pointsFromSeries,
+  stepSecForLayer,
+  type HistoryRange,
+} from "../lib/historyChart";
 import { newOperationId } from "../lib/opid";
-import { useNodeClient } from "../lib/rpc";
+import { useMetricsClient, useNodeClient } from "../lib/rpc";
 import { session } from "../lib/session";
 import { useI18n } from "../lib/useI18n";
 import { formatPercent, mapNode, REMOVE_CONFIRM } from "./clusterView";
@@ -12,11 +20,14 @@ import { formatPercent, mapNode, REMOVE_CONFIRM } from "./clusterView";
 const { t } = useI18n();
 
 const POLL_MS = 5000;
+const HISTORY_POLL_MS = 60_000;
 const route = useRoute();
 const router = useRouter();
 const client = useNodeClient();
+const metrics = useMetricsClient();
 const queryClient = useQueryClient();
 const actionError = ref("");
+const range = ref<HistoryRange>("24h");
 
 const id = computed(() => String(route.params.id ?? ""));
 const canRemove = computed(() => (session.value?.permissions ?? []).includes("node.remove"));
@@ -32,6 +43,29 @@ const node = computed(() => {
   const raw = query.data.value?.node;
   return raw ? mapNode(raw, Date.now()) : null;
 });
+
+const historyQuery = useQuery({
+  queryKey: computed(() => ["node-history", id.value, node.value?.nodeId ?? "", range.value]),
+  queryFn: () => {
+    const { sinceUnix, untilUnix } = historyWindow(range.value);
+    return metrics.getNodeHistory({
+      nodeId: node.value?.nodeId ?? "",
+      sinceUnix,
+      untilUnix,
+    });
+  },
+  refetchInterval: HISTORY_POLL_MS,
+  enabled: computed(() => Boolean(node.value?.nodeId)),
+  retry: false,
+});
+
+const historyStale = computed(() => isHistoryUnavailable(historyQuery.error.value));
+const historyStepSec = computed(() =>
+  stepSecForLayer(historyQuery.data.value?.layer || historyQuery.data.value?.series?.[0]?.layer || ""),
+);
+const cpuPoints = computed(() => pointsFromSeries(historyQuery.data.value?.series, "cpu_percent"));
+const memPoints = computed(() => pointsFromSeries(historyQuery.data.value?.series, "memory_percent"));
+const diskPoints = computed(() => pointsFromSeries(historyQuery.data.value?.series, "disk_percent"));
 
 const errorText = computed(() => {
   if (actionError.value) {
@@ -153,6 +187,41 @@ async function onRemove(): Promise<void> {
             </dd>
           </div>
         </dl>
+      </section>
+
+      <section class="card">
+        <div class="title-row">
+          <h2>{{ t("metricsHistory.title") }}</h2>
+          <div class="range-toggle">
+            <button type="button" :class="{ active: range === '24h' }" @click="range = '24h'">
+              {{ t("metricsHistory.range24h") }}
+            </button>
+            <button type="button" :class="{ active: range === '7d' }" @click="range = '7d'">
+              {{ t("metricsHistory.range7d") }}
+            </button>
+          </div>
+        </div>
+        <p v-if="historyQuery.isPending && !historyQuery.data" class="muted">{{ t("metricsHistory.loading") }}</p>
+        <div v-else class="charts">
+          <HistoryChart
+            :title="t('metricsHistory.cpu')"
+            :points="cpuPoints"
+            :step-sec="historyStepSec"
+            :stale="historyStale"
+          />
+          <HistoryChart
+            :title="t('metricsHistory.memory')"
+            :points="memPoints"
+            :step-sec="historyStepSec"
+            :stale="historyStale"
+          />
+          <HistoryChart
+            :title="t('metricsHistory.disk')"
+            :points="diskPoints"
+            :step-sec="historyStepSec"
+            :stale="historyStale"
+          />
+        </div>
       </section>
 
       <section class="card">
@@ -289,5 +358,28 @@ a:not(.back):hover {
   margin: 0;
   padding: 0;
   list-style: none;
+}
+.range-toggle {
+  display: flex;
+  gap: 0.35rem;
+  margin-left: auto;
+}
+.range-toggle button {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-card);
+  color: var(--color-text);
+  padding: 0.35rem 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 550;
+  cursor: pointer;
+}
+.range-toggle button.active {
+  border-color: var(--color-text);
+}
+.charts {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
 }
 </style>

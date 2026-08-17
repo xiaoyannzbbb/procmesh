@@ -21,7 +21,10 @@ export type ProcessClient = Pick<
   Client<typeof ProcessService>,
   "listProcesses" | "getProcess" | "startProcess" | "stopProcess" | "restartProcess" | "killProcess"
 >;
-export type MetricsClient = Pick<Client<typeof MetricsService>, "getProcessMetrics">;
+export type MetricsClient = Pick<
+  Client<typeof MetricsService>,
+  "getProcessMetrics" | "getNodeHistory" | "getProcessHistory"
+>;
 export type ConfigClient = Pick<
   Client<typeof ConfigService>,
   "getConfig" | "updateConfig" | "history" | "diff" | "rollback"
