@@ -134,7 +134,7 @@ async function mountAlerts(
   mounted.push(wrapper);
   await flushPromises();
   await wrapper.vm.$nextTick();
-  return { wrapper, alertClient };
+  return { wrapper, alertClient, queryClient };
 }
 
 afterEach(() => {
@@ -223,5 +223,26 @@ describe("AlertsPage", () => {
     expect(html).not.toContain("s3cret");
     expect(html).not.toContain('"secret"');
     expect(html).not.toContain('"password"');
+  });
+
+  it("does not clobber dirty policy fields on refetch", async () => {
+    const { wrapper, alertClient, queryClient } = await mountAlerts();
+    const cpu = wrapper.get('input[name="cpuHighPercent"]');
+    expect((cpu.element as HTMLInputElement).value).toBe("90");
+    await cpu.setValue("70");
+    alertClient.getAlertPolicy.mockResolvedValue({
+      policy: {
+        dedupWindowSec: BigInt(600),
+        notifyOnResolve: true,
+        cpuHighPercent: 80,
+        memoryHighPercent: 90,
+        diskHighPercent: 90,
+        highConsecutiveMins: 2,
+        suspectTooLongSec: BigInt(120),
+      },
+    });
+    await queryClient.invalidateQueries({ queryKey: ["alert-policy"] });
+    await flushPromises();
+    expect((wrapper.get('input[name="cpuHighPercent"]').element as HTMLInputElement).value).toBe("70");
   });
 });

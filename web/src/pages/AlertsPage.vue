@@ -34,6 +34,25 @@ const memoryHighPercent = ref(90);
 const diskHighPercent = ref(90);
 const highConsecutiveMins = ref(2);
 const suspectTooLongSec = ref(120);
+const policyHydrated = ref(false);
+
+function applyPolicy(p: {
+  dedupWindowSec?: bigint | number;
+  notifyOnResolve?: boolean;
+  cpuHighPercent?: number;
+  memoryHighPercent?: number;
+  diskHighPercent?: number;
+  highConsecutiveMins?: number;
+  suspectTooLongSec?: bigint | number;
+}): void {
+  dedupWindowSec.value = Number(p.dedupWindowSec ?? 600);
+  notifyOnResolve.value = Boolean(p.notifyOnResolve);
+  cpuHighPercent.value = p.cpuHighPercent ?? 90;
+  memoryHighPercent.value = p.memoryHighPercent ?? 90;
+  diskHighPercent.value = p.diskHighPercent ?? 90;
+  highConsecutiveMins.value = p.highConsecutiveMins ?? 2;
+  suspectTooLongSec.value = Number(p.suspectTooLongSec ?? 120);
+}
 
 const listQuery = useQuery({
   queryKey: ["alerts"],
@@ -75,16 +94,11 @@ const showEmptyInbox = computed(() => !listPending.value && !hasStale.value && !
 watch(
   () => policyQuery.data.value?.policy,
   (p) => {
-    if (!p) {
+    if (!p || policyHydrated.value) {
       return;
     }
-    dedupWindowSec.value = Number(p.dedupWindowSec ?? 600);
-    notifyOnResolve.value = Boolean(p.notifyOnResolve);
-    cpuHighPercent.value = p.cpuHighPercent ?? 90;
-    memoryHighPercent.value = p.memoryHighPercent ?? 90;
-    diskHighPercent.value = p.diskHighPercent ?? 90;
-    highConsecutiveMins.value = p.highConsecutiveMins ?? 2;
-    suspectTooLongSec.value = Number(p.suspectTooLongSec ?? 120);
+    applyPolicy(p);
+    policyHydrated.value = true;
   },
   { immediate: true },
 );
@@ -233,7 +247,12 @@ const putPolicyMut = useMutation({
         suspectTooLongSec: BigInt(suspectTooLongSec.value),
       },
     }),
-  onSuccess: () => queryClient.invalidateQueries({ queryKey: ["alert-policy"] }),
+  onSuccess: async (res) => {
+    if (res?.policy) {
+      applyPolicy(res.policy);
+    }
+    await queryClient.invalidateQueries({ queryKey: ["alert-policy"] });
+  },
   onError: (err: unknown) => {
     actionError.value = formatRemoteError(err);
   },

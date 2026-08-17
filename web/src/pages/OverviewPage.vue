@@ -35,12 +35,23 @@ const recentAlertsQuery = useQuery({
 });
 
 const recentAlertEntries = computed(() => recentAlertsQuery.data.value?.entries ?? []);
+const recentAlertsError = computed(() => {
+  const err = recentAlertsQuery.error.value;
+  if (!err) {
+    return "";
+  }
+  return err instanceof Error ? err.message : String(err);
+});
 const recentAlertHasStale = computed(() =>
   recentAlertEntries.value.some((e) => freshnessOf(e.freshness) === STALE),
 );
 const recentAlertRows = computed(() => recentAlertEntries.value.map(mapRecentAlert));
 const showRecentAlertsEmpty = computed(
-  () => !recentAlertHasStale.value && !recentAlertRows.value.length,
+  () =>
+    !!recentAlertsQuery.data.value &&
+    !recentAlertsError.value &&
+    !recentAlertHasStale.value &&
+    !recentAlertRows.value.length,
 );
 
 function freshnessOf(raw: string | undefined): Freshness {
@@ -210,9 +221,14 @@ const errorText = computed(() => {
         </dl>
       </section>
 
-      <section v-if="recentAlertsQuery.data" class="card">
+      <section class="card" data-testid="recent-alerts">
         <h2>{{ t("overview.recentAlerts") }}</h2>
-        <div v-if="recentAlertHasStale" class="banner alert-stale-banner" role="status">
+        <p v-if="recentAlertsError" class="error" role="alert">{{ recentAlertsError }}</p>
+        <div
+          v-if="recentAlertsError || recentAlertHasStale"
+          class="banner alert-stale-banner"
+          role="status"
+        >
           {{ t("alert.staleBanner") }}
         </div>
         <table v-if="recentAlertRows.length" class="table">

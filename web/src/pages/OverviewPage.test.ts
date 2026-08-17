@@ -100,13 +100,18 @@ async function mountOverview(
   overrides: Partial<typeof overview> = {},
   batches: unknown[] = [],
   alerts: unknown[] = [],
+  alertsError?: Error,
 ) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   const clusterClient = { overview: vi.fn().mockResolvedValue({ ...overview, ...overrides }) };
   const batchClient = { listBatches: vi.fn().mockResolvedValue({ batches }) };
-  const alertClient = { listAlerts: vi.fn().mockResolvedValue({ entries: alerts }) };
+  const alertClient = {
+    listAlerts: alertsError
+      ? vi.fn().mockRejectedValue(alertsError)
+      : vi.fn().mockResolvedValue({ entries: alerts }),
+  };
   const wrapper = mount(OverviewPage, {
     global: {
       plugins: [
@@ -220,6 +225,15 @@ describe("OverviewPage", () => {
     expect(wrapper.text()).not.toContain("No alerts");
     expect(wrapper.find(".freshness-stale").exists()).toBe(true);
     expect(wrapper.find('[data-freshness="STALE"]').exists()).toBe(true);
+  });
+
+  it("keeps Recent Alerts card when listAlerts fails", async () => {
+    const { wrapper } = await mountOverview({}, [], [], new Error("alerts unavailable"));
+    expect(wrapper.find('[data-testid="recent-alerts"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain("Recent alerts");
+    expect(wrapper.find(".alert-stale-banner").exists()).toBe(true);
+    expect(wrapper.text()).toContain("alerts unavailable");
+    expect(wrapper.text()).not.toContain("No alerts");
   });
 });
 
