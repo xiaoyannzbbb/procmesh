@@ -9,6 +9,17 @@ afterEach(() => {
 });
 
 describe("Drawer focus management", () => {
+  it("supports a wide panel for dense editors", () => {
+    const wrapper = mount(Drawer, {
+      attachTo: document.body,
+      props: { open: true, title: "Edit configuration", size: "wide" },
+    });
+
+    expect(document.querySelector(".drawer-panel")?.classList.contains("drawer-panel-wide")).toBe(true);
+
+    wrapper.unmount();
+  });
+
   it("moves focus inside when opened and restores it when closed", async () => {
     const trigger = document.createElement("button");
     document.body.appendChild(trigger);

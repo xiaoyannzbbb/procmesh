@@ -2,6 +2,8 @@
 import { create, fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
 import { useQuery, useQueryClient } from "@tanstack/vue-query";
 import { computed, ref, watch } from "vue";
+import { Braces, Pencil, RefreshCw } from "lucide-vue-next";
+import Drawer from "../components/Drawer.vue";
 import { ProcessSpecSchema, type ProcessSpec } from "../gen/procmesh/v1/api_pb";
 import { isConflict } from "../lib/connecterr";
 import { withTarget } from "../lib/headers";
@@ -14,6 +16,27 @@ import { formatRemoteError } from "./processView";
 const { t } = useI18n();
 
 const CONFLICT_BANNER = computed(() => t("processConfig.conflictBanner"));
+const SECTION_IDS = {
+  identity: "identity",
+  execution: "execution",
+  runtime: "runtime",
+  policies: "policies",
+  environment: "environment",
+  dependencies: "dependencies",
+} as const;
+const POLICY_KEYS = {
+  restart: "restart",
+  health: "health",
+  log: "log",
+  resources: "resources",
+} as const;
+const EDITOR_IDS = {
+  json: "process-config-json",
+  jsonError: "process-config-json-error",
+  comment: "process-config-comment",
+} as const;
+const EDITOR_FIELDS = { json: "config-json" } as const;
+const DRAWER_SIZE = "wide" as const;
 
 const props = defineProps<{
   idOrName: string;
@@ -23,6 +46,9 @@ const props = defineProps<{
 const config = useConfigClient();
 const queryClient = useQueryClient();
 const editorText = ref("");
+const editorBaseline = ref("");
+const editorOpen = ref(false);
+const jsonError = ref("");
 const comment = ref("");
 const loadedSpec = ref<ProcessSpec | null>(null);
 const conflictText = ref("");
@@ -73,6 +99,22 @@ const historyPending = computed(() => historyQuery.isPending.value);
 const diffPending = computed(() => diffQuery.isPending.value);
 const diffError = computed(() => diffQuery.error.value);
 const diffText = computed(() => diffQuery.data.value?.diff ?? "");
+const displayJson = computed(() => {
+  if (!loadedSpec.value) {
+    return "";
+  }
+  return JSON.stringify(toJson(ProcessSpecSchema, loadedSpec.value), null, 2);
+});
+const displayObject = computed<Record<string, unknown>>(() => {
+  if (!displayJson.value) {
+    return {};
+  }
+  return JSON.parse(displayJson.value) as Record<string, unknown>;
+});
+const environmentEntries = computed(() => Object.entries(loadedSpec.value?.environment ?? {}));
+const editorDirty = computed(
+  () => editorText.value !== editorBaseline.value || comment.value.trim().length > 0,
+);
 
 watch(
   () => configQuery.data.value?.spec,
@@ -121,6 +163,43 @@ function applySpec(spec: ProcessSpec | undefined): void {
   editorText.value = JSON.stringify(toJson(ProcessSpecSchema, next), null, 2);
 }
 
+function openEditor(): void {
+  if (!canUpdate.value || !loadedSpec.value) {
+    return;
+  }
+  editorText.value = displayJson.value;
+  editorBaseline.value = editorText.value;
+  comment.value = "";
+  jsonError.value = "";
+  actionError.value = "";
+  conflictText.value = "";
+  editorOpen.value = true;
+}
+
+function closeEditor(): void {
+  if (saving.value) {
+    return;
+  }
+  if (editorDirty.value && !window.confirm(t("processConfig.config.unsavedConfirm"))) {
+    return;
+  }
+  editorOpen.value = false;
+  jsonError.value = "";
+  actionError.value = "";
+}
+
+function nestedJson(key: string): string {
+  const value = displayObject.value[key];
+  if (value === undefined || value === null) {
+    return t("processConfig.config.empty");
+  }
+  return JSON.stringify(value, null, 2);
+}
+
+function textOrEmpty(value: string): string {
+  return value || t("processConfig.config.empty");
+}
+
 function commitSpec(spec: ProcessSpec | undefined): void {
   if (!spec) {
     return;
@@ -162,6 +241,7 @@ function formatTime(ms: bigint | number | undefined): string {
 async function onSave(): Promise<void> {
   conflictText.value = "";
   actionError.value = "";
+  jsonError.value = "";
   if (!canUpdate.value || !loadedSpec.value) {
     return;
   }
@@ -169,7 +249,7 @@ async function onSave(): Promise<void> {
   try {
     parsed = fromJson(ProcessSpecSchema, JSON.parse(editorText.value) as JsonValue);
   } catch (err) {
-    actionError.value = err instanceof Error ? err.message : "Invalid JSON";
+    jsonError.value = err instanceof Error ? err.message : t("processConfig.config.invalidJson");
     return;
   }
   parsed.processId = loadedSpec.value.processId;
@@ -187,6 +267,9 @@ async function onSave(): Promise<void> {
       targetOpts.value,
     );
     commitSpec(out.spec);
+    editorBaseline.value = editorText.value;
+    comment.value = "";
+    editorOpen.value = false;
     await queryClient.invalidateQueries({ queryKey: ["process-history", props.idOrName, props.targetNodeId] });
     await queryClient.invalidateQueries({ queryKey: ["process", props.idOrName, props.targetNodeId] });
   } catch (err) {
@@ -243,44 +326,218 @@ async function onRollback(toRevision: bigint | number): Promise<void> {
     <p v-if="errorText" class="error" role="alert">{{ errorText }}</p>
     <p v-if="configPending && !loadedSpec" class="muted">{{ t("processConfig.loading") }}</p>
 
-    <section v-if="loadedSpec" class="card">
-      <div class="title-row">
-        <h2>{{ t("processConfig.config.title") }}</h2>
-        <button type="button" class="btn" @click="onReload">{{ t("processConfig.config.reload") }}</button>
+    <section v-if="loadedSpec" class="card config-card">
+      <div class="title-row config-header">
+        <div class="title-copy">
+          <div class="title-line">
+            <h2>{{ t("processConfig.config.title") }}</h2>
+            <span class="revision-badge">{{ t("processConfig.config.revision", { revision: String(loadedSpec.latestRevision) }) }}</span>
+          </div>
+          <p class="muted config-subtitle">{{ loadedSpec.name || props.idOrName }}</p>
+        </div>
+        <div class="header-actions">
+          <button type="button" class="btn" @click="onReload">
+            <RefreshCw :size="16" aria-hidden="true" />
+            {{ t("processConfig.config.reload") }}
+          </button>
+          <button
+            v-if="canUpdate"
+            type="button"
+            class="btn btn-primary"
+            data-action="edit-config"
+            @click="openEditor"
+          >
+            <Pencil :size="16" aria-hidden="true" />
+            {{ t("processConfig.config.edit") }}
+          </button>
+        </div>
       </div>
-      <dl class="facts">
-        <div>
-          <dt>{{ t("processConfig.config.processId") }}</dt>
-          <dd class="mono">{{ loadedSpec.processId || "—" }}</dd>
+
+      <div class="config-section" :data-section="SECTION_IDS.identity">
+        <h3>{{ t("processConfig.config.sections.identity") }}</h3>
+        <dl class="facts config-facts">
+          <div>
+            <dt>{{ t("processConfig.config.processId") }}</dt>
+            <dd class="mono breakable">{{ textOrEmpty(loadedSpec.processId) }}</dd>
+          </div>
+          <div>
+            <dt>{{ t("processConfig.config.name") }}</dt>
+            <dd>{{ textOrEmpty(loadedSpec.name) }}</dd>
+          </div>
+          <div>
+            <dt>{{ t("processConfig.config.group") }}</dt>
+            <dd>{{ textOrEmpty(loadedSpec.group) }}</dd>
+          </div>
+          <div>
+            <dt>{{ t("processConfig.config.owner") }}</dt>
+            <dd class="mono breakable">{{ textOrEmpty(loadedSpec.ownerAgentId) }}</dd>
+          </div>
+          <div>
+            <dt>{{ t("processConfig.config.latestRevision") }}</dt>
+            <dd class="numeric">{{ String(loadedSpec.latestRevision) }}</dd>
+          </div>
+        </dl>
+      </div>
+
+      <div class="config-section" :data-section="SECTION_IDS.execution">
+        <h3>{{ t("processConfig.config.sections.execution") }}</h3>
+        <dl class="facts config-facts">
+          <div class="fact-wide">
+            <dt>{{ t("processConfig.config.command") }}</dt>
+            <dd class="command-line">
+              <code>{{ textOrEmpty(loadedSpec.command) }}</code>
+              <code v-for="(arg, index) in loadedSpec.args" :key="`${index}-${arg}`" class="argument">{{ arg }}</code>
+            </dd>
+          </div>
+          <div>
+            <dt>{{ t("processConfig.config.workingDirectory") }}</dt>
+            <dd class="mono breakable">{{ textOrEmpty(loadedSpec.workingDirectory) }}</dd>
+          </div>
+          <div>
+            <dt>{{ t("processConfig.config.runAsUser") }}</dt>
+            <dd>{{ textOrEmpty(loadedSpec.runAsUser) }}</dd>
+          </div>
+        </dl>
+      </div>
+
+      <div class="config-section" :data-section="SECTION_IDS.runtime">
+        <h3>{{ t("processConfig.config.sections.runtime") }}</h3>
+        <dl class="facts config-facts">
+          <div>
+            <dt>{{ t("processConfig.config.instances") }}</dt>
+            <dd class="numeric">{{ loadedSpec.instances }}</dd>
+          </div>
+          <div>
+            <dt>{{ t("processConfig.config.autostart") }}</dt>
+            <dd>{{ t(loadedSpec.autostart ? "processConfig.config.enabled" : "processConfig.config.disabled") }}</dd>
+          </div>
+          <div>
+            <dt>{{ t("processConfig.config.startupPriority") }}</dt>
+            <dd class="numeric">{{ loadedSpec.startupPriority }}</dd>
+          </div>
+          <div>
+            <dt>{{ t("processConfig.config.stopTimeout") }}</dt>
+            <dd class="numeric">{{ t("processConfig.config.milliseconds", { value: String(loadedSpec.stopTimeoutMs) }) }}</dd>
+          </div>
+          <div>
+            <dt>{{ t("processConfig.config.stopSignal") }}</dt>
+            <dd class="mono">{{ textOrEmpty(loadedSpec.stopSignal) }}</dd>
+          </div>
+          <div>
+            <dt>{{ t("processConfig.config.killSignal") }}</dt>
+            <dd class="mono">{{ textOrEmpty(loadedSpec.killSignal) }}</dd>
+          </div>
+        </dl>
+      </div>
+
+      <div class="config-section" :data-section="SECTION_IDS.policies">
+        <h3>{{ t("processConfig.config.sections.policies") }}</h3>
+        <div class="policy-grid">
+          <div>
+            <h4>{{ t("processConfig.config.restartPolicy") }}</h4>
+            <pre>{{ nestedJson(POLICY_KEYS.restart) }}</pre>
+          </div>
+          <div>
+            <h4>{{ t("processConfig.config.healthCheck") }}</h4>
+            <pre>{{ nestedJson(POLICY_KEYS.health) }}</pre>
+          </div>
+          <div>
+            <h4>{{ t("processConfig.config.logPolicy") }}</h4>
+            <pre>{{ nestedJson(POLICY_KEYS.log) }}</pre>
+          </div>
+          <div>
+            <h4>{{ t("processConfig.config.resources") }}</h4>
+            <pre>{{ nestedJson(POLICY_KEYS.resources) }}</pre>
+          </div>
         </div>
-        <div>
-          <dt>{{ t("processConfig.config.latestRevision") }}</dt>
-          <dd>{{ String(loadedSpec.latestRevision) }}</dd>
+      </div>
+
+      <div class="config-section split-sections">
+        <div :data-section="SECTION_IDS.environment">
+          <h3>{{ t("processConfig.config.sections.environment") }}</h3>
+          <dl v-if="environmentEntries.length" class="key-value-list">
+            <div v-for="([key, value]) in environmentEntries" :key="key">
+              <dt class="mono breakable">{{ key }}</dt>
+              <dd class="mono breakable">{{ value }}</dd>
+            </div>
+          </dl>
+          <p v-else class="muted empty-state">{{ t("processConfig.config.empty") }}</p>
         </div>
-      </dl>
-      <p class="muted note">{{ t("processConfig.config.readOnlyNote") }}</p>
-      <form class="config-form" @submit.prevent="onSave">
-        <label class="field">
+        <div :data-section="SECTION_IDS.dependencies">
+          <h3>{{ t("processConfig.config.sections.dependencies") }}</h3>
+          <ul v-if="loadedSpec.dependencies.length" class="dependency-list">
+            <li v-for="dependency in loadedSpec.dependencies" :key="`${dependency.processName}-${dependency.condition}`">
+              <span class="mono breakable">{{ dependency.processName }}</span>
+              <span class="dependency-condition">{{ dependency.condition }}</span>
+            </li>
+          </ul>
+          <p v-else class="muted empty-state">{{ t("processConfig.config.empty") }}</p>
+        </div>
+      </div>
+
+      <details class="json-details">
+        <summary>
+          <Braces :size="16" aria-hidden="true" />
+          {{ t("processConfig.config.fullJson") }}
+        </summary>
+        <pre class="config-json-viewer">{{ displayJson }}</pre>
+      </details>
+    </section>
+
+    <Drawer
+      :open="editorOpen"
+      :title="t('processConfig.config.editTitle')"
+      :close-label="t('actions.close')"
+      :size="DRAWER_SIZE"
+      @close="closeEditor"
+    >
+      <form class="config-form drawer-form" @submit.prevent="onSave">
+        <div v-if="conflictText" class="banner conflict" role="alert">{{ conflictText }}</div>
+        <p v-if="actionError" class="error" role="alert">{{ actionError }}</p>
+        <p class="muted drawer-intro">{{ t("processConfig.config.editHint") }}</p>
+        <label class="field" :for="EDITOR_IDS.json">
           <span>{{ t("processConfig.config.specLabel") }}</span>
           <textarea
+            :id="EDITOR_IDS.json"
             v-model="editorText"
             class="input editor"
-            :readonly="!canUpdate"
+            :data-field="EDITOR_FIELDS.json"
             spellcheck="false"
-            rows="18"
+            rows="24"
+            :aria-invalid="Boolean(jsonError)"
+            :aria-describedby="jsonError ? EDITOR_IDS.jsonError : undefined"
+            @input="jsonError = ''"
           />
         </label>
-        <label class="field">
+        <p
+          v-if="jsonError"
+          :id="EDITOR_IDS.jsonError"
+          class="field-error"
+          :data-error="EDITOR_FIELDS.json"
+          role="alert"
+        >
+          {{ jsonError }}
+        </p>
+        <label class="field" :for="EDITOR_IDS.comment">
           <span>{{ t("processConfig.config.commentLabel") }}</span>
-          <input v-model="comment" class="input" type="text" :readonly="!canUpdate" />
+          <input :id="EDITOR_IDS.comment" v-model="comment" class="input" type="text" />
         </label>
-        <div class="actions">
-          <button type="submit" class="btn btn-primary" :disabled="!canUpdate || saving || !targetNodeId">
-            {{ t("processConfig.config.save") }}
+        <div class="drawer-actions">
+          <button
+            type="button"
+            class="btn"
+            data-action="cancel-config-edit"
+            :disabled="saving"
+            @click="closeEditor"
+          >
+            {{ t("actions.cancel") }}
+          </button>
+          <button type="submit" class="btn btn-primary" :disabled="saving || !targetNodeId">
+            {{ saving ? t("processConfig.config.saving") : t("processConfig.config.save") }}
           </button>
         </div>
       </form>
-    </section>
+    </Drawer>
 
     <section class="card">
       <h2>{{ t("processConfig.history.title") }}</h2>
@@ -350,6 +607,43 @@ async function onRollback(toRevision: bigint | number): Promise<void> {
   gap: 0.75rem;
   margin-bottom: 0.75rem;
 }
+.config-header {
+  align-items: flex-start;
+  margin-bottom: 0;
+  padding-bottom: 1rem;
+}
+.title-copy {
+  min-width: 0;
+}
+.title-line,
+.header-actions,
+.command-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.title-line {
+  gap: 0.625rem;
+}
+.header-actions {
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+.config-subtitle {
+  margin: 0.25rem 0 0;
+}
+.revision-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.5rem;
+  border-radius: 999px;
+  background: var(--color-live);
+  color: var(--color-live-fg);
+  padding: 0.125rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
 h2 {
   margin: 0;
   font-size: 1.05rem;
@@ -359,6 +653,12 @@ h3 {
   margin: 0 0 0.5rem;
   font-size: 0.85rem;
   font-weight: 600;
+}
+h4 {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 650;
+  color: var(--color-muted);
 }
 .muted {
   color: var(--color-muted);
@@ -373,7 +673,7 @@ h3 {
   font-size: 0.875rem;
 }
 .banner {
-  border-radius: 10px;
+  border-radius: 8px;
   padding: 0.75rem 1rem;
   font-size: 0.875rem;
   line-height: 1.4;
@@ -389,11 +689,31 @@ h3 {
   padding: 1.25rem;
   overflow: auto;
 }
+.config-card {
+  overflow: hidden;
+}
+.config-section {
+  border-top: 1px solid var(--color-border);
+  padding: 1rem 0;
+}
+.config-section > h3,
+.split-sections h3 {
+  margin-bottom: 0.75rem;
+  color: var(--color-text);
+  font-size: 0.8125rem;
+}
 .facts {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 0.85rem 1.25rem;
   margin: 0;
+}
+.config-facts {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: 1rem 1.5rem;
+}
+.fact-wide {
+  grid-column: 1 / -1;
 }
 .facts div {
   display: flex;
@@ -409,6 +729,125 @@ h3 {
   font-size: 0.95rem;
   font-weight: 550;
 }
+.breakable {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.numeric {
+  font-variant-numeric: tabular-nums;
+}
+.command-line {
+  gap: 0.375rem;
+}
+.command-line code {
+  max-width: 100%;
+  border-radius: 5px;
+  background: var(--color-bg);
+  padding: 0.25rem 0.4375rem;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8125rem;
+  font-weight: 550;
+}
+.command-line .argument {
+  color: var(--color-muted);
+  font-weight: 500;
+}
+.policy-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem 1.5rem;
+}
+.policy-grid > div {
+  min-width: 0;
+}
+.policy-grid pre,
+.config-json-viewer {
+  margin: 0.375rem 0 0;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg);
+  padding: 0.75rem;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+.policy-grid pre {
+  min-height: 4.5rem;
+  max-height: 12rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.split-sections {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.5rem;
+}
+.key-value-list {
+  margin: 0;
+}
+.key-value-list > div,
+.dependency-list li {
+  display: grid;
+  grid-template-columns: minmax(6rem, 0.7fr) minmax(0, 1.3fr);
+  gap: 0.75rem;
+  border-top: 1px solid var(--color-border);
+  padding: 0.625rem 0;
+}
+.key-value-list > div:first-child,
+.dependency-list li:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.key-value-list dt,
+.key-value-list dd {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+.key-value-list dt {
+  color: var(--color-muted);
+}
+.dependency-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.dependency-condition {
+  justify-self: start;
+  border-radius: 999px;
+  background: var(--color-unknown);
+  color: var(--color-unknown-fg);
+  padding: 0.125rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.empty-state {
+  margin: 0;
+}
+.json-details {
+  border-top: 1px solid var(--color-border);
+  padding-top: 1rem;
+}
+.json-details summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: fit-content;
+  border-radius: 5px;
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+.json-details summary::marker {
+  color: var(--color-muted);
+}
+.config-json-viewer {
+  max-height: 28rem;
+  white-space: pre;
+}
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.8rem;
@@ -418,6 +857,14 @@ h3 {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+.drawer-form {
+  min-height: 100%;
+}
+.drawer-intro {
+  margin: 0;
+  max-width: 65ch;
+  line-height: 1.5;
 }
 .field {
   display: flex;
@@ -431,11 +878,29 @@ h3 {
   font-size: 0.8rem;
   line-height: 1.45;
   resize: vertical;
-  min-height: 16rem;
+  min-height: min(32rem, 55vh);
+  tab-size: 2;
 }
 .actions {
   display: flex;
   gap: 0.5rem;
+}
+.field-error {
+  margin: -0.375rem 0 0;
+  color: var(--color-danger);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+.drawer-actions {
+  position: sticky;
+  bottom: -1.5rem;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin: auto -1.5rem -1.5rem;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-card);
+  padding: 1rem 1.5rem;
 }
 .diff-block {
   margin-top: 1rem;
@@ -451,5 +916,31 @@ h3 {
   white-space: pre-wrap;
   overflow: auto;
   max-height: 20rem;
+}
+
+@media (max-width: 720px) {
+  .config-header,
+  .split-sections {
+    grid-template-columns: 1fr;
+  }
+  .config-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .header-actions {
+    justify-content: flex-start;
+  }
+  .policy-grid,
+  .split-sections {
+    grid-template-columns: 1fr;
+  }
+  .header-actions .btn {
+    flex: 1;
+  }
+  .key-value-list > div,
+  .dependency-list li {
+    grid-template-columns: 1fr;
+    gap: 0.25rem;
+  }
 }
 </style>

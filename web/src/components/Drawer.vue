@@ -6,9 +6,11 @@ const props = withDefaults(defineProps<{
   open: boolean;
   title?: string;
   closeLabel?: string;
+  size?: "default" | "wide";
 }>(), {
   title: "",
   closeLabel: "Close",
+  size: "default",
 });
 
 const emit = defineEmits<{
@@ -134,6 +136,7 @@ watch(
         <div
           :ref="setPanelRef"
           class="drawer-panel"
+          :class="{ 'drawer-panel-wide': size === 'wide' }"
           role="dialog"
           :aria-modal="true"
           :aria-label="title"
@@ -171,6 +174,10 @@ watch(
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.drawer-panel-wide {
+  max-width: 48rem;
 }
 
 .drawer-panel:focus {

@@ -71,6 +71,12 @@ function sampleSpec() {
     processId: "p1",
     name: "web",
     command: "sleep",
+    args: ["30"],
+    group: "services",
+    workingDirectory: "/srv/web",
+    environment: { PORT: "8080" },
+    instances: 2,
+    autostart: true,
     latestRevision: 3n,
   });
 }
@@ -124,6 +130,28 @@ async function mountPanel(opts: MountOpts | ReturnType<typeof vi.fn> = {}) {
   return { wrapper, updateConfig, configClient, queryClient };
 }
 
+async function openEditor(wrapper: Awaited<ReturnType<typeof mountPanel>>["wrapper"]): Promise<void> {
+  await wrapper.get('[data-action="edit-config"]').trigger("click");
+  await flushPromises();
+  await wrapper.vm.$nextTick();
+}
+
+function editorTextarea(): HTMLTextAreaElement {
+  return document.querySelector<HTMLTextAreaElement>('[data-field="config-json"]')!;
+}
+
+function setEditorText(value: string): void {
+  const textarea = editorTextarea();
+  textarea.value = value;
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function submitEditor(): void {
+  document.querySelector<HTMLFormElement>("form.config-form")!.dispatchEvent(
+    new Event("submit", { bubbles: true, cancelable: true }),
+  );
+}
+
 afterEach(() => {
   while (mounted.length) {
     mounted.pop()?.unmount();
@@ -132,9 +160,75 @@ afterEach(() => {
 });
 
 describe("ProcessConfigPanel", () => {
+  it("shows a structured read-only configuration before editing", async () => {
+    const { wrapper } = await mountPanel();
+
+    expect(wrapper.find("form.config-form").exists()).toBe(false);
+    expect(wrapper.find("textarea").exists()).toBe(false);
+    expect(wrapper.get('[data-section="execution"]').text()).toContain("sleep");
+    expect(wrapper.get('[data-section="execution"]').text()).toContain("30");
+    expect(wrapper.get('[data-section="environment"]').text()).toContain("PORT");
+    expect(wrapper.get('[data-section="environment"]').text()).toContain("8080");
+    expect(wrapper.get(".config-json-viewer").text()).toContain('"name": "web"');
+  });
+
+  it("opens JSON editing in a wide drawer and closes it after a successful save", async () => {
+    const saved = create(ProcessSpecSchema, {
+      ...sampleSpec(),
+      name: "api",
+      latestRevision: 4n,
+    });
+    const { wrapper } = await mountPanel({ updateConfig: vi.fn().mockResolvedValue({ spec: saved }) });
+
+    await openEditor(wrapper);
+    expect(document.querySelector(".drawer-panel-wide")).not.toBeNull();
+    const textarea = editorTextarea();
+    expect(textarea.value).toContain('"name": "web"');
+    setEditorText(textarea.value.replace('"name": "web"', '"name": "api"'));
+    submitEditor();
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(wrapper.get(".config-json-viewer").text()).toContain('"name": "api"');
+  });
+
+  it("keeps invalid JSON in the drawer and shows an inline error", async () => {
+    const updateConfig = vi.fn().mockResolvedValue({ spec: sampleSpec() });
+    const { wrapper } = await mountPanel({ updateConfig });
+    await openEditor(wrapper);
+
+    setEditorText("{");
+    submitEditor();
+    await flushPromises();
+
+    expect(updateConfig).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-error="config-json"]')?.textContent).toBeTruthy();
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+  });
+
+  it("asks before closing the drawer with unsaved changes", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const { wrapper } = await mountPanel({ updateConfig: vi.fn().mockResolvedValue({ spec: sampleSpec() }) });
+    await openEditor(wrapper);
+
+    setEditorText(editorTextarea().value.replace('"name": "web"', '"name": "api"'));
+    document.querySelector<HTMLButtonElement>('[data-action="cancel-config-edit"]')!.click();
+    await wrapper.vm.$nextTick();
+
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+
+    confirm.mockReturnValue(true);
+    document.querySelector<HTMLButtonElement>('[data-action="cancel-config-edit"]')!.click();
+    await wrapper.vm.$nextTick();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
   it("shows 409 Conflict when UpdateConfig throws CONFLICT", async () => {
     const { wrapper, updateConfig } = await mountPanel();
-    await wrapper.get("form.config-form").trigger("submit");
+    await openEditor(wrapper);
+    submitEditor();
     await flushPromises();
     expect(updateConfig).toHaveBeenCalledTimes(1);
     const [req] = updateConfig.mock.calls[0];
@@ -167,9 +261,9 @@ describe("ProcessConfigPanel", () => {
 
   it("does not overwrite textarea or expected_revision on refetch while editing or after 409", async () => {
     const { wrapper, updateConfig, configClient, queryClient } = await mountPanel();
-    const textarea = wrapper.get("textarea");
-    const edited = textarea.element.value.replace('"name": "web"', '"name": "api"');
-    await textarea.setValue(edited);
+    await openEditor(wrapper);
+    const edited = editorTextarea().value.replace('"name": "web"', '"name": "api"');
+    setEditorText(edited);
 
     const newer = create(ProcessSpecSchema, {
       processId: "p1",
@@ -181,19 +275,19 @@ describe("ProcessConfigPanel", () => {
     await queryClient.invalidateQueries({ queryKey: ["process-config"] });
     await flushPromises();
     await wrapper.vm.$nextTick();
-    expect(wrapper.get("textarea").element.value).toBe(edited);
+    expect(editorTextarea().value).toBe(edited);
 
-    await wrapper.get("form.config-form").trigger("submit");
+    submitEditor();
     await flushPromises();
     expect(wrapper.text()).toContain("409 Conflict");
 
     await queryClient.invalidateQueries({ queryKey: ["process-config"] });
     await flushPromises();
     await wrapper.vm.$nextTick();
-    expect(wrapper.get("textarea").element.value).toBe(edited);
+    expect(editorTextarea().value).toBe(edited);
     expect(wrapper.text()).toContain("409 Conflict");
 
-    await wrapper.get("form.config-form").trigger("submit");
+    submitEditor();
     await flushPromises();
     expect(updateConfig).toHaveBeenCalledTimes(2);
     expect(updateConfig.mock.calls[0][0].expectedRevision).toBe(3n);
@@ -209,11 +303,12 @@ describe("ProcessConfigPanel", () => {
     });
     const updateConfig = vi.fn().mockResolvedValue({ spec: saved });
     const first = await mountPanel({ updateConfig });
-    const edited = first.wrapper.get("textarea").element.value.replace('"name": "web"', '"name": "api"');
-    await first.wrapper.get("textarea").setValue(edited);
-    await first.wrapper.get("form.config-form").trigger("submit");
+    await openEditor(first.wrapper);
+    const edited = editorTextarea().value.replace('"name": "web"', '"name": "api"');
+    setEditorText(edited);
+    submitEditor();
     await flushPromises();
-    expect(first.wrapper.get("textarea").element.value).toContain('"name": "api"');
+    expect(first.wrapper.get(".config-json-viewer").text()).toContain('"name": "api"');
     expect(first.wrapper.text()).toContain("Latest Revision4");
 
     first.wrapper.unmount();
@@ -227,9 +322,10 @@ describe("ProcessConfigPanel", () => {
       updateConfig,
       spec: sampleSpec(),
     });
-    expect(second.wrapper.get("textarea").element.value).toContain('"name": "api"');
+    expect(second.wrapper.get(".config-json-viewer").text()).toContain('"name": "api"');
     expect(second.wrapper.text()).toContain("Latest Revision4");
-    await second.wrapper.get("form.config-form").trigger("submit");
+    await openEditor(second.wrapper);
+    submitEditor();
     await flushPromises();
     expect(updateConfig.mock.calls.at(-1)?.[0].expectedRevision).toBe(4n);
   });
