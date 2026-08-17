@@ -93,18 +93,20 @@ type Policy struct {
 }
 
 type State struct {
-	ClusterID   string                `json:"cluster_id"`
-	Users       map[string]User       `json:"users"`       // by username
-	UsersByID   map[string]string     `json:"users_by_id"` // id → username
-	Roles       map[string]Role       `json:"roles"`
-	Bindings    []Binding             `json:"bindings"`
-	Sessions    map[string]Session    `json:"sessions"`
-	APITokens   map[string]APIToken   `json:"api_tokens"`
-	JoinTokens  map[string]JoinToken  `json:"join_tokens"`  // by id
-	Members     map[string]Member     `json:"members"`      // by node_id
-	CRL         map[string]struct{}   `json:"crl"`          // cert serial hex
-	AgentGroups map[string]AgentGroup `json:"agent_groups"` // by group_id
-	Policy      Policy                `json:"policy"`
+	ClusterID     string                  `json:"cluster_id"`
+	Users         map[string]User         `json:"users"`       // by username
+	UsersByID     map[string]string       `json:"users_by_id"` // id → username
+	Roles         map[string]Role         `json:"roles"`
+	Bindings      []Binding               `json:"bindings"`
+	Sessions      map[string]Session      `json:"sessions"`
+	APITokens     map[string]APIToken     `json:"api_tokens"`
+	JoinTokens    map[string]JoinToken    `json:"join_tokens"`    // by id
+	Members       map[string]Member       `json:"members"`        // by node_id
+	CRL           map[string]struct{}     `json:"crl"`            // cert serial hex
+	AgentGroups   map[string]AgentGroup   `json:"agent_groups"`   // by group_id
+	AlertChannels map[string]AlertChannel `json:"alert_channels"` // by channel_id
+	AlertPolicy   AlertPolicy             `json:"alert_policy"`
+	Policy        Policy                  `json:"policy"`
 }
 
 func NewState() *State {
@@ -143,6 +145,12 @@ func (s *State) ensure() {
 	}
 	if s.AgentGroups == nil {
 		s.AgentGroups = map[string]AgentGroup{}
+	}
+	if s.AlertChannels == nil {
+		s.AlertChannels = map[string]AlertChannel{}
+	}
+	if s.AlertPolicy.DedupWindowSec == 0 {
+		s.AlertPolicy = DefaultAlertPolicy()
 	}
 	for _, r := range builtinRoles() {
 		s.Roles[r.ID] = r
@@ -198,6 +206,12 @@ func (s *State) Apply(cmd Command, now time.Time) error {
 		return applyJSON(cmd.Body, s.applyGroupMemberAdd)
 	case CmdGroupMemberRemove:
 		return applyJSON(cmd.Body, s.applyGroupMemberRemove)
+	case CmdAlertChannelPut:
+		return applyJSON(cmd.Body, s.applyAlertChannelPut)
+	case CmdAlertChannelDelete:
+		return applyJSON(cmd.Body, s.applyAlertChannelDelete)
+	case CmdAlertPolicyPut:
+		return applyJSON(cmd.Body, s.applyAlertPolicyPut)
 	default:
 		return errcode.E(errcode.INVALID, "unknown command type")
 	}
@@ -561,6 +575,90 @@ func (s *State) applyGroupMemberAdd(b GroupMemberBody) error {
 	}
 	g.MemberIDs = append(g.MemberIDs, b.NodeID)
 	s.AgentGroups[b.GroupID] = g
+	return nil
+}
+
+func validAlertChannelType(typ string) bool {
+	switch typ {
+	case "WEB", "WEBHOOK", "EMAIL", "WECOM", "DINGTALK", "SLACK":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeAlertConfigJSON(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "{}", nil
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &obj); err != nil {
+		return "", errcode.E(errcode.INVALID, "config_json")
+	}
+	return raw, nil
+}
+
+func validAlertPercent(n int) bool {
+	return n >= 1 && n <= 100
+}
+
+func (s *State) applyAlertChannelPut(b AlertChannelPutBody) error {
+	name := strings.TrimSpace(b.Name)
+	if b.ChannelID == "" || !agentGroupNameRE.MatchString(name) {
+		return errcode.E(errcode.INVALID, "channel name")
+	}
+	if !validAlertChannelType(b.Type) {
+		return errcode.E(errcode.INVALID, "channel type")
+	}
+	cfg, err := normalizeAlertConfigJSON(b.ConfigJSON)
+	if err != nil {
+		return err
+	}
+	cur := s.AlertChannels[b.ChannelID]
+	if cur.ChannelID == "" {
+		cur.ChannelID = b.ChannelID
+		cur.CreatedUnix = b.NowUnix
+	}
+	cur.Type = b.Type
+	cur.Name = name
+	cur.Enabled = b.Enabled
+	cur.ConfigJSON = cfg
+	cur.UpdatedUnix = b.NowUnix
+	s.AlertChannels[b.ChannelID] = cur
+	return nil
+}
+
+func (s *State) applyAlertChannelDelete(b AlertChannelDeleteBody) error {
+	if _, ok := s.AlertChannels[b.ChannelID]; !ok {
+		return errcode.E(errcode.NOT_FOUND, "channel not found")
+	}
+	delete(s.AlertChannels, b.ChannelID)
+	return nil
+}
+
+func (s *State) applyAlertPolicyPut(b AlertPolicyPutBody) error {
+	if b.DedupWindowSec < 1 {
+		return errcode.E(errcode.INVALID, "dedup_window_sec")
+	}
+	if !validAlertPercent(b.CPUHighPercent) || !validAlertPercent(b.MemoryHighPercent) || !validAlertPercent(b.DiskHighPercent) {
+		return errcode.E(errcode.INVALID, "threshold percent")
+	}
+	if b.HighConsecutiveMins < 1 || b.HighConsecutiveMins > 60 {
+		return errcode.E(errcode.INVALID, "high_consecutive_mins")
+	}
+	if b.SuspectTooLongSec < 1 || b.SuspectTooLongSec > 86400 {
+		return errcode.E(errcode.INVALID, "suspect_too_long_sec")
+	}
+	s.AlertPolicy = AlertPolicy{
+		DedupWindowSec:      b.DedupWindowSec,
+		NotifyOnResolve:     b.NotifyOnResolve,
+		CPUHighPercent:      b.CPUHighPercent,
+		MemoryHighPercent:   b.MemoryHighPercent,
+		DiskHighPercent:     b.DiskHighPercent,
+		HighConsecutiveMins: b.HighConsecutiveMins,
+		SuspectTooLongSec:   b.SuspectTooLongSec,
+	}
 	return nil
 }
 

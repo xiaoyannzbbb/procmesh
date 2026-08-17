@@ -52,6 +52,8 @@ func TestAllowWrite_NoQuorumBlocksUserCreate(t *testing.T) {
 	requireCode(t, err, errcode.UNAVAILABLE, "control quorum lost")
 	err = svc.AllowWrite(admin, auth.PermClusterManage, "", true)
 	requireCode(t, err, errcode.UNAVAILABLE, "control quorum lost")
+	err = svc.AllowWrite(admin, auth.PermAlertManage, "", true)
+	requireCode(t, err, errcode.UNAVAILABLE, "control quorum lost")
 }
 
 func TestAllowWrite_NoQuorumAllowsProcessRead(t *testing.T) {

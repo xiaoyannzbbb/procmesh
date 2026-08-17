@@ -3,27 +3,30 @@ package control
 import "encoding/json"
 
 const (
-	CmdBootstrap         = "bootstrap"
-	CmdUserPut           = "user_put"
-	CmdUserDisable       = "user_disable"
-	CmdLoginOK           = "login_ok"
-	CmdLoginFail         = "login_fail"
-	CmdSessionPut        = "session_put"
-	CmdSessionDel        = "session_del"
-	CmdTokenPut          = "token_put"
-	CmdTokenRevoke       = "token_revoke"
-	CmdRolePut           = "role_put"
-	CmdBindPut           = "bind_put"
-	CmdJoinTokenPut      = "join_token_put"
-	CmdJoinTokenConsume  = "join_token_consume"
-	CmdJoinTokenRevoke   = "join_token_revoke"
-	CmdMemberPut         = "member_put"
-	CmdMemberRemove      = "member_remove"
-	CmdCRLAdd            = "crl_add"
-	CmdGroupPut          = "group_put"
-	CmdGroupDelete       = "group_delete"
-	CmdGroupMemberAdd    = "group_member_add"
-	CmdGroupMemberRemove = "group_member_remove"
+	CmdBootstrap          = "bootstrap"
+	CmdUserPut            = "user_put"
+	CmdUserDisable        = "user_disable"
+	CmdLoginOK            = "login_ok"
+	CmdLoginFail          = "login_fail"
+	CmdSessionPut         = "session_put"
+	CmdSessionDel         = "session_del"
+	CmdTokenPut           = "token_put"
+	CmdTokenRevoke        = "token_revoke"
+	CmdRolePut            = "role_put"
+	CmdBindPut            = "bind_put"
+	CmdJoinTokenPut       = "join_token_put"
+	CmdJoinTokenConsume   = "join_token_consume"
+	CmdJoinTokenRevoke    = "join_token_revoke"
+	CmdMemberPut          = "member_put"
+	CmdMemberRemove       = "member_remove"
+	CmdCRLAdd             = "crl_add"
+	CmdGroupPut           = "group_put"
+	CmdGroupDelete        = "group_delete"
+	CmdGroupMemberAdd     = "group_member_add"
+	CmdGroupMemberRemove  = "group_member_remove"
+	CmdAlertChannelPut    = "alert_channel_put"
+	CmdAlertChannelDelete = "alert_channel_delete"
+	CmdAlertPolicyPut     = "alert_policy_put"
 )
 
 // Command is a Raft log payload: type + JSON body.
@@ -146,6 +149,54 @@ type GroupDeleteBody struct {
 
 type GroupMemberBody struct {
 	GroupID, NodeID string
+}
+
+type AlertChannel struct {
+	ChannelID   string `json:"channel_id"`
+	Type        string `json:"type"`
+	Name        string `json:"name"`
+	Enabled     bool   `json:"enabled"`
+	ConfigJSON  string `json:"config_json,omitempty"`
+	CreatedUnix int64  `json:"created_unix"`
+	UpdatedUnix int64  `json:"updated_unix"`
+}
+
+type AlertPolicy struct {
+	DedupWindowSec      int64 `json:"dedup_window_sec"`
+	NotifyOnResolve     bool  `json:"notify_on_resolve"`
+	CPUHighPercent      int   `json:"cpu_high_percent"`
+	MemoryHighPercent   int   `json:"memory_high_percent"`
+	DiskHighPercent     int   `json:"disk_high_percent"`
+	HighConsecutiveMins int   `json:"high_consecutive_mins"`
+	SuspectTooLongSec   int64 `json:"suspect_too_long_sec"`
+}
+
+func DefaultAlertPolicy() AlertPolicy {
+	return AlertPolicy{
+		DedupWindowSec:      600,
+		NotifyOnResolve:     true,
+		CPUHighPercent:      90,
+		MemoryHighPercent:   90,
+		DiskHighPercent:     90,
+		HighConsecutiveMins: 2,
+		SuspectTooLongSec:   120,
+	}
+}
+
+type AlertChannelPutBody struct {
+	ChannelID, Type, Name, ConfigJSON string
+	Enabled                           bool
+	NowUnix                           int64
+}
+
+type AlertChannelDeleteBody struct{ ChannelID string }
+
+type AlertPolicyPutBody struct {
+	DedupWindowSec                                     int64
+	NotifyOnResolve                                    bool
+	CPUHighPercent, MemoryHighPercent, DiskHighPercent int
+	HighConsecutiveMins                                int
+	SuspectTooLongSec                                  int64
 }
 
 // EncodeCommand marshals body as the Command payload.

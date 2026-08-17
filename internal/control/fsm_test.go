@@ -804,6 +804,50 @@ func TestFSM_CheckAgentGroupAndProcessGroup(t *testing.T) {
 	}
 }
 
+func TestFSM_AlertChannelAndPolicy(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := mustBootstrap(t, now)
+	if s.AlertPolicy.DedupWindowSec != 600 || !s.AlertPolicy.NotifyOnResolve {
+		t.Fatalf("defaults %+v", s.AlertPolicy)
+	}
+	if err := s.Apply(mustEncode(t, "alert_channel_put", control.AlertChannelPutBody{
+		ChannelID: "c1", Type: "WEBHOOK", Name: "hook", Enabled: true,
+		ConfigJSON: `{"url":"https://example","hmac_secret":"s"}`, NowUnix: now.Unix(),
+	}), now); err != nil {
+		t.Fatal(err)
+	}
+	ch := s.AlertChannels["c1"]
+	if ch.Name != "hook" || !strings.Contains(ch.ConfigJSON, "hmac_secret") {
+		t.Fatalf("channel %+v", ch)
+	}
+	if err := s.Apply(mustEncode(t, "alert_policy_put", control.AlertPolicyPutBody{
+		DedupWindowSec: 120, NotifyOnResolve: false, CPUHighPercent: 80,
+		MemoryHighPercent: 80, DiskHighPercent: 85, HighConsecutiveMins: 3, SuspectTooLongSec: 60,
+	}), now); err != nil {
+		t.Fatal(err)
+	}
+	if s.AlertPolicy.CPUHighPercent != 80 || s.AlertPolicy.NotifyOnResolve {
+		t.Fatalf("policy %+v", s.AlertPolicy)
+	}
+	if err := s.Apply(mustEncode(t, "alert_channel_delete", control.AlertChannelDeleteBody{ChannelID: "c1"}), now); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.AlertChannels["c1"]; ok {
+		t.Fatal("channel should be gone")
+	}
+}
+
+func TestFSM_AlertChannelValidation(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := mustBootstrap(t, now)
+	err := s.Apply(mustEncode(t, "alert_channel_put", control.AlertChannelPutBody{
+		ChannelID: "c1", Type: "SMS", Name: "x", NowUnix: now.Unix(),
+	}), now)
+	if err == nil || !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("got %v", err)
+	}
+}
+
 func TestFSM_EnsureSyncsBuiltinAlertPerms(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	s := mustBootstrap(t, now)

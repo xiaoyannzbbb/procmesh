@@ -56,7 +56,8 @@ func (s *Service) AllowWrite(p Principal, perm, targetNodeID string, local bool)
 func isControlPlaneWrite(perm string) bool {
 	switch perm {
 	case PermUserCreate, PermUserUpdate, PermUserDelete,
-		PermRoleManage, PermNodeRemove, PermNodeManage, PermClusterManage:
+		PermRoleManage, PermNodeRemove, PermNodeManage, PermClusterManage,
+		PermAlertManage:
 		return true
 	default:
 		return false
@@ -67,7 +68,7 @@ func isMutation(perm string) bool {
 	switch perm {
 	case PermClusterRead, PermNodeRead, PermProcessRead,
 		PermProcessConfigRead, PermProcessLogsRead, PermProcessLogsDownload,
-		PermUserRead, PermRoleRead, PermAuditRead:
+		PermUserRead, PermRoleRead, PermAuditRead, PermAlertRead:
 		return false
 	default:
 		return true
