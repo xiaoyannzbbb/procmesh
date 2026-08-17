@@ -13,6 +13,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/metrics"
 	"github.com/qleelulu/procmesh/internal/process"
+	"github.com/qleelulu/procmesh/internal/store"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
@@ -282,3 +283,125 @@ func (f *fakeMetricsClient) GetProcessHistory(context.Context, *connect.Request[
 }
 
 var _ procmeshv1connect.MetricsServiceClient = (*fakeMetricsClient)(nil)
+
+func openAPIStore(t *testing.T) *store.Store {
+	t.Helper()
+	_, st, _ := newTestManager(t)
+	return st
+}
+
+func applyTestSpec(t *testing.T, m *process.Manager, name string) process.ProcessSpec {
+	t.Helper()
+	spec, err := m.ApplySpec(context.Background(), process.ProcessSpec{Name: name, Command: "/bin/true"}, 0, "op-"+name, "t", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return spec
+}
+
+func TestMetrics_GetNodeHistory_RequiresNodeID(t *testing.T) {
+	api := &MetricsAPI{Store: openAPIStore(t), LocalID: "n1"}
+	_, err := api.GetNodeHistory(context.Background(), connect.NewRequest(&procmeshv1.GetNodeHistoryRequest{}))
+	if err == nil {
+		t.Fatal("expected INVALID")
+	}
+}
+
+func TestMetrics_GetNodeHistory_GapNotFilledWithZero(t *testing.T) {
+	st := openAPIStore(t)
+	ctx := context.Background()
+	_ = st.InsertMetricSamples(ctx, []store.MetricSample{
+		{Series: metrics.SeriesNodeCPU, SubjectID: "n1", Layer: metrics.LayerRawMin, TSUnix: 1_700_000_000, Value: 11},
+		{Series: metrics.SeriesNodeCPU, SubjectID: "n1", Layer: metrics.LayerRawMin, TSUnix: 1_700_000_120, Value: 22},
+	})
+	api := &MetricsAPI{Store: st, LocalID: "n1", LocalOnly: true}
+	resp, err := api.GetNodeHistory(ctx, connect.NewRequest(&procmeshv1.GetNodeHistoryRequest{
+		NodeId: "n1", SinceUnix: 1_700_000_000, UntilUnix: 1_700_000_120, Resolution: "raw_min",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cpu *procmeshv1.MetricSeries
+	for _, s := range resp.Msg.GetSeries() {
+		if s.GetName() == "cpu_percent" {
+			cpu = s
+		}
+	}
+	if cpu == nil || len(cpu.Points) != 2 {
+		t.Fatalf("%+v", resp.Msg)
+	}
+	if cpu.Points[0].GetValue() == 0 && cpu.Points[0].GetTsUnix() != 1_700_000_000 {
+		t.Fatal("gap filled")
+	}
+	if len(cpu.Points) == 3 {
+		t.Fatal("invented midpoint")
+	}
+}
+
+func TestMetrics_GetNodeHistory_DefaultLayerByRange(t *testing.T) {
+	st := openAPIStore(t)
+	ctx := context.Background()
+	_ = st.InsertMetricSamples(ctx, []store.MetricSample{
+		{Series: metrics.SeriesNodeCPU, SubjectID: "n1", Layer: metrics.LayerDown5m, TSUnix: 1_700_000_000, Value: 7},
+	})
+	api := &MetricsAPI{Store: st, LocalID: "n1", LocalOnly: true}
+	resp, err := api.GetNodeHistory(ctx, connect.NewRequest(&procmeshv1.GetNodeHistoryRequest{
+		NodeId: "n1", SinceUnix: 1_700_000_000, UntilUnix: 1_700_000_000 + 25*3600,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Msg.GetLayer() != "down_5m" {
+		t.Fatalf("layer=%s", resp.Msg.GetLayer())
+	}
+}
+
+func TestMetrics_GetNodeHistory_HopsAndUnavailable(t *testing.T) {
+	api := &MetricsAPI{
+		LocalID: "aaa",
+		Router: &Router{LocalID: "aaa", Members: func() []cluster.NodeSummary {
+			return []cluster.NodeSummary{{NodeID: "ccc", State: cluster.StateFailed, RPCAddress: "127.0.0.1:9"}}
+		}},
+	}
+	_, err := api.GetNodeHistory(context.Background(), connect.NewRequest(&procmeshv1.GetNodeHistoryRequest{NodeId: "ccc"}))
+	if err == nil {
+		t.Fatal("FAILED owner must be UNAVAILABLE")
+	}
+}
+
+func TestMetrics_GetProcessHistory_NotFound(t *testing.T) {
+	m, st, _ := newTestManager(t)
+	api := &MetricsAPI{Mgr: m, Store: st, LocalID: "n1", LocalOnly: true}
+	_, err := api.GetProcessHistory(context.Background(), connect.NewRequest(&procmeshv1.GetProcessHistoryRequest{IdOrName: "nope"}))
+	if err == nil {
+		t.Fatal("NOT_FOUND")
+	}
+}
+
+func TestMetrics_GetProcessHistory_LocalSeries(t *testing.T) {
+	m, st, _ := newTestManager(t)
+	ctx := context.Background()
+	spec := applyTestSpec(t, m, "web")
+	_ = st.InsertMetricSamples(ctx, []store.MetricSample{
+		{Series: metrics.SeriesProcCPU, SubjectID: spec.ProcessID, Layer: metrics.LayerRawMin, TSUnix: 50, Value: 3},
+	})
+	api := &MetricsAPI{Mgr: m, Store: st, LocalID: "n1", LocalOnly: true}
+	resp, err := api.GetProcessHistory(ctx, connect.NewRequest(&procmeshv1.GetProcessHistoryRequest{
+		IdOrName: "web", SinceUnix: 0, UntilUnix: 100, Resolution: "raw_min",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Msg.GetProcessId() != spec.ProcessID {
+		t.Fatalf("%s", resp.Msg.GetProcessId())
+	}
+	found := false
+	for _, s := range resp.Msg.GetSeries() {
+		if s.GetName() == "cpu_percent" && len(s.Points) == 1 && s.Points[0].GetValue() == 3 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("%+v", resp.Msg)
+	}
+}
