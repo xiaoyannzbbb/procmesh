@@ -273,4 +273,12 @@ func (f *fakeMetricsClient) GetProcessMetrics(context.Context, *connect.Request[
 	return connect.NewResponse(&procmeshv1.GetProcessMetricsResponse{}), nil
 }
 
+func (f *fakeMetricsClient) GetNodeHistory(context.Context, *connect.Request[procmeshv1.GetNodeHistoryRequest]) (*connect.Response[procmeshv1.GetNodeHistoryResponse], error) {
+	return connect.NewResponse(&procmeshv1.GetNodeHistoryResponse{}), nil
+}
+
+func (f *fakeMetricsClient) GetProcessHistory(context.Context, *connect.Request[procmeshv1.GetProcessHistoryRequest]) (*connect.Response[procmeshv1.GetProcessHistoryResponse], error) {
+	return connect.NewResponse(&procmeshv1.GetProcessHistoryResponse{}), nil
+}
+
 var _ procmeshv1connect.MetricsServiceClient = (*fakeMetricsClient)(nil)

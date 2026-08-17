@@ -92,3 +92,20 @@ func TestProto_BatchServiceGenerated(t *testing.T) {
 	_ = (&procmeshv1.CreateBatchRequest{}).GetType
 	var _ procmeshv1connect.BatchServiceHandler = (*BatchAPI)(nil)
 }
+
+func TestProto_Q3HistoryRPCsGenerated(t *testing.T) {
+	if procmeshv1connect.MetricsServiceGetNodeHistoryProcedure == "" {
+		t.Fatal("missing GetNodeHistory")
+	}
+	if procmeshv1connect.MetricsServiceGetProcessHistoryProcedure == "" {
+		t.Fatal("missing GetProcessHistory")
+	}
+	_ = (&procmeshv1.GetNodeHistoryRequest{}).GetNodeId
+	_ = (&procmeshv1.GetNodeHistoryRequest{}).GetSinceUnix
+	_ = (&procmeshv1.GetNodeHistoryRequest{}).GetUntilUnix
+	_ = (&procmeshv1.GetNodeHistoryRequest{}).GetResolution
+	_ = (&procmeshv1.GetProcessHistoryRequest{}).GetIdOrName
+	_ = (&procmeshv1.MetricPoint{}).GetTsUnix
+	_ = (&procmeshv1.MetricSeries{}).GetName
+	var _ procmeshv1connect.MetricsServiceHandler = (*MetricsAPI)(nil)
+}

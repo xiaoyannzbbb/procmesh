@@ -172,6 +172,12 @@ const (
 	// MetricsServiceGetProcessMetricsProcedure is the fully-qualified name of the MetricsService's
 	// GetProcessMetrics RPC.
 	MetricsServiceGetProcessMetricsProcedure = "/procmesh.v1.MetricsService/GetProcessMetrics"
+	// MetricsServiceGetNodeHistoryProcedure is the fully-qualified name of the MetricsService's
+	// GetNodeHistory RPC.
+	MetricsServiceGetNodeHistoryProcedure = "/procmesh.v1.MetricsService/GetNodeHistory"
+	// MetricsServiceGetProcessHistoryProcedure is the fully-qualified name of the MetricsService's
+	// GetProcessHistory RPC.
+	MetricsServiceGetProcessHistoryProcedure = "/procmesh.v1.MetricsService/GetProcessHistory"
 	// BatchServiceCreateBatchProcedure is the fully-qualified name of the BatchService's CreateBatch
 	// RPC.
 	BatchServiceCreateBatchProcedure = "/procmesh.v1.BatchService/CreateBatch"
@@ -1805,6 +1811,8 @@ func (UnimplementedAuditServiceHandler) ListAudit(context.Context, *connect.Requ
 type MetricsServiceClient interface {
 	GetAgentMetrics(context.Context, *connect.Request[v1.GetAgentMetricsRequest]) (*connect.Response[v1.GetAgentMetricsResponse], error)
 	GetProcessMetrics(context.Context, *connect.Request[v1.GetProcessMetricsRequest]) (*connect.Response[v1.GetProcessMetricsResponse], error)
+	GetNodeHistory(context.Context, *connect.Request[v1.GetNodeHistoryRequest]) (*connect.Response[v1.GetNodeHistoryResponse], error)
+	GetProcessHistory(context.Context, *connect.Request[v1.GetProcessHistoryRequest]) (*connect.Response[v1.GetProcessHistoryResponse], error)
 }
 
 // NewMetricsServiceClient constructs a client for the procmesh.v1.MetricsService service. By
@@ -1830,6 +1838,18 @@ func NewMetricsServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(metricsServiceMethods.ByName("GetProcessMetrics")),
 			connect.WithClientOptions(opts...),
 		),
+		getNodeHistory: connect.NewClient[v1.GetNodeHistoryRequest, v1.GetNodeHistoryResponse](
+			httpClient,
+			baseURL+MetricsServiceGetNodeHistoryProcedure,
+			connect.WithSchema(metricsServiceMethods.ByName("GetNodeHistory")),
+			connect.WithClientOptions(opts...),
+		),
+		getProcessHistory: connect.NewClient[v1.GetProcessHistoryRequest, v1.GetProcessHistoryResponse](
+			httpClient,
+			baseURL+MetricsServiceGetProcessHistoryProcedure,
+			connect.WithSchema(metricsServiceMethods.ByName("GetProcessHistory")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -1837,6 +1857,8 @@ func NewMetricsServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 type metricsServiceClient struct {
 	getAgentMetrics   *connect.Client[v1.GetAgentMetricsRequest, v1.GetAgentMetricsResponse]
 	getProcessMetrics *connect.Client[v1.GetProcessMetricsRequest, v1.GetProcessMetricsResponse]
+	getNodeHistory    *connect.Client[v1.GetNodeHistoryRequest, v1.GetNodeHistoryResponse]
+	getProcessHistory *connect.Client[v1.GetProcessHistoryRequest, v1.GetProcessHistoryResponse]
 }
 
 // GetAgentMetrics calls procmesh.v1.MetricsService.GetAgentMetrics.
@@ -1849,10 +1871,22 @@ func (c *metricsServiceClient) GetProcessMetrics(ctx context.Context, req *conne
 	return c.getProcessMetrics.CallUnary(ctx, req)
 }
 
+// GetNodeHistory calls procmesh.v1.MetricsService.GetNodeHistory.
+func (c *metricsServiceClient) GetNodeHistory(ctx context.Context, req *connect.Request[v1.GetNodeHistoryRequest]) (*connect.Response[v1.GetNodeHistoryResponse], error) {
+	return c.getNodeHistory.CallUnary(ctx, req)
+}
+
+// GetProcessHistory calls procmesh.v1.MetricsService.GetProcessHistory.
+func (c *metricsServiceClient) GetProcessHistory(ctx context.Context, req *connect.Request[v1.GetProcessHistoryRequest]) (*connect.Response[v1.GetProcessHistoryResponse], error) {
+	return c.getProcessHistory.CallUnary(ctx, req)
+}
+
 // MetricsServiceHandler is an implementation of the procmesh.v1.MetricsService service.
 type MetricsServiceHandler interface {
 	GetAgentMetrics(context.Context, *connect.Request[v1.GetAgentMetricsRequest]) (*connect.Response[v1.GetAgentMetricsResponse], error)
 	GetProcessMetrics(context.Context, *connect.Request[v1.GetProcessMetricsRequest]) (*connect.Response[v1.GetProcessMetricsResponse], error)
+	GetNodeHistory(context.Context, *connect.Request[v1.GetNodeHistoryRequest]) (*connect.Response[v1.GetNodeHistoryResponse], error)
+	GetProcessHistory(context.Context, *connect.Request[v1.GetProcessHistoryRequest]) (*connect.Response[v1.GetProcessHistoryResponse], error)
 }
 
 // NewMetricsServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -1874,12 +1908,28 @@ func NewMetricsServiceHandler(svc MetricsServiceHandler, opts ...connect.Handler
 		connect.WithSchema(metricsServiceMethods.ByName("GetProcessMetrics")),
 		connect.WithHandlerOptions(opts...),
 	)
+	metricsServiceGetNodeHistoryHandler := connect.NewUnaryHandler(
+		MetricsServiceGetNodeHistoryProcedure,
+		svc.GetNodeHistory,
+		connect.WithSchema(metricsServiceMethods.ByName("GetNodeHistory")),
+		connect.WithHandlerOptions(opts...),
+	)
+	metricsServiceGetProcessHistoryHandler := connect.NewUnaryHandler(
+		MetricsServiceGetProcessHistoryProcedure,
+		svc.GetProcessHistory,
+		connect.WithSchema(metricsServiceMethods.ByName("GetProcessHistory")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/procmesh.v1.MetricsService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case MetricsServiceGetAgentMetricsProcedure:
 			metricsServiceGetAgentMetricsHandler.ServeHTTP(w, r)
 		case MetricsServiceGetProcessMetricsProcedure:
 			metricsServiceGetProcessMetricsHandler.ServeHTTP(w, r)
+		case MetricsServiceGetNodeHistoryProcedure:
+			metricsServiceGetNodeHistoryHandler.ServeHTTP(w, r)
+		case MetricsServiceGetProcessHistoryProcedure:
+			metricsServiceGetProcessHistoryHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1895,6 +1945,14 @@ func (UnimplementedMetricsServiceHandler) GetAgentMetrics(context.Context, *conn
 
 func (UnimplementedMetricsServiceHandler) GetProcessMetrics(context.Context, *connect.Request[v1.GetProcessMetricsRequest]) (*connect.Response[v1.GetProcessMetricsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.MetricsService.GetProcessMetrics is not implemented"))
+}
+
+func (UnimplementedMetricsServiceHandler) GetNodeHistory(context.Context, *connect.Request[v1.GetNodeHistoryRequest]) (*connect.Response[v1.GetNodeHistoryResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.MetricsService.GetNodeHistory is not implemented"))
+}
+
+func (UnimplementedMetricsServiceHandler) GetProcessHistory(context.Context, *connect.Request[v1.GetProcessHistoryRequest]) (*connect.Response[v1.GetProcessHistoryResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.MetricsService.GetProcessHistory is not implemented"))
 }
 
 // BatchServiceClient is a client for the procmesh.v1.BatchService service.

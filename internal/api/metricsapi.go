@@ -106,6 +106,14 @@ func (s *MetricsAPI) GetProcessMetrics(ctx context.Context, req *connect.Request
 	return connect.NewResponse(&procmeshv1.GetProcessMetricsResponse{Metrics: out}), nil
 }
 
+func (s *MetricsAPI) GetNodeHistory(context.Context, *connect.Request[procmeshv1.GetNodeHistoryRequest]) (*connect.Response[procmeshv1.GetNodeHistoryResponse], error) {
+	return nil, unimplemented()
+}
+
+func (s *MetricsAPI) GetProcessHistory(context.Context, *connect.Request[procmeshv1.GetProcessHistoryRequest]) (*connect.Response[procmeshv1.GetProcessHistoryResponse], error) {
+	return nil, unimplemented()
+}
+
 func (s *MetricsAPI) remoteMetrics(ctx context.Context, rt Route, header http.Header) (procmeshv1connect.MetricsServiceClient, error) {
 	if s.Forward == nil {
 		return nil, unavailableOwner()
