@@ -8,6 +8,13 @@ export function appCode(err: unknown): string {
   return err.findDetails(ErrorInfoSchema)[0]?.code ?? "";
 }
 
+export function appMessage(err: unknown): string {
+  if (!(err instanceof ConnectError)) {
+    return "";
+  }
+  return err.findDetails(ErrorInfoSchema)[0]?.message ?? "";
+}
+
 export function isConflict(err: unknown): boolean {
   return appCode(err) === "CONFLICT";
 }

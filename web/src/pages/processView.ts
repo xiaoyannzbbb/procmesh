@@ -1,5 +1,5 @@
 import { Code, ConnectError } from "@connectrpc/connect";
-import { appCode } from "../lib/connecterr";
+import { appCode, appMessage } from "../lib/connecterr";
 import { LIVE, type Freshness } from "../lib/freshness";
 import { mapNode } from "./clusterView";
 
@@ -186,7 +186,9 @@ export function needsRestartBanner(latestRevision: number, activeRevision: numbe
 export function formatRemoteError(err: unknown): string {
   const app = appCode(err);
   if (app) {
-    return app;
+    const msg = appMessage(err);
+    // If we have a detailed message, use it; otherwise fall back to the code
+    return msg || app;
   }
   if (err instanceof ConnectError) {
     if (err.code === Code.DeadlineExceeded) {
