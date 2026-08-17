@@ -402,12 +402,16 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
         <div v-else class="charts">
           <HistoryChart
             :title="t('metricsHistory.cpu')"
+            kind="cpu"
+            unit="percent"
             :points="cpuPoints"
             :step-sec="historyStepSec"
             :stale="historyStale"
           />
           <HistoryChart
             :title="t('metricsHistory.memory')"
+            kind="memory"
+            unit="bytes"
             :points="memPoints"
             :step-sec="historyStepSec"
             :stale="historyStale"
@@ -558,8 +562,8 @@ h2 {
   border-color: var(--color-text);
 }
 .charts {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.85rem;
 }
 </style>

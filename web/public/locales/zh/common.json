@@ -46,7 +46,8 @@
     "disk": "磁盘 %",
     "empty": "该时间范围内无样本",
     "stale": "历史不可用（STALE）。禁止把 Gossip 即时摘要当成曲线。",
-    "loading": "正在加载历史…"
+    "loading": "正在加载历史…",
+    "summary": "{{title}} 最新 {{last}}，范围 {{min}} 至 {{max}}"
   },
   "common": {
     "loading": "加载中...",

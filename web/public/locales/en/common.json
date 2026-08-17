@@ -46,7 +46,8 @@
     "disk": "Disk %",
     "empty": "No samples in this range",
     "stale": "History unavailable (STALE). Live gossip summary is not a chart.",
-    "loading": "Loading history…"
+    "loading": "Loading history…",
+    "summary": "{{title}} last {{last}}, range {{min}} to {{max}}"
   },
   "common": {
     "loading": "Loading...",
