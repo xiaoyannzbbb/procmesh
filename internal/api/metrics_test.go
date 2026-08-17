@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/qleelulu/procmesh/internal/store"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
@@ -110,6 +111,23 @@ func TestMetrics_IncludesBatchGauges(t *testing.T) {
 		t.Fatalf("metrics %d %q", rec.Code, rec.Body.String())
 	}
 	assertBatchMetricsPresent(t, rec.Body.String())
+}
+
+func TestMetrics_SampleRowsGauge(t *testing.T) {
+	m, st, _ := newTestManager(t)
+	_ = st.InsertMetricSamples(context.Background(), []store.MetricSample{
+		{Series: "node.cpu_percent", SubjectID: "n", Layer: "raw_min", TSUnix: 1, Value: 1},
+		{Series: "node.cpu_percent", SubjectID: "n", Layer: "raw_min", TSUnix: 2, Value: 2},
+	})
+	srv, err := NewServer(Options{Mgr: m, Store: st, Started: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	srv.Engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(rec.Body.String(), "procmesh_metric_samples_rows 2") {
+		t.Fatalf("%s", rec.Body.String())
+	}
 }
 
 func assertBatchMetricsPresent(t *testing.T, body string) {

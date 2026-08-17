@@ -8,6 +8,7 @@ import (
 
 	"github.com/qleelulu/procmesh/internal/batch"
 	"github.com/qleelulu/procmesh/internal/process"
+	"github.com/qleelulu/procmesh/internal/store"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
 
@@ -113,7 +114,7 @@ func collectBatchMetrics(eng *batch.Engine) batchMetricSnapshot {
 	return out
 }
 
-func renderMetrics(uptimeSeconds float64, running, members, alive int, rpcForward uint64, quorum int, batchStats batchMetricSnapshot) []byte {
+func renderMetrics(uptimeSeconds float64, running, members, alive int, rpcForward uint64, quorum int, batchStats batchMetricSnapshot, sampleRows int64) []byte {
 	return []byte(fmt.Sprintf(
 		"# HELP procmesh_agent_uptime Agent uptime in seconds.\n"+
 			"# TYPE procmesh_agent_uptime gauge\n"+
@@ -144,9 +145,25 @@ func renderMetrics(uptimeSeconds float64, running, members, alive int, rpcForwar
 			"procmesh_batch_targets_total{status=\"denied\"} %d\n"+
 			"procmesh_batch_targets_total{status=\"conflict\"} %d\n"+
 			"procmesh_batch_targets_total{status=\"unavailable\"} %d\n"+
-			"procmesh_batch_targets_total{status=\"invalid\"} %d\n",
+			"procmesh_batch_targets_total{status=\"invalid\"} %d\n"+
+			"# HELP procmesh_metric_samples_rows Local historical metric sample rows.\n"+
+			"# TYPE procmesh_metric_samples_rows gauge\n"+
+			"procmesh_metric_samples_rows %d\n",
 		uptimeSeconds, running, members, alive, rpcForward, quorum,
 		batchStats.Running, batchStats.Success, batchStats.Failed, batchStats.Timeout,
 		batchStats.Denied, batchStats.Conflict, batchStats.Unavailable, batchStats.Invalid,
+		sampleRows,
 	))
+}
+
+func countMetricSampleRows(st RevisionStore) int64 {
+	s, ok := st.(*store.Store)
+	if !ok || s == nil {
+		return 0
+	}
+	n, err := s.CountMetricSamples(context.Background())
+	if err != nil {
+		return 0
+	}
+	return n
 }

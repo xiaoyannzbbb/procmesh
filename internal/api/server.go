@@ -291,6 +291,7 @@ func (s *Server) metrics(c *gin.Context) {
 		rpcForward,
 		s.controlQuorum(),
 		collectBatchMetrics(s.opts.Batch),
+		countMetricSampleRows(s.opts.Store),
 	))
 }
 

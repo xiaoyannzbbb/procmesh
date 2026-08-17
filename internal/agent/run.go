@@ -199,6 +199,21 @@ func Run(ctx context.Context, opt Options) error {
 	if err != nil {
 		return fmt.Errorf("node id: %w", err)
 	}
+	rec := metrics.NewRecorder(st, nodeID)
+	rec.CollectNode = collector.NodeMetrics
+	rec.CollectProcess = collector.ProcessMetrics
+	rec.ListProcesses = func() []metrics.ProcessRef {
+		return listProcessRefs(mgr)
+	}
+	rec.DiskPercent = func() float64 {
+		nm, err := collector.NodeMetrics()
+		if err != nil || nm == nil {
+			return 0
+		}
+		return nm.DiskPercent
+	}
+	_ = rec.Start(ctx)
+	defer rec.Stop()
 	hostname, _ := os.Hostname()
 	src := &liveSource{
 		nodeID:   nodeID,
@@ -265,6 +280,33 @@ func Run(ctx context.Context, opt Options) error {
 		Hostname:   hostname,
 		BootID:     hostBoot,
 	}, batchEng)
+}
+
+func listProcessRefs(mgr *process.Manager) []metrics.ProcessRef {
+	if mgr == nil {
+		return nil
+	}
+	specs, err := mgr.ListSpecs(context.Background())
+	if err != nil {
+		return nil
+	}
+	var out []metrics.ProcessRef
+	for _, spec := range specs {
+		insts, err := mgr.ListInstances(context.Background(), spec.ProcessID)
+		if err != nil {
+			continue
+		}
+		for _, inst := range insts {
+			if inst.PID <= 0 {
+				continue
+			}
+			out = append(out, metrics.ProcessRef{
+				ProcessID: spec.ProcessID,
+				PID:       inst.PID,
+			})
+		}
+	}
+	return out
 }
 
 func newBatchEngine(st *store.Store, cfg agentcfg.Config, nodeID string) *batch.Engine {

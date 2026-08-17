@@ -208,7 +208,8 @@ func (r *rpcRuntime) localHandler() http.Handler {
 			ControlFn: r.control, NodeID: r.nodeID,
 		},
 		LocalOnly: true, LocalID: r.nodeID, Degraded: r.degradedFn(),
-		Metrics:   r.metrics,
+		Metrics: r.metrics,
+		Store:   r.st,
 	}, opts...)
 	mux.Handle(mp, mh)
 	return mux
