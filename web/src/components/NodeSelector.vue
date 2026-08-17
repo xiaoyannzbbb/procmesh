@@ -44,10 +44,6 @@ const nodes = computed(() => {
     });
 });
 
-const selectedNode = computed(() => {
-  return nodes.value.find((n) => n.nodeId === props.modelValue);
-});
-
 function onSelect(event: Event): void {
   const target = event.target as HTMLSelectElement;
   emit("update:modelValue", target.value);

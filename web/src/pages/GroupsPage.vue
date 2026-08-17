@@ -72,13 +72,6 @@ function showToastNotification(message: string, type: "success" | "error" | "inf
   showToast.value = true;
 }
 
-function formatMembers(ids: string[] | undefined): string {
-  if (!ids?.length) {
-    return "—";
-  }
-  return ids.join(", ");
-}
-
 const createMut = useMutation({
   mutationFn: () =>
     client.createAgentGroup({
