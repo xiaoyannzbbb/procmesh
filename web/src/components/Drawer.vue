@@ -254,6 +254,11 @@ watch(
   .drawer-panel {
     max-width: 100%;
   }
+
+  .drawer-close {
+    min-width: 44px;
+    min-height: 44px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

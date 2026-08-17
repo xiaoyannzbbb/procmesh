@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /* eslint-disable i18next/no-literal-string -- Template literals are non-visible schema paths and selectors; visible copy uses t(). */
 import { Plus, Trash2 } from "lucide-vue-next";
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, ref } from "vue";
 import { useI18n } from "../lib/useI18n";
 import type { ProcessConfigFormState, ProcessConfigIssue } from "./processConfigForm";
 import {
@@ -25,7 +25,6 @@ const emit = defineEmits<{
 const { t: typedTranslate } = useI18n();
 const t = typedTranslate as unknown as (key: string, options?: Record<string, unknown>) => string;
 const formRoot = ref<HTMLElement | null>(null);
-const errorSummary = ref<HTMLElement | null>(null);
 
 const collectionPaths = new Set<ProcessConfigFieldPath>([
   "args",
@@ -206,18 +205,6 @@ async function focusIssue(path: string): Promise<void> {
   focusTarget(path)?.focus();
 }
 
-watch(
-  () => props.validateRequested,
-  async (request, previousRequest) => {
-    if (request === previousRequest || props.issues.length === 0) {
-      return;
-    }
-    await nextTick();
-    errorSummary.value?.focus();
-  },
-  { flush: "post" },
-);
-
 defineExpose({ focusIssue });
 </script>
 
@@ -225,7 +212,6 @@ defineExpose({ focusIssue });
   <div ref="formRoot" class="process-config-form">
     <div
       v-if="issues.length && validateRequested > 0"
-      ref="errorSummary"
       class="error-summary"
       data-error-summary
       role="alert"

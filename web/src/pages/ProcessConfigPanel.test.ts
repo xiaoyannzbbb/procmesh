@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ErrorInfoSchema, ProcessSpecSchema } from "../gen/procmesh/v1/api_pb";
 import { session } from "../lib/session";
 import ProcessConfigPanel from "./ProcessConfigPanel.vue";
+import panelSource from "./ProcessConfigPanel.vue?raw";
 
 let i18n: typeof i18next;
 
@@ -253,7 +254,7 @@ describe("ProcessConfigPanel", () => {
     expect(wrapper.get(".config-json-viewer").text()).toContain('"name": "web"');
   });
 
-  it("opens form-first with an accessible segmented mode control and a sticky footer", async () => {
+  it("opens form-first with an accessible segmented mode control and footer controls", async () => {
     const { wrapper } = await mountPanel();
 
     await openEditor(wrapper);
@@ -266,6 +267,16 @@ describe("ProcessConfigPanel", () => {
     expect(drawerField("name").value).toBe("web");
     expect(document.querySelector(".drawer-content .drawer-actions")).not.toBeNull();
     expect(document.querySelector(".drawer-actions #process-config-comment")).not.toBeNull();
+  });
+
+  it("keeps drawer editor styles sticky, overflow-safe, touch-sized, and on the spacing grid", () => {
+    expect(panelSource).toMatch(/\.drawer-actions\s*\{(?=[^}]*position:\s*sticky)(?=[^}]*bottom:\s*-1\.5rem)[^}]*\}/s);
+    expect(panelSource).toMatch(/\.drawer-form\s*\{(?=[^}]*min-width:\s*0)[^}]*\}/s);
+    expect(panelSource).toMatch(/\.json-editor\s*\{(?=[^}]*min-width:\s*0)[^}]*\}/s);
+    expect(panelSource).toMatch(/\.editor\s*\{(?=[^}]*box-sizing:\s*border-box)(?=[^}]*max-width:\s*100%)[^}]*\}/s);
+    expect(panelSource).toMatch(/@media \(max-width:\s*720px\)[\s\S]*\.editor-mode-button,[\s\S]*\.drawer-actions \.btn\s*\{[^}]*min-height:\s*44px/s);
+    expect(panelSource).toMatch(/\.field\s*\{(?=[^}]*gap:\s*0\.25rem)[^}]*\}/s);
+    expect(panelSource).toMatch(/\.field-error\s*\{(?=[^}]*margin:\s*-0\.5rem 0 0)[^}]*\}/s);
   });
 
   it("synchronizes valid edits in both directions", async () => {
@@ -325,7 +336,7 @@ describe("ProcessConfigPanel", () => {
     expect(document.activeElement).toBe(editorTextarea());
   });
 
-  it("blocks switching and saving an invalid form and focuses its error summary", async () => {
+  it("blocks switching and saving an invalid form, keeps its summary, and focuses the first issue", async () => {
     const updateConfig = vi.fn().mockResolvedValue({ spec: sampleSpec() });
     const { wrapper } = await mountPanel({ updateConfig });
     await openEditor(wrapper);
@@ -335,12 +346,14 @@ describe("ProcessConfigPanel", () => {
 
     expect(activeEditorMode()).toBe("form");
     expect(document.querySelector('[data-error="name"]')).not.toBeNull();
-    expect(document.activeElement).toBe(document.querySelector("[data-error-summary]"));
+    expect(document.querySelector("[data-error-summary]")).not.toBeNull();
+    expect(document.activeElement).toBe(drawerField("name"));
 
     submitEditor();
     await flushPromises();
     expect(updateConfig).not.toHaveBeenCalled();
-    expect(document.activeElement).toBe(document.querySelector("[data-error-summary]"));
+    expect(document.querySelector("[data-error-summary]")).not.toBeNull();
+    expect(document.activeElement).toBe(drawerField("name"));
   });
 
   it("asks before closing form and JSON drafts with semantic unsaved changes", async () => {
@@ -382,6 +395,46 @@ describe("ProcessConfigPanel", () => {
     const commentInput = document.querySelector<HTMLInputElement>("#process-config-comment")!;
     commentInput.value = "   ";
     commentInput.dispatchEvent(new Event("input", { bubbles: true }));
+    document.querySelector<HTMLButtonElement>('[data-action="cancel-config-edit"]')!.click();
+    await wrapper.vm.$nextTick();
+
+    expect(confirm).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("ignores protobuf map insertion order in JSON-originated dirty checks", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const { wrapper } = await mountPanel({ spec: fullSampleSpec() });
+    await openEditor(wrapper);
+    await switchEditorMode("json");
+
+    const reordered = JSON.parse(editorTextarea().value) as { environment: Record<string, string> };
+    reordered.environment = { PORT: "8080", MODE: "prod" };
+    setEditorText(JSON.stringify(reordered));
+    document.querySelector<HTMLButtonElement>('[data-action="cancel-config-edit"]')!.click();
+    await wrapper.vm.$nextTick();
+
+    expect(confirm).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("ignores protobuf map row order in form-originated dirty checks", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const { wrapper } = await mountPanel({ spec: fullSampleSpec() });
+    await openEditor(wrapper);
+
+    document.querySelectorAll<HTMLButtonElement>('[data-action="remove-environment"]')[0].click();
+    await flushPromises();
+    document.querySelector<HTMLButtonElement>('[data-action="add-environment"]')!.click();
+    await flushPromises();
+    await setDrawerField("environment.1.key", "MODE");
+    await setDrawerField("environment.1.value", "prod");
+    expect(
+      Array.from(document.querySelectorAll<HTMLInputElement>('[data-field$=".key"]')).map((input) => input.value),
+    ).toEqual(["PORT", "MODE"]);
+    expect(
+      Array.from(document.querySelectorAll<HTMLInputElement>('[data-field$=".value"]')).map((input) => input.value),
+    ).toEqual(["8080", "prod"]);
     document.querySelector<HTMLButtonElement>('[data-action="cancel-config-edit"]')!.click();
     await wrapper.vm.$nextTick();
 
@@ -461,7 +514,9 @@ describe("ProcessConfigPanel", () => {
     const { wrapper, updateConfig, configClient, queryClient } = await mountPanel();
     await openEditor(wrapper);
     await switchEditorMode("json");
-    const edited = editorTextarea().value.replace('"name": "web"', '"name": "api"');
+    const editedObject = JSON.parse(editorTextarea().value) as Record<string, unknown>;
+    editedObject.name = "api";
+    const edited = JSON.stringify(editedObject);
     setEditorText(edited);
 
     const newer = create(ProcessSpecSchema, {

@@ -52,6 +52,9 @@ const EDITOR_MODE = { form: "form", json: "json" } as const;
 const EDITOR_MODES = [EDITOR_MODE.form, EDITOR_MODE.json] as const;
 const DRAWER_SIZE = "wide" as const;
 type EditorMode = "form" | "json";
+type ProcessConfigFormHandle = {
+  focusIssue(path: string): Promise<void>;
+};
 
 const props = defineProps<{
   idOrName: string;
@@ -62,6 +65,7 @@ const config = useConfigClient();
 const queryClient = useQueryClient();
 const editorMode = ref<EditorMode>("form");
 const formDraft = ref<ProcessConfigFormState | null>(null);
+const formEditor = ref<ProcessConfigFormHandle | null>(null);
 const editorText = ref("");
 const editorBaseline = ref("");
 const editorOpen = ref(false);
@@ -132,16 +136,35 @@ const displayObject = computed<Record<string, unknown>>(() => {
   return JSON.parse(displayJson.value) as Record<string, unknown>;
 });
 const environmentEntries = computed(() => Object.entries(loadedSpec.value?.environment ?? {}));
+
+function canonicalizeJson(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(canonicalizeJson);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+        .map(([key, entry]) => [key, canonicalizeJson(entry)]),
+    );
+  }
+  return value;
+}
+
+function semanticSpecJson(spec: ProcessSpec): string {
+  return JSON.stringify(canonicalizeJson(toJson(ProcessSpecSchema, spec)));
+}
+
 const normalizedDraft = computed(() => {
   if (editorMode.value === "form" && formDraft.value) {
     try {
-      return stringifyProcessConfigJson(processConfigFormToSpec(formDraft.value));
+      return semanticSpecJson(processConfigFormToSpec(formDraft.value));
     } catch {
       return JSON.stringify(formDraft.value);
     }
   }
   try {
-    return stringifyProcessConfigJson(parseProcessConfigJson(editorText.value));
+    return semanticSpecJson(parseProcessConfigJson(editorText.value));
   } catch {
     return editorText.value;
   }
@@ -205,7 +228,7 @@ function openEditor(): void {
   editorMode.value = "form";
   formDraft.value = specToProcessConfigForm(openingSpec);
   editorText.value = stringifyProcessConfigJson(openingSpec);
-  editorBaseline.value = stringifyProcessConfigJson(openingSpec);
+  editorBaseline.value = semanticSpecJson(openingSpec);
   formIssues.value = [];
   validateRequested.value = 0;
   comment.value = "";
@@ -239,6 +262,10 @@ function issueMessage(issue: ProcessConfigIssue): string {
 function showFormIssues(issues: ProcessConfigIssue[]): void {
   formIssues.value = issues;
   validateRequested.value += 1;
+  const firstIssue = issues[0];
+  if (firstIssue) {
+    void nextTick(() => formEditor.value?.focusIssue(firstIssue.path));
+  }
 }
 
 function showJsonError(message: string): void {
@@ -250,7 +277,11 @@ function setJsonTextarea(element: Element | ComponentPublicInstance | null): voi
   jsonTextarea.value = element instanceof HTMLTextAreaElement ? element : null;
 }
 
-function synchronizeActiveMode(): ProcessSpec | null {
+function setFormEditor(element: Element | ComponentPublicInstance | null): void {
+  formEditor.value = element as unknown as ProcessConfigFormHandle | null;
+}
+
+function synchronizeActiveMode(synchronizeInactiveDraft = true): ProcessSpec | null {
   if (editorMode.value === "form") {
     if (!formDraft.value) {
       return null;
@@ -261,7 +292,9 @@ function synchronizeActiveMode(): ProcessSpec | null {
       return null;
     }
     const spec = processConfigFormToSpec(formDraft.value);
-    editorText.value = stringifyProcessConfigJson(spec);
+    if (synchronizeInactiveDraft) {
+      editorText.value = stringifyProcessConfigJson(spec);
+    }
     return spec;
   }
 
@@ -277,8 +310,9 @@ function synchronizeActiveMode(): ProcessSpec | null {
     showJsonError(issueMessage(issues[0]));
     return null;
   }
-  editorText.value = stringifyProcessConfigJson(spec);
-  formDraft.value = specToProcessConfigForm(spec);
+  if (synchronizeInactiveDraft) {
+    formDraft.value = specToProcessConfigForm(spec);
+  }
   return spec;
 }
 
@@ -351,7 +385,7 @@ async function onSave(): Promise<void> {
   if (!canUpdate.value || !loadedSpec.value) {
     return;
   }
-  const parsed = synchronizeActiveMode();
+  const parsed = synchronizeActiveMode(false);
   if (!parsed) {
     return;
   }
@@ -370,7 +404,7 @@ async function onSave(): Promise<void> {
       targetOpts.value,
     );
     commitSpec(out.spec);
-    editorBaseline.value = stringifyProcessConfigJson(out.spec ?? parsed);
+    editorBaseline.value = semanticSpecJson(out.spec ?? parsed);
     comment.value = "";
     editorOpen.value = false;
     await queryClient.invalidateQueries({ queryKey: ["process-history", props.idOrName, props.targetNodeId] });
@@ -614,6 +648,7 @@ async function onRollback(toRevision: bigint | number): Promise<void> {
         </div>
         <ProcessConfigForm
           v-if="editorMode === EDITOR_MODE.form && formDraft"
+          :ref="setFormEditor"
           :model-value="formDraft"
           :issues="formIssues"
           :validate-requested="validateRequested"
@@ -1040,7 +1075,7 @@ h4 {
 .field {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.25rem;
   font-size: 0.8rem;
   color: var(--color-muted);
 }
@@ -1060,7 +1095,7 @@ h4 {
   gap: 0.5rem;
 }
 .field-error {
-  margin: -0.375rem 0 0;
+  margin: -0.5rem 0 0;
   color: var(--color-danger);
   font-size: 0.8125rem;
   line-height: 1.45;

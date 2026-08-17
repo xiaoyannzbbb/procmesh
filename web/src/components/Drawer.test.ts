@@ -1,6 +1,7 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { afterEach, describe, expect, it } from "vitest";
 import Drawer from "./Drawer.vue";
+import drawerSource from "./Drawer.vue?raw";
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -52,6 +53,12 @@ describe("Drawer focus management", () => {
     expect(Number(getComputedStyle(backdrop!).zIndex)).toBeGreaterThan(1000);
 
     wrapper.unmount();
+  });
+
+  it("keeps the narrow drawer close target at least 44 pixels", () => {
+    expect(drawerSource).toMatch(
+      /@media \(max-width:\s*640px\)[\s\S]*\.drawer-close\s*\{(?=[^}]*min-width:\s*44px)(?=[^}]*min-height:\s*44px)[^}]*\}/s,
+    );
   });
 
   it("recaptures focus when the focused control becomes disabled", async () => {

@@ -428,7 +428,7 @@ describe("ProcessConfigForm errors and focus", () => {
     ]);
   });
 
-  it("keeps inline errors associated with controls and focuses a linked summary on full validation", async () => {
+  it("keeps inline errors and a linked summary without overriding parent-managed issue focus", async () => {
     const host = document.createElement("div");
     document.body.append(host);
     const issues: ProcessConfigIssue[] = [
@@ -463,7 +463,7 @@ describe("ProcessConfigForm errors and focus", () => {
       "#process-config-dependencies-0-processName",
     ]);
     await nextTick();
-    expect(document.activeElement).toBe(summary.element);
+    expect(document.activeElement).toBe(command.element);
 
     wrapper.unmount();
     host.remove();
