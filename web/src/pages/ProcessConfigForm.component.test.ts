@@ -4,15 +4,18 @@ import i18next from "i18next";
 import I18NextVue from "i18next-vue";
 import { nextTick } from "vue";
 import { beforeEach, describe, expect, it } from "vitest";
+import enCommon from "../../public/locales/en/common.json";
+import zhCommon from "../../public/locales/zh/common.json";
 import { ProcessSpecSchema } from "../gen/procmesh/v1/api_pb";
 import {
   processConfigFormToSpec,
   specToProcessConfigForm,
   type ProcessConfigFormState,
   type ProcessConfigIssue,
+  type ProcessConfigIssueCode,
 } from "./processConfigForm";
 import ProcessConfigForm from "./ProcessConfigForm.vue";
-import { PROCESS_CONFIG_FIELDS } from "./processConfigSchema";
+import { PROCESS_CONFIG_FIELDS, PROCESS_CONFIG_SECTIONS } from "./processConfigSchema";
 
 let i18n: typeof i18next;
 
@@ -26,6 +29,57 @@ const sectionLabels = {
   environment: "Environment",
   dependencies: "Dependencies",
 };
+
+const validationTranslationKeys: Record<ProcessConfigIssueCode, string> = {
+  invalidName: "processConfig.editor.validation.invalidName",
+  invalidGroup: "processConfig.editor.validation.invalidGroup",
+  required: "processConfig.editor.validation.required",
+  minimumOne: "processConfig.editor.validation.minimumOne",
+  minimumZero: "processConfig.editor.validation.minimumZero",
+  retryWindowRequired: "processConfig.editor.validation.retryWindowRequired",
+  multiplierMinimum: "processConfig.editor.validation.multiplierMinimum",
+  httpUrlRequired: "processConfig.editor.validation.httpUrlRequired",
+  tcpAddressRequired: "processConfig.editor.validation.tcpAddressRequired",
+  execCommandRequired: "processConfig.editor.validation.execCommandRequired",
+  duplicateEnvironmentKey: "processConfig.editor.validation.duplicateEnvironmentKey",
+  duplicateDependency: "processConfig.editor.validation.duplicateDependency",
+  invalidInteger: "processConfig.editor.validation.invalidInteger",
+  int32OutOfRange: "processConfig.editor.validation.int32OutOfRange",
+  int64OutOfRange: "processConfig.editor.validation.int64OutOfRange",
+  invalidDecimal: "processConfig.editor.validation.invalidDecimal",
+  invalidOption: "processConfig.editor.validation.invalidOption",
+};
+
+function processConfigTranslationKeys(): string[] {
+  const schemaKeys = PROCESS_CONFIG_FIELDS.flatMap((field) => [
+    field.labelKey,
+    field.helpKey,
+    field.unitKey,
+    ...(field.options?.map((option) => option.labelKey) ?? []),
+  ]).filter((key): key is string => typeof key === "string");
+
+  return [...new Set([
+    ...PROCESS_CONFIG_SECTIONS.map((section) => section.labelKey),
+    ...schemaKeys,
+    "processConfig.editor.modeLabel",
+    "processConfig.editor.mode.form",
+    "processConfig.editor.mode.json",
+    "processConfig.editor.add.argument",
+    "processConfig.editor.add.healthArgument",
+    "processConfig.editor.add.environment",
+    "processConfig.editor.add.dependency",
+    "processConfig.editor.remove.argument",
+    "processConfig.editor.remove.healthArgument",
+    "processConfig.editor.remove.environment",
+    "processConfig.editor.remove.dependency",
+    "processConfig.editor.environmentKey",
+    "processConfig.editor.environmentValue",
+    "processConfig.editor.dependencyProcess",
+    "processConfig.editor.dependencyCondition",
+    "processConfig.editor.errorSummary",
+    ...Object.values(validationTranslationKeys),
+  ])].sort();
+}
 
 beforeEach(async () => {
   i18n = i18next.createInstance();
@@ -117,6 +171,29 @@ beforeEach(async () => {
         },
       },
     },
+  });
+});
+
+describe("ProcessConfigForm translations", () => {
+  it("resolves every editor key in English and Simplified Chinese", async () => {
+    const resourceI18n = i18next.createInstance();
+    await resourceI18n.init({
+      defaultNS: "common",
+      fallbackLng: false,
+      resources: {
+        en: { common: enCommon },
+        zh: { common: zhCommon },
+      },
+    });
+
+    for (const language of ["en", "zh"] as const) {
+      const translate = resourceI18n.getFixedT(language, "common") as unknown as (key: string) => string;
+      for (const key of processConfigTranslationKeys()) {
+        const translated = translate(key);
+        expect(translated, `${language} is missing ${key}`).not.toBe(key);
+        expect(translated.trim(), `${language} has an empty ${key}`).not.toBe("");
+      }
+    }
   });
 });
 

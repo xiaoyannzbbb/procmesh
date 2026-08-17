@@ -225,6 +225,128 @@
   "processConfig": {
     "loading": "Loading…",
     "conflictBanner": "409 Conflict — reload and retry",
+    "editor": {
+      "modeLabel": "Editor mode",
+      "mode": {
+        "form": "Form",
+        "json": "JSON"
+      },
+      "section": {
+        "identity": "Identity",
+        "execution": "Execution",
+        "runtime": "Runtime",
+        "restart": "Restart policy",
+        "health": "Health check",
+        "logsResources": "Logs and resources",
+        "environment": "Environment",
+        "dependencies": "Dependencies"
+      },
+      "field": {
+        "processId": "Process ID",
+        "name": "Name",
+        "ownerAgentId": "Owner agent",
+        "group": "Group",
+        "command": "Command",
+        "args": "Arguments",
+        "workingDirectory": "Working directory",
+        "runAsUser": "Run as user",
+        "environment": "Environment",
+        "instances": "Instances",
+        "autostart": "Autostart",
+        "stopSignal": "Stop signal",
+        "killSignal": "Kill signal",
+        "stopTimeoutMs": "Stop timeout",
+        "startupPriority": "Startup priority",
+        "restartMode": "Restart mode",
+        "maxRetries": "Maximum retries",
+        "retryWindowMs": "Retry window",
+        "initialMs": "Initial backoff",
+        "maxMs": "Maximum backoff",
+        "multiplier": "Backoff multiplier",
+        "healthType": "Health check type",
+        "url": "URL",
+        "method": "HTTP method",
+        "address": "Address",
+        "healthCommand": "Health check command",
+        "expectedStatus": "Expected HTTP status",
+        "healthArgs": "Health check arguments",
+        "initialDelayMs": "Initial delay",
+        "intervalMs": "Interval",
+        "timeoutMs": "Timeout",
+        "failureThreshold": "Failure threshold",
+        "successThreshold": "Success threshold",
+        "restartOnFailure": "Restart on failure",
+        "restartCooldownMs": "Restart cooldown",
+        "maxSize": "Maximum log size",
+        "maxFiles": "Maximum log files",
+        "maxAgeSeconds": "Maximum log age",
+        "compress": "Compress logs",
+        "cpuQuotaMillis": "CPU quota",
+        "memoryBytes": "Memory limit",
+        "openFiles": "Open file limit",
+        "dependencies": "Dependencies",
+        "latestRevision": "Latest revision"
+      },
+      "unit": {
+        "ms": "milliseconds",
+        "seconds": "seconds",
+        "bytes": "bytes",
+        "millis": "millis"
+      },
+      "option": {
+        "restart": {
+          "never": "Never",
+          "always": "Always",
+          "on-failure": "On failure"
+        },
+        "health": {
+          "alive": "Alive",
+          "http": "HTTP",
+          "tcp": "TCP",
+          "exec": "Exec"
+        },
+        "dependency": {
+          "STARTED": "Started",
+          "HEALTHY": "Healthy"
+        }
+      },
+      "add": {
+        "argument": "Add argument",
+        "healthArgument": "Add health argument",
+        "environment": "Add environment variable",
+        "dependency": "Add dependency"
+      },
+      "remove": {
+        "argument": "Remove argument {{number}}",
+        "healthArgument": "Remove health argument {{number}}",
+        "environment": "Remove environment variable {{number}}",
+        "dependency": "Remove dependency {{number}}"
+      },
+      "environmentKey": "Key",
+      "environmentValue": "Value",
+      "dependencyProcess": "Process name",
+      "dependencyCondition": "Condition",
+      "errorSummary": "Fix the following fields",
+      "validation": {
+        "invalidName": "Use 1–63 characters, starting with a letter; only letters, numbers, underscores, and hyphens are allowed.",
+        "invalidGroup": "Use 1–64 letters, numbers, periods, underscores, or hyphens for the group.",
+        "required": "Enter a value for this required field.",
+        "minimumOne": "Enter an integer greater than or equal to 1.",
+        "minimumZero": "Enter an integer greater than or equal to 0.",
+        "retryWindowRequired": "Enter a retry window greater than 0 when maximum retries is greater than 0.",
+        "multiplierMinimum": "Enter 0 to disable backoff growth, or a multiplier greater than or equal to 1.",
+        "httpUrlRequired": "Enter an HTTP or HTTPS URL for an HTTP health check.",
+        "tcpAddressRequired": "Enter a host and port for a TCP health check.",
+        "execCommandRequired": "Enter a command for an exec health check.",
+        "duplicateEnvironmentKey": "Use each environment variable key only once.",
+        "duplicateDependency": "Use each dependency process name only once.",
+        "invalidInteger": "Enter a whole number using base-10 digits.",
+        "int32OutOfRange": "Enter an integer from -2,147,483,648 to 2,147,483,647.",
+        "int64OutOfRange": "Enter an integer from -9,223,372,036,854,775,808 to 9,223,372,036,854,775,807.",
+        "invalidDecimal": "Enter a finite decimal number.",
+        "invalidOption": "Select one of the available options."
+      }
+    },
     "config": {
       "title": "Config",
       "reload": "Reload",

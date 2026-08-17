@@ -24,8 +24,7 @@ import {
 } from "./processConfigForm";
 import { formatRemoteError } from "./processView";
 
-const { t: typedTranslate } = useI18n();
-const t = typedTranslate as unknown as (key: string, options?: Record<string, unknown>) => string;
+const { t } = useI18n();
 
 const CONFLICT_BANNER = computed(() => t("processConfig.conflictBanner"));
 const SECTION_IDS = {
