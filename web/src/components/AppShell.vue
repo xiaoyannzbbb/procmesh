@@ -97,7 +97,7 @@ async function onLogout(): Promise<void> {
     <aside class="sidebar" :class="{ collapsed: isCollapsed }">
       <div class="sidebar-header">
         <div class="brand">
-          <span class="brand-full">ProcMesh</span>
+          <span class="brand-full">{{ t("app.name") }}</span>
           <span class="brand-short">PM</span>
         </div>
         <button

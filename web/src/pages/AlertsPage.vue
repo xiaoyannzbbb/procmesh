@@ -390,7 +390,7 @@ async function onSavePolicy(): Promise<void> {
                 <span v-else>{{ ch.name }}</span>
               </td>
               <td>{{ ch.type }}</td>
-              <td>{{ ch.enabled ? "true" : "false" }}</td>
+              <td>{{ t(ch.enabled ? "alert.enabled" : "alert.disabled") }}</td>
               <td class="mono config-cell">{{ ch.configJson }}</td>
               <td v-if="canManage">
                 <button

@@ -27,6 +27,7 @@ const alertI18n = {
   lastUpdated: "Last updated",
   name: "Name",
   enabled: "Enabled",
+  disabled: "Disabled",
   config: "Config",
   save: "Save",
   delete: "Delete",
@@ -182,6 +183,21 @@ describe("AlertsPage", () => {
     expect(wrapper.find('[data-action="save-channel"]').exists()).toBe(false);
     expect(wrapper.find('[data-action="delete-channel"]').exists()).toBe(false);
     expect(wrapper.find('[data-action="save-policy"]').exists()).toBe(false);
+  });
+
+  it("shows localized channel enabled states", async () => {
+    const { wrapper } = await mountAlerts({
+      channels: [
+        { channelId: "c1", type: "WEBHOOK", name: "on", enabled: true, configJson: "{}" },
+        { channelId: "c2", type: "WEBHOOK", name: "off", enabled: false, configJson: "{}" },
+      ],
+    });
+    const rows = wrapper.findAll("table")[1].findAll("tbody tr");
+
+    expect(rows[0].text()).toContain("Enabled");
+    expect(rows[0].text()).not.toContain("true");
+    expect(rows[1].text()).toContain("Disabled");
+    expect(rows[1].text()).not.toContain("false");
   });
 
   it("shows save when session has alert.manage", async () => {

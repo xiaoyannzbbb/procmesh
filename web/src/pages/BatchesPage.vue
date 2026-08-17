@@ -193,7 +193,9 @@ const replayMut = useMutation({
 const exportMut = useMutation({
   mutationFn: () => client.exportBatch({ batchId: batchId.value, format: "json" }),
   onSuccess: (resp) => {
-    const blob = new Blob([resp.content], { type: resp.contentType || "application/json" });
+    const blob = new Blob([new Uint8Array(resp.content)], {
+      type: resp.contentType || "application/json",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;

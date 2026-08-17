@@ -4,11 +4,12 @@ import tsParser from '@typescript-eslint/parser'
 import vuePlugin from 'eslint-plugin-vue'
 import vueParser from 'vue-eslint-parser'
 import i18nextPlugin from 'eslint-plugin-i18next'
+import globals from 'globals'
 
 export default [
   js.configs.recommended,
   {
-    ignores: ['dist', 'node_modules', '.vite']
+    ignores: ['dist', 'node_modules', '.vite', 'src/gen']
   },
   {
     files: ['src/**/*.{js,ts,vue}'],
@@ -20,23 +21,10 @@ export default [
         sourceType: 'module',
       },
       globals: {
-        console: 'readonly',
-        document: 'readonly',
-        window: 'readonly',
-        localStorage: 'readonly',
-        sessionStorage: 'readonly',
-        fetch: 'readonly',
-        HTMLElement: 'readonly',
-        getComputedStyle: 'readonly',
+        ...globals.browser,
+        ...globals.node,
         HeadersInit: 'readonly',
-        performance: 'readonly',
-        process: 'readonly',
-        crypto: 'readonly',
-        AbortController: 'readonly',
-        TextDecoder: 'readonly',
         BlobPart: 'readonly',
-        Blob: 'readonly',
-        URL: 'readonly',
       }
     },
     plugins: {
@@ -46,42 +34,66 @@ export default [
     },
     rules: {
       ...tsPlugin.configs.recommended.rules,
+    }
+  },
+  {
+    files: ['src/**/*.vue'],
+    rules: {
       'i18next/no-literal-string': [
-        'warn',
+        'error',
         {
-          mode: 'all',
-          'should-validate-template': true,
-          ignore: [
-            '^[A-Z_]+$', // Constants
-            '^[0-9]+$',  // Numbers
-            '^\\s*$',    // Whitespace
-          ],
-          ignoreAttribute: [
-            'data-testid',
-            'type',
-            'role',
-            'aria-label',
-            'placeholder',
-            'autocomplete',
-            'name',
-            'class',
-            'style',
-            'href',
-            'src',
-            'alt',
-            'width',
-            'height',
-          ],
-          ignoreCallee: [
-            'console.*',
-            't',
-            'tError',
-          ],
-          ignoreProperty: [
-            'path',
-            'component',
-            'meta',
-          ],
+          framework: 'vue',
+          mode: 'vue-template-only',
+          'should-validate-template': false,
+          words: {
+            exclude: [
+              /^[A-Z_-]+$/,
+              /^(?:24h|7d|overview|config|logs|—|–|=|\/|×|→|,\s*)$/,
+            ],
+          },
+          'jsx-attributes': {
+            exclude: [
+              'class',
+              'style',
+              'type',
+              'role',
+              'id',
+              'data-testid',
+              'data-action',
+              'aria-hidden',
+              'tabindex',
+              'autocomplete',
+              'name',
+              'href',
+              'src',
+              'to',
+              'value',
+              'kind',
+              'unit',
+              'spellcheck',
+              'width',
+              'height',
+              'rows',
+              'min',
+              'max',
+              'colspan',
+              'fill',
+              'stroke',
+              'x1',
+              'y1',
+              'x2',
+              'y2',
+              'r',
+              'offset',
+              'stop-opacity',
+              'stroke-width',
+              'stop-color',
+              'stroke-linejoin',
+              'stroke-linecap',
+              'vector-effect',
+              'preserveAspectRatio',
+            ],
+          },
         },
       ],
     }

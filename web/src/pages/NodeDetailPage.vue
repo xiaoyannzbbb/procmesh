@@ -144,9 +144,9 @@ async function onRemove(): Promise<void> {
           <div>
             <dt>{{ t("nodeDetail.node.address") }}</dt>
             <dd>
-              <div>api {{ node.apiAddress || "—" }}</div>
-              <div>rpc {{ node.rpcAddress || "—" }}</div>
-              <div>gossip {{ node.gossipAddress || "—" }}</div>
+              <div>{{ t("nodeDetail.node.api") }} {{ node.apiAddress || "—" }}</div>
+              <div>{{ t("nodeDetail.node.rpc") }} {{ node.rpcAddress || "—" }}</div>
+              <div>{{ t("nodeDetail.node.gossip") }} {{ node.gossipAddress || "—" }}</div>
             </dd>
           </div>
           <div>

@@ -15,6 +15,20 @@ describe('i18n type safety', () => {
     expect(typeContent).toContain('interface CustomTypeOptions')
   })
 
+  it('keeps generated common types in sync with translation keys', () => {
+    const commonEn = JSON.parse(
+      readFileSync(join(process.cwd(), 'public/locales/en/common.json'), 'utf-8'),
+    ) as Record<string, unknown>
+    const typeContent = readFileSync(
+      join(process.cwd(), 'src/types/i18n.d.ts'),
+      'utf-8',
+    )
+
+    for (const key of leafKeys(commonEn)) {
+      expect(typeContent).toContain(`'${key}': string`)
+    }
+  })
+
   it('all translation namespaces have matching key structures', () => {
     const namespaces = ['common', 'errors', 'process', 'audit']
     const languages = ['en', 'zh']
@@ -67,3 +81,13 @@ describe('i18n type safety', () => {
     expect(commonZh).not.toBeNull()
   })
 })
+
+function leafKeys(value: Record<string, unknown>, prefix = ''): string[] {
+  return Object.entries(value).flatMap(([key, child]) => {
+    const fullKey = prefix ? `${prefix}.${key}` : key
+    if (typeof child === 'object' && child !== null) {
+      return leafKeys(child as Record<string, unknown>, fullKey)
+    }
+    return [fullKey]
+  })
+}
