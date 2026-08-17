@@ -147,7 +147,8 @@ async function onLogout(): Promise<void> {
 <style scoped>
 .app-shell {
   display: flex;
-  min-height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
   background: var(--color-bg);
 }
 
@@ -156,6 +157,7 @@ async function onLogout(): Promise<void> {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
+  min-height: 0;
   border-right: 1px solid var(--color-border);
   background: var(--color-sidebar);
   transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -363,6 +365,8 @@ async function onLogout(): Promise<void> {
 .content {
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .content-inner {

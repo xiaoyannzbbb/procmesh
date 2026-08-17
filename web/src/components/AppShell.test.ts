@@ -3,6 +3,7 @@ import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, h } from "vue";
 import AppShell from "./AppShell.vue";
+import shellSource from "./AppShell.vue?raw";
 import { clearSession, session, type Me } from "../lib/session";
 import { I18NextVue } from "../lib/i18n";
 import i18next from 'i18next';
@@ -184,5 +185,10 @@ describe("AppShell", () => {
     expect(wrapper.text()).toContain('节点');
     expect(wrapper.text()).toContain('进程');
     expect(wrapper.text()).toContain('退出登录');
+  });
+
+  it("locks the shell to the viewport so logout stays on screen", () => {
+    expect(shellSource).toMatch(/\.app-shell\s*\{[^}]*height:\s*100dvh/s);
+    expect(shellSource).toMatch(/\.content\s*\{[^}]*overflow-y:\s*auto/s);
   });
 });
