@@ -284,6 +284,14 @@ func (f *blockingAuditForwarder) Metrics(context.Context, Route) (procmeshv1conn
 	return nil, errors.New("unused")
 }
 
+func (f *blockingAuditForwarder) Alert(ctx context.Context, rt Route) (procmeshv1connect.AlertServiceClient, error) {
+	_, err := f.Audit(ctx, rt)
+	if err != nil {
+		return nil, err
+	}
+	return nil, errors.New("unavailable")
+}
+
 func (f *blockingAuditForwarder) Audit(ctx context.Context, _ Route) (procmeshv1connect.AuditServiceClient, error) {
 	if f.started != nil {
 		select {

@@ -115,6 +115,10 @@ func hopRPCPerm(procedure string) (perm string, write bool, ok bool) {
 		return auth.PermProcessLogsDownload, false, true
 	case "ListAudit":
 		return auth.PermAuditRead, false, true
+	case "ListAlerts", "GetAlert", "ListAlertChannels", "GetAlertPolicy":
+		return auth.PermAlertRead, false, true
+	case "PutAlertChannel", "DeleteAlertChannel", "PutAlertPolicy":
+		return auth.PermAlertManage, true, true
 	case "GetAgentMetrics", "GetNodeHistory":
 		return auth.PermClusterRead, false, true
 	case "GetProcessMetrics", "GetProcessHistory":

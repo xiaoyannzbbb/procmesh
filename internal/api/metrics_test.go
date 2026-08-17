@@ -111,6 +111,7 @@ func TestMetrics_IncludesBatchGauges(t *testing.T) {
 		t.Fatalf("metrics %d %q", rec.Code, rec.Body.String())
 	}
 	assertBatchMetricsPresent(t, rec.Body.String())
+	assertAlertSendMetricsPresent(t, rec.Body.String())
 }
 
 func TestMetrics_SampleRowsGauge(t *testing.T) {
@@ -143,5 +144,18 @@ func assertBatchMetricsPresent(t *testing.T, body string) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("missing %s:\n%s", want, body)
 		}
+	}
+}
+
+func assertAlertSendMetricsPresent(t *testing.T, body string) {
+	t.Helper()
+	if !strings.Contains(body, "# HELP procmesh_alert_send_total Alert outbound send attempts.") {
+		t.Fatalf("missing HELP procmesh_alert_send_total:\n%s", body)
+	}
+	if !strings.Contains(body, "# TYPE procmesh_alert_send_total counter") {
+		t.Fatalf("missing TYPE procmesh_alert_send_total:\n%s", body)
+	}
+	if !strings.Contains(body, `procmesh_alert_send_total{type="WEBHOOK",result="ok"}`) {
+		t.Fatalf("missing WEBHOOK ok series:\n%s", body)
 	}
 }

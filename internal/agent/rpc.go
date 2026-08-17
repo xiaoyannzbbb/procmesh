@@ -212,6 +212,11 @@ func (r *rpcRuntime) localHandler() http.Handler {
 		Store:   r.st,
 	}, opts...)
 	mux.Handle(mp, mh)
+	alp, alh := procmeshv1connect.NewAlertServiceHandler(&api.AlertAPI{
+		Store: r.st, Auth: r.auth,
+		LocalOnly: true, LocalID: r.nodeID,
+	}, opts...)
+	mux.Handle(alp, alh)
 	return mux
 }
 
@@ -285,6 +290,7 @@ const (
 	logHopTimeout     = time.Duration(0)
 	auditHopTimeout   = 2 * time.Second
 	metricsHopTimeout = rpc.UnaryTimeout
+	alertHopTimeout   = 2 * time.Second
 )
 
 func (f *agentForwarder) dial(rt api.Route, timeout time.Duration) (*http.Client, string, error) {
@@ -337,4 +343,12 @@ func (f *agentForwarder) Metrics(_ context.Context, rt api.Route) (procmeshv1con
 		return nil, err
 	}
 	return rpc.NewMetricsClient(hc, base), nil
+}
+
+func (f *agentForwarder) Alert(_ context.Context, rt api.Route) (procmeshv1connect.AlertServiceClient, error) {
+	hc, base, err := f.dial(rt, alertHopTimeout)
+	if err != nil {
+		return nil, err
+	}
+	return rpc.NewAlertClient(hc, base), nil
 }

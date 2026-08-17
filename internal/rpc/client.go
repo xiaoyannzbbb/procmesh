@@ -67,6 +67,11 @@ func NewMetricsClient(hc *http.Client, base string) procmeshv1connect.MetricsSer
 	return procmeshv1connect.NewMetricsServiceClient(hc, base)
 }
 
+// NewAlertClient returns an AlertService client over the given HTTP client and base URL.
+func NewAlertClient(hc *http.Client, base string) procmeshv1connect.AlertServiceClient {
+	return procmeshv1connect.NewAlertServiceClient(hc, base)
+}
+
 func baseURL(addr string) string {
 	if strings.HasPrefix(addr, "https://") {
 		return addr

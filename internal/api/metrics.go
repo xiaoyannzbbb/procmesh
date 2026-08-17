@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"github.com/qleelulu/procmesh/internal/alert"
 	"github.com/qleelulu/procmesh/internal/batch"
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/store"
@@ -54,6 +55,11 @@ func (f *countingForwarder) Audit(ctx context.Context, rt Route) (procmeshv1conn
 func (f *countingForwarder) Metrics(ctx context.Context, rt Route) (procmeshv1connect.MetricsServiceClient, error) {
 	f.n.Add(1)
 	return f.inner.Metrics(ctx, rt)
+}
+
+func (f *countingForwarder) Alert(ctx context.Context, rt Route) (procmeshv1connect.AlertServiceClient, error) {
+	f.n.Add(1)
+	return f.inner.Alert(ctx, rt)
 }
 
 func wrapForwarder(f Forwarder, n *atomic.Uint64) Forwarder {
@@ -115,7 +121,7 @@ func collectBatchMetrics(eng *batch.Engine) batchMetricSnapshot {
 }
 
 func renderMetrics(uptimeSeconds float64, running, members, alive int, rpcForward uint64, quorum int, batchStats batchMetricSnapshot, sampleRows int64) []byte {
-	return []byte(fmt.Sprintf(
+	body := fmt.Sprintf(
 		"# HELP procmesh_agent_uptime Agent uptime in seconds.\n"+
 			"# TYPE procmesh_agent_uptime gauge\n"+
 			"procmesh_agent_uptime %g\n"+
@@ -153,7 +159,31 @@ func renderMetrics(uptimeSeconds float64, running, members, alive int, rpcForwar
 		batchStats.Running, batchStats.Success, batchStats.Failed, batchStats.Timeout,
 		batchStats.Denied, batchStats.Conflict, batchStats.Unavailable, batchStats.Invalid,
 		sampleRows,
-	))
+	)
+	return []byte(body + renderAlertSendMetrics())
+}
+
+func renderAlertSendMetrics() string {
+	counts := map[string]map[string]uint64{}
+	for _, s := range alert.SendTotals() {
+		if counts[s.Type] == nil {
+			counts[s.Type] = map[string]uint64{}
+		}
+		counts[s.Type][s.Result] = s.N
+	}
+	var b []byte
+	b = append(b, "# HELP procmesh_alert_send_total Alert outbound send attempts.\n"...)
+	b = append(b, "# TYPE procmesh_alert_send_total counter\n"...)
+	for _, typ := range []string{"WEBHOOK", "EMAIL", "WECOM", "DINGTALK", "SLACK"} {
+		for _, result := range []string{"ok", "error"} {
+			var n uint64
+			if counts[typ] != nil {
+				n = counts[typ][result]
+			}
+			b = append(b, fmt.Sprintf("procmesh_alert_send_total{type=%q,result=%q} %d\n", typ, result, n)...)
+		}
+	}
+	return string(b)
 }
 
 func countMetricSampleRows(st RevisionStore) int64 {

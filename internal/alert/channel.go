@@ -88,6 +88,18 @@ func (e httpStatusError) Error() string {
 }
 
 func (s *ChannelSender) Send(ctx context.Context, ch control.AlertChannel, rec store.AlertRecord) error {
+	err := s.doSend(ctx, ch, rec)
+	if ch.Enabled && ch.Type != "" && ch.Type != "WEB" {
+		result := "ok"
+		if err != nil {
+			result = "error"
+		}
+		RecordSend(ch.Type, result)
+	}
+	return err
+}
+
+func (s *ChannelSender) doSend(ctx context.Context, ch control.AlertChannel, rec store.AlertRecord) error {
 	if !ch.Enabled {
 		return nil
 	}

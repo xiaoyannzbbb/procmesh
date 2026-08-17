@@ -137,6 +137,8 @@ func NewServer(opts Options) (*Server, error) {
 	mountConnect(engine, gp, gh)
 	adp, adh := procmeshv1connect.NewAuditServiceHandler(newAuditAPI(opts), intercept)
 	mountConnect(engine, adp, adh)
+	alp, alh := procmeshv1connect.NewAlertServiceHandler(newAlertAPI(opts), intercept)
+	mountConnect(engine, alp, alh)
 	var histStore *store.Store
 	if st, ok := opts.Store.(*store.Store); ok {
 		histStore = st
@@ -336,6 +338,29 @@ func (s *Server) isDegraded() bool {
 
 func mountConnect(engine *gin.Engine, path string, h http.Handler) {
 	engine.Any(strings.TrimSuffix(path, "/")+"/*path", gin.WrapH(h))
+}
+
+func newAlertAPI(opts Options) *AlertAPI {
+	var st *store.Store
+	if s, ok := opts.Store.(*store.Store); ok {
+		st = s
+	}
+	members := opts.Members
+	if members == nil && opts.Router != nil {
+		members = opts.Router.Members
+	}
+	if members == nil {
+		members = opts.Cluster.members
+	}
+	return &AlertAPI{
+		Store:     st,
+		Auth:      opts.Auth,
+		LocalOnly: opts.LocalOnly,
+		LocalID:   opts.LocalID,
+		Router:    opts.Router,
+		Forward:   opts.Forward,
+		Members:   members,
+	}
 }
 
 func newAuditAPI(opts Options) *AuditAPI {

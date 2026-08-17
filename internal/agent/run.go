@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/qleelulu/procmesh/internal/agentcfg"
+	"github.com/qleelulu/procmesh/internal/alert"
 	"github.com/qleelulu/procmesh/internal/api"
 	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/batch"
@@ -498,6 +499,8 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		}()
 	}
 
+	startAlertScanner(ctx, opt, mgr, st, mesh, collector, authSvc, rt, clusterDeps)
+
 	errCh := make(chan error, 1)
 	go func() {
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
@@ -612,4 +615,157 @@ func lookupUser(name string) error {
 		return errcode.E(errcode.INVALID, "run_as_user")
 	}
 	return nil
+}
+
+const alertScanInterval = 15 * time.Second
+
+func startAlertScanner(ctx context.Context, opt Options, mgr *process.Manager, st *store.Store, mesh *cluster.Mesh, collector *metrics.Collector, authSvc *auth.Service, rt *rpcRuntime, clusterDeps api.ClusterDeps) {
+	if st == nil {
+		return
+	}
+	eng := &alert.Engine{
+		Store:  st,
+		NodeID: clusterDeps.NodeID,
+		NewID:  newBatchID,
+		Policy: func() control.AlertPolicy {
+			if authSvc == nil || authSvc.Store() == nil {
+				return control.DefaultAlertPolicy()
+			}
+			return authSvc.Store().View().AlertPolicy
+		},
+		Channels: func() []control.AlertChannel {
+			if authSvc == nil || authSvc.Store() == nil {
+				return nil
+			}
+			m := authSvc.Store().View().AlertChannels
+			out := make([]control.AlertChannel, 0, len(m))
+			for _, ch := range m {
+				out = append(out, ch)
+			}
+			return out
+		},
+		Sender: &alert.ChannelSender{},
+	}
+	sc := &alert.Scanner{
+		Engine:    eng,
+		NodeID:    clusterDeps.NodeID,
+		ListProcs: func() []alert.ProcessSnap { return listAlertProcessSnaps(mgr) },
+		Samples:   st.ListMetricSamples,
+		Snapshot:  func() alert.NodeSample { return alertNodeSample(collector) },
+		Degraded:  rt.degradedFn(),
+	}
+	go func() {
+		ticker := time.NewTicker(alertScanInterval)
+		defer ticker.Stop()
+		scan := func() {
+			if err := sc.ScanLocal(ctx); err != nil && ctx.Err() == nil {
+				opt.Logger.Warn("alert scan local failed", "error", err)
+			}
+			if err := sc.ScanCluster(ctx, buildAlertClusterView(st, mesh, rt, clusterDeps)); err != nil && ctx.Err() == nil {
+				opt.Logger.Warn("alert scan cluster failed", "error", err)
+			}
+		}
+		scan()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				scan()
+			}
+		}
+	}()
+}
+
+func listAlertProcessSnaps(mgr *process.Manager) []alert.ProcessSnap {
+	if mgr == nil {
+		return nil
+	}
+	specs, err := mgr.ListSpecs(context.Background())
+	if err != nil {
+		return nil
+	}
+	var out []alert.ProcessSnap
+	for _, spec := range specs {
+		insts, err := mgr.ListInstances(context.Background(), spec.ProcessID)
+		if err != nil || len(insts) == 0 {
+			continue
+		}
+		chosen := insts[0]
+		for _, inst := range insts {
+			if inst.Ordinal == 0 {
+				chosen = inst
+				break
+			}
+		}
+		for _, inst := range insts {
+			if instanceFiresAlert(inst) {
+				chosen = inst
+				break
+			}
+		}
+		out = append(out, alert.ProcessSnap{
+			ProcessID: spec.ProcessID,
+			Desired:   string(chosen.Desired),
+			Observed:  string(chosen.Observed),
+			Health:    string(chosen.Health),
+		})
+	}
+	return out
+}
+
+func instanceFiresAlert(inst process.Instance) bool {
+	if inst.Observed == process.ObservedFatal {
+		return true
+	}
+	if inst.Desired != process.DesiredRunning {
+		return false
+	}
+	switch inst.Observed {
+	case process.ObservedExited, process.ObservedBackoff:
+		return true
+	case process.ObservedRunning:
+		return inst.Health == process.HealthUnhealthy
+	default:
+		return false
+	}
+}
+
+func alertNodeSample(collector *metrics.Collector) alert.NodeSample {
+	if collector == nil {
+		return alert.NodeSample{}
+	}
+	nm, err := collector.NodeMetrics()
+	if err != nil || nm == nil {
+		return alert.NodeSample{}
+	}
+	return alert.NodeSample{
+		CPUPercent:       nm.CPUPercent,
+		MemoryPercent:    nm.MemoryPercent,
+		DiskPercent:      nm.DiskPercent,
+		MemoryTotalBytes: int64(nm.MemoryTotal),
+		HaveSnapshot:     true,
+	}
+}
+
+func buildAlertClusterView(st *store.Store, mesh *cluster.Mesh, rt *rpcRuntime, clusterDeps api.ClusterDeps) alert.ClusterView {
+	view := alert.ClusterView{}
+	if st != nil {
+		if id, err := st.GetClusterID(context.Background()); err == nil {
+			view.ClusterID = id
+		}
+	}
+	if n := rt.control(); n != nil {
+		view.Leader = n.IsLeader()
+		view.Voter = n.IsVoter()
+		view.HasQuorum = n.HasQuorum()
+		view.LeaderAddr = n.LeaderAddr()
+	}
+	if mesh != nil {
+		view.Members = mesh.Members()
+	}
+	if unix := api.CertNotAfterUnix(clusterDeps.Dir, "agent.crt"); unix > 0 {
+		view.CertNotAfter = map[string]time.Time{clusterDeps.NodeID: time.Unix(unix, 0)}
+	}
+	return view
 }
