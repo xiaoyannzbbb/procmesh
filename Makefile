@@ -1,4 +1,4 @@
-.PHONY: test proto proto-ts web test-e2e bin
+.PHONY: test proto proto-ts web web-dev test-e2e bin
 test:
 	go test ./...
 test-e2e:
@@ -17,6 +17,8 @@ proto-ts:
 		--es_out=web/src/gen --es_opt=target=ts \
 		--proto_path=proto \
 		proto/procmesh/v1/api.proto
+web-dev:
+	cd web && npm ci && npm run dev
 web:
 	cd web && npm ci && npm run build
 bin:
