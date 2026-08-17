@@ -95,10 +95,12 @@ func (s *AlertAPI) aggregateRemotes(ctx context.Context, req *connect.Request[pr
 			continue
 		}
 		switch m.State {
-		case cluster.StateFailed, cluster.StateSuspect:
-			out = append(out, unavailableAlertEntry(m, now))
 		case cluster.StateAlive:
 			alive = append(alive, m)
+		default:
+			// LEFT/FAILED/SUSPECT/REMOVED: still emit STALE so a departed
+			// peer cannot look like an empty inbox.
+			out = append(out, unavailableAlertEntry(m, now))
 		}
 	}
 	for _, m := range alive {

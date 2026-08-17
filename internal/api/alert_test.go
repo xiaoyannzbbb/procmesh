@@ -133,6 +133,40 @@ func TestAlertAPI_ListAlertsLocalLive(t *testing.T) {
 	}
 }
 
+func TestAlertAPI_LeftMemberStalePlaceholder(t *testing.T) {
+	now := time.Date(2026, 8, 16, 13, 0, 0, 0, time.UTC)
+	api := &AlertAPI{
+		LocalID: "node-a",
+		Now:     func() time.Time { return now },
+		Members: func() []cluster.NodeSummary {
+			return []cluster.NodeSummary{
+				{NodeID: "node-a", State: cluster.StateAlive, LastUpdatedUnixMs: now.UnixMilli()},
+				{NodeID: "node-c", State: cluster.StateLeft, LastUpdatedUnixMs: now.UnixMilli()},
+			}
+		},
+	}
+	resp, err := api.ListAlerts(context.Background(), connect.NewRequest(&procmeshv1.ListAlertsRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Msg.GetEntries()) == 0 {
+		t.Fatal("LEFT peer must not look like an empty inbox")
+	}
+	var placeholder *procmeshv1.AlertEntry
+	for _, e := range resp.Msg.GetEntries() {
+		if e.GetSourceNode() == "node-c" {
+			placeholder = e
+			break
+		}
+	}
+	if placeholder == nil {
+		t.Fatalf("missing node-c entry: %+v", resp.Msg.GetEntries())
+	}
+	if placeholder.GetFreshness() != freshness.STALE {
+		t.Fatalf("freshness=%q want STALE", placeholder.GetFreshness())
+	}
+}
+
 func TestAlertAPI_AliveHopFailStalePlaceholder(t *testing.T) {
 	now := time.Date(2026, 8, 16, 13, 0, 0, 0, time.UTC)
 	api := &AlertAPI{

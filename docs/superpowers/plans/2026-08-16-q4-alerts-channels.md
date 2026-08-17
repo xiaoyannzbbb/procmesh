@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Status:** 已完成
+
 **Goal:** 进程/本机告警由 Owner 写入本地 inbox 并外发；集群级告警仅当时 Raft Leader 外发；Web + Webhook + Email + 企业微信 + 钉钉 + Slack 可测通；Alerts 页与 Overview Recent Alerts 遵守 P5 新鲜度合同（STALE 不得画成「无告警」）。
 
 **Architecture:** `alert_channels` / `alert_policy` 进 Raft（与 AgentGroup 同形）。Alert 实例只存在发送者 SQLite，按 fingerprint 复用一行。`internal/alert` 判定 + 去重 + `Send`；`process` 不得依赖 `alert`。`ListAlerts` 本机 ∪ 对 ALIVE 节点按需 RPC，失败标 STALE。WEB 通道无网络 I/O。
@@ -1281,21 +1283,21 @@ func TestQ4_ListAlertsMarksUnreachableSTALE(t *testing.T) {
 
 更新 `docs/superpowers/plans/2026-08-16-v1.1.md`：Q4 行改为 **已完成** 并链到本文件。
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 按上。
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/agent -run TestQ4_ -count=1 -timeout 180s`
 
 Expected: FAIL
 
-- [ ] **Step 3: 补齐接线缺口并 `make web`**
+- [x] **Step 3: 补齐接线缺口并 `make web`**
 
 若扫描未挂到 run loop、或 CLI 未注册，在本任务修到验收绿。不要趁机做 Q5。
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 ```bash
 go test ./internal/alert ./internal/store ./internal/control ./internal/auth ./internal/api ./internal/cli ./internal/agent -count=1 -timeout 180s
