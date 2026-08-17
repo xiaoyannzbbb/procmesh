@@ -77,7 +77,8 @@ export type ProcessConfigIssueCode =
   | "invalidInteger"
   | "int32OutOfRange"
   | "int64OutOfRange"
-  | "invalidDecimal";
+  | "invalidDecimal"
+  | "invalidOption";
 
 export type ProcessConfigIssue = {
   path: string;
@@ -90,6 +91,9 @@ const INT64_MIN = -9_223_372_036_854_775_808n;
 const INT64_MAX = 9_223_372_036_854_775_807n;
 const INTEGER_TEXT = /^-?\d+$/;
 const DECIMAL_TEXT = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+const RESTART_MODES = new Set(["", "never", "always", "on-failure"]);
+const HEALTH_TYPES = new Set(["", "alive", "http", "tcp", "exec"]);
+const DEPENDENCY_CONDITIONS = new Set(["", "STARTED", "HEALTHY"]);
 
 function decimal(value: bigint | number): string {
   return String(value);
@@ -195,13 +199,67 @@ export function specToProcessConfigForm(spec: ProcessSpec): ProcessConfigFormSta
   };
 }
 
+function hasEditedNumber(value: string): boolean {
+  return value !== "0";
+}
+
+function shouldIncludeRestartBackoff(form: ProcessConfigFormState): boolean {
+  return form.hasRestartBackoff
+    || hasEditedNumber(form.restart.backoff.initialMs)
+    || hasEditedNumber(form.restart.backoff.maxMs)
+    || hasEditedNumber(form.restart.backoff.multiplier);
+}
+
+function shouldIncludeRestart(form: ProcessConfigFormState): boolean {
+  return form.hasRestart
+    || form.restart.mode !== ""
+    || hasEditedNumber(form.restart.maxRetries)
+    || hasEditedNumber(form.restart.retryWindowMs)
+    || shouldIncludeRestartBackoff(form);
+}
+
+function shouldIncludeHealth(form: ProcessConfigFormState): boolean {
+  const health = form.health;
+  return form.hasHealth
+    || health.type !== ""
+    || health.url !== ""
+    || health.method !== ""
+    || health.address !== ""
+    || health.command !== ""
+    || health.args.length > 0
+    || hasEditedNumber(health.expectedStatus)
+    || hasEditedNumber(health.initialDelayMs)
+    || hasEditedNumber(health.intervalMs)
+    || hasEditedNumber(health.timeoutMs)
+    || hasEditedNumber(health.failureThreshold)
+    || hasEditedNumber(health.successThreshold)
+    || health.restartOnFailure
+    || hasEditedNumber(health.restartCooldownMs);
+}
+
+function shouldIncludeLog(form: ProcessConfigFormState): boolean {
+  return form.hasLog
+    || hasEditedNumber(form.log.maxSize)
+    || hasEditedNumber(form.log.maxFiles)
+    || hasEditedNumber(form.log.maxAgeSeconds)
+    || form.log.compress;
+}
+
+function shouldIncludeResources(form: ProcessConfigFormState): boolean {
+  return form.hasResources
+    || hasEditedNumber(form.resources.cpuQuotaMillis)
+    || hasEditedNumber(form.resources.memoryBytes)
+    || hasEditedNumber(form.resources.openFiles);
+}
+
 export function processConfigFormToSpec(form: ProcessConfigFormState): ProcessSpec {
-  const restart = form.hasRestart
+  const includeRestartBackoff = shouldIncludeRestartBackoff(form);
+  const restart = shouldIncludeRestart(form)
     ? create(RestartPolicySchema, {
         mode: form.restart.mode,
         maxRetries: parseInt32(form.restart.maxRetries, "restart.maxRetries"),
         retryWindowMs: parseInt64(form.restart.retryWindowMs, "restart.retryWindowMs"),
-        backoff: form.hasRestartBackoff
+        backoff: includeRestartBackoff
           ? create(BackoffSchema, {
               initialMs: parseInt64(form.restart.backoff.initialMs, "restart.backoff.initialMs"),
               maxMs: parseInt64(form.restart.backoff.maxMs, "restart.backoff.maxMs"),
@@ -210,7 +268,7 @@ export function processConfigFormToSpec(form: ProcessConfigFormState): ProcessSp
           : undefined,
       })
     : undefined;
-  const health = form.hasHealth
+  const health = shouldIncludeHealth(form)
     ? create(HealthCheckSchema, {
         type: form.health.type,
         url: form.health.url,
@@ -228,7 +286,7 @@ export function processConfigFormToSpec(form: ProcessConfigFormState): ProcessSp
         restartCooldownMs: parseInt64(form.health.restartCooldownMs, "health.restartCooldownMs"),
       })
     : undefined;
-  const log = form.hasLog
+  const log = shouldIncludeLog(form)
     ? create(LogPolicySchema, {
         maxSize: parseInt64(form.log.maxSize, "log.maxSize"),
         maxFiles: parseInt32(form.log.maxFiles, "log.maxFiles"),
@@ -236,7 +294,7 @@ export function processConfigFormToSpec(form: ProcessConfigFormState): ProcessSp
         compress: form.log.compress,
       })
     : undefined;
-  const resources = form.hasResources
+  const resources = shouldIncludeResources(form)
     ? create(ResourceLimitSchema, {
         cpuQuotaMillis: parseInt64(form.resources.cpuQuotaMillis, "resources.cpuQuotaMillis"),
         memoryBytes: parseInt64(form.resources.memoryBytes, "resources.memoryBytes"),
@@ -359,13 +417,16 @@ export function validateProcessConfigForm(form: ProcessConfigFormState): Process
   validateInteger(issues, "startupPriority", form.startupPriority, INT32_MIN, INT32_MAX, "int32OutOfRange");
   validateInteger(issues, "latestRevision", form.latestRevision, INT64_MIN, INT64_MAX, "int64OutOfRange");
 
-  if (form.hasRestart) {
+  if (shouldIncludeRestart(form)) {
+    if (!RESTART_MODES.has(form.restart.mode)) {
+      addIssue(issues, "restart.mode", "invalidOption");
+    }
     const maxRetries = validateNonNegative(issues, "restart.maxRetries", form.restart.maxRetries, INT32_MIN, INT32_MAX, "int32OutOfRange");
     const retryWindow = validateNonNegative(issues, "restart.retryWindowMs", form.restart.retryWindowMs, INT64_MIN, INT64_MAX, "int64OutOfRange");
     if (maxRetries !== undefined && retryWindow !== undefined && maxRetries > 0n && retryWindow <= 0n) {
       addIssue(issues, "restart.retryWindowMs", "retryWindowRequired");
     }
-    if (form.hasRestartBackoff) {
+    if (shouldIncludeRestartBackoff(form)) {
       validateNonNegative(issues, "restart.backoff.initialMs", form.restart.backoff.initialMs, INT64_MIN, INT64_MAX, "int64OutOfRange");
       validateNonNegative(issues, "restart.backoff.maxMs", form.restart.backoff.maxMs, INT64_MIN, INT64_MAX, "int64OutOfRange");
       const multiplier = validateDecimal(issues, "restart.backoff.multiplier", form.restart.backoff.multiplier);
@@ -375,7 +436,10 @@ export function validateProcessConfigForm(form: ProcessConfigFormState): Process
     }
   }
 
-  if (form.hasHealth) {
+  if (shouldIncludeHealth(form)) {
+    if (!HEALTH_TYPES.has(form.health.type)) {
+      addIssue(issues, "health.type", "invalidOption");
+    }
     if (form.health.type === "http" && !hasAllowedHttpScheme(form.health.url)) {
       addIssue(issues, "health.url", "httpUrlRequired");
     }
@@ -394,12 +458,12 @@ export function validateProcessConfigForm(form: ProcessConfigFormState): Process
     validateNonNegative(issues, "health.restartCooldownMs", form.health.restartCooldownMs, INT64_MIN, INT64_MAX, "int64OutOfRange");
   }
 
-  if (form.hasLog) {
+  if (shouldIncludeLog(form)) {
     validateNonNegative(issues, "log.maxSize", form.log.maxSize, INT64_MIN, INT64_MAX, "int64OutOfRange");
     validateNonNegative(issues, "log.maxFiles", form.log.maxFiles, INT32_MIN, INT32_MAX, "int32OutOfRange");
     validateNonNegative(issues, "log.maxAgeSeconds", form.log.maxAgeSeconds, INT64_MIN, INT64_MAX, "int64OutOfRange");
   }
-  if (form.hasResources) {
+  if (shouldIncludeResources(form)) {
     validateNonNegative(issues, "resources.cpuQuotaMillis", form.resources.cpuQuotaMillis, INT64_MIN, INT64_MAX, "int64OutOfRange");
     validateNonNegative(issues, "resources.memoryBytes", form.resources.memoryBytes, INT64_MIN, INT64_MAX, "int64OutOfRange");
     validateNonNegative(issues, "resources.openFiles", form.resources.openFiles, INT64_MIN, INT64_MAX, "int64OutOfRange");
@@ -421,6 +485,9 @@ export function validateProcessConfigForm(form: ProcessConfigFormState): Process
     if (dependencyNames.has(dependency.processName)) {
       addIssue(issues, "dependencies", "duplicateDependency");
       break;
+    }
+    if (!DEPENDENCY_CONDITIONS.has(dependency.condition)) {
+      addIssue(issues, `dependencies.${index}.condition`, "invalidOption");
     }
     dependencyNames.add(dependency.processName);
   }
