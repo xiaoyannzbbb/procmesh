@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -164,6 +165,107 @@ func TestAlertAPI_AliveHopFailStalePlaceholder(t *testing.T) {
 	}
 	if placeholder.GetFreshness() != freshness.STALE {
 		t.Fatalf("freshness=%q want STALE", placeholder.GetFreshness())
+	}
+}
+
+func TestAlertAPI_StateFilterKeepsOlderFiringAndStalePlaceholder(t *testing.T) {
+	ctx := context.Background()
+	st := openStoreAt(t, t.TempDir()+"/alert-state.db")
+	now := time.Date(2026, 8, 16, 14, 0, 0, 0, time.UTC)
+	firingAt := now.Add(-2 * time.Hour)
+	if err := st.UpsertAlert(ctx, store.AlertRecord{
+		AlertID: "old-fire", Fingerprint: "PROCESS_FATAL:old", Type: "PROCESS_FATAL",
+		Severity: "CRITICAL", NodeID: "node-a", ProcessID: "old", PayloadJSON: `{}`,
+		State: "FIRING", FirstAt: firingAt, LastAt: firingAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 60; i++ {
+		at := now.Add(-time.Duration(i+1) * time.Minute)
+		if err := st.UpsertAlert(ctx, store.AlertRecord{
+			AlertID: fmt.Sprintf("r%02d", i), Fingerprint: fmt.Sprintf("PROCESS_EXIT:p%02d", i),
+			Type: "PROCESS_EXIT", Severity: "WARNING", NodeID: "node-a",
+			ProcessID: fmt.Sprintf("p%02d", i), PayloadJSON: `{}`,
+			State: "RESOLVED", FirstAt: at, LastAt: at,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	api := &AlertAPI{
+		Store:   st,
+		LocalID: "node-a",
+		Now:     func() time.Time { return now },
+		Forward: &blockingAuditForwarder{err: errors.New("unavailable")},
+		Members: func() []cluster.NodeSummary {
+			return []cluster.NodeSummary{
+				{NodeID: "node-a", State: cluster.StateAlive, LastUpdatedUnixMs: now.UnixMilli()},
+				{NodeID: "node-c", State: cluster.StateAlive, RPCAddress: "127.0.0.1:9003", LastUpdatedUnixMs: now.UnixMilli()},
+			}
+		},
+	}
+	resp, err := api.ListAlerts(ctx, connect.NewRequest(&procmeshv1.ListAlertsRequest{State: "FIRING", Limit: 50}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var firing, placeholder *procmeshv1.AlertEntry
+	for _, e := range resp.Msg.GetEntries() {
+		if e.GetAlert() != nil && e.GetAlert().GetAlertId() == "old-fire" {
+			firing = e
+		}
+		if e.GetSourceNode() == "node-c" && e.GetAlert() == nil {
+			placeholder = e
+		}
+	}
+	if firing == nil || firing.GetFreshness() != freshness.LIVE || firing.GetAlert().GetState() != "FIRING" {
+		t.Fatalf("older FIRING dropped by newest-N-then-filter: %+v", resp.Msg.GetEntries())
+	}
+	if placeholder == nil || placeholder.GetFreshness() != freshness.STALE {
+		t.Fatalf("state=FIRING emptied inbox; missing STALE placeholder: %+v", resp.Msg.GetEntries())
+	}
+}
+
+func TestAlertAPI_StateFilterHopFailKeepsStaleWithZeroFiring(t *testing.T) {
+	ctx := context.Background()
+	st := openStoreAt(t, t.TempDir()+"/alert-zero-firing.db")
+	now := time.Date(2026, 8, 16, 15, 0, 0, 0, time.UTC)
+	if err := st.UpsertAlert(ctx, store.AlertRecord{
+		AlertID: "resolved-1", Fingerprint: "PROCESS_EXIT:p1", Type: "PROCESS_EXIT",
+		Severity: "WARNING", NodeID: "node-a", ProcessID: "p1", PayloadJSON: `{}`,
+		State: "RESOLVED", FirstAt: now.Add(-time.Minute), LastAt: now.Add(-time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	api := &AlertAPI{
+		Store:   st,
+		LocalID: "node-a",
+		Now:     func() time.Time { return now },
+		Forward: &blockingAuditForwarder{err: errors.New("unavailable")},
+		Members: func() []cluster.NodeSummary {
+			return []cluster.NodeSummary{
+				{NodeID: "node-a", State: cluster.StateAlive, LastUpdatedUnixMs: now.UnixMilli()},
+				{NodeID: "node-c", State: cluster.StateAlive, RPCAddress: "127.0.0.1:9003", LastUpdatedUnixMs: now.UnixMilli()},
+			}
+		},
+	}
+	resp, err := api.ListAlerts(ctx, connect.NewRequest(&procmeshv1.ListAlertsRequest{State: "FIRING"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Msg.GetEntries()) == 0 {
+		t.Fatal("state=FIRING + hop fail must not look like an empty inbox")
+	}
+	var placeholder *procmeshv1.AlertEntry
+	for _, e := range resp.Msg.GetEntries() {
+		if e.GetAlert() != nil && e.GetAlert().GetState() == "FIRING" {
+			t.Fatalf("unexpected FIRING row: %+v", e.GetAlert())
+		}
+		if e.GetSourceNode() == "node-c" {
+			placeholder = e
+		}
+	}
+	if placeholder == nil || placeholder.GetFreshness() != freshness.STALE {
+		t.Fatalf("want STALE placeholder, got %+v", resp.Msg.GetEntries())
 	}
 }
 

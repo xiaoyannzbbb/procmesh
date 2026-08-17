@@ -12,8 +12,8 @@ import (
 
 // AlertRecord is one local alert instance on the sender agent.
 type AlertRecord struct {
-	AlertID, Fingerprint, Type, Severity string
-	NodeID, ProcessID, PayloadJSON, State string
+	AlertID, Fingerprint, Type, Severity    string
+	NodeID, ProcessID, PayloadJSON, State   string
 	FirstAt, LastAt, NotifiedAt, ResolvedAt time.Time
 	LastError                               string
 }
@@ -68,16 +68,27 @@ func (s *Store) GetAlertByFingerprint(ctx context.Context, fp string) (AlertReco
 
 // ListAlerts returns alerts ordered by last_at DESC.
 // limit <= 0 defaults to 50; limit is capped at 200.
-func (s *Store) ListAlerts(ctx context.Context, limit int) ([]AlertRecord, error) {
+// Non-empty state filters in SQL (newest matching rows), not after LIMIT.
+func (s *Store) ListAlerts(ctx context.Context, limit int, state string) ([]AlertRecord, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	if limit > 200 {
 		limit = 200
 	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT `+alertCols+` FROM alerts ORDER BY last_at DESC LIMIT ?
-	`, limit)
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if state == "" {
+		rows, err = s.db.QueryContext(ctx, `
+			SELECT `+alertCols+` FROM alerts ORDER BY last_at DESC LIMIT ?
+		`, limit)
+	} else {
+		rows, err = s.db.QueryContext(ctx, `
+			SELECT `+alertCols+` FROM alerts WHERE state = ? ORDER BY last_at DESC LIMIT ?
+		`, state, limit)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("list alerts: %w", err)
 	}

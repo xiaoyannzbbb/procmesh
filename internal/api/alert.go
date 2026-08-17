@@ -155,16 +155,13 @@ func (s *AlertAPI) listLocal(ctx context.Context, state string, limit int, now t
 	if s.Store == nil {
 		return []*procmeshv1.AlertEntry{}, nil
 	}
-	recs, err := s.Store.ListAlerts(ctx, limit)
+	recs, err := s.Store.ListAlerts(ctx, limit, state)
 	if err != nil {
 		return nil, err
 	}
 	nowMs := now.UnixMilli()
 	out := make([]*procmeshv1.AlertEntry, 0, len(recs))
 	for _, rec := range recs {
-		if state != "" && rec.State != state {
-			continue
-		}
 		out = append(out, &procmeshv1.AlertEntry{
 			Alert:             alertRecordToProto(rec),
 			SourceNode:        s.LocalID,
