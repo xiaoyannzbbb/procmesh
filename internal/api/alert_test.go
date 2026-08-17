@@ -102,6 +102,48 @@ func TestAlertAPI_PutChannelRedactsAndKeepsSecret(t *testing.T) {
 	}
 }
 
+func TestAlertAPI_PutChannelEmptyConfigKeepsURL(t *testing.T) {
+	ctx := context.Background()
+	e := newRBACEnv(t)
+	adminSid := e.loginAs(t, "admin", testAdminPass)
+	cli := procmeshv1connect.NewAlertServiceClient(e.http, e.url)
+	created, err := cli.PutAlertChannel(ctx, bearerReq(adminSid, &procmeshv1.PutAlertChannelRequest{
+		Meta:       &procmeshv1.MutationMeta{OperationId: "op-ch-empty-1", Operator: "admin"},
+		Type:       "WEBHOOK",
+		Name:       "hook",
+		Enabled:    true,
+		ConfigJson: `{"url":"https://hooks.example.com","hmac_secret":"s3cret"}`,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := created.Msg.GetChannel().GetChannelId()
+	updated, err := cli.PutAlertChannel(ctx, bearerReq(adminSid, &procmeshv1.PutAlertChannelRequest{
+		Meta:       &procmeshv1.MutationMeta{OperationId: "op-ch-empty-2", Operator: "admin"},
+		ChannelId:  id,
+		Type:       "WEBHOOK",
+		Name:       "hook",
+		Enabled:    true,
+		ConfigJson: `{}`,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg := updated.Msg.GetChannel().GetConfigJson(); !strings.Contains(cfg, "https://hooks.example.com") {
+		t.Fatalf("empty config wiped url in response: %s", cfg)
+	}
+	ch, ok := e.svc.Store().View().AlertChannels[id]
+	if !ok {
+		t.Fatal("channel missing from FSM")
+	}
+	if !strings.Contains(ch.ConfigJSON, "https://hooks.example.com") {
+		t.Fatalf("empty config wiped url: %s", ch.ConfigJSON)
+	}
+	if !strings.Contains(ch.ConfigJSON, "s3cret") {
+		t.Fatalf("empty config dropped hmac: %s", ch.ConfigJSON)
+	}
+}
+
 func TestAlertAPI_ListAlertsLocalLive(t *testing.T) {
 	ctx := context.Background()
 	st := openStoreAt(t, t.TempDir()+"/alert-live.db")

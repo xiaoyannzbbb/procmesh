@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -645,6 +646,18 @@ func startAlertScanner(ctx context.Context, opt Options, mgr *process.Manager, s
 			return out
 		},
 		Sender: &alert.ChannelSender{},
+		Audit: func(action, result, meta string) {
+			payload, err := json.Marshal(map[string]string{"channel_id": meta})
+			if err != nil {
+				payload = []byte(`{"channel_id":""}`)
+			}
+			_ = st.AppendAudit(context.Background(), store.AuditEvent{
+				Action:   action,
+				Result:   result,
+				Resource: meta,
+				Metadata: payload,
+			})
+		},
 	}
 	sc := &alert.Scanner{
 		Engine:    eng,

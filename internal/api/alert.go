@@ -474,6 +474,13 @@ func alertPolicyToProto(p control.AlertPolicy) *procmeshv1.AlertPolicy {
 func mergeChannelConfig(oldJSON, newJSON string) string {
 	old := parseJSONObject(oldJSON)
 	neu := parseJSONObject(newJSON)
+	if !hasNonSecretChannelKey(neu) {
+		for k, v := range old {
+			if _, exists := neu[k]; !exists {
+				neu[k] = v
+			}
+		}
+	}
 	for _, k := range []string{"hmac_secret", "password", "secret"} {
 		if jsonEmpty(neu[k]) {
 			if v, ok := old[k]; ok && !jsonEmpty(v) {
@@ -536,6 +543,18 @@ func redactChannelConfig(raw string) string {
 		return "{}"
 	}
 	return string(b)
+}
+
+func hasNonSecretChannelKey(obj map[string]json.RawMessage) bool {
+	for k := range obj {
+		switch k {
+		case "hmac_secret", "password", "secret":
+			continue
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 func parseJSONObject(raw string) map[string]json.RawMessage {
