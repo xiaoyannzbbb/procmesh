@@ -8,7 +8,7 @@ import { mapNode } from "../pages/clusterView";
 const { t } = useI18n();
 
 const props = defineProps<{
-  modelValue: string;
+  modelValue?: string;
   excludeNodeIds?: string[];
   placeholder?: string;
   disabled?: boolean;
@@ -57,7 +57,7 @@ function onSelect(event: Event): void {
 <template>
   <div class="node-selector">
     <select
-      :value="modelValue"
+      :value="modelValue || ''"
       class="select"
       :disabled="disabled || query.isPending.value"
       @change="onSelect"
