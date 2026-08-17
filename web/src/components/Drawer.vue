@@ -1,17 +1,51 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { nextTick, onMounted, onUnmounted, ref, watch, type ComponentPublicInstance } from "vue";
 import { X } from "lucide-vue-next";
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   open: boolean;
   title?: string;
-}>();
+  closeLabel?: string;
+}>(), {
+  title: "",
+  closeLabel: "Close",
+});
 
 const emit = defineEmits<{
   close: [];
 }>();
 
 const drawerRef = ref<HTMLElement | null>(null);
+const panelRef = ref<HTMLElement | null>(null);
+let previousActiveElement: HTMLElement | null = null;
+const DRAWER_Z_INDEX = 1100;
+
+const FOCUSABLE_SELECTOR = [
+  "button:not([disabled])",
+  "[href]",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  '[tabindex]:not([tabindex="-1"])',
+].join(",");
+
+function focusableElements(): HTMLElement[] {
+  return Array.from(panelRef.value?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR) ?? []).filter(
+    (element) => element.getAttribute("aria-hidden") !== "true",
+  );
+}
+
+function setDrawerRef(element: Element | ComponentPublicInstance | null): void {
+  drawerRef.value = element instanceof HTMLElement ? element : null;
+}
+
+function setPanelRef(element: Element | ComponentPublicInstance | null): void {
+  panelRef.value = element instanceof HTMLElement ? element : null;
+}
+
+function close(): void {
+  emit("close");
+}
 
 function onBackdropClick(e: MouseEvent): void {
   if (e.target === drawerRef.value) {
@@ -19,41 +53,96 @@ function onBackdropClick(e: MouseEvent): void {
   }
 }
 
-function onEscape(e: KeyboardEvent): void {
-  if (e.key === "Escape" && props.open) {
+function onDocumentKeydown(e: KeyboardEvent): void {
+  if (!props.open) {
+    return;
+  }
+  if (e.key === "Escape") {
     emit("close");
+    return;
+  }
+  if (e.key === "Tab") {
+    trapFocus(e);
+  }
+}
+
+function trapFocus(e: KeyboardEvent): void {
+  const elements = focusableElements();
+  if (!elements.length) {
+    e.preventDefault();
+    panelRef.value?.focus();
+    return;
+  }
+  const first = elements[0];
+  const last = elements[elements.length - 1];
+  const active = document.activeElement as HTMLElement | null;
+  if (!active || !elements.includes(active)) {
+    e.preventDefault();
+    (e.shiftKey ? last : first).focus();
+    return;
+  }
+  if (e.shiftKey && active === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && active === last) {
+    e.preventDefault();
+    first.focus();
   }
 }
 
 onMounted(() => {
-  document.addEventListener("keydown", onEscape);
+  document.addEventListener("keydown", onDocumentKeydown);
 });
 
 onUnmounted(() => {
-  document.removeEventListener("keydown", onEscape);
+  document.removeEventListener("keydown", onDocumentKeydown);
+  if (props.open) {
+    document.body.style.overflow = "";
+    previousActiveElement?.focus();
+  }
 });
 
 watch(
   () => props.open,
-  (isOpen) => {
+  async (isOpen) => {
     if (isOpen) {
+      previousActiveElement = document.activeElement as HTMLElement | null;
       document.body.style.overflow = "hidden";
+      await nextTick();
+      (focusableElements()[0] ?? panelRef.value)?.focus();
     } else {
       document.body.style.overflow = "";
+      await nextTick();
+      previousActiveElement?.focus();
+      previousActiveElement = null;
     }
   },
+  { flush: "post" },
 );
 </script>
 
 <template>
   <Teleport to="body">
     <Transition name="drawer">
-      <div v-if="open" ref="drawerRef" class="drawer-backdrop" @click="onBackdropClick">
-        <div class="drawer-panel" role="dialog" aria-modal="true" :aria-label="title">
+      <div
+        v-if="open"
+        :ref="setDrawerRef"
+        class="drawer-backdrop"
+        :style="{ zIndex: DRAWER_Z_INDEX }"
+        @click="onBackdropClick"
+      >
+        <div
+          :ref="setPanelRef"
+          class="drawer-panel"
+          role="dialog"
+          :aria-modal="true"
+          :aria-label="title"
+          tabindex="-1"
+        >
           <div class="drawer-header">
             <h2 v-if="title" class="drawer-title">{{ title }}</h2>
-            <button type="button" class="drawer-close" aria-label="Close" @click="emit('close')">
-              <X :size="20" />
+            <button type="button" class="drawer-close" :aria-label="closeLabel" @click="close">
+              <X :size="20" aria-hidden="true" />
             </button>
           </div>
           <div class="drawer-content">
@@ -69,7 +158,6 @@ watch(
 .drawer-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 50;
   background: rgba(0, 0, 0, 0.5);
   display: flex;
   justify-content: flex-end;
@@ -83,6 +171,10 @@ watch(
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.drawer-panel:focus {
+  outline: none;
 }
 
 .drawer-header {
@@ -154,6 +246,15 @@ watch(
 @media (max-width: 640px) {
   .drawer-panel {
     max-width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drawer-enter-active,
+  .drawer-leave-active,
+  .drawer-enter-active .drawer-panel,
+  .drawer-leave-active .drawer-panel {
+    transition-duration: 1ms;
   }
 }
 </style>

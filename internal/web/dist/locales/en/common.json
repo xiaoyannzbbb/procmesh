@@ -321,6 +321,10 @@
     "title": "Roles",
     "loading": "Loading…",
     "noRoles": "No roles",
+    "actions": {
+      "createRole": "Create role",
+      "grantRole": "Grant to user"
+    },
     "table": {
       "name": "Name",
       "type": "Type",
@@ -344,11 +348,19 @@
       "title": "Create role",
       "name": "Name",
       "permissions": "Permissions",
-      "create": "Create"
+      "create": "Create",
+      "success": "Role created"
     },
     "grant": {
-      "title": "Grant",
+      "title": "Grant role to user",
       "userId": "User ID",
+      "searchUsers": "Select user",
+      "searchPlaceholder": "Search username, display name, email, or user ID",
+      "selectUser": "Select a user to grant",
+      "selectedUser": "Selected user",
+      "clearSelection": "Clear selected user",
+      "userMeta": "{{username}} · {{userId}}",
+      "noUsers": "No matching users",
       "role": "Role",
       "selectRole": "Select role",
       "scope": "Scope",
@@ -357,10 +369,13 @@
         "required": "required",
         "optional": "optional"
       },
-      "grant": "Grant"
+      "grant": "Grant role",
+      "success": "Role granted"
     }
   },
   "role": {
+    "scopeCluster": "Entire cluster",
+    "scopeAgent": "Specific agent",
     "scopeAgentGroup": "Agent group",
     "scopeProcessGroup": "Process group"
   },
@@ -369,13 +384,22 @@
     "loading": "Loading…",
     "noGroups": "No groups",
     "create": "Create",
+    "createGroup": "Create Group",
     "members": "Members",
     "name": "Name",
     "description": "Description",
     "addMember": "Add member",
     "removeMember": "Remove member",
     "delete": "Delete",
-    "nodeId": "Node ID"
+    "nodeId": "Node ID",
+    "selectNode": "Select node",
+    "selectNodeToAdd": "Select a node to add",
+    "noAdmittedNodes": "No admitted nodes available. Only nodes that have completed the cluster admission process can be added to groups.",
+    "clusterRequiredNotice": "Agent Groups require an initialized cluster. Nodes must join via <code>cluster init</code> or <code>cluster join</code> to be added to groups. Standalone nodes are not admitted members.",
+    "createSuccess": "Group created successfully",
+    "deleteSuccess": "Group deleted successfully",
+    "addMemberSuccess": "Member added successfully",
+    "removeMemberSuccess": "Member removed successfully"
   },
   "users": {
     "title": "Users",
@@ -385,18 +409,33 @@
       "username": "Username",
       "display": "Display",
       "email": "Email",
+      "roles": "Roles",
       "status": "Status",
       "lastLogin": "Last login",
       "actions": "Actions"
     },
     "disable": "Disable",
+    "roles": {
+      "loading": "Loading roles…",
+      "unavailable": "Role data unavailable",
+      "loadError": "Could not load role data: {{error}}"
+    },
     "createUser": {
-      "title": "Create",
+      "title": "Create user",
       "username": "Username",
       "password": "Password",
+      "passwordHint": "At least 10 characters",
       "display": "Display",
       "email": "Email",
-      "create": "Create"
+      "create": "Create user",
+      "success": "User created"
+    },
+    "bindRole": {
+      "action": "Bind role",
+      "title": "Bind role to user",
+      "user": "Selected user",
+      "submit": "Bind role",
+      "success": "Role bound"
     }
   },
   "batch": {

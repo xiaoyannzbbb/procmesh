@@ -321,6 +321,10 @@
     "title": "角色",
     "loading": "加载中…",
     "noRoles": "无角色",
+    "actions": {
+      "createRole": "创建角色",
+      "grantRole": "授权给用户"
+    },
     "table": {
       "name": "名称",
       "type": "类型",
@@ -344,11 +348,19 @@
       "title": "创建角色",
       "name": "名称",
       "permissions": "权限",
-      "create": "创建"
+      "create": "创建",
+      "success": "角色创建成功"
     },
     "grant": {
-      "title": "授予",
+      "title": "授权角色给用户",
       "userId": "用户ID",
+      "searchUsers": "选择用户",
+      "searchPlaceholder": "搜索用户名、显示名称、邮箱或用户 ID",
+      "selectUser": "选择要授权的用户",
+      "selectedUser": "已选用户",
+      "clearSelection": "清除已选用户",
+      "userMeta": "{{username}} · {{userId}}",
+      "noUsers": "没有匹配的用户",
       "role": "角色",
       "selectRole": "选择角色",
       "scope": "范围",
@@ -357,10 +369,13 @@
         "required": "必填",
         "optional": "可选"
       },
-      "grant": "授予"
+      "grant": "确认授权",
+      "success": "角色授权成功"
     }
   },
   "role": {
+    "scopeCluster": "整个集群",
+    "scopeAgent": "指定代理",
     "scopeAgentGroup": "代理分组",
     "scopeProcessGroup": "进程分组"
   },
@@ -369,13 +384,22 @@
     "loading": "加载中…",
     "noGroups": "无分组",
     "create": "创建",
+    "createGroup": "创建分组",
     "members": "成员",
     "name": "名称",
     "description": "描述",
     "addMember": "添加成员",
     "removeMember": "移除成员",
     "delete": "删除",
-    "nodeId": "节点ID"
+    "nodeId": "节点ID",
+    "selectNode": "选择节点",
+    "selectNodeToAdd": "选择要添加的节点",
+    "noAdmittedNodes": "无可用的已准入节点。只有完成集群准入流程的节点才能被添加到分组。",
+    "clusterRequiredNotice": "代理分组需要已初始化的集群。节点必须通过 <code>cluster init</code> 或 <code>cluster join</code> 加入集群才能被添加到分组。独立节点不是已准入成员。",
+    "createSuccess": "分组创建成功",
+    "deleteSuccess": "分组删除成功",
+    "addMemberSuccess": "成员添加成功",
+    "removeMemberSuccess": "成员移除成功"
   },
   "users": {
     "title": "用户",
@@ -385,18 +409,33 @@
       "username": "用户名",
       "display": "显示名称",
       "email": "邮箱",
+      "roles": "角色",
       "status": "状态",
       "lastLogin": "最后登录",
       "actions": "操作"
     },
     "disable": "禁用",
+    "roles": {
+      "loading": "正在加载角色…",
+      "unavailable": "角色数据不可用",
+      "loadError": "角色数据加载失败：{{error}}"
+    },
     "createUser": {
-      "title": "创建",
+      "title": "创建用户",
       "username": "用户名",
       "password": "密码",
+      "passwordHint": "至少 10 个字符",
       "display": "显示名称",
       "email": "邮箱",
-      "create": "创建"
+      "create": "创建用户",
+      "success": "用户创建成功"
+    },
+    "bindRole": {
+      "action": "绑定角色",
+      "title": "给用户绑定角色",
+      "user": "当前用户",
+      "submit": "确认绑定",
+      "success": "角色绑定成功"
     }
   },
   "batch": {
