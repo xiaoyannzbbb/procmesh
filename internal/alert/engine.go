@@ -61,24 +61,30 @@ func (e *Engine) Observe(ctx context.Context, ev Event) (store.AlertRecord, erro
 	rec.ProcessID = ev.ProcessID
 	rec.PayloadJSON = marshalPayload(ev.Payload)
 
+	notify := false
 	if ev.Firing {
 		rec.State = string(StateFiring)
 		rec.LastAt = ev.At
 		rec.ResolvedAt = time.Time{}
-		e.dispatch(ctx, &rec, ev)
+		notify = true
 	} else if rec.State == string(StateResolved) {
 		rec.LastAt = ev.At
 	} else {
 		rec.State = string(StateResolved)
 		rec.LastAt = ev.At
 		rec.ResolvedAt = ev.At
-		if e.policy().NotifyOnResolve {
-			e.dispatch(ctx, &rec, ev)
-		}
+		notify = e.policy().NotifyOnResolve
 	}
 
+	// Inbox first so a hung Send cannot drop the FIRING/RESOLVED row.
 	if err := e.Store.UpsertAlert(ctx, rec); err != nil {
 		return store.AlertRecord{}, err
+	}
+	if notify {
+		e.dispatch(ctx, &rec, ev)
+		if err := e.Store.UpsertAlert(ctx, rec); err != nil {
+			return store.AlertRecord{}, err
+		}
 	}
 	return rec, nil
 }
@@ -108,6 +114,9 @@ func (e *Engine) dispatch(ctx context.Context, rec *store.AlertRecord, ev Event)
 			continue
 		}
 		anyOK = true
+		if e.Audit != nil {
+			e.Audit("alert.send", "ok", ch.ChannelID)
+		}
 	}
 	if anyOK {
 		rec.NotifiedAt = ev.At

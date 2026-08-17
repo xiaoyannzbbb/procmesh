@@ -50,6 +50,20 @@ func (c *countDoer) Do(req *http.Request) (*http.Response, error) {
 	return c.inner.Do(req)
 }
 
+func TestChannel_DefaultHTTPTimeout(t *testing.T) {
+	s := &ChannelSender{}
+	c, ok := s.http().(*http.Client)
+	if !ok {
+		t.Fatalf("http() %T", s.http())
+	}
+	if c.Timeout != 10*time.Second {
+		t.Fatalf("timeout %s want 10s", c.Timeout)
+	}
+	if c == http.DefaultClient {
+		t.Fatal("must not use http.DefaultClient")
+	}
+}
+
 func TestChannel_WebhookHMAC(t *testing.T) {
 	const secret = "s3cret"
 	var gotBody []byte

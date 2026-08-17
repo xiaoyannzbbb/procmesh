@@ -226,6 +226,33 @@ func TestScanner_CPUHighNeedsConsecutiveMinutes(t *testing.T) {
 	e2.insert(t, metrics.SeriesNodeCPU, "n1", e2.now.Add(-2*time.Minute), 97)
 	e2.scan(t)
 	e2.requireNotFiring(t, "CPU_HIGH:n1")
+
+	// Existing FIRING + gappy window is not recovery — leave the row FIRING.
+	if err := e2.st.UpsertAlert(e2.ctx, store.AlertRecord{
+		AlertID: "pre-fire", Fingerprint: "CPU_HIGH:n1", Type: "CPU_HIGH",
+		Severity: "WARNING", NodeID: "n1", PayloadJSON: `{}`,
+		State: string(alert.StateFiring), FirstAt: e2.now.Add(-time.Hour), LastAt: e2.now.Add(-time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e2.scan(t)
+	e2.requireFiring(t, "CPU_HIGH:n1")
+}
+
+func TestScanner_CPUHighRecoversOnSnapshotBelow(t *testing.T) {
+	e := newScanEnv(t)
+	e.pol.HighConsecutiveMins = 2
+	e.pol.CPUHighPercent = 90
+	e.insert(t, metrics.SeriesNodeCPU, "n1", e.now, 95)
+	e.insert(t, metrics.SeriesNodeCPU, "n1", e.now.Add(-time.Minute), 96)
+	e.scan(t)
+	e.requireFiring(t, "CPU_HIGH:n1")
+
+	// Advance so the high minutes leave the window; snapshot below is recovery.
+	e.now = e.now.Add(3 * time.Minute)
+	e.snap = alert.NodeSample{CPUPercent: 10, HaveSnapshot: true}
+	e.scan(t)
+	e.requireResolved(t, "CPU_HIGH:n1")
 }
 
 func TestScanner_SnapshotAloneNotEnoughWhenConsecutiveMinsGT1(t *testing.T) {

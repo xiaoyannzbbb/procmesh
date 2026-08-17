@@ -12,7 +12,10 @@ import (
 	"github.com/qleelulu/procmesh/internal/store"
 )
 
-const certExpiringWithin = 30 * 24 * time.Hour
+const (
+	certExpiringWithin = 30 * 24 * time.Hour
+	scanDeadline       = 12 * time.Second
+)
 
 type ClusterView struct {
 	ClusterID          string
@@ -56,6 +59,8 @@ func (s *Scanner) ScanLocal(ctx context.Context) error {
 	if s == nil || s.Engine == nil {
 		return errcode.E(errcode.INVALID, "scanner engine")
 	}
+	ctx, cancel := context.WithTimeout(ctx, scanDeadline)
+	defer cancel()
 	now := s.now()
 	if err := s.scanProcesses(ctx, now); err != nil {
 		return err
@@ -73,6 +78,8 @@ func (s *Scanner) ScanCluster(ctx context.Context, view ClusterView) error {
 	if s == nil || s.Engine == nil {
 		return errcode.E(errcode.INVALID, "scanner engine")
 	}
+	ctx, cancel := context.WithTimeout(ctx, scanDeadline)
+	defer cancel()
 	now := s.now()
 	if err := s.scanControlQuorum(ctx, view, now); err != nil {
 		return err
@@ -304,13 +311,41 @@ func (s *Scanner) evalThreshold(ctx context.Context, ev threshEval) error {
 }
 
 func (s *Scanner) applyThreshold(ctx context.Context, typ Type, processID string, samples []store.MetricSample, snap float64, haveSnap bool, threshold float64, need int, now time.Time) error {
-	firing := thresholdMet(samples, snap, haveSnap, threshold, need)
-	if err := s.observe(ctx, Event{
-		Type: typ, NodeID: s.NodeID, ProcessID: processID, At: now, Firing: firing,
-	}); err != nil {
-		return fmt.Errorf("scan %s %s: %w", typ, processID, err)
+	switch thresholdDecision(samples, snap, haveSnap, threshold, need) {
+	case threshHold:
+		return nil
+	case threshFire:
+		if err := s.observe(ctx, Event{
+			Type: typ, NodeID: s.NodeID, ProcessID: processID, At: now, Firing: true,
+		}); err != nil {
+			return fmt.Errorf("scan %s %s: %w", typ, processID, err)
+		}
+	case threshResolve:
+		if err := s.observe(ctx, Event{
+			Type: typ, NodeID: s.NodeID, ProcessID: processID, At: now, Firing: false,
+		}); err != nil {
+			return fmt.Errorf("scan %s %s: %w", typ, processID, err)
+		}
 	}
 	return nil
+}
+
+type threshDecision int
+
+const (
+	threshHold threshDecision = iota
+	threshFire
+	threshResolve
+)
+
+func thresholdDecision(samples []store.MetricSample, snap float64, haveSnap bool, threshold float64, need int) threshDecision {
+	if thresholdMet(samples, snap, haveSnap, threshold, need) {
+		return threshFire
+	}
+	if thresholdRecovered(samples, snap, haveSnap, threshold, need) {
+		return threshResolve
+	}
+	return threshHold
 }
 
 func thresholdMet(samples []store.MetricSample, snap float64, haveSnap bool, threshold float64, need int) bool {
@@ -326,12 +361,30 @@ func thresholdMet(samples []store.MetricSample, snap float64, haveSnap bool, thr
 	return consecutiveHigh(samples, threshold, need)
 }
 
+func thresholdRecovered(samples []store.MetricSample, snap float64, haveSnap bool, threshold float64, need int) bool {
+	if need < 1 {
+		need = 1
+	}
+	if haveSnap && snap < threshold {
+		return true
+	}
+	return consecutiveCmp(samples, threshold, need, true)
+}
+
 func consecutiveHigh(samples []store.MetricSample, threshold float64, need int) bool {
+	return consecutiveCmp(samples, threshold, need, false)
+}
+
+func consecutiveCmp(samples []store.MetricSample, threshold float64, need int, below bool) bool {
 	count := 0
 	var prev int64
 	for i := len(samples) - 1; i >= 0; i-- {
 		pt := samples[i]
-		if pt.Value < threshold {
+		if below {
+			if pt.Value >= threshold {
+				break
+			}
+		} else if pt.Value < threshold {
 			break
 		}
 		if count > 0 && pt.TSUnix != prev-60 {

@@ -296,11 +296,15 @@ func (s *ChannelSender) withRetry(ctx context.Context, fn func() error) error {
 	return last
 }
 
+const defaultSendTimeout = 10 * time.Second
+
+var defaultHTTPClient = &http.Client{Timeout: defaultSendTimeout}
+
 func (s *ChannelSender) http() HTTPDoer {
 	if s != nil && s.HTTP != nil {
 		return s.HTTP
 	}
-	return http.DefaultClient
+	return defaultHTTPClient
 }
 
 func (s *ChannelSender) sleep(d time.Duration) {
@@ -401,8 +405,18 @@ func formatRFC822(from string, to []string, subject string, body []byte) []byte 
 }
 
 func defaultDialSMTP(host string, cfg EmailConfig) (smtpSendCloser, error) {
-	c, err := smtp.Dial(host)
+	d := net.Dialer{Timeout: defaultSendTimeout}
+	conn, err := d.Dial("tcp", host)
 	if err != nil {
+		return nil, err
+	}
+	name, _, splitErr := net.SplitHostPort(host)
+	if splitErr != nil || name == "" {
+		name = cfg.SMTPHost
+	}
+	c, err := smtp.NewClient(conn, name)
+	if err != nil {
+		_ = conn.Close()
 		return nil, err
 	}
 	if cfg.StartTLS {
