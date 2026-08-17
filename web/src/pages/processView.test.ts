@@ -124,6 +124,16 @@ describe("formatRemoteError", () => {
     expect(formatRemoteError(err)).toBe("DEGRADED");
     expect(formatRemoteError(err)).not.toBe("UNAVAILABLE");
   });
+
+  it("keeps detailed messages for non-DEGRADED application errors", () => {
+    const err = new ConnectError("invalid node", Code.InvalidArgument, undefined, [
+      {
+        desc: ErrorInfoSchema,
+        value: { code: "INVALID", message: "INVALID: node is not an admitted member" },
+      },
+    ]);
+    expect(formatRemoteError(err)).toBe("INVALID: node is not an admitted member");
+  });
 });
 
 describe("formatMetric", () => {

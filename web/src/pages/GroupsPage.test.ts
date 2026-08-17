@@ -21,6 +21,7 @@ beforeEach(async () => {
             loading: "Loading…",
             noGroups: "No groups",
             create: "Create",
+            createGroup: "Create Group",
             members: "Members",
             name: "Name",
             description: "Description",
