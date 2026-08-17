@@ -380,7 +380,11 @@
     "selectNode": "Select node",
     "selectNodeToAdd": "Select a node to add",
     "noAdmittedNodes": "No admitted nodes available. Only nodes that have completed the cluster admission process can be added to groups.",
-    "clusterRequiredNotice": "Agent Groups require an initialized cluster. Nodes must join via <code>cluster init</code> or <code>cluster join</code> to be added to groups. Standalone nodes are not admitted members."
+    "clusterRequiredNotice": "Agent Groups require an initialized cluster. Nodes must join via <code>cluster init</code> or <code>cluster join</code> to be added to groups. Standalone nodes are not admitted members.",
+    "createSuccess": "Group created successfully",
+    "deleteSuccess": "Group deleted successfully",
+    "addMemberSuccess": "Member added successfully",
+    "removeMemberSuccess": "Member removed successfully"
   },
   "users": {
     "title": "Users",

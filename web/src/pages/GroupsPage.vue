@@ -4,6 +4,7 @@ import { computed, ref } from "vue";
 import { Plus } from "lucide-vue-next";
 import Drawer from "../components/Drawer.vue";
 import NodeSelector from "../components/NodeSelector.vue";
+import Toast from "../components/Toast.vue";
 import { newOperationId } from "../lib/opid";
 import { useGroupClient } from "../lib/rpc";
 import { session } from "../lib/session";
@@ -16,6 +17,10 @@ const POLL_MS = 5000;
 const client = useGroupClient();
 const queryClient = useQueryClient();
 const actionError = ref("");
+
+const toastMessage = ref("");
+const toastType = ref<"success" | "error" | "info" | "warning">("info");
+const showToast = ref(false);
 
 const isDrawerOpen = ref(false);
 const name = ref("");
@@ -59,6 +64,12 @@ function mutationMeta() {
   };
 }
 
+function showToastNotification(message: string, type: "success" | "error" | "info" | "warning"): void {
+  toastMessage.value = message;
+  toastType.value = type;
+  showToast.value = true;
+}
+
 function formatMembers(ids: string[] | undefined): string {
   if (!ids?.length) {
     return "—";
@@ -78,9 +89,12 @@ const createMut = useMutation({
     description.value = "";
     isDrawerOpen.value = false;
     await queryClient.invalidateQueries({ queryKey: ["groups"] });
+    showToastNotification(t("group.createSuccess", { name: name.value }), "success");
   },
   onError: (err: unknown) => {
-    actionError.value = formatRemoteError(err);
+    const errorMsg = formatRemoteError(err);
+    showToastNotification(errorMsg, "error");
+    actionError.value = errorMsg;
   },
 });
 
@@ -90,9 +104,12 @@ const deleteMut = useMutation({
       meta: mutationMeta(),
       groupId,
     }),
-  onSuccess: () => queryClient.invalidateQueries({ queryKey: ["groups"] }),
+  onSuccess: () => {
+    queryClient.invalidateQueries({ queryKey: ["groups"] });
+    showToastNotification(t("group.deleteSuccess"), "success");
+  },
   onError: (err: unknown) => {
-    actionError.value = formatRemoteError(err);
+    showToastNotification(formatRemoteError(err), "error");
   },
 });
 
@@ -106,9 +123,10 @@ const addMemberMut = useMutation({
   onSuccess: (_, variables) => {
     addNodeId.value = { ...addNodeId.value, [variables.groupId]: "" };
     queryClient.invalidateQueries({ queryKey: ["groups"] });
+    showToastNotification(t("group.addMemberSuccess"), "success");
   },
   onError: (err: unknown) => {
-    actionError.value = formatRemoteError(err);
+    showToastNotification(formatRemoteError(err), "error");
   },
 });
 
@@ -119,9 +137,12 @@ const removeMemberMut = useMutation({
       groupId: args.groupId,
       nodeId: args.nodeId,
     }),
-  onSuccess: () => queryClient.invalidateQueries({ queryKey: ["groups"] }),
+  onSuccess: () => {
+    queryClient.invalidateQueries({ queryKey: ["groups"] });
+    showToastNotification(t("group.removeMemberSuccess"), "success");
+  },
   onError: (err: unknown) => {
-    actionError.value = formatRemoteError(err);
+    showToastNotification(formatRemoteError(err), "error");
   },
 });
 
@@ -219,7 +240,6 @@ async function onRemoveMember(groupId: string, nodeId: string): Promise<void> {
     <p v-if="query.isPending && !query.data" class="muted">{{ t("group.loading") }}</p>
     <p v-else-if="errorText && !query.data" class="error" role="alert">{{ errorText }}</p>
     <template v-else>
-      <p v-if="errorText" class="error" role="alert">{{ errorText }}</p>
       <div class="card">
         <table class="table">
           <thead>
@@ -306,6 +326,13 @@ async function onRemoveMember(groupId: string, nodeId: string): Promise<void> {
         </div>
       </form>
     </Drawer>
+
+    <Toast
+      :show="showToast"
+      :message="toastMessage"
+      :type="toastType"
+      @close="showToast = false"
+    />
   </div>
 </template>
 

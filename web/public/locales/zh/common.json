@@ -380,7 +380,11 @@
     "selectNode": "选择节点",
     "selectNodeToAdd": "选择要添加的节点",
     "noAdmittedNodes": "无可用的已准入节点。只有完成集群准入流程的节点才能被添加到分组。",
-    "clusterRequiredNotice": "代理分组需要已初始化的集群。节点必须通过 <code>cluster init</code> 或 <code>cluster join</code> 加入集群才能被添加到分组。独立节点不是已准入成员。"
+    "clusterRequiredNotice": "代理分组需要已初始化的集群。节点必须通过 <code>cluster init</code> 或 <code>cluster join</code> 加入集群才能被添加到分组。独立节点不是已准入成员。",
+    "createSuccess": "分组创建成功",
+    "deleteSuccess": "分组删除成功",
+    "addMemberSuccess": "成员添加成功",
+    "removeMemberSuccess": "成员移除成功"
   },
   "users": {
     "title": "用户",
