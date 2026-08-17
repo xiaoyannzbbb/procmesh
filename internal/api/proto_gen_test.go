@@ -109,3 +109,18 @@ func TestProto_Q3HistoryRPCsGenerated(t *testing.T) {
 	_ = (&procmeshv1.MetricSeries{}).GetName
 	var _ procmeshv1connect.MetricsServiceHandler = (*MetricsAPI)(nil)
 }
+
+func TestProto_AlertServiceGenerated(t *testing.T) {
+	if procmeshv1connect.AlertServiceName != "procmesh.v1.AlertService" {
+		t.Fatalf("alert=%s", procmeshv1connect.AlertServiceName)
+	}
+	if procmeshv1connect.AlertServiceListAlertsProcedure == "" {
+		t.Fatal("missing ListAlerts")
+	}
+	_ = (&procmeshv1.Alert{}).GetFingerprint
+	_ = (&procmeshv1.AlertEntry{}).GetFreshness
+	_ = (&procmeshv1.AlertChannel{}).GetConfigJson
+	_ = (&procmeshv1.AlertPolicy{}).GetDedupWindowSec
+	_ = (&procmeshv1.PutAlertChannelRequest{}).GetMeta
+	var _ procmeshv1connect.AlertServiceHandler = (*AlertAPI)(nil)
+}

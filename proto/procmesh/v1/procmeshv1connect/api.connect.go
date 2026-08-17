@@ -45,6 +45,8 @@ const (
 	MetricsServiceName = "procmesh.v1.MetricsService"
 	// BatchServiceName is the fully-qualified name of the BatchService service.
 	BatchServiceName = "procmesh.v1.BatchService"
+	// AlertServiceName is the fully-qualified name of the AlertService service.
+	AlertServiceName = "procmesh.v1.AlertService"
 )
 
 // These constants are the fully-qualified names of the RPCs defined in this package. They're
@@ -195,6 +197,25 @@ const (
 	// BatchServiceExportBatchProcedure is the fully-qualified name of the BatchService's ExportBatch
 	// RPC.
 	BatchServiceExportBatchProcedure = "/procmesh.v1.BatchService/ExportBatch"
+	// AlertServiceListAlertsProcedure is the fully-qualified name of the AlertService's ListAlerts RPC.
+	AlertServiceListAlertsProcedure = "/procmesh.v1.AlertService/ListAlerts"
+	// AlertServiceGetAlertProcedure is the fully-qualified name of the AlertService's GetAlert RPC.
+	AlertServiceGetAlertProcedure = "/procmesh.v1.AlertService/GetAlert"
+	// AlertServiceListAlertChannelsProcedure is the fully-qualified name of the AlertService's
+	// ListAlertChannels RPC.
+	AlertServiceListAlertChannelsProcedure = "/procmesh.v1.AlertService/ListAlertChannels"
+	// AlertServicePutAlertChannelProcedure is the fully-qualified name of the AlertService's
+	// PutAlertChannel RPC.
+	AlertServicePutAlertChannelProcedure = "/procmesh.v1.AlertService/PutAlertChannel"
+	// AlertServiceDeleteAlertChannelProcedure is the fully-qualified name of the AlertService's
+	// DeleteAlertChannel RPC.
+	AlertServiceDeleteAlertChannelProcedure = "/procmesh.v1.AlertService/DeleteAlertChannel"
+	// AlertServiceGetAlertPolicyProcedure is the fully-qualified name of the AlertService's
+	// GetAlertPolicy RPC.
+	AlertServiceGetAlertPolicyProcedure = "/procmesh.v1.AlertService/GetAlertPolicy"
+	// AlertServicePutAlertPolicyProcedure is the fully-qualified name of the AlertService's
+	// PutAlertPolicy RPC.
+	AlertServicePutAlertPolicyProcedure = "/procmesh.v1.AlertService/PutAlertPolicy"
 )
 
 // ProcessServiceClient is a client for the procmesh.v1.ProcessService service.
@@ -2153,4 +2174,230 @@ func (UnimplementedBatchServiceHandler) ReplayTimeout(context.Context, *connect.
 
 func (UnimplementedBatchServiceHandler) ExportBatch(context.Context, *connect.Request[v1.ExportBatchRequest]) (*connect.Response[v1.ExportBatchResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.BatchService.ExportBatch is not implemented"))
+}
+
+// AlertServiceClient is a client for the procmesh.v1.AlertService service.
+type AlertServiceClient interface {
+	ListAlerts(context.Context, *connect.Request[v1.ListAlertsRequest]) (*connect.Response[v1.ListAlertsResponse], error)
+	GetAlert(context.Context, *connect.Request[v1.GetAlertRequest]) (*connect.Response[v1.GetAlertResponse], error)
+	ListAlertChannels(context.Context, *connect.Request[v1.ListAlertChannelsRequest]) (*connect.Response[v1.ListAlertChannelsResponse], error)
+	PutAlertChannel(context.Context, *connect.Request[v1.PutAlertChannelRequest]) (*connect.Response[v1.PutAlertChannelResponse], error)
+	DeleteAlertChannel(context.Context, *connect.Request[v1.DeleteAlertChannelRequest]) (*connect.Response[v1.DeleteAlertChannelResponse], error)
+	GetAlertPolicy(context.Context, *connect.Request[v1.GetAlertPolicyRequest]) (*connect.Response[v1.GetAlertPolicyResponse], error)
+	PutAlertPolicy(context.Context, *connect.Request[v1.PutAlertPolicyRequest]) (*connect.Response[v1.PutAlertPolicyResponse], error)
+}
+
+// NewAlertServiceClient constructs a client for the procmesh.v1.AlertService service. By default,
+// it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses, and
+// sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the connect.WithGRPC()
+// or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewAlertServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) AlertServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	alertServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("AlertService").Methods()
+	return &alertServiceClient{
+		listAlerts: connect.NewClient[v1.ListAlertsRequest, v1.ListAlertsResponse](
+			httpClient,
+			baseURL+AlertServiceListAlertsProcedure,
+			connect.WithSchema(alertServiceMethods.ByName("ListAlerts")),
+			connect.WithClientOptions(opts...),
+		),
+		getAlert: connect.NewClient[v1.GetAlertRequest, v1.GetAlertResponse](
+			httpClient,
+			baseURL+AlertServiceGetAlertProcedure,
+			connect.WithSchema(alertServiceMethods.ByName("GetAlert")),
+			connect.WithClientOptions(opts...),
+		),
+		listAlertChannels: connect.NewClient[v1.ListAlertChannelsRequest, v1.ListAlertChannelsResponse](
+			httpClient,
+			baseURL+AlertServiceListAlertChannelsProcedure,
+			connect.WithSchema(alertServiceMethods.ByName("ListAlertChannels")),
+			connect.WithClientOptions(opts...),
+		),
+		putAlertChannel: connect.NewClient[v1.PutAlertChannelRequest, v1.PutAlertChannelResponse](
+			httpClient,
+			baseURL+AlertServicePutAlertChannelProcedure,
+			connect.WithSchema(alertServiceMethods.ByName("PutAlertChannel")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteAlertChannel: connect.NewClient[v1.DeleteAlertChannelRequest, v1.DeleteAlertChannelResponse](
+			httpClient,
+			baseURL+AlertServiceDeleteAlertChannelProcedure,
+			connect.WithSchema(alertServiceMethods.ByName("DeleteAlertChannel")),
+			connect.WithClientOptions(opts...),
+		),
+		getAlertPolicy: connect.NewClient[v1.GetAlertPolicyRequest, v1.GetAlertPolicyResponse](
+			httpClient,
+			baseURL+AlertServiceGetAlertPolicyProcedure,
+			connect.WithSchema(alertServiceMethods.ByName("GetAlertPolicy")),
+			connect.WithClientOptions(opts...),
+		),
+		putAlertPolicy: connect.NewClient[v1.PutAlertPolicyRequest, v1.PutAlertPolicyResponse](
+			httpClient,
+			baseURL+AlertServicePutAlertPolicyProcedure,
+			connect.WithSchema(alertServiceMethods.ByName("PutAlertPolicy")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// alertServiceClient implements AlertServiceClient.
+type alertServiceClient struct {
+	listAlerts         *connect.Client[v1.ListAlertsRequest, v1.ListAlertsResponse]
+	getAlert           *connect.Client[v1.GetAlertRequest, v1.GetAlertResponse]
+	listAlertChannels  *connect.Client[v1.ListAlertChannelsRequest, v1.ListAlertChannelsResponse]
+	putAlertChannel    *connect.Client[v1.PutAlertChannelRequest, v1.PutAlertChannelResponse]
+	deleteAlertChannel *connect.Client[v1.DeleteAlertChannelRequest, v1.DeleteAlertChannelResponse]
+	getAlertPolicy     *connect.Client[v1.GetAlertPolicyRequest, v1.GetAlertPolicyResponse]
+	putAlertPolicy     *connect.Client[v1.PutAlertPolicyRequest, v1.PutAlertPolicyResponse]
+}
+
+// ListAlerts calls procmesh.v1.AlertService.ListAlerts.
+func (c *alertServiceClient) ListAlerts(ctx context.Context, req *connect.Request[v1.ListAlertsRequest]) (*connect.Response[v1.ListAlertsResponse], error) {
+	return c.listAlerts.CallUnary(ctx, req)
+}
+
+// GetAlert calls procmesh.v1.AlertService.GetAlert.
+func (c *alertServiceClient) GetAlert(ctx context.Context, req *connect.Request[v1.GetAlertRequest]) (*connect.Response[v1.GetAlertResponse], error) {
+	return c.getAlert.CallUnary(ctx, req)
+}
+
+// ListAlertChannels calls procmesh.v1.AlertService.ListAlertChannels.
+func (c *alertServiceClient) ListAlertChannels(ctx context.Context, req *connect.Request[v1.ListAlertChannelsRequest]) (*connect.Response[v1.ListAlertChannelsResponse], error) {
+	return c.listAlertChannels.CallUnary(ctx, req)
+}
+
+// PutAlertChannel calls procmesh.v1.AlertService.PutAlertChannel.
+func (c *alertServiceClient) PutAlertChannel(ctx context.Context, req *connect.Request[v1.PutAlertChannelRequest]) (*connect.Response[v1.PutAlertChannelResponse], error) {
+	return c.putAlertChannel.CallUnary(ctx, req)
+}
+
+// DeleteAlertChannel calls procmesh.v1.AlertService.DeleteAlertChannel.
+func (c *alertServiceClient) DeleteAlertChannel(ctx context.Context, req *connect.Request[v1.DeleteAlertChannelRequest]) (*connect.Response[v1.DeleteAlertChannelResponse], error) {
+	return c.deleteAlertChannel.CallUnary(ctx, req)
+}
+
+// GetAlertPolicy calls procmesh.v1.AlertService.GetAlertPolicy.
+func (c *alertServiceClient) GetAlertPolicy(ctx context.Context, req *connect.Request[v1.GetAlertPolicyRequest]) (*connect.Response[v1.GetAlertPolicyResponse], error) {
+	return c.getAlertPolicy.CallUnary(ctx, req)
+}
+
+// PutAlertPolicy calls procmesh.v1.AlertService.PutAlertPolicy.
+func (c *alertServiceClient) PutAlertPolicy(ctx context.Context, req *connect.Request[v1.PutAlertPolicyRequest]) (*connect.Response[v1.PutAlertPolicyResponse], error) {
+	return c.putAlertPolicy.CallUnary(ctx, req)
+}
+
+// AlertServiceHandler is an implementation of the procmesh.v1.AlertService service.
+type AlertServiceHandler interface {
+	ListAlerts(context.Context, *connect.Request[v1.ListAlertsRequest]) (*connect.Response[v1.ListAlertsResponse], error)
+	GetAlert(context.Context, *connect.Request[v1.GetAlertRequest]) (*connect.Response[v1.GetAlertResponse], error)
+	ListAlertChannels(context.Context, *connect.Request[v1.ListAlertChannelsRequest]) (*connect.Response[v1.ListAlertChannelsResponse], error)
+	PutAlertChannel(context.Context, *connect.Request[v1.PutAlertChannelRequest]) (*connect.Response[v1.PutAlertChannelResponse], error)
+	DeleteAlertChannel(context.Context, *connect.Request[v1.DeleteAlertChannelRequest]) (*connect.Response[v1.DeleteAlertChannelResponse], error)
+	GetAlertPolicy(context.Context, *connect.Request[v1.GetAlertPolicyRequest]) (*connect.Response[v1.GetAlertPolicyResponse], error)
+	PutAlertPolicy(context.Context, *connect.Request[v1.PutAlertPolicyRequest]) (*connect.Response[v1.PutAlertPolicyResponse], error)
+}
+
+// NewAlertServiceHandler builds an HTTP handler from the service implementation. It returns the
+// path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewAlertServiceHandler(svc AlertServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	alertServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("AlertService").Methods()
+	alertServiceListAlertsHandler := connect.NewUnaryHandler(
+		AlertServiceListAlertsProcedure,
+		svc.ListAlerts,
+		connect.WithSchema(alertServiceMethods.ByName("ListAlerts")),
+		connect.WithHandlerOptions(opts...),
+	)
+	alertServiceGetAlertHandler := connect.NewUnaryHandler(
+		AlertServiceGetAlertProcedure,
+		svc.GetAlert,
+		connect.WithSchema(alertServiceMethods.ByName("GetAlert")),
+		connect.WithHandlerOptions(opts...),
+	)
+	alertServiceListAlertChannelsHandler := connect.NewUnaryHandler(
+		AlertServiceListAlertChannelsProcedure,
+		svc.ListAlertChannels,
+		connect.WithSchema(alertServiceMethods.ByName("ListAlertChannels")),
+		connect.WithHandlerOptions(opts...),
+	)
+	alertServicePutAlertChannelHandler := connect.NewUnaryHandler(
+		AlertServicePutAlertChannelProcedure,
+		svc.PutAlertChannel,
+		connect.WithSchema(alertServiceMethods.ByName("PutAlertChannel")),
+		connect.WithHandlerOptions(opts...),
+	)
+	alertServiceDeleteAlertChannelHandler := connect.NewUnaryHandler(
+		AlertServiceDeleteAlertChannelProcedure,
+		svc.DeleteAlertChannel,
+		connect.WithSchema(alertServiceMethods.ByName("DeleteAlertChannel")),
+		connect.WithHandlerOptions(opts...),
+	)
+	alertServiceGetAlertPolicyHandler := connect.NewUnaryHandler(
+		AlertServiceGetAlertPolicyProcedure,
+		svc.GetAlertPolicy,
+		connect.WithSchema(alertServiceMethods.ByName("GetAlertPolicy")),
+		connect.WithHandlerOptions(opts...),
+	)
+	alertServicePutAlertPolicyHandler := connect.NewUnaryHandler(
+		AlertServicePutAlertPolicyProcedure,
+		svc.PutAlertPolicy,
+		connect.WithSchema(alertServiceMethods.ByName("PutAlertPolicy")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/procmesh.v1.AlertService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case AlertServiceListAlertsProcedure:
+			alertServiceListAlertsHandler.ServeHTTP(w, r)
+		case AlertServiceGetAlertProcedure:
+			alertServiceGetAlertHandler.ServeHTTP(w, r)
+		case AlertServiceListAlertChannelsProcedure:
+			alertServiceListAlertChannelsHandler.ServeHTTP(w, r)
+		case AlertServicePutAlertChannelProcedure:
+			alertServicePutAlertChannelHandler.ServeHTTP(w, r)
+		case AlertServiceDeleteAlertChannelProcedure:
+			alertServiceDeleteAlertChannelHandler.ServeHTTP(w, r)
+		case AlertServiceGetAlertPolicyProcedure:
+			alertServiceGetAlertPolicyHandler.ServeHTTP(w, r)
+		case AlertServicePutAlertPolicyProcedure:
+			alertServicePutAlertPolicyHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedAlertServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedAlertServiceHandler struct{}
+
+func (UnimplementedAlertServiceHandler) ListAlerts(context.Context, *connect.Request[v1.ListAlertsRequest]) (*connect.Response[v1.ListAlertsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.AlertService.ListAlerts is not implemented"))
+}
+
+func (UnimplementedAlertServiceHandler) GetAlert(context.Context, *connect.Request[v1.GetAlertRequest]) (*connect.Response[v1.GetAlertResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.AlertService.GetAlert is not implemented"))
+}
+
+func (UnimplementedAlertServiceHandler) ListAlertChannels(context.Context, *connect.Request[v1.ListAlertChannelsRequest]) (*connect.Response[v1.ListAlertChannelsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.AlertService.ListAlertChannels is not implemented"))
+}
+
+func (UnimplementedAlertServiceHandler) PutAlertChannel(context.Context, *connect.Request[v1.PutAlertChannelRequest]) (*connect.Response[v1.PutAlertChannelResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.AlertService.PutAlertChannel is not implemented"))
+}
+
+func (UnimplementedAlertServiceHandler) DeleteAlertChannel(context.Context, *connect.Request[v1.DeleteAlertChannelRequest]) (*connect.Response[v1.DeleteAlertChannelResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.AlertService.DeleteAlertChannel is not implemented"))
+}
+
+func (UnimplementedAlertServiceHandler) GetAlertPolicy(context.Context, *connect.Request[v1.GetAlertPolicyRequest]) (*connect.Response[v1.GetAlertPolicyResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.AlertService.GetAlertPolicy is not implemented"))
+}
+
+func (UnimplementedAlertServiceHandler) PutAlertPolicy(context.Context, *connect.Request[v1.PutAlertPolicyRequest]) (*connect.Response[v1.PutAlertPolicyResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.AlertService.PutAlertPolicy is not implemented"))
 }

@@ -729,3 +729,94 @@ service BatchService {
   rpc ReplayTimeout(RetryBatchRequest) returns (RetryBatchResponse);
   rpc ExportBatch(ExportBatchRequest) returns (ExportBatchResponse);
 }
+
+message Alert {
+  string alert_id = 1;
+  string fingerprint = 2;
+  string type = 3;
+  string severity = 4;
+  string node_id = 5;
+  string process_id = 6;
+  string payload_json = 7;
+  string state = 8; // FIRING | RESOLVED
+  int64 first_unix_ms = 9;
+  int64 last_unix_ms = 10;
+  int64 notified_unix_ms = 11;
+  int64 resolved_unix_ms = 12;
+  string last_error = 13;
+}
+
+message AlertEntry {
+  Alert alert = 1;
+  string source_node = 2;
+  string freshness = 3; // LIVE | STALE | UNKNOWN
+  int64 last_updated_unix_ms = 4;
+}
+
+message ListAlertsRequest {
+  int32 limit = 1;          // 0 = 50；封顶 200
+  string target_node = 2;   // 空 = 聚合
+  string state = 3;         // 空 = 全部；FIRING | RESOLVED
+}
+message ListAlertsResponse { repeated AlertEntry entries = 1; }
+
+message GetAlertRequest { string alert_id = 1; }
+message GetAlertResponse { AlertEntry entry = 1; }
+
+message AlertChannel {
+  string channel_id = 1;
+  string type = 2;
+  string name = 3;
+  bool enabled = 4;
+  string config_json = 5; // 已脱敏
+  int64 created_unix = 6;
+  int64 updated_unix = 7;
+}
+
+message ListAlertChannelsRequest {}
+message ListAlertChannelsResponse { repeated AlertChannel channels = 1; }
+
+message PutAlertChannelRequest {
+  MutationMeta meta = 1;
+  string channel_id = 2; // 空 = 创建
+  string type = 3;
+  string name = 4;
+  bool enabled = 5;
+  string config_json = 6;
+}
+message PutAlertChannelResponse { AlertChannel channel = 1; }
+
+message DeleteAlertChannelRequest {
+  MutationMeta meta = 1;
+  string channel_id = 2;
+}
+message DeleteAlertChannelResponse {}
+
+message AlertPolicy {
+  int64 dedup_window_sec = 1;
+  bool notify_on_resolve = 2;
+  int32 cpu_high_percent = 3;
+  int32 memory_high_percent = 4;
+  int32 disk_high_percent = 5;
+  int32 high_consecutive_mins = 6;
+  int64 suspect_too_long_sec = 7;
+}
+
+message GetAlertPolicyRequest {}
+message GetAlertPolicyResponse { AlertPolicy policy = 1; }
+
+message PutAlertPolicyRequest {
+  MutationMeta meta = 1;
+  AlertPolicy policy = 2;
+}
+message PutAlertPolicyResponse { AlertPolicy policy = 1; }
+
+service AlertService {
+  rpc ListAlerts(ListAlertsRequest) returns (ListAlertsResponse);
+  rpc GetAlert(GetAlertRequest) returns (GetAlertResponse);
+  rpc ListAlertChannels(ListAlertChannelsRequest) returns (ListAlertChannelsResponse);
+  rpc PutAlertChannel(PutAlertChannelRequest) returns (PutAlertChannelResponse);
+  rpc DeleteAlertChannel(DeleteAlertChannelRequest) returns (DeleteAlertChannelResponse);
+  rpc GetAlertPolicy(GetAlertPolicyRequest) returns (GetAlertPolicyResponse);
+  rpc PutAlertPolicy(PutAlertPolicyRequest) returns (PutAlertPolicyResponse);
+}
