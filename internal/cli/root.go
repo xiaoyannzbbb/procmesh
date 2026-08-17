@@ -64,6 +64,8 @@ commands:
   batch retry BATCH_ID
   batch replay-timeout BATCH_ID
   batch export BATCH_ID [--format json|csv]
+  metrics history node NODE_ID [--since RFC3339|unix] [--until RFC3339|unix]
+  metrics history process <id-or-name> [--since RFC3339|unix] [--until RFC3339|unix]
 `
 
 type usageError string
@@ -94,11 +96,11 @@ type options struct {
 	ttl       time.Duration
 	uses      int32
 
-	authToken string
-	user      string
-	password  string
-	display   string
-	email     string
+	authToken   string
+	user        string
+	password    string
+	display     string
+	email       string
 	name        string
 	perms       []string
 	userID      string
@@ -109,12 +111,15 @@ type options struct {
 	groupID     string
 	nodeID      string
 
-	batchType     string
-	processIDs    []string
-	processNames  []string
-	agentGroupID  string
-	processGroup  string
-	format        string
+	batchType    string
+	processIDs   []string
+	processNames []string
+	agentGroupID string
+	processGroup string
+	format       string
+
+	sinceUnix int64
+	untilUnix int64
 
 	args []string
 }
@@ -201,6 +206,11 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return printUsage(stderr, usageError("missing batch subcommand"))
 		}
 		runErr = runBatch(c, rest[0], rest[1:], opt, stdout)
+	case "metrics":
+		if len(rest) == 0 {
+			return printUsage(stderr, usageError("missing metrics subcommand"))
+		}
+		runErr = runMetrics(c, rest[0], rest[1:], opt, stdout)
 	default:
 		return printUsage(stderr, usageError("unknown command"))
 	}
@@ -365,10 +375,45 @@ func applyFlag(opt *options, name, val string) error {
 		opt.processGroup = val
 	case "format":
 		opt.format = val
+	case "since":
+		n, err := parseUnixOrRFC3339(val)
+		if err != nil {
+			return usageError("invalid --since")
+		}
+		opt.sinceUnix = n
+	case "until":
+		n, err := parseUnixOrRFC3339(val)
+		if err != nil {
+			return usageError("invalid --until")
+		}
+		opt.untilUnix = n
 	default:
 		return usageError("unknown flag --" + name)
 	}
 	return nil
+}
+
+func parseUnixOrRFC3339(val string) (int64, error) {
+	if isAllDigits(val) {
+		return strconv.ParseInt(val, 10, 64)
+	}
+	t, err := time.Parse(time.RFC3339, val)
+	if err != nil {
+		return 0, err
+	}
+	return t.Unix(), nil
+}
+
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func defaultOperator() string {
