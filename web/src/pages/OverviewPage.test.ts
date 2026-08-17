@@ -48,8 +48,20 @@ beforeEach(async () => {
             },
             recentBatches: "Recent batches",
             recentBatchesHint: "Only batches created on this entry agent.",
+            recentAlerts: "Recent alerts",
           },
           batch: { timeout: "timeout" },
+          alert: {
+            staleBanner: "Some nodes are unreachable. This is not an empty inbox.",
+            noAlerts: "No alerts",
+            firing: "FIRING",
+            resolved: "RESOLVED",
+            fingerprint: "Fingerprint",
+            type: "Type",
+            state: "State",
+            node: "Node",
+            freshness: "Freshness",
+          },
         },
       },
     },
@@ -87,19 +99,21 @@ const mounted: Array<{ unmount: () => void }> = [];
 async function mountOverview(
   overrides: Partial<typeof overview> = {},
   batches: unknown[] = [],
+  alerts: unknown[] = [],
 ) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   const clusterClient = { overview: vi.fn().mockResolvedValue({ ...overview, ...overrides }) };
   const batchClient = { listBatches: vi.fn().mockResolvedValue({ batches }) };
+  const alertClient = { listAlerts: vi.fn().mockResolvedValue({ entries: alerts }) };
   const wrapper = mount(OverviewPage, {
     global: {
       plugins: [
         [VueQueryPlugin, { queryClient }],
         [I18NextVue, { i18next: i18n }],
       ],
-      provide: { clusterClient, batchClient },
+      provide: { clusterClient, batchClient, alertClient },
       stubs: {
         RouterLink: { template: "<a><slot /></a>" },
       },
@@ -108,7 +122,7 @@ async function mountOverview(
   mounted.push(wrapper);
   await flushPromises();
   await wrapper.vm.$nextTick();
-  return { wrapper, batchClient };
+  return { wrapper, batchClient, alertClient };
 }
 
 afterEach(() => {
@@ -176,6 +190,36 @@ describe("OverviewPage", () => {
     expect(timeout.text()).toContain("2");
     expect(timeout.classes()).toContain("status-timeout");
     expect(timeout.classes()).not.toContain("status-success");
+  });
+
+  it("shows recent alerts STALE banner and not empty inbox", async () => {
+    const { wrapper, alertClient } = await mountOverview({}, [], [
+      {
+        alert: {
+          alertId: "a1",
+          fingerprint: "fp1",
+          type: "PROCESS_EXIT",
+          state: "FIRING",
+          nodeId: "n1",
+        },
+        sourceNode: "n1",
+        freshness: "LIVE",
+        lastUpdatedUnixMs: BigInt(1_700_000_010_000),
+      },
+      {
+        alert: undefined,
+        sourceNode: "n2",
+        freshness: "STALE",
+        lastUpdatedUnixMs: BigInt(0),
+      },
+    ]);
+    expect(alertClient.listAlerts).toHaveBeenCalledWith({ limit: 5 });
+    expect(wrapper.text()).toContain("Recent alerts");
+    expect(wrapper.text()).toContain("Some nodes are unreachable. This is not an empty inbox.");
+    expect(wrapper.find(".alert-stale-banner").exists()).toBe(true);
+    expect(wrapper.text()).not.toContain("No alerts");
+    expect(wrapper.find(".freshness-stale").exists()).toBe(true);
+    expect(wrapper.find('[data-freshness="STALE"]').exists()).toBe(true);
   });
 });
 

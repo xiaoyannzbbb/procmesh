@@ -7,6 +7,7 @@ import {
   Layers,
   FolderTree,
   ListTodo,
+  Bell,
   Users,
   ShieldCheck,
   FileSearch,
@@ -53,6 +54,9 @@ const navItems = computed(() => {
   }
   if (perms.value.has("batch.execute")) {
     items.push({ to: "/batches", label: t("nav.batches"), icon: ListTodo });
+  }
+  if (perms.value.has("alert.read")) {
+    items.push({ to: "/alerts", label: t("nav.alerts"), icon: Bell });
   }
   if (perms.value.has("user.read")) {
     items.push({ to: "/users", label: t("nav.users"), icon: Users });

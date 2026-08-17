@@ -2,7 +2,8 @@
 import { useQuery } from "@tanstack/vue-query";
 import { computed } from "vue";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
-import { useBatchClient, useClusterClient } from "../lib/rpc";
+import { LIVE, STALE, UNKNOWN, type Freshness } from "../lib/freshness";
+import { useAlertClient, useBatchClient, useClusterClient } from "../lib/rpc";
 import { useI18n } from "../lib/useI18n";
 import { formatPercent, mapOverview } from "./clusterView";
 
@@ -11,6 +12,7 @@ const { t } = useI18n();
 const POLL_MS = 5000;
 const client = useClusterClient();
 const batchClient = useBatchClient();
+const alertClient = useAlertClient();
 
 const query = useQuery({
   queryKey: ["cluster", "overview"],
@@ -25,6 +27,64 @@ const recentQuery = useQuery({
 });
 
 const recentBatches = computed(() => recentQuery.data.value?.batches ?? []);
+
+const recentAlertsQuery = useQuery({
+  queryKey: ["alerts", "recent"],
+  queryFn: () => alertClient.listAlerts({ limit: 5 }),
+  refetchInterval: POLL_MS,
+});
+
+const recentAlertEntries = computed(() => recentAlertsQuery.data.value?.entries ?? []);
+const recentAlertHasStale = computed(() =>
+  recentAlertEntries.value.some((e) => freshnessOf(e.freshness) === STALE),
+);
+const recentAlertRows = computed(() => recentAlertEntries.value.map(mapRecentAlert));
+const showRecentAlertsEmpty = computed(
+  () => !recentAlertHasStale.value && !recentAlertRows.value.length,
+);
+
+function freshnessOf(raw: string | undefined): Freshness {
+  if (raw === LIVE || raw === STALE || raw === UNKNOWN) {
+    return raw;
+  }
+  return UNKNOWN;
+}
+
+function mapRecentAlert(
+  entry: {
+    alert?: {
+      alertId?: string;
+      fingerprint?: string;
+      type?: string;
+      state?: string;
+      nodeId?: string;
+    };
+    sourceNode?: string;
+    freshness?: string;
+  },
+  index: number,
+) {
+  const alert = entry.alert;
+  const freshness = freshnessOf(entry.freshness);
+  return {
+    key: alert?.alertId || `${entry.sourceNode ?? "node"}:${index}`,
+    fingerprint: alert?.fingerprint || "—",
+    type: alert?.type || "—",
+    state: (alert?.state || "").toUpperCase(),
+    node: alert?.nodeId || entry.sourceNode || "—",
+    freshness,
+  };
+}
+
+function alertStateLabel(state: string): string {
+  if (state === "FIRING") {
+    return t("alert.firing");
+  }
+  if (state === "RESOLVED") {
+    return t("alert.resolved");
+  }
+  return state || "—";
+}
 
 const view = computed(() => {
   const data = query.data.value;
@@ -148,6 +208,45 @@ const errorText = computed(() => {
             <dd>{{ formatPercent(view.workload.diskPercent) }}</dd>
           </div>
         </dl>
+      </section>
+
+      <section v-if="recentAlertsQuery.data" class="card">
+        <h2>{{ t("overview.recentAlerts") }}</h2>
+        <div v-if="recentAlertHasStale" class="banner alert-stale-banner" role="status">
+          {{ t("alert.staleBanner") }}
+        </div>
+        <table v-if="recentAlertRows.length" class="table">
+          <thead>
+            <tr>
+              <th>{{ t("alert.fingerprint") }}</th>
+              <th>{{ t("alert.type") }}</th>
+              <th>{{ t("alert.state") }}</th>
+              <th>{{ t("alert.node") }}</th>
+              <th>{{ t("alert.freshness") }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="row in recentAlertRows"
+              :key="row.key"
+              :data-freshness="row.freshness"
+              :class="{ 'row-stale': row.freshness === 'STALE' }"
+            >
+              <td class="mono">{{ row.fingerprint }}</td>
+              <td>{{ row.type }}</td>
+              <td>
+                <span
+                  class="alert-state"
+                  :class="{ 'alert-firing': row.state === 'FIRING' }"
+                  :data-state="row.state || undefined"
+                >{{ alertStateLabel(row.state) }}</span>
+              </td>
+              <td class="mono">{{ row.node }}</td>
+              <td><FreshnessBadge :status="row.freshness" /></td>
+            </tr>
+          </tbody>
+        </table>
+        <p v-else-if="showRecentAlertsEmpty" class="muted">{{ t("alert.noAlerts") }}</p>
       </section>
 
       <section v-if="recentQuery.data" class="card">
@@ -317,5 +416,25 @@ h3 {
   padding: 0.125rem 0.5rem;
   font-size: 0.75rem;
   font-weight: 600;
+}
+.alert-stale-banner {
+  background: var(--color-stale);
+  color: var(--color-stale-fg);
+  margin-bottom: 0.75rem;
+}
+.alert-state {
+  font-weight: 600;
+}
+.alert-firing {
+  color: var(--color-danger);
+}
+.row-stale,
+tr[data-freshness="STALE"] {
+  background-color: #fef3c7;
+  color: #92400e;
+}
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
 }
 </style>

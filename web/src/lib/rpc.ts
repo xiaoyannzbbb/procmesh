@@ -1,6 +1,7 @@
 import { createClient, type Client } from "@connectrpc/connect";
 import { inject } from "vue";
 import {
+  AlertService,
   AuditService,
   BatchService,
   ClusterService,
@@ -40,6 +41,16 @@ export type AuditClient = Pick<Client<typeof AuditService>, "listAudit">;
 export type BatchClient = Pick<
   Client<typeof BatchService>,
   "createBatch" | "getBatch" | "listBatches" | "retryFailed" | "replayTimeout" | "exportBatch"
+>;
+export type AlertClient = Pick<
+  Client<typeof AlertService>,
+  | "listAlerts"
+  | "getAlert"
+  | "listAlertChannels"
+  | "putAlertChannel"
+  | "deleteAlertChannel"
+  | "getAlertPolicy"
+  | "putAlertPolicy"
 >;
 
 export function useClusterClient(): ClusterClient {
@@ -84,4 +95,8 @@ export function useAuditClient(): AuditClient {
 
 export function useBatchClient(): BatchClient {
   return inject<BatchClient | null>("batchClient", null) ?? createClient(BatchService, transport);
+}
+
+export function useAlertClient(): AlertClient {
+  return inject<AlertClient | null>("alertClient", null) ?? createClient(AlertService, transport);
 }

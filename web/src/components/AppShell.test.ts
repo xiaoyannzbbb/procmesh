@@ -28,6 +28,7 @@ testI18n.init({
           roles: 'Roles',
           audit: 'Audit',
           batches: 'Batches',
+          alerts: 'Alerts',
         },
         actions: {
           logout: 'Logout'
@@ -45,6 +46,7 @@ testI18n.init({
           roles: '角色',
           audit: '审计',
           batches: '批次',
+          alerts: '告警',
         },
         actions: {
           logout: '退出登录'
@@ -81,6 +83,7 @@ async function mountShell(current: Me, provide: Record<string, unknown> = {}) {
           { path: "processes", component: Blank },
           { path: "groups", component: Blank },
           { path: "batches", component: Blank },
+          { path: "alerts", component: Blank },
           { path: "users", component: Blank },
           { path: "roles", component: Blank },
           { path: "audit", component: Blank },
@@ -149,6 +152,25 @@ describe("AppShell", () => {
     expect(labels.indexOf("Groups")).toBeGreaterThan(-1);
     expect(labels.indexOf("Batches")).toBeGreaterThan(labels.indexOf("Groups"));
     expect(labels.indexOf("Users")).toBeGreaterThan(labels.indexOf("Batches"));
+  });
+
+  it("shows Alerts nav when alert.read", async () => {
+    const wrapper = await mountShell(me({ permissions: ["alert.read"] }));
+    expect(wrapper.text()).toContain("Alerts");
+  });
+
+  it("hides Alerts nav without alert.read", async () => {
+    const wrapper = await mountShell(me({ permissions: ["node.read", "user.read"] }));
+    expect(wrapper.text()).not.toContain("Alerts");
+  });
+
+  it("places Alerts after Batches and before Users", async () => {
+    const wrapper = await mountShell(
+      me({ permissions: ["node.read", "batch.execute", "alert.read", "user.read"] }),
+    );
+    const labels = wrapper.findAll(".nav-label").map((n) => n.text());
+    expect(labels.indexOf("Alerts")).toBeGreaterThan(labels.indexOf("Batches"));
+    expect(labels.indexOf("Users")).toBeGreaterThan(labels.indexOf("Alerts"));
   });
 
   it("shows Users, Roles, and Audit when permitted", async () => {
