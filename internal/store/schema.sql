@@ -96,3 +96,14 @@ CREATE TABLE IF NOT EXISTS batch_targets (
 
 CREATE INDEX IF NOT EXISTS batch_targets_batch ON batch_targets(batch_id);
 CREATE INDEX IF NOT EXISTS batch_targets_incomplete ON batch_targets(status);
+
+CREATE TABLE IF NOT EXISTS metric_samples (
+    series TEXT NOT NULL,
+    subject_id TEXT NOT NULL,
+    layer TEXT NOT NULL,
+    ts_unix INTEGER NOT NULL,
+    value REAL NOT NULL,
+    PRIMARY KEY (series, subject_id, layer, ts_unix)
+);
+CREATE INDEX IF NOT EXISTS metric_samples_query
+    ON metric_samples(subject_id, layer, series, ts_unix);

@@ -195,6 +195,7 @@ func TestOpen_CreatesFileAndStubTables(t *testing.T) {
 		"audit_events",
 		"batches",
 		"batch_targets",
+		"metric_samples",
 	}
 	for _, name := range want {
 		var got string
