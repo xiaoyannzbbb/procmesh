@@ -295,6 +295,38 @@ func TestCLI_AlertUsageAndParse(t *testing.T) {
 	}
 }
 
+func TestCLI_AlertChannelPutEnabledDefault(t *testing.T) {
+	opt, err := parseArgs([]string{"alert", "channel", "put", "--type", "WEBHOOK", "--name", "hook"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if opt.enabledSet {
+		t.Fatal("expected --enabled omitted")
+	}
+	if !channelPutEnabled(opt) {
+		t.Fatal("omitted --enabled must send Enabled=true")
+	}
+
+	opt, err = parseArgs([]string{"alert", "channel", "put", "--type", "WEBHOOK", "--name", "hook", "--enabled", "false"})
+	if err != nil {
+		t.Fatalf("parse false: %v", err)
+	}
+	if !opt.enabledSet || opt.enabled {
+		t.Fatalf("enabled=%v set=%v", opt.enabled, opt.enabledSet)
+	}
+	if channelPutEnabled(opt) {
+		t.Fatal("explicit --enabled false must send Enabled=false")
+	}
+
+	opt, err = parseArgs([]string{"alert", "channel", "put", "--type", "WEBHOOK", "--name", "hook", "--enabled", "true"})
+	if err != nil {
+		t.Fatalf("parse true: %v", err)
+	}
+	if !channelPutEnabled(opt) {
+		t.Fatal("explicit --enabled true must send Enabled=true")
+	}
+}
+
 func TestCLI_BatchUsageAndParse(t *testing.T) {
 	if !strings.Contains(usageText, "batch create") {
 		t.Fatal("usage missing batch create")

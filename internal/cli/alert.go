@@ -124,16 +124,12 @@ func alertChannelPut(c *client, opt options, stdout io.Writer) error {
 	if opt.name == "" {
 		return usageError("alert channel put requires --name")
 	}
-	enabled := false
-	if opt.enabledSet {
-		enabled = opt.enabled
-	}
 	resp, err := c.alert.PutAlertChannel(context.Background(), connect.NewRequest(&procmeshv1.PutAlertChannelRequest{
 		Meta:       c.meta(),
 		ChannelId:  opt.id,
 		Type:       opt.batchType,
 		Name:       opt.name,
-		Enabled:    enabled,
+		Enabled:    channelPutEnabled(opt),
 		ConfigJson: opt.config,
 	}))
 	if err != nil {
@@ -141,6 +137,15 @@ func alertChannelPut(c *client, opt options, stdout io.Writer) error {
 	}
 	printAlertChannel(stdout, resp.Msg.GetChannel())
 	return nil
+}
+
+// channelPutEnabled defaults to true when --enabled is omitted so create/update
+// does not silently leave channels disabled.
+func channelPutEnabled(opt options) bool {
+	if opt.enabledSet {
+		return opt.enabled
+	}
+	return true
 }
 
 func alertChannelDelete(c *client, channelID string, stdout io.Writer) error {
