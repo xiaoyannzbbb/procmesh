@@ -369,13 +369,18 @@
     "loading": "Loading…",
     "noGroups": "No groups",
     "create": "Create",
+    "createGroup": "Create Group",
     "members": "Members",
     "name": "Name",
     "description": "Description",
     "addMember": "Add member",
     "removeMember": "Remove member",
     "delete": "Delete",
-    "nodeId": "Node ID"
+    "nodeId": "Node ID",
+    "selectNode": "Select node",
+    "selectNodeToAdd": "Select a node to add",
+    "noAdmittedNodes": "No admitted nodes available. Only nodes that have completed the cluster admission process can be added to groups.",
+    "clusterRequiredNotice": "Agent Groups require an initialized cluster. Nodes must join via <code>cluster init</code> or <code>cluster join</code> to be added to groups. Standalone nodes are not admitted members."
   },
   "users": {
     "title": "Users",

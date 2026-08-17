@@ -369,13 +369,18 @@
     "loading": "加载中…",
     "noGroups": "无分组",
     "create": "创建",
+    "createGroup": "创建分组",
     "members": "成员",
     "name": "名称",
     "description": "描述",
     "addMember": "添加成员",
     "removeMember": "移除成员",
     "delete": "删除",
-    "nodeId": "节点ID"
+    "nodeId": "节点ID",
+    "selectNode": "选择节点",
+    "selectNodeToAdd": "选择要添加的节点",
+    "noAdmittedNodes": "无可用的已准入节点。只有完成集群准入流程的节点才能被添加到分组。",
+    "clusterRequiredNotice": "代理分组需要已初始化的集群。节点必须通过 <code>cluster init</code> 或 <code>cluster join</code> 加入集群才能被添加到分组。独立节点不是已准入成员。"
   },
   "users": {
     "title": "用户",
