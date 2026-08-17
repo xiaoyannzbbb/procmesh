@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/memberlist"
 	"github.com/qleelulu/procmesh/internal/cluster"
 )
 
@@ -73,6 +74,38 @@ func TestMesh_GracefulLeaveMarksLeft(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("want nb LEFT, got %q members=%+v", memberState(a, "nb"), a.Members())
+}
+
+func TestMesh_ApplyMemberlistStateSuspect(t *testing.T) {
+	src := &staticSource{s: cluster.NodeSummary{NodeID: "na", BootID: "ba", Hostname: "a", State: cluster.StateAlive, ProtocolVersion: 1}}
+	m, err := cluster.Start(cluster.Config{NodeID: "na", BindAddr: "127.0.0.1", BindPort: 0, Source: src, Protocol: 1, TestFast: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = m.Shutdown() })
+
+	put := func(id string, st cluster.State) {
+		t.Helper()
+		m.MergeForTest(cluster.EncodeState(cluster.NodeSummary{
+			NodeID: id, BootID: id, Hostname: id, State: st, ProtocolVersion: 1,
+		}))
+	}
+
+	put("nb", cluster.StateAlive)
+	m.ApplyMemberlistState("nb", memberlist.StateSuspect)
+	if got := memberState(m, "nb"); got != cluster.StateSuspect {
+		t.Fatalf("alive→suspect: got %q", got)
+	}
+
+	terminals := []cluster.State{cluster.StateFailed, cluster.StateLeft, cluster.StateRemoved, cluster.StateRevoked}
+	for i, st := range terminals {
+		id := string(rune('c' + i))
+		put(id, st)
+		m.ApplyMemberlistState(id, memberlist.StateSuspect)
+		if got := memberState(m, id); got != st {
+			t.Fatalf("%s: want %s held, got %q", id, st, got)
+		}
+	}
 }
 
 func memberState(m *cluster.Mesh, id string) cluster.State {

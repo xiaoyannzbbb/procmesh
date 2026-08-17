@@ -163,8 +163,20 @@ func (m *Mesh) Update() {
 	_ = m.list.UpdateNode(0)
 }
 
+// ApplyMemberlistState maps a memberlist node state onto the local view.
+// StateSuspect becomes cluster.StateSuspect and does not overlay LEFT/REMOVED/REVOKED/FAILED.
+func (m *Mesh) ApplyMemberlistState(nodeID string, state memberlist.NodeStateType) {
+	if nodeID == "" || state != memberlist.StateSuspect {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.markSuspectLocked(nodeID)
+}
+
 // Members returns the local snapshot plus remote views, sorted by node_id.
 func (m *Mesh) Members() []NodeSummary {
+	m.applyMemberlistStates()
 	local := m.localSummary()
 
 	m.mu.RLock()
@@ -182,6 +194,43 @@ func (m *Mesh) Members() []NodeSummary {
 		return out[i].NodeID < out[j].NodeID
 	})
 	return out
+}
+
+func (m *Mesh) applyMemberlistStates() {
+	if m.list == nil {
+		return
+	}
+	var suspects []string
+	for _, n := range m.list.Members() {
+		if n == nil || n.State != memberlist.StateSuspect {
+			continue
+		}
+		id, _ := splitMemberName(n.Name)
+		if id != "" {
+			suspects = append(suspects, id)
+		}
+	}
+	if len(suspects) == 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, id := range suspects {
+		m.markSuspectLocked(id)
+	}
+}
+
+func (m *Mesh) markSuspectLocked(nodeID string) {
+	prev, ok := m.view[nodeID]
+	if !ok {
+		return
+	}
+	switch prev.State {
+	case StateLeft, StateRemoved, StateRevoked, StateFailed:
+		return
+	}
+	prev.State = StateSuspect
+	m.view[nodeID] = prev
 }
 
 func (m *Mesh) NodeMeta(limit int) []byte {

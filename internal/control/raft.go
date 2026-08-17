@@ -196,6 +196,22 @@ func (n *Node) IsLeader() bool {
 	return n != nil && n.raft != nil && n.raft.State() == raft.Leader
 }
 
+func (n *Node) IsVoter() bool {
+	if n == nil || n.raft == nil {
+		return false
+	}
+	fut := n.raft.GetConfiguration()
+	if err := fut.Error(); err != nil {
+		return false
+	}
+	for _, srv := range fut.Configuration().Servers {
+		if string(srv.ID) == n.id {
+			return srv.Suffrage == raft.Voter
+		}
+	}
+	return false
+}
+
 func (n *Node) LeaderAddr() string {
 	if n == nil || n.raft == nil {
 		return ""

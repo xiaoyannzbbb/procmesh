@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/qleelulu/procmesh/internal/alert"
+	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/metrics"
@@ -259,4 +260,175 @@ func TestScanner_ProcessMemSkippedWhenTotalUnknown(t *testing.T) {
 	e.snap.MemoryTotalBytes = 100
 	e.scan(t)
 	e.requireFiring(t, "MEMORY_HIGH:p1")
+}
+
+func (e *scanEnv) scanCluster(t *testing.T, view alert.ClusterView) {
+	t.Helper()
+	if err := e.sc.ScanCluster(e.ctx, view); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (e *scanEnv) requireAbsent(t *testing.T, fp string) {
+	t.Helper()
+	if rec, ok := e.get(t, fp); ok {
+		t.Fatalf("want no row %s, got %+v", fp, rec)
+	}
+}
+
+func TestScanner_OnlyLeaderSendsAgentFailed(t *testing.T) {
+	e := newScanEnv(t)
+	view := alert.ClusterView{
+		ClusterID:  "cid",
+		Leader:     false,
+		Voter:      true,
+		HasQuorum:  true,
+		LeaderAddr: "127.0.0.1:9",
+		Members: []cluster.NodeSummary{{
+			NodeID:            "n2",
+			State:             cluster.StateFailed,
+			LastUpdatedUnixMs: e.now.UnixMilli(),
+		}},
+	}
+	e.scanCluster(t, view)
+	e.requireAbsent(t, "NODE_FAILED:n2")
+
+	view.Leader = true
+	e.scanCluster(t, view)
+	e.requireFiring(t, "NODE_FAILED:n2")
+
+	view.Members[0].State = cluster.StateAlive
+	e.scanCluster(t, view)
+	e.requireResolved(t, "NODE_FAILED:n2")
+}
+
+func TestScanner_FollowerDoesNotSendCertOrVersion(t *testing.T) {
+	e := newScanEnv(t)
+	view := alert.ClusterView{
+		ClusterID:  "cid",
+		Leader:     false,
+		Voter:      true,
+		HasQuorum:  true,
+		LeaderAddr: "127.0.0.1:9",
+		Members: []cluster.NodeSummary{{
+			NodeID:          "n2",
+			State:           cluster.StateAlive,
+			ProtocolVersion: 99,
+		}},
+		CertNotAfter: map[string]time.Time{
+			"n2": e.now.Add(24 * time.Hour),
+		},
+	}
+	e.scanCluster(t, view)
+	e.requireAbsent(t, "CERT_EXPIRING:n2")
+	e.requireAbsent(t, "VERSION_MISMATCH:n2")
+	e.requireAbsent(t, "NODE_SUSPECT:n2")
+
+	view.Leader = true
+	e.scanCluster(t, view)
+	e.requireFiring(t, "CERT_EXPIRING:n2")
+	e.requireFiring(t, "VERSION_MISMATCH:n2")
+}
+
+func TestScanner_VoterNoQuorumAfterSuspectWindow(t *testing.T) {
+	e := newScanEnv(t)
+	e.pol.SuspectTooLongSec = 60
+	view := alert.ClusterView{
+		ClusterID:  "cid",
+		Leader:     false,
+		Voter:      true,
+		HasQuorum:  false,
+		LeaderAddr: "",
+	}
+	e.scanCluster(t, view)
+	e.requireAbsent(t, "CONTROL_NO_QUORUM:cid")
+
+	e.now = e.now.Add(60 * time.Second)
+	e.scanCluster(t, view)
+	e.requireFiring(t, "CONTROL_NO_QUORUM:cid")
+
+	view.HasQuorum = true
+	view.LeaderAddr = "127.0.0.1:9"
+	e.scanCluster(t, view)
+	e.requireResolved(t, "CONTROL_NO_QUORUM:cid")
+}
+
+func TestScanner_NonVoterNoQuorumSilent(t *testing.T) {
+	e := newScanEnv(t)
+	e.pol.SuspectTooLongSec = 60
+	view := alert.ClusterView{
+		ClusterID:  "cid",
+		Leader:     false,
+		Voter:      false,
+		HasQuorum:  false,
+		LeaderAddr: "",
+	}
+	e.scanCluster(t, view)
+	e.now = e.now.Add(2 * time.Minute)
+	e.scanCluster(t, view)
+	e.requireAbsent(t, "CONTROL_NO_QUORUM:cid")
+}
+
+func TestScanner_LeaderWithoutQuorumSkipsMemberAlerts(t *testing.T) {
+	e := newScanEnv(t)
+	view := alert.ClusterView{
+		ClusterID: "cid",
+		Leader:    true,
+		Voter:     true,
+		HasQuorum: false,
+		Members: []cluster.NodeSummary{
+			{NodeID: "n2", State: cluster.StateFailed, LastUpdatedUnixMs: e.now.UnixMilli()},
+			{NodeID: "n3", State: cluster.StateAlive, ProtocolVersion: 7},
+		},
+		CertNotAfter: map[string]time.Time{"n3": e.now.Add(time.Hour)},
+	}
+	e.scanCluster(t, view)
+	e.requireAbsent(t, "NODE_FAILED:n2")
+	e.requireAbsent(t, "CERT_EXPIRING:n3")
+	e.requireAbsent(t, "VERSION_MISMATCH:n3")
+}
+
+func TestScanner_LeaderSuspectTooLongAndRecover(t *testing.T) {
+	e := newScanEnv(t)
+	e.pol.SuspectTooLongSec = 60
+	view := alert.ClusterView{
+		ClusterID:  "cid",
+		Leader:     true,
+		Voter:      true,
+		HasQuorum:  true,
+		LeaderAddr: "127.0.0.1:9",
+		Members: []cluster.NodeSummary{{
+			NodeID:            "n2",
+			State:             cluster.StateSuspect,
+			LastUpdatedUnixMs: e.now.Add(-30 * time.Second).UnixMilli(),
+		}},
+	}
+	e.scanCluster(t, view)
+	e.requireAbsent(t, "NODE_SUSPECT:n2")
+
+	view.Members[0].LastUpdatedUnixMs = e.now.Add(-60 * time.Second).UnixMilli()
+	e.scanCluster(t, view)
+	e.requireFiring(t, "NODE_SUSPECT:n2")
+
+	view.Members[0].State = cluster.StateAlive
+	e.scanCluster(t, view)
+	e.requireResolved(t, "NODE_SUSPECT:n2")
+}
+
+func TestScanner_ProtocolZeroAndOneNotMismatch(t *testing.T) {
+	e := newScanEnv(t)
+	view := alert.ClusterView{
+		ClusterID:  "cid",
+		Leader:     true,
+		Voter:      true,
+		HasQuorum:  true,
+		LeaderAddr: "127.0.0.1:9",
+		Members: []cluster.NodeSummary{
+			{NodeID: "n2", State: cluster.StateAlive, ProtocolVersion: 0},
+			{NodeID: "n3", State: cluster.StateAlive, ProtocolVersion: 1},
+		},
+	}
+	e.scanCluster(t, view)
+	e.requireAbsent(t, "VERSION_MISMATCH:n2")
+	e.requireAbsent(t, "VERSION_MISMATCH:n3")
 }

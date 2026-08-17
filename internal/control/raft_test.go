@@ -303,6 +303,54 @@ func TestRaft_MembershipAddRemove(t *testing.T) {
 	}
 }
 
+func TestNode_IsVoter(t *testing.T) {
+	nodes := startInmemVoters(t, 3)
+	waitLeader(t, nodes, 10*time.Second)
+	for i, n := range nodes {
+		if !n.IsVoter() {
+			t.Fatalf("voter node-%d IsVoter=false", i+1)
+		}
+	}
+
+	addr0, trans0 := raft.NewInmemTransport("")
+	addr1, trans1 := raft.NewInmemTransport("")
+	trans0.Connect(addr1, trans1)
+	trans1.Connect(addr0, trans0)
+
+	voter, err := control.StartInmem("voter", control.NewFSM(), trans0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = voter.Shutdown() })
+	nv, err := control.StartInmem("nv-1", control.NewFSM(), trans1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = nv.Shutdown() })
+
+	if err := voter.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	waitLeader(t, []*control.Node{voter}, 10*time.Second)
+	if err := voter.AddNonvoter("nv-1", string(addr1)); err != nil {
+		t.Fatal(err)
+	}
+	if !voter.IsVoter() {
+		t.Fatal("bootstrap voter IsVoter=false")
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if nv.LeaderAddr() != "" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if nv.IsVoter() {
+		t.Fatal("nonvoter IsVoter=true")
+	}
+}
+
 func startInmemVoters(t *testing.T, n int) []*control.Node {
 	t.Helper()
 	type spec struct {

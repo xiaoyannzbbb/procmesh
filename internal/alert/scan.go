@@ -5,11 +5,25 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/metrics"
 	"github.com/qleelulu/procmesh/internal/store"
 )
+
+const certExpiringWithin = 30 * 24 * time.Hour
+
+type ClusterView struct {
+	ClusterID          string
+	Leader             bool
+	Voter              bool
+	HasQuorum          bool
+	LeaderAddr         string
+	LeaderMissingSince time.Time // 测试可设；生产由 Scanner 记住
+	Members            []cluster.NodeSummary
+	CertNotAfter       map[string]time.Time // node_id → NotAfter；缺省只填本机
+}
 
 type ProcessSnap struct {
 	ProcessID string
@@ -34,6 +48,8 @@ type Scanner struct {
 	ProcMem   func(processID string) int64   // bytes；未知 <0
 	Degraded  func() bool
 	Now       func() time.Time
+
+	leaderGoneAt time.Time
 }
 
 func (s *Scanner) ScanLocal(ctx context.Context) error {
@@ -51,6 +67,113 @@ func (s *Scanner) ScanLocal(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+func (s *Scanner) ScanCluster(ctx context.Context, view ClusterView) error {
+	if s == nil || s.Engine == nil {
+		return errcode.E(errcode.INVALID, "scanner engine")
+	}
+	now := s.now()
+	if err := s.scanControlQuorum(ctx, view, now); err != nil {
+		return err
+	}
+	if view.Leader && view.HasQuorum {
+		if err := s.scanClusterMembers(ctx, view, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Scanner) scanControlQuorum(ctx context.Context, view ClusterView, now time.Time) error {
+	if !view.Voter {
+		return nil
+	}
+	missing := !view.HasQuorum || view.LeaderAddr == ""
+	if !missing {
+		s.leaderGoneAt = time.Time{}
+		return s.observe(ctx, Event{
+			Type: TypeControlNoQuorum, NodeID: s.NodeID, ClusterID: view.ClusterID, At: now, Firing: false,
+		})
+	}
+	start := s.leaderGoneAt
+	if start.IsZero() {
+		if !view.LeaderMissingSince.IsZero() {
+			start = view.LeaderMissingSince
+		} else {
+			start = now
+		}
+		s.leaderGoneAt = start
+	}
+	window := time.Duration(s.policy().SuspectTooLongSec) * time.Second
+	if now.Sub(start) < window {
+		return nil
+	}
+	return s.observe(ctx, Event{
+		Type: TypeControlNoQuorum, NodeID: s.NodeID, ClusterID: view.ClusterID, At: now, Firing: true,
+	})
+}
+
+func (s *Scanner) scanClusterMembers(ctx context.Context, view ClusterView, now time.Time) error {
+	window := time.Duration(s.policy().SuspectTooLongSec) * time.Second
+	for _, m := range view.Members {
+		if err := s.scanMemberFailed(ctx, view.ClusterID, m, now); err != nil {
+			return err
+		}
+		if err := s.scanMemberSuspect(ctx, view.ClusterID, m, now, window); err != nil {
+			return err
+		}
+		if err := s.scanMemberVersion(ctx, view.ClusterID, m, now); err != nil {
+			return err
+		}
+		if err := s.scanMemberCert(ctx, view.ClusterID, m, view.CertNotAfter, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Scanner) scanMemberFailed(ctx context.Context, clusterID string, m cluster.NodeSummary, now time.Time) error {
+	switch m.State {
+	case cluster.StateFailed:
+		return s.observe(ctx, Event{Type: TypeAgentFailed, NodeID: m.NodeID, ClusterID: clusterID, At: now, Firing: true})
+	case cluster.StateAlive:
+		return s.observe(ctx, Event{Type: TypeAgentFailed, NodeID: m.NodeID, ClusterID: clusterID, At: now, Firing: false})
+	default:
+		return nil
+	}
+}
+
+func (s *Scanner) scanMemberSuspect(ctx context.Context, clusterID string, m cluster.NodeSummary, now time.Time, window time.Duration) error {
+	switch m.State {
+	case cluster.StateSuspect:
+		last := time.UnixMilli(m.LastUpdatedUnixMs)
+		if now.Sub(last) < window {
+			return nil
+		}
+		return s.observe(ctx, Event{Type: TypeAgentSuspect, NodeID: m.NodeID, ClusterID: clusterID, At: now, Firing: true})
+	case cluster.StateAlive:
+		return s.observe(ctx, Event{Type: TypeAgentSuspect, NodeID: m.NodeID, ClusterID: clusterID, At: now, Firing: false})
+	default:
+		return nil
+	}
+}
+
+func (s *Scanner) scanMemberVersion(ctx context.Context, clusterID string, m cluster.NodeSummary, now time.Time) error {
+	if m.State != cluster.StateAlive {
+		return nil
+	}
+	mismatch := m.ProtocolVersion != 0 && m.ProtocolVersion != 1
+	return s.observe(ctx, Event{Type: TypeVersionMismatch, NodeID: m.NodeID, ClusterID: clusterID, At: now, Firing: mismatch})
+}
+
+func (s *Scanner) scanMemberCert(ctx context.Context, clusterID string, m cluster.NodeSummary, certs map[string]time.Time, now time.Time) error {
+	notAfter, ok := certs[m.NodeID]
+	if !ok || notAfter.IsZero() {
+		return nil
+	}
+	firing := !notAfter.After(now.Add(certExpiringWithin))
+	return s.observe(ctx, Event{Type: TypeCertExpiring, NodeID: m.NodeID, ClusterID: clusterID, At: now, Firing: firing})
 }
 
 func (s *Scanner) scanProcesses(ctx context.Context, now time.Time) error {
