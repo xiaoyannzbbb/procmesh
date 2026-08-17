@@ -76,6 +76,103 @@ func TestMesh_GracefulLeaveMarksLeft(t *testing.T) {
 	t.Fatalf("want nb LEFT, got %q members=%+v", memberState(a, "nb"), a.Members())
 }
 
+func TestMesh_StaleAlivePresentMemberMarkedSuspect(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	srcA := &staticSource{s: cluster.NodeSummary{
+		NodeID: "na", BootID: "ba", Hostname: "a", State: cluster.StateAlive, ProtocolVersion: 1,
+		LastUpdatedUnixMs: now.UnixMilli(),
+	}}
+	srcB := &staticSource{s: cluster.NodeSummary{
+		NodeID: "nb", BootID: "bb", Hostname: "b", State: cluster.StateAlive, ProtocolVersion: 1,
+		LastUpdatedUnixMs: now.Add(-3 * time.Second).UnixMilli(),
+	}}
+	a, err := cluster.Start(cluster.Config{
+		NodeID: "na", BindAddr: "127.0.0.1", BindPort: 0, Source: srcA, Protocol: 1, TestFast: true,
+		SuspectAfter: 2 * time.Second,
+		Now:          func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = a.Shutdown() })
+	b, err := cluster.Start(cluster.Config{NodeID: "nb", BindAddr: "127.0.0.1", BindPort: 0, Source: srcB, Protocol: 1, TestFast: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = b.Shutdown() })
+	if _, err := b.Join([]string{a.LocalAddr()}); err != nil {
+		t.Fatal(err)
+	}
+	waitMembers(t, a, 2)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if memberState(a, "nb") == cluster.StateSuspect {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("want nb SUSPECT via stale Members() overlay, got %q members=%+v", memberState(a, "nb"), a.Members())
+}
+
+func TestMesh_ZeroLastUpdatedNotSuspect(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	srcA := &staticSource{s: cluster.NodeSummary{NodeID: "na", BootID: "ba", Hostname: "a", State: cluster.StateAlive, ProtocolVersion: 1}}
+	srcB := &staticSource{s: cluster.NodeSummary{NodeID: "nb", BootID: "bb", Hostname: "b", State: cluster.StateAlive, ProtocolVersion: 1}}
+	a, err := cluster.Start(cluster.Config{
+		NodeID: "na", BindAddr: "127.0.0.1", BindPort: 0, Source: srcA, Protocol: 1, TestFast: true,
+		SuspectAfter: 2 * time.Second,
+		Now:          func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = a.Shutdown() })
+	b, err := cluster.Start(cluster.Config{NodeID: "nb", BindAddr: "127.0.0.1", BindPort: 0, Source: srcB, Protocol: 1, TestFast: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = b.Shutdown() })
+	if _, err := b.Join([]string{a.LocalAddr()}); err != nil {
+		t.Fatal(err)
+	}
+	waitMembers(t, a, 2)
+	if got := memberState(a, "nb"); got != cluster.StateAlive {
+		t.Fatalf("LastUpdated=0 must stay ALIVE, got %q members=%+v", got, a.Members())
+	}
+}
+
+func TestMesh_StaleDoesNotOverlayFailed(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	srcA := &staticSource{s: cluster.NodeSummary{NodeID: "na", BootID: "ba", Hostname: "a", State: cluster.StateAlive, ProtocolVersion: 1}}
+	srcB := &staticSource{s: cluster.NodeSummary{NodeID: "nb", BootID: "bb", Hostname: "b", State: cluster.StateAlive, ProtocolVersion: 1}}
+	a, err := cluster.Start(cluster.Config{
+		NodeID: "na", BindAddr: "127.0.0.1", BindPort: 0, Source: srcA, Protocol: 1, TestFast: true,
+		SuspectAfter: 2 * time.Second,
+		Now:          func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = a.Shutdown() })
+	b, err := cluster.Start(cluster.Config{NodeID: "nb", BindAddr: "127.0.0.1", BindPort: 0, Source: srcB, Protocol: 1, TestFast: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = b.Shutdown() })
+	if _, err := b.Join([]string{a.LocalAddr()}); err != nil {
+		t.Fatal(err)
+	}
+	waitMembers(t, a, 2)
+	a.MergeForTest(cluster.EncodeState(cluster.NodeSummary{
+		NodeID: "nb", BootID: "bb", Hostname: "b", State: cluster.StateFailed, ProtocolVersion: 1,
+		LastUpdatedUnixMs: now.Add(-10 * time.Second).UnixMilli(),
+	}))
+	if got := memberState(a, "nb"); got != cluster.StateFailed {
+		t.Fatalf("FAILED must not become SUSPECT, got %q", got)
+	}
+}
+
 func TestMesh_ApplyMemberlistStateSuspect(t *testing.T) {
 	src := &staticSource{s: cluster.NodeSummary{NodeID: "na", BootID: "ba", Hostname: "a", State: cluster.StateAlive, ProtocolVersion: 1}}
 	m, err := cluster.Start(cluster.Config{NodeID: "na", BindAddr: "127.0.0.1", BindPort: 0, Source: src, Protocol: 1, TestFast: true})

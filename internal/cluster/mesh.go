@@ -16,6 +16,11 @@ import (
 	"github.com/qleelulu/procmesh/internal/version"
 )
 
+// DefaultSuspectAfter is how long an ALIVE peer may go without LastUpdated
+// before Members() overlays StateSuspect. This is the mesh overlay, not the
+// AGENT_SUSPECT_TOO_LONG alert window (control.AlertPolicy.SuspectTooLongSec).
+const DefaultSuspectAfter = 2 * time.Second
+
 type Config struct {
 	NodeID    string
 	BindAddr  string // default 127.0.0.1
@@ -25,6 +30,10 @@ type Config struct {
 	Protocol  int         // must be version.Protocol
 	Logger    *log.Logger // 可空
 	TestFast  bool        // short probe/gossip intervals for tests
+	// SuspectAfter overlays StateSuspect on still-present ALIVE remotes whose
+	// LastUpdatedUnixMs is this old. Zero means DefaultSuspectAfter (2s).
+	SuspectAfter time.Duration
+	Now          func() time.Time
 }
 
 type Mesh struct {
@@ -197,27 +206,62 @@ func (m *Mesh) Members() []NodeSummary {
 }
 
 func (m *Mesh) applyMemberlistStates() {
-	if m.list == nil {
+	present := m.presentMemberIDs()
+	if len(present) == 0 {
 		return
 	}
-	var suspects []string
+	now := m.now()
+	after := m.suspectAfter()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id := range present {
+		s, ok := m.view[id]
+		if !ok {
+			continue
+		}
+		switch s.State {
+		case StateLeft, StateRemoved, StateRevoked, StateFailed:
+			continue
+		}
+		if s.LastUpdatedUnixMs == 0 {
+			continue
+		}
+		if now.Sub(time.UnixMilli(s.LastUpdatedUnixMs)) < after {
+			continue
+		}
+		m.markSuspectLocked(id)
+	}
+}
+
+func (m *Mesh) presentMemberIDs() map[string]struct{} {
+	out := map[string]struct{}{}
+	if m.list == nil {
+		return out
+	}
 	for _, n := range m.list.Members() {
-		if n == nil || n.State != memberlist.StateSuspect {
+		if n == nil {
 			continue
 		}
 		id, _ := splitMemberName(n.Name)
 		if id != "" {
-			suspects = append(suspects, id)
+			out[id] = struct{}{}
 		}
 	}
-	if len(suspects) == 0 {
-		return
+	return out
+}
+
+func (m *Mesh) now() time.Time {
+	if m.cfg.Now != nil {
+		return m.cfg.Now()
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for _, id := range suspects {
-		m.markSuspectLocked(id)
+	return time.Now()
+}
+
+func (m *Mesh) suspectAfter() time.Duration {
+	if m.cfg.SuspectAfter > 0 {
+		return m.cfg.SuspectAfter
 	}
+	return DefaultSuspectAfter
 }
 
 func (m *Mesh) markSuspectLocked(nodeID string) {
