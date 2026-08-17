@@ -105,6 +105,32 @@ function issueMessage(issue: ProcessConfigIssue): string {
   return t(`processConfig.editor.validation.${issue.code}`);
 }
 
+function issueLabel(path: string): string {
+  const field = PROCESS_CONFIG_FIELDS.find((candidate) => candidate.path === path);
+  if (field) {
+    return t(field.labelKey);
+  }
+
+  const rowField = path.match(/^(args|health\.args|environment|dependencies)\.(\d+)(?:\.(key|value|processName|condition))?$/);
+  if (!rowField) {
+    return path;
+  }
+
+  const [, collection, index, property] = rowField;
+  const labelKey = property === "key"
+    ? "processConfig.editor.environmentKey"
+    : property === "value"
+      ? "processConfig.editor.environmentValue"
+      : property === "processName"
+        ? "processConfig.editor.dependencyProcess"
+        : property === "condition"
+          ? "processConfig.editor.dependencyCondition"
+          : collection === "health.args"
+            ? "processConfig.editor.field.healthArgs"
+            : "processConfig.editor.field.args";
+  return `${t(labelKey)} ${Number(index) + 1}`;
+}
+
 function describedBy(path: string): string | undefined {
   return issueFor(path) ? issueId(path) : undefined;
 }
@@ -209,7 +235,7 @@ defineExpose({ focusIssue });
       <ul>
         <li v-for="issue in issues" :key="`${issue.path}-${issue.code}`">
           <a :href="`#${fieldId(issue.path)}`" @click.prevent="focusIssue(issue.path)">
-            {{ issueMessage(issue) }}
+            {{ issueLabel(issue.path) }}: {{ issueMessage(issue) }}
           </a>
         </li>
       </ul>
@@ -555,7 +581,7 @@ legend {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 0.375rem;
+  gap: 0.5rem;
 }
 
 .field-control > label,
@@ -626,7 +652,7 @@ legend {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 0.375rem;
+  gap: 0.5rem;
 }
 
 .argument-row {

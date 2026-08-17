@@ -1,10 +1,18 @@
+import { create } from "@bufbuild/protobuf";
 import { mount, type VueWrapper } from "@vue/test-utils";
 import i18next from "i18next";
 import I18NextVue from "i18next-vue";
 import { nextTick } from "vue";
 import { beforeEach, describe, expect, it } from "vitest";
-import type { ProcessConfigFormState, ProcessConfigIssue } from "./processConfigForm";
+import { ProcessSpecSchema } from "../gen/procmesh/v1/api_pb";
+import {
+  processConfigFormToSpec,
+  specToProcessConfigForm,
+  type ProcessConfigFormState,
+  type ProcessConfigIssue,
+} from "./processConfigForm";
 import ProcessConfigForm from "./ProcessConfigForm.vue";
+import { PROCESS_CONFIG_FIELDS } from "./processConfigSchema";
 
 let i18n: typeof i18next;
 
@@ -193,10 +201,16 @@ async function changeHealthType(wrapper: VueWrapper, type: string): Promise<Proc
 
 describe("ProcessConfigForm schema rendering", () => {
   it("renders every schema section and generated scalar control with native semantics", () => {
-    const wrapper = mountForm();
+    const model = completeModel();
+    const wrapper = mountForm(model);
+    const collectionPaths = new Set(["args", "health.args", "environment", "dependencies"]);
+    const visibleScalarPaths = PROCESS_CONFIG_FIELDS
+      .filter((field) => !collectionPaths.has(field.path) && (!field.visible || field.visible(model)))
+      .map((field) => field.path);
 
     expect(wrapper.findAll("fieldset")).toHaveLength(8);
     expect(wrapper.findAll("legend").map((legend) => legend.text())).toEqual(Object.values(sectionLabels));
+    expect(visibleScalarPaths.every((path) => wrapper.find(`[data-field="${path}"]`).exists())).toBe(true);
     expect(wrapper.get('[data-field="name"]').attributes("aria-required")).toBe("true");
     expect(wrapper.get('[data-field="command"]').element.tagName).toBe("INPUT");
     expect(wrapper.get('[data-field="restart.mode"]').element.tagName).toBe("SELECT");
@@ -241,6 +255,55 @@ describe("ProcessConfigForm schema rendering", () => {
     expect(wrapper.find('[data-field="health.command"]').exists()).toBe(false);
     expect(wrapper.find('[data-collection="health.args"]').exists()).toBe(false);
     expect(next.health.args).toEqual(["--quiet"]);
+  });
+
+  it("retains nested edits from absent messages and creates them during conversion", async () => {
+    const minimal = create(ProcessSpecSchema, { name: "api", command: "/bin/api", instances: 1 });
+    const model = specToProcessConfigForm(minimal);
+    const wrapper = mountForm(model);
+
+    expect({
+      restart: model.hasRestart,
+      backoff: model.hasRestartBackoff,
+      health: model.hasHealth,
+      log: model.hasLog,
+      resources: model.hasResources,
+    }).toEqual({ restart: false, backoff: false, health: false, log: false, resources: false });
+
+    await wrapper.get('[data-field="restart.mode"]').setValue("always");
+    await acceptLastUpdate(wrapper);
+    await wrapper.get('[data-field="restart.backoff.initialMs"]').setValue("250");
+    await acceptLastUpdate(wrapper);
+    await wrapper.get('[data-field="health.type"]').setValue("alive");
+    await acceptLastUpdate(wrapper);
+    await wrapper.get('[data-field="health.intervalMs"]').setValue("5000");
+    await acceptLastUpdate(wrapper);
+    await wrapper.get('[data-field="log.maxSize"]').setValue("1048576");
+    await acceptLastUpdate(wrapper);
+    await wrapper.get('[data-field="resources.memoryBytes"]').setValue("536870912");
+    const next = await acceptLastUpdate(wrapper);
+
+    expect(next.restart.mode).toBe("always");
+    expect(next.restart.backoff.initialMs).toBe("250");
+    expect(next.health.type).toBe("alive");
+    expect(next.health.intervalMs).toBe("5000");
+    expect(next.log.maxSize).toBe("1048576");
+    expect(next.resources.memoryBytes).toBe("536870912");
+    expect({
+      restart: next.hasRestart,
+      backoff: next.hasRestartBackoff,
+      health: next.hasHealth,
+      log: next.hasLog,
+      resources: next.hasResources,
+    }).toEqual({ restart: false, backoff: false, health: false, log: false, resources: false });
+
+    const converted = processConfigFormToSpec(next);
+    expect(converted.restart?.mode).toBe("always");
+    expect(converted.restart?.backoff?.initialMs).toBe(250n);
+    expect(converted.health?.type).toBe("alive");
+    expect(converted.health?.intervalMs).toBe(5000n);
+    expect(converted.log?.maxSize).toBe(1048576n);
+    expect(converted.resources?.memoryBytes).toBe(536870912n);
   });
 });
 
@@ -341,6 +404,30 @@ describe("ProcessConfigForm collections", () => {
 });
 
 describe("ProcessConfigForm errors and focus", () => {
+  it("labels same-code summary links with distinct row targets without changing inline errors", async () => {
+    const model = completeModel();
+    model.dependencies.push({ processName: "cache", condition: "STARTED" });
+    const issues: ProcessConfigIssue[] = [
+      { path: "dependencies.0.processName", code: "required" },
+      { path: "dependencies.1.processName", code: "required" },
+    ];
+    const wrapper = mountForm(model, { issues, validateRequested: 1 });
+
+    expect(wrapper.findAll('[data-error^="dependencies."]').map((error) => error.text())).toEqual([
+      "This field is required",
+      "This field is required",
+    ]);
+    const links = wrapper.get('[data-error-summary]').findAll("a");
+    expect(links.map((link) => link.attributes("href"))).toEqual([
+      "#process-config-dependencies-0-processName",
+      "#process-config-dependencies-1-processName",
+    ]);
+    expect(links.map((link) => link.text())).toEqual([
+      "Process name 1: This field is required",
+      "Process name 2: This field is required",
+    ]);
+  });
+
   it("keeps inline errors associated with controls and focuses a linked summary on full validation", async () => {
     const host = document.createElement("div");
     document.body.append(host);
