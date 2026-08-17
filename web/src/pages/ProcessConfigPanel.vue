@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { create, fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
+import { create, toJson } from "@bufbuild/protobuf";
 import { useQuery, useQueryClient } from "@tanstack/vue-query";
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch, type ComponentPublicInstance } from "vue";
 import { Braces, Pencil, RefreshCw } from "lucide-vue-next";
 import Drawer from "../components/Drawer.vue";
 import { ProcessSpecSchema, type ProcessSpec } from "../gen/procmesh/v1/api_pb";
@@ -11,9 +11,21 @@ import { newOperationId } from "../lib/opid";
 import { useConfigClient } from "../lib/rpc";
 import { session } from "../lib/session";
 import { useI18n } from "../lib/useI18n";
+import ProcessConfigForm from "./ProcessConfigForm.vue";
+import {
+  parseProcessConfigJson,
+  processConfigFormToSpec,
+  specToProcessConfigForm,
+  stringifyProcessConfigJson,
+  validateProcessConfigForm,
+  validateProcessSpec,
+  type ProcessConfigFormState,
+  type ProcessConfigIssue,
+} from "./processConfigForm";
 import { formatRemoteError } from "./processView";
 
-const { t } = useI18n();
+const { t: typedTranslate } = useI18n();
+const t = typedTranslate as unknown as (key: string, options?: Record<string, unknown>) => string;
 
 const CONFLICT_BANNER = computed(() => t("processConfig.conflictBanner"));
 const SECTION_IDS = {
@@ -36,7 +48,10 @@ const EDITOR_IDS = {
   comment: "process-config-comment",
 } as const;
 const EDITOR_FIELDS = { json: "config-json" } as const;
+const EDITOR_MODE = { form: "form", json: "json" } as const;
+const EDITOR_MODES = [EDITOR_MODE.form, EDITOR_MODE.json] as const;
 const DRAWER_SIZE = "wide" as const;
+type EditorMode = "form" | "json";
 
 const props = defineProps<{
   idOrName: string;
@@ -45,10 +60,15 @@ const props = defineProps<{
 
 const config = useConfigClient();
 const queryClient = useQueryClient();
+const editorMode = ref<EditorMode>("form");
+const formDraft = ref<ProcessConfigFormState | null>(null);
 const editorText = ref("");
 const editorBaseline = ref("");
 const editorOpen = ref(false);
+const formIssues = ref<ProcessConfigIssue[]>([]);
+const validateRequested = ref(0);
 const jsonError = ref("");
+const jsonTextarea = ref<HTMLTextAreaElement | null>(null);
 const comment = ref("");
 const loadedSpec = ref<ProcessSpec | null>(null);
 const conflictText = ref("");
@@ -112,8 +132,22 @@ const displayObject = computed<Record<string, unknown>>(() => {
   return JSON.parse(displayJson.value) as Record<string, unknown>;
 });
 const environmentEntries = computed(() => Object.entries(loadedSpec.value?.environment ?? {}));
+const normalizedDraft = computed(() => {
+  if (editorMode.value === "form" && formDraft.value) {
+    try {
+      return stringifyProcessConfigJson(processConfigFormToSpec(formDraft.value));
+    } catch {
+      return JSON.stringify(formDraft.value);
+    }
+  }
+  try {
+    return stringifyProcessConfigJson(parseProcessConfigJson(editorText.value));
+  } catch {
+    return editorText.value;
+  }
+});
 const editorDirty = computed(
-  () => editorText.value !== editorBaseline.value || comment.value.trim().length > 0,
+  () => normalizedDraft.value !== editorBaseline.value || comment.value.trim().length > 0,
 );
 
 watch(
@@ -160,15 +194,20 @@ function applySpec(spec: ProcessSpec | undefined): void {
   }
   const next = create(ProcessSpecSchema, spec);
   loadedSpec.value = next;
-  editorText.value = JSON.stringify(toJson(ProcessSpecSchema, next), null, 2);
+  editorText.value = stringifyProcessConfigJson(next);
 }
 
 function openEditor(): void {
   if (!canUpdate.value || !loadedSpec.value) {
     return;
   }
-  editorText.value = displayJson.value;
-  editorBaseline.value = editorText.value;
+  const openingSpec = create(ProcessSpecSchema, loadedSpec.value);
+  editorMode.value = "form";
+  formDraft.value = specToProcessConfigForm(openingSpec);
+  editorText.value = stringifyProcessConfigJson(openingSpec);
+  editorBaseline.value = stringifyProcessConfigJson(openingSpec);
+  formIssues.value = [];
+  validateRequested.value = 0;
   comment.value = "";
   jsonError.value = "";
   actionError.value = "";
@@ -186,6 +225,73 @@ function closeEditor(): void {
   editorOpen.value = false;
   jsonError.value = "";
   actionError.value = "";
+}
+
+function updateFormDraft(next: ProcessConfigFormState): void {
+  formDraft.value = next;
+  formIssues.value = [];
+}
+
+function issueMessage(issue: ProcessConfigIssue): string {
+  return t(`processConfig.editor.validation.${issue.code}`);
+}
+
+function showFormIssues(issues: ProcessConfigIssue[]): void {
+  formIssues.value = issues;
+  validateRequested.value += 1;
+}
+
+function showJsonError(message: string): void {
+  jsonError.value = message;
+  void nextTick(() => jsonTextarea.value?.focus());
+}
+
+function setJsonTextarea(element: Element | ComponentPublicInstance | null): void {
+  jsonTextarea.value = element instanceof HTMLTextAreaElement ? element : null;
+}
+
+function synchronizeActiveMode(): ProcessSpec | null {
+  if (editorMode.value === "form") {
+    if (!formDraft.value) {
+      return null;
+    }
+    const issues = validateProcessConfigForm(formDraft.value);
+    if (issues.length > 0) {
+      showFormIssues(issues);
+      return null;
+    }
+    const spec = processConfigFormToSpec(formDraft.value);
+    editorText.value = stringifyProcessConfigJson(spec);
+    return spec;
+  }
+
+  let spec: ProcessSpec;
+  try {
+    spec = parseProcessConfigJson(editorText.value);
+  } catch (err) {
+    showJsonError(err instanceof Error ? err.message : t("processConfig.config.invalidJson"));
+    return null;
+  }
+  const issues = validateProcessSpec(spec);
+  if (issues.length > 0) {
+    showJsonError(issueMessage(issues[0]));
+    return null;
+  }
+  editorText.value = stringifyProcessConfigJson(spec);
+  formDraft.value = specToProcessConfigForm(spec);
+  return spec;
+}
+
+function switchEditorMode(next: EditorMode): void {
+  if (next === editorMode.value) {
+    return;
+  }
+  if (!synchronizeActiveMode()) {
+    return;
+  }
+  formIssues.value = [];
+  jsonError.value = "";
+  editorMode.value = next;
 }
 
 function nestedJson(key: string): string {
@@ -245,11 +351,8 @@ async function onSave(): Promise<void> {
   if (!canUpdate.value || !loadedSpec.value) {
     return;
   }
-  let parsed: ProcessSpec;
-  try {
-    parsed = fromJson(ProcessSpecSchema, JSON.parse(editorText.value) as JsonValue);
-  } catch (err) {
-    jsonError.value = err instanceof Error ? err.message : t("processConfig.config.invalidJson");
+  const parsed = synchronizeActiveMode();
+  if (!parsed) {
     return;
   }
   parsed.processId = loadedSpec.value.processId;
@@ -267,7 +370,7 @@ async function onSave(): Promise<void> {
       targetOpts.value,
     );
     commitSpec(out.spec);
-    editorBaseline.value = editorText.value;
+    editorBaseline.value = stringifyProcessConfigJson(out.spec ?? parsed);
     comment.value = "";
     editorOpen.value = false;
     await queryClient.invalidateQueries({ queryKey: ["process-history", props.idOrName, props.targetNodeId] });
@@ -495,46 +598,72 @@ async function onRollback(toRevision: bigint | number): Promise<void> {
         <div v-if="conflictText" class="banner conflict" role="alert">{{ conflictText }}</div>
         <p v-if="actionError" class="error" role="alert">{{ actionError }}</p>
         <p class="muted drawer-intro">{{ t("processConfig.config.editHint") }}</p>
-        <label class="field" :for="EDITOR_IDS.json">
-          <span>{{ t("processConfig.config.specLabel") }}</span>
-          <textarea
-            :id="EDITOR_IDS.json"
-            v-model="editorText"
-            class="input editor"
-            :data-field="EDITOR_FIELDS.json"
-            spellcheck="false"
-            rows="24"
-            :aria-invalid="Boolean(jsonError)"
-            :aria-describedby="jsonError ? EDITOR_IDS.jsonError : undefined"
-            @input="jsonError = ''"
-          />
-        </label>
-        <p
-          v-if="jsonError"
-          :id="EDITOR_IDS.jsonError"
-          class="field-error"
-          :data-error="EDITOR_FIELDS.json"
-          role="alert"
-        >
-          {{ jsonError }}
-        </p>
-        <label class="field" :for="EDITOR_IDS.comment">
-          <span>{{ t("processConfig.config.commentLabel") }}</span>
-          <input :id="EDITOR_IDS.comment" v-model="comment" class="input" type="text" />
-        </label>
-        <div class="drawer-actions">
+        <div class="editor-mode" role="group" :aria-label="t('processConfig.editor.modeLabel')">
           <button
+            v-for="mode in EDITOR_MODES"
+            :key="mode"
             type="button"
-            class="btn"
-            data-action="cancel-config-edit"
-            :disabled="saving"
-            @click="closeEditor"
+            class="editor-mode-button"
+            :class="{ active: editorMode === mode }"
+            :data-editor-mode="mode"
+            :aria-pressed="editorMode === mode"
+            @click="switchEditorMode(mode)"
           >
-            {{ t("actions.cancel") }}
+            {{ t(`processConfig.editor.mode.${mode}`) }}
           </button>
-          <button type="submit" class="btn btn-primary" :disabled="saving || !targetNodeId">
-            {{ saving ? t("processConfig.config.saving") : t("processConfig.config.save") }}
-          </button>
+        </div>
+        <ProcessConfigForm
+          v-if="editorMode === EDITOR_MODE.form && formDraft"
+          :model-value="formDraft"
+          :issues="formIssues"
+          :validate-requested="validateRequested"
+          @update:model-value="updateFormDraft"
+        />
+        <div v-else-if="editorMode === EDITOR_MODE.json" class="json-editor">
+          <label class="field" :for="EDITOR_IDS.json">
+            <span>{{ t("processConfig.config.specLabel") }}</span>
+            <textarea
+              :id="EDITOR_IDS.json"
+              :ref="setJsonTextarea"
+              v-model="editorText"
+              class="input editor"
+              :data-field="EDITOR_FIELDS.json"
+              spellcheck="false"
+              rows="24"
+              :aria-invalid="Boolean(jsonError)"
+              :aria-describedby="jsonError ? EDITOR_IDS.jsonError : undefined"
+              @input="jsonError = ''"
+            />
+          </label>
+          <p
+            v-if="jsonError"
+            :id="EDITOR_IDS.jsonError"
+            class="field-error"
+            :data-error="EDITOR_FIELDS.json"
+            role="alert"
+          >
+            {{ jsonError }}
+          </p>
+        </div>
+        <div class="drawer-actions">
+          <label class="field drawer-comment" :for="EDITOR_IDS.comment">
+            <span>{{ t("processConfig.config.commentLabel") }}</span>
+            <input :id="EDITOR_IDS.comment" v-model="comment" class="input" type="text" />
+          </label>
+          <div class="drawer-action-buttons">
+            <button
+              type="button"
+              class="btn"
+              data-action="cancel-config-edit"
+              :disabled="saving"
+              @click="closeEditor"
+            >
+              {{ t("actions.cancel") }}
+            </button>
+            <button type="submit" class="btn btn-primary" :disabled="saving || !targetNodeId">
+              {{ saving ? t("processConfig.config.saving") : t("processConfig.config.save") }}
+            </button>
+          </div>
         </div>
       </form>
     </Drawer>
@@ -859,12 +988,54 @@ h4 {
   gap: 0.75rem;
 }
 .drawer-form {
+  min-width: 0;
   min-height: 100%;
 }
 .drawer-intro {
   margin: 0;
   max-width: 65ch;
   line-height: 1.5;
+}
+.editor-mode {
+  display: grid;
+  align-self: flex-start;
+  grid-template-columns: repeat(2, minmax(5rem, 1fr));
+  gap: 0.25rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg);
+  padding: 0.25rem;
+}
+.editor-mode-button {
+  min-height: 2.25rem;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--color-muted);
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+.editor-mode-button:hover {
+  background: var(--color-hover);
+  color: var(--color-text);
+}
+.editor-mode-button.active {
+  background: var(--color-card);
+  box-shadow: 0 0 0 1px var(--color-border);
+  color: var(--color-text);
+}
+.editor-mode-button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+.json-editor {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.75rem;
 }
 .field {
   display: flex;
@@ -874,6 +1045,9 @@ h4 {
   color: var(--color-muted);
 }
 .editor {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.8rem;
   line-height: 1.45;
@@ -895,12 +1069,25 @@ h4 {
   position: sticky;
   bottom: -1.5rem;
   display: flex;
-  justify-content: flex-end;
+  align-items: flex-end;
   gap: 0.5rem;
   margin: auto -1.5rem -1.5rem;
   border-top: 1px solid var(--color-border);
   background: var(--color-card);
   padding: 1rem 1.5rem;
+}
+.drawer-comment {
+  min-width: 0;
+  flex: 1 1 16rem;
+}
+.drawer-comment .input {
+  box-sizing: border-box;
+  width: 100%;
+}
+.drawer-action-buttons {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 0.5rem;
 }
 .diff-block {
   margin-top: 1rem;
@@ -941,6 +1128,21 @@ h4 {
   .dependency-list li {
     grid-template-columns: 1fr;
     gap: 0.25rem;
+  }
+  .editor-mode {
+    align-self: stretch;
+  }
+  .editor-mode-button,
+  .drawer-actions .input,
+  .drawer-actions .btn {
+    min-height: 44px;
+  }
+  .drawer-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .drawer-action-buttons .btn {
+    flex: 1;
   }
 }
 </style>

@@ -32,6 +32,15 @@ beforeEach(async () => {
               commentLabel: "Comment",
               save: "Save",
             },
+            editor: {
+              modeLabel: "Editor mode",
+              mode: { form: "Form", json: "JSON" },
+              errorSummary: "Fix the following errors",
+              validation: {
+                invalidName: "Enter a valid process name",
+                required: "This field is required",
+              },
+            },
             history: {
               title: "History",
               loading: "Loading history…",
@@ -81,6 +90,52 @@ function sampleSpec() {
   });
 }
 
+function fullSampleSpec() {
+  return create(ProcessSpecSchema, {
+    processId: "p1",
+    name: "web",
+    ownerAgentId: "node-a",
+    group: "services.core",
+    command: "/usr/bin/web",
+    args: ["serve", "--port=8080"],
+    workingDirectory: "/srv/web",
+    runAsUser: "svc-web",
+    environment: { MODE: "prod", PORT: "8080" },
+    instances: 2,
+    autostart: true,
+    stopSignal: "SIGTERM",
+    killSignal: "SIGKILL",
+    stopTimeoutMs: 10_000n,
+    startupPriority: 20,
+    restart: {
+      mode: "on-failure",
+      maxRetries: 5,
+      retryWindowMs: 60_000n,
+      backoff: { initialMs: 500n, maxMs: 30_000n, multiplier: 2 },
+    },
+    health: {
+      type: "http",
+      url: "http://127.0.0.1:8080/health",
+      method: "GET",
+      address: "127.0.0.1:8080",
+      command: "/usr/bin/check-web",
+      expectedStatus: 204,
+      args: ["--quiet"],
+      initialDelayMs: 1_000n,
+      intervalMs: 5_000n,
+      timeoutMs: 1_000n,
+      failureThreshold: 3,
+      successThreshold: 2,
+      restartOnFailure: true,
+      restartCooldownMs: 30_000n,
+    },
+    log: { maxSize: 104_857_600n, maxFiles: 10, maxAgeSeconds: 604_800n, compress: true },
+    resources: { cpuQuotaMillis: 500n, memoryBytes: 536_870_912n, openFiles: 4096n },
+    dependencies: [{ processName: "db", condition: "HEALTHY" }],
+    latestRevision: 3n,
+  });
+}
+
 type MountOpts = {
   updateConfig?: ReturnType<typeof vi.fn>;
   spec?: ReturnType<typeof sampleSpec>;
@@ -93,6 +148,7 @@ type MountOpts = {
     diff?: string;
   }>;
   diff?: string;
+  permissions?: string[];
 };
 
 async function mountPanel(opts: MountOpts | ReturnType<typeof vi.fn> = {}) {
@@ -102,7 +158,7 @@ async function mountPanel(opts: MountOpts | ReturnType<typeof vi.fn> = {}) {
     userId: "u1",
     username: "admin",
     csrfToken: "csrf",
-    permissions: ["process.config.update", "process.config.read"],
+    permissions: resolved.permissions ?? ["process.config.update", "process.config.read"],
   };
   const queryClient =
     resolved.queryClient ??
@@ -140,6 +196,31 @@ function editorTextarea(): HTMLTextAreaElement {
   return document.querySelector<HTMLTextAreaElement>('[data-field="config-json"]')!;
 }
 
+function drawerField(path: string): HTMLInputElement | HTMLSelectElement {
+  return document.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-field="${path}"]`)!;
+}
+
+async function setDrawerField(path: string, value: string): Promise<void> {
+  const field = drawerField(path);
+  field.value = value;
+  field.dispatchEvent(new Event(field instanceof HTMLSelectElement ? "change" : "input", { bubbles: true }));
+  await flushPromises();
+}
+
+function editorMode(mode: "form" | "json"): HTMLButtonElement {
+  return document.querySelector<HTMLButtonElement>(`[data-editor-mode="${mode}"]`)!;
+}
+
+async function switchEditorMode(mode: "form" | "json"): Promise<void> {
+  editorMode(mode).click();
+  await flushPromises();
+}
+
+function activeEditorMode(): "form" | "json" | undefined {
+  return document.querySelector<HTMLButtonElement>('[data-editor-mode][aria-pressed="true"]')?.dataset
+    .editorMode as "form" | "json" | undefined;
+}
+
 function setEditorText(value: string): void {
   const textarea = editorTextarea();
   textarea.value = value;
@@ -172,7 +253,37 @@ describe("ProcessConfigPanel", () => {
     expect(wrapper.get(".config-json-viewer").text()).toContain('"name": "web"');
   });
 
-  it("opens JSON editing in a wide drawer and closes it after a successful save", async () => {
+  it("opens form-first with an accessible segmented mode control and a sticky footer", async () => {
+    const { wrapper } = await mountPanel();
+
+    await openEditor(wrapper);
+
+    expect(document.querySelector(".drawer-panel-wide")).not.toBeNull();
+    expect(activeEditorMode()).toBe("form");
+    expect(editorMode("form").getAttribute("aria-pressed")).toBe("true");
+    expect(editorMode("json").getAttribute("aria-pressed")).toBe("false");
+    expect(editorMode("form").parentElement?.getAttribute("aria-label")).toBe("Editor mode");
+    expect(drawerField("name").value).toBe("web");
+    expect(document.querySelector(".drawer-content .drawer-actions")).not.toBeNull();
+    expect(document.querySelector(".drawer-actions #process-config-comment")).not.toBeNull();
+  });
+
+  it("synchronizes valid edits in both directions", async () => {
+    const { wrapper } = await mountPanel();
+
+    await openEditor(wrapper);
+    await setDrawerField("name", "api");
+    await switchEditorMode("json");
+    expect(activeEditorMode()).toBe("json");
+    expect(editorTextarea().value).toContain('"name": "api"');
+
+    setEditorText(editorTextarea().value.replace('"instances": 2', '"instances": 3'));
+    await switchEditorMode("form");
+    expect(activeEditorMode()).toBe("form");
+    expect(drawerField("instances").value).toBe("3");
+  });
+
+  it("closes after a successful save from JSON mode", async () => {
     const saved = create(ProcessSpecSchema, {
       ...sampleSpec(),
       name: "api",
@@ -181,7 +292,7 @@ describe("ProcessConfigPanel", () => {
     const { wrapper } = await mountPanel({ updateConfig: vi.fn().mockResolvedValue({ spec: saved }) });
 
     await openEditor(wrapper);
-    expect(document.querySelector(".drawer-panel-wide")).not.toBeNull();
+    await switchEditorMode("json");
     const textarea = editorTextarea();
     expect(textarea.value).toContain('"name": "web"');
     setEditorText(textarea.value.replace('"name": "web"', '"name": "api"'));
@@ -197,22 +308,47 @@ describe("ProcessConfigPanel", () => {
     const updateConfig = vi.fn().mockResolvedValue({ spec: sampleSpec() });
     const { wrapper } = await mountPanel({ updateConfig });
     await openEditor(wrapper);
+    await switchEditorMode("json");
 
     setEditorText("{");
+    await switchEditorMode("form");
+    expect(activeEditorMode()).toBe("json");
+    expect(document.activeElement).toBe(editorTextarea());
+    expect(editorTextarea().getAttribute("aria-describedby")).toBe("process-config-json-error");
+
     submitEditor();
     await flushPromises();
 
     expect(updateConfig).not.toHaveBeenCalled();
     expect(document.querySelector('[data-error="config-json"]')?.textContent).toBeTruthy();
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(document.activeElement).toBe(editorTextarea());
   });
 
-  it("asks before closing the drawer with unsaved changes", async () => {
+  it("blocks switching and saving an invalid form and focuses its error summary", async () => {
+    const updateConfig = vi.fn().mockResolvedValue({ spec: sampleSpec() });
+    const { wrapper } = await mountPanel({ updateConfig });
+    await openEditor(wrapper);
+
+    await setDrawerField("name", "1bad");
+    await switchEditorMode("json");
+
+    expect(activeEditorMode()).toBe("form");
+    expect(document.querySelector('[data-error="name"]')).not.toBeNull();
+    expect(document.activeElement).toBe(document.querySelector("[data-error-summary]"));
+
+    submitEditor();
+    await flushPromises();
+    expect(updateConfig).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(document.querySelector("[data-error-summary]"));
+  });
+
+  it("asks before closing form and JSON drafts with semantic unsaved changes", async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     const { wrapper } = await mountPanel({ updateConfig: vi.fn().mockResolvedValue({ spec: sampleSpec() }) });
     await openEditor(wrapper);
 
-    setEditorText(editorTextarea().value.replace('"name": "web"', '"name": "api"'));
+    await setDrawerField("name", "api");
     document.querySelector<HTMLButtonElement>('[data-action="cancel-config-edit"]')!.click();
     await wrapper.vm.$nextTick();
 
@@ -223,6 +359,68 @@ describe("ProcessConfigPanel", () => {
     document.querySelector<HTMLButtonElement>('[data-action="cancel-config-edit"]')!.click();
     await wrapper.vm.$nextTick();
     expect(document.querySelector('[role="dialog"]')).toBeNull();
+
+    confirm.mockClear();
+    confirm.mockReturnValue(false);
+    await openEditor(wrapper);
+    await switchEditorMode("json");
+    setEditorText(editorTextarea().value.replace('"name": "web"', '"name": "api"'));
+    document.querySelector<HTMLButtonElement>('[data-action="cancel-config-edit"]')!.click();
+    await wrapper.vm.$nextTick();
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+  });
+
+  it("ignores JSON formatting and whitespace-only comments when checking dirty state", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const { wrapper } = await mountPanel();
+    await openEditor(wrapper);
+    await switchEditorMode("json");
+
+    const normalized = JSON.parse(editorTextarea().value) as object;
+    setEditorText(JSON.stringify(normalized));
+    const commentInput = document.querySelector<HTMLInputElement>("#process-config-comment")!;
+    commentInput.value = "   ";
+    commentInput.dispatchEvent(new Event("input", { bubbles: true }));
+    document.querySelector<HTMLButtonElement>('[data-action="cancel-config-edit"]')!.click();
+    await wrapper.vm.$nextTick();
+
+    expect(confirm).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("submits every field while restoring loaded ownership and revision", async () => {
+    const loaded = fullSampleSpec();
+    const saved = create(ProcessSpecSchema, { ...loaded, name: "api", latestRevision: 4n });
+    const updateConfig = vi.fn().mockResolvedValue({ spec: saved });
+    const { wrapper } = await mountPanel({ spec: loaded, updateConfig });
+    await openEditor(wrapper);
+    await switchEditorMode("json");
+    setEditorText(
+      editorTextarea().value
+        .replace('"processId": "p1"', '"processId": "other"')
+        .replace('"name": "web"', '"name": "api"')
+        .replace('"latestRevision": "3"', '"latestRevision": "99"'),
+    );
+    await switchEditorMode("form");
+
+    submitEditor();
+    await flushPromises();
+
+    expect(updateConfig).toHaveBeenCalledTimes(1);
+    const request = updateConfig.mock.calls[0][0];
+    expect(request.spec).toEqual(create(ProcessSpecSchema, { ...loaded, name: "api" }));
+    expect(request.expectedRevision).toBe(3n);
+    expect(request.meta.operationId).toBeTruthy();
+    expect(request.meta.operator).toBe("admin");
+  });
+
+  it("keeps editing unavailable without update permission", async () => {
+    const { wrapper, updateConfig } = await mountPanel({ permissions: ["process.config.read"] });
+
+    expect(wrapper.find('[data-action="edit-config"]').exists()).toBe(false);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(updateConfig).not.toHaveBeenCalled();
   });
 
   it("shows 409 Conflict when UpdateConfig throws CONFLICT", async () => {
@@ -262,6 +460,7 @@ describe("ProcessConfigPanel", () => {
   it("does not overwrite textarea or expected_revision on refetch while editing or after 409", async () => {
     const { wrapper, updateConfig, configClient, queryClient } = await mountPanel();
     await openEditor(wrapper);
+    await switchEditorMode("json");
     const edited = editorTextarea().value.replace('"name": "web"', '"name": "api"');
     setEditorText(edited);
 
@@ -296,16 +495,14 @@ describe("ProcessConfigPanel", () => {
 
   it("remount after save uses new latest as expected_revision", async () => {
     const saved = create(ProcessSpecSchema, {
-      processId: "p1",
+      ...sampleSpec(),
       name: "api",
-      command: "sleep",
       latestRevision: 4n,
     });
     const updateConfig = vi.fn().mockResolvedValue({ spec: saved });
     const first = await mountPanel({ updateConfig });
     await openEditor(first.wrapper);
-    const edited = editorTextarea().value.replace('"name": "web"', '"name": "api"');
-    setEditorText(edited);
+    await setDrawerField("name", "api");
     submitEditor();
     await flushPromises();
     expect(first.wrapper.get(".config-json-viewer").text()).toContain('"name": "api"');
