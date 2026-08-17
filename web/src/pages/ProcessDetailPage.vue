@@ -2,7 +2,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
 import { computed, ref } from "vue";
 import { useRoute } from "vue-router";
+import HistoryChart from "../components/HistoryChart.vue";
 import { withTarget } from "../lib/headers";
+import {
+  historyWindow,
+  isHistoryUnavailable,
+  pointsFromSeries,
+  stepSecForLayer,
+  type HistoryRange,
+} from "../lib/historyChart";
 import { newOperationId } from "../lib/opid";
 import { useMetricsClient, useNodeClient, useProcessClient } from "../lib/rpc";
 import { session } from "../lib/session";
@@ -22,6 +30,7 @@ const { t } = useI18n();
 const { translateDesiredState, translateObservedState, translateHealthState } = useProcessState();
 
 const POLL_MS = 5000;
+const HISTORY_POLL_MS = 60_000;
 const route = useRoute();
 const nodes = useNodeClient();
 const processes = useProcessClient();
@@ -29,6 +38,7 @@ const metrics = useMetricsClient();
 const queryClient = useQueryClient();
 const actionError = ref("");
 const tab = ref<"overview" | "config" | "logs">("overview");
+const range = ref<HistoryRange>("24h");
 
 const idOrName = computed(() => String(route.params.idOrName ?? ""));
 const routeNode = computed(() => {
@@ -91,6 +101,24 @@ const metricsQuery = useQuery({
   refetchInterval: POLL_MS,
   enabled: computed(() => idOrName.value.length > 0),
 });
+
+const historyQuery = useQuery({
+  queryKey: computed(() => ["process-history", idOrName.value, ownerNodeId.value, range.value]),
+  queryFn: () => {
+    const { sinceUnix, untilUnix } = historyWindow(range.value);
+    return metrics.getProcessHistory({ idOrName: idOrName.value, sinceUnix, untilUnix }, targetOpts.value);
+  },
+  refetchInterval: HISTORY_POLL_MS,
+  enabled: computed(() => idOrName.value.length > 0),
+  retry: false,
+});
+
+const historyStale = computed(() => isHistoryUnavailable(historyQuery.error.value));
+const historyStepSec = computed(() =>
+  stepSecForLayer(historyQuery.data.value?.layer || historyQuery.data.value?.series?.[0]?.layer || ""),
+);
+const cpuPoints = computed(() => pointsFromSeries(historyQuery.data.value?.series, "cpu_percent"));
+const memPoints = computed(() => pointsFromSeries(historyQuery.data.value?.series, "memory_bytes"));
 
 const detail = computed(() => {
   const raw = processQuery.data.value?.process;
@@ -357,6 +385,35 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
           </tbody>
         </table>
       </section>
+
+      <section class="card">
+        <div class="title-row">
+          <h2>{{ t("metricsHistory.title") }}</h2>
+          <div class="range-toggle">
+            <button type="button" :class="{ active: range === '24h' }" @click="range = '24h'">
+              {{ t("metricsHistory.range24h") }}
+            </button>
+            <button type="button" :class="{ active: range === '7d' }" @click="range = '7d'">
+              {{ t("metricsHistory.range7d") }}
+            </button>
+          </div>
+        </div>
+        <p v-if="historyQuery.isPending && !historyQuery.data" class="muted">{{ t("metricsHistory.loading") }}</p>
+        <div v-else class="charts">
+          <HistoryChart
+            :title="t('metricsHistory.cpu')"
+            :points="cpuPoints"
+            :step-sec="historyStepSec"
+            :stale="historyStale"
+          />
+          <HistoryChart
+            :title="t('metricsHistory.memory')"
+            :points="memPoints"
+            :step-sec="historyStepSec"
+            :stale="historyStale"
+          />
+        </div>
+      </section>
       </template>
     </template>
   </div>
@@ -472,5 +529,37 @@ h2 {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.8rem;
   font-weight: 500;
+}
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.title-row h2 {
+  margin: 0;
+}
+.range-toggle {
+  display: flex;
+  gap: 0.35rem;
+  margin-left: auto;
+}
+.range-toggle button {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-card);
+  color: var(--color-text);
+  padding: 0.35rem 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 550;
+  cursor: pointer;
+}
+.range-toggle button.active {
+  border-color: var(--color-text);
+}
+.charts {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
 }
 </style>

@@ -122,6 +122,53 @@ func TestCLI_UnknownCommand(t *testing.T) {
 	}
 }
 
+func TestCLI_UsageIncludesMetricsHistory(t *testing.T) {
+	if !strings.Contains(usageText, "metrics history node") {
+		t.Fatal("usage")
+	}
+	if !strings.Contains(usageText, "metrics history process") {
+		t.Fatal("usage process")
+	}
+}
+
+func TestCLI_ParseSinceUntil(t *testing.T) {
+	opt, err := parseArgs([]string{"--since", "1700000000", "--until", "2026-08-16T00:00:00Z", "metrics", "history", "node", "n1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opt.sinceUnix != 1700000000 {
+		t.Fatalf("since %d", opt.sinceUnix)
+	}
+	if opt.untilUnix == 0 {
+		t.Fatal("until")
+	}
+}
+
+func TestCLI_MetricsHistory(t *testing.T) {
+	url, st := newTestServerWithStore(t)
+	ctx := context.Background()
+	if err := st.InsertMetricSamples(ctx, []store.MetricSample{
+		{Series: "node.cpu_percent", SubjectID: "n1", Layer: "raw_min", TSUnix: 1_700_000_000, Value: 11},
+		{Series: "node.cpu_percent", SubjectID: "n1", Layer: "raw_min", TSUnix: 1_700_000_120, Value: 22},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, errb := runCLI("--server", url, "metrics", "history", "node", "n1", "--since", "1700000000", "--until", "1700000120")
+	if code != 0 {
+		t.Fatalf("history exit=%d stderr=%q stdout=%q", code, errb, out)
+	}
+	if !strings.Contains(out, "ts=1700000000") {
+		t.Fatalf("missing ts=1700000000: %q", out)
+	}
+	if !strings.Contains(out, "value=11") {
+		t.Fatalf("missing value=11: %q", out)
+	}
+	if strings.Contains(out, "ts=1700000060") {
+		t.Fatalf("gap printed: %q", out)
+	}
+}
+
 func TestCLI_GroupUsageAndParse(t *testing.T) {
 	if !strings.Contains(usageText, "group list") {
 		t.Fatal("usage missing group list")
@@ -392,15 +439,22 @@ func kvField(out, key string) string {
 
 func newTestServer(t *testing.T) string {
 	t.Helper()
+	url, _ := startTestServer(t, false)
+	return url
+}
+
+func newTestServerWithStore(t *testing.T) (string, *store.Store) {
+	t.Helper()
 	return startTestServer(t, false)
 }
 
 func newClusterTestServer(t *testing.T) string {
 	t.Helper()
-	return startTestServer(t, true)
+	url, _ := startTestServer(t, true)
+	return url
 }
 
-func startTestServer(t *testing.T, withCluster bool) string {
+func startTestServer(t *testing.T, withCluster bool) (string, *store.Store) {
 	t.Helper()
 	root := t.TempDir()
 	st, err := store.Open(filepath.Join(root, "store.db"))
@@ -462,5 +516,5 @@ func startTestServer(t *testing.T, withCluster bool) string {
 	}
 	hs := httptest.NewServer(srv.Engine)
 	t.Cleanup(hs.Close)
-	return hs.URL
+	return hs.URL, st
 }

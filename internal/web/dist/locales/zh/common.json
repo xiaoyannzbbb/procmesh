@@ -37,6 +37,17 @@
     "stale": "过时",
     "unknown": "未知"
   },
+  "metricsHistory": {
+    "title": "历史",
+    "range24h": "24 小时",
+    "range7d": "7 天",
+    "cpu": "CPU %",
+    "memory": "内存",
+    "disk": "磁盘 %",
+    "empty": "该时间范围内无样本",
+    "stale": "历史不可用（STALE）。禁止把 Gossip 即时摘要当成曲线。",
+    "loading": "正在加载历史…"
+  },
   "common": {
     "loading": "加载中...",
     "error": "错误",

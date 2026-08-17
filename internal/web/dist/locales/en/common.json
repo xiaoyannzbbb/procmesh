@@ -37,6 +37,17 @@
     "stale": "Stale",
     "unknown": "Unknown"
   },
+  "metricsHistory": {
+    "title": "History",
+    "range24h": "24h",
+    "range7d": "7d",
+    "cpu": "CPU %",
+    "memory": "Memory",
+    "disk": "Disk %",
+    "empty": "No samples in this range",
+    "stale": "History unavailable (STALE). Live gossip summary is not a chart.",
+    "loading": "Loading history…"
+  },
   "common": {
     "loading": "Loading...",
     "error": "Error",

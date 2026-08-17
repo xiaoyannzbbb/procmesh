@@ -137,10 +137,14 @@ func NewServer(opts Options) (*Server, error) {
 	mountConnect(engine, gp, gh)
 	adp, adh := procmeshv1connect.NewAuditServiceHandler(newAuditAPI(opts), intercept)
 	mountConnect(engine, adp, adh)
+	var histStore *store.Store
+	if st, ok := opts.Store.(*store.Store); ok {
+		histStore = st
+	}
 	mp, mh := procmeshv1connect.NewMetricsServiceHandler(&MetricsAPI{
 		Mgr: opts.Mgr, Auth: opts.Auth, Started: opts.Started, Cluster: opts.Cluster,
 		LocalOnly: opts.LocalOnly, LocalID: opts.LocalID, Router: opts.Router, Forward: opts.Forward,
-		Degraded: degraded, Metrics: opts.Metrics,
+		Degraded: degraded, Metrics: opts.Metrics, Store: histStore,
 	}, intercept)
 	mountConnect(engine, mp, mh)
 	if opts.Batch != nil {
@@ -287,6 +291,7 @@ func (s *Server) metrics(c *gin.Context) {
 		rpcForward,
 		s.controlQuorum(),
 		collectBatchMetrics(s.opts.Batch),
+		countMetricSampleRows(s.opts.Store),
 	))
 }
 
