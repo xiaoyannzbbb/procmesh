@@ -208,6 +208,93 @@ func TestCLI_GroupUsageAndParse(t *testing.T) {
 	}
 }
 
+func TestCLI_AlertUsageAndParse(t *testing.T) {
+	if !strings.Contains(usageText, "alert list") {
+		t.Fatal("usage missing alert list")
+	}
+	if !strings.Contains(usageText, "alert get ALERT_ID") {
+		t.Fatal("usage missing alert get")
+	}
+	if !strings.Contains(usageText, "alert channel list") {
+		t.Fatal("usage missing alert channel list")
+	}
+	if !strings.Contains(usageText, "alert channel put") {
+		t.Fatal("usage missing alert channel put")
+	}
+	if !strings.Contains(usageText, "alert policy get") {
+		t.Fatal("usage missing alert policy get")
+	}
+	if !strings.Contains(usageText, "alert policy put") {
+		t.Fatal("usage missing alert policy put")
+	}
+
+	code, _, errb := runCLI("alert")
+	if code != 2 {
+		t.Fatalf("alert without subcommand exit=%d stderr=%q", code, errb)
+	}
+	if strings.Contains(errb, "unknown command") {
+		t.Fatalf("alert must not be unknown command: %q", errb)
+	}
+
+	opt, err := parseArgs([]string{"alert", "list", "--state", "FIRING"})
+	if err != nil {
+		t.Fatalf("alert list parse: %v", err)
+	}
+	if len(opt.args) != 2 || opt.args[0] != "alert" || opt.args[1] != "list" {
+		t.Fatalf("args=%v", opt.args)
+	}
+	if opt.state != "FIRING" {
+		t.Fatalf("state=%q", opt.state)
+	}
+
+	opt, err = parseArgs([]string{
+		"alert", "channel", "put",
+		"--type", "WEBHOOK",
+		"--name", "hook",
+		"--id", "ch1",
+		"--enabled", "true",
+		"--config", `{"url":"https://example.com"}`,
+	})
+	if err != nil {
+		t.Fatalf("channel put parse: %v", err)
+	}
+	if opt.batchType != "WEBHOOK" || opt.name != "hook" || opt.id != "ch1" {
+		t.Fatalf("type=%q name=%q id=%q", opt.batchType, opt.name, opt.id)
+	}
+	if !opt.enabled || !opt.enabledSet {
+		t.Fatalf("enabled=%v set=%v", opt.enabled, opt.enabledSet)
+	}
+	if opt.config != `{"url":"https://example.com"}` {
+		t.Fatalf("config=%q", opt.config)
+	}
+
+	opt, err = parseArgs([]string{
+		"alert", "policy", "put",
+		"--dedup-window-sec", "600",
+		"--notify-on-resolve", "false",
+		"--cpu", "80",
+		"--memory", "85",
+		"--disk", "90",
+		"--consecutive", "3",
+		"--suspect-too-long-sec", "120",
+	})
+	if err != nil {
+		t.Fatalf("policy put parse: %v", err)
+	}
+	if opt.dedupWindowSec != 600 || !opt.dedupWindowSet {
+		t.Fatalf("dedup=%d set=%v", opt.dedupWindowSec, opt.dedupWindowSet)
+	}
+	if opt.notifyOnResolve || !opt.notifyOnResolveSet {
+		t.Fatalf("notify=%v set=%v", opt.notifyOnResolve, opt.notifyOnResolveSet)
+	}
+	if opt.cpuHigh != 80 || opt.memoryHigh != 85 || opt.diskHigh != 90 {
+		t.Fatalf("cpu=%d mem=%d disk=%d", opt.cpuHigh, opt.memoryHigh, opt.diskHigh)
+	}
+	if opt.consecutive != 3 || opt.suspectTooLongSec != 120 {
+		t.Fatalf("consecutive=%d suspect=%d", opt.consecutive, opt.suspectTooLongSec)
+	}
+}
+
 func TestCLI_BatchUsageAndParse(t *testing.T) {
 	if !strings.Contains(usageText, "batch create") {
 		t.Fatal("usage missing batch create")

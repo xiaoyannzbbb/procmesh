@@ -66,6 +66,13 @@ commands:
   batch export BATCH_ID [--format json|csv]
   metrics history node NODE_ID [--since RFC3339|unix] [--until RFC3339|unix]
   metrics history process <id-or-name> [--since RFC3339|unix] [--until RFC3339|unix]
+  alert list [--state FIRING|RESOLVED]
+  alert get ALERT_ID
+  alert channel list
+  alert channel put --type T --name N [--id ID] [--enabled true|false] [--config JSON]
+  alert channel delete CHANNEL_ID
+  alert policy get
+  alert policy put --dedup-window-sec N --notify-on-resolve true|false --cpu N --memory N --disk N --consecutive N --suspect-too-long-sec N
 `
 
 type usageError string
@@ -120,6 +127,26 @@ type options struct {
 
 	sinceUnix int64
 	untilUnix int64
+
+	state              string
+	id                 string
+	enabled            bool
+	enabledSet         bool
+	config             string
+	dedupWindowSec     int64
+	dedupWindowSet     bool
+	notifyOnResolve    bool
+	notifyOnResolveSet bool
+	cpuHigh            int32
+	cpuHighSet         bool
+	memoryHigh         int32
+	memoryHighSet      bool
+	diskHigh           int32
+	diskHighSet        bool
+	consecutive        int32
+	consecutiveSet     bool
+	suspectTooLongSec  int64
+	suspectTooLongSet  bool
 
 	args []string
 }
@@ -211,6 +238,11 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return printUsage(stderr, usageError("missing metrics subcommand"))
 		}
 		runErr = runMetrics(c, rest[0], rest[1:], opt, stdout)
+	case "alert":
+		if len(rest) == 0 {
+			return printUsage(stderr, usageError("missing alert subcommand"))
+		}
+		runErr = runAlert(c, rest[0], rest[1:], opt, stdout)
 	default:
 		return printUsage(stderr, usageError("unknown command"))
 	}
@@ -387,10 +419,83 @@ func applyFlag(opt *options, name, val string) error {
 			return usageError("invalid --until")
 		}
 		opt.untilUnix = n
+	case "state":
+		opt.state = val
+	case "id":
+		opt.id = val
+	case "enabled":
+		b, err := parseBoolFlag(val)
+		if err != nil {
+			return usageError("invalid --enabled")
+		}
+		opt.enabled = b
+		opt.enabledSet = true
+	case "config":
+		opt.config = val
+	case "dedup-window-sec":
+		n, err := strconv.ParseInt(val, 10, 64)
+		if err != nil {
+			return usageError("invalid --dedup-window-sec")
+		}
+		opt.dedupWindowSec = n
+		opt.dedupWindowSet = true
+	case "notify-on-resolve":
+		b, err := parseBoolFlag(val)
+		if err != nil {
+			return usageError("invalid --notify-on-resolve")
+		}
+		opt.notifyOnResolve = b
+		opt.notifyOnResolveSet = true
+	case "cpu":
+		n, err := strconv.ParseInt(val, 10, 32)
+		if err != nil {
+			return usageError("invalid --cpu")
+		}
+		opt.cpuHigh = int32(n)
+		opt.cpuHighSet = true
+	case "memory":
+		n, err := strconv.ParseInt(val, 10, 32)
+		if err != nil {
+			return usageError("invalid --memory")
+		}
+		opt.memoryHigh = int32(n)
+		opt.memoryHighSet = true
+	case "disk":
+		n, err := strconv.ParseInt(val, 10, 32)
+		if err != nil {
+			return usageError("invalid --disk")
+		}
+		opt.diskHigh = int32(n)
+		opt.diskHighSet = true
+	case "consecutive":
+		n, err := strconv.ParseInt(val, 10, 32)
+		if err != nil {
+			return usageError("invalid --consecutive")
+		}
+		opt.consecutive = int32(n)
+		opt.consecutiveSet = true
+	case "suspect-too-long-sec":
+		n, err := strconv.ParseInt(val, 10, 64)
+		if err != nil {
+			return usageError("invalid --suspect-too-long-sec")
+		}
+		opt.suspectTooLongSec = n
+		opt.suspectTooLongSet = true
 	default:
 		return usageError("unknown flag --" + name)
 	}
 	return nil
+}
+
+func parseBoolFlag(val string) (bool, error) {
+	switch strings.ToLower(val) {
+	case "true", "1", "yes":
+		return true, nil
+	case "false", "0", "no":
+		return false, nil
+	default:
+		return false, fmt.Errorf("invalid bool")
+	}
 }
 
 func parseUnixOrRFC3339(val string) (int64, error) {
