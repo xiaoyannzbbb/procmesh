@@ -2,6 +2,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
 import { computed, ref } from "vue";
 import { Plus } from "lucide-vue-next";
+import ConfirmDialog from "../components/ConfirmDialog.vue";
 import Drawer from "../components/Drawer.vue";
 import NodeSelector from "../components/NodeSelector.vue";
 import Toast from "../components/Toast.vue";
@@ -26,6 +27,7 @@ const isDrawerOpen = ref(false);
 const name = ref("");
 const description = ref("");
 const addNodeId = ref<Record<string, string>>({});
+const pendingDelete = ref<{ groupId: string; name: string } | null>(null);
 
 const perms = computed(() => new Set(session.value?.permissions ?? []));
 const canManage = computed(() => perms.value.has("node.manage"));
@@ -180,13 +182,28 @@ async function onCreate(): Promise<void> {
   }
 }
 
-async function onDelete(groupId: string): Promise<void> {
+function requestDelete(groupId: string, groupName: string): void {
   if (!canManage.value || !groupId || acting.value) {
+    return;
+  }
+  pendingDelete.value = { groupId, name: groupName };
+}
+
+function cancelDelete(): void {
+  if (!deleteMut.isPending.value) {
+    pendingDelete.value = null;
+  }
+}
+
+async function confirmDelete(): Promise<void> {
+  const target = pendingDelete.value;
+  if (!canManage.value || !target || acting.value) {
     return;
   }
   actionError.value = "";
   try {
-    await deleteMut.mutateAsync(groupId);
+    await deleteMut.mutateAsync(target.groupId);
+    pendingDelete.value = null;
   } catch {
     // onError already recorded
   }
@@ -292,7 +309,7 @@ async function onRemoveMember(groupId: string, nodeId: string): Promise<void> {
                     type="button"
                     class="btn btn-sm btn-danger"
                     :disabled="acting"
-                    @click="onDelete(group.groupId)"
+                    @click="requestDelete(group.groupId, group.name)"
                   >
                     {{ t("group.delete") }}
                   </button>
@@ -326,6 +343,17 @@ async function onRemoveMember(groupId: string, nodeId: string): Promise<void> {
         </div>
       </form>
     </Drawer>
+
+    <ConfirmDialog
+      :open="Boolean(pendingDelete)"
+      :title="t('group.deleteConfirmTitle')"
+      :message="t('group.deleteConfirmMessage', { name: pendingDelete?.name ?? '' })"
+      :confirm-label="t('group.confirmDelete')"
+      :cancel-label="t('actions.cancel')"
+      :pending="deleteMut.isPending.value"
+      @cancel="cancelDelete"
+      @confirm="confirmDelete"
+    />
 
     <Toast
       :show="showToast"

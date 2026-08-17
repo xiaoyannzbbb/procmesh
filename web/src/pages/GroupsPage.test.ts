@@ -16,6 +16,9 @@ beforeEach(async () => {
     resources: {
       en: {
         common: {
+          actions: {
+            cancel: "Cancel",
+          },
           group: {
             title: "Groups",
             loading: "Loading…",
@@ -28,6 +31,9 @@ beforeEach(async () => {
             addMember: "Add member",
             removeMember: "Remove member",
             delete: "Delete",
+            deleteConfirmTitle: "Delete group?",
+            deleteConfirmMessage: 'Delete group "{{name}}"? This action cannot be undone.',
+            confirmDelete: "Delete group",
             nodeId: "Node ID",
           },
         },
@@ -94,5 +100,49 @@ describe("GroupsPage", () => {
   it("hides Create without node.manage", async () => {
     const { wrapper } = await mountGroups(["node.read"]);
     expect(wrapper.text()).not.toContain("Create");
+  });
+
+  it("does not delete a group when the confirmation dialog is cancelled", async () => {
+    const { wrapper, groupClient } = await mountGroups(["node.read", "node.manage"]);
+
+    const deleteButton = wrapper.findAll("button").find((button) => button.text() === "Delete");
+    await deleteButton?.trigger("click");
+    await flushPromises();
+
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+    expect(dialog?.textContent).toContain('Delete group "finance"? This action cannot be undone.');
+    expect(groupClient.deleteAgentGroup).not.toHaveBeenCalled();
+
+    const cancelButton = Array.from(dialog?.querySelectorAll("button") ?? []).find(
+      (button) => button.textContent?.trim() === "Cancel",
+    );
+    cancelButton?.click();
+    await flushPromises();
+
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(groupClient.deleteAgentGroup).not.toHaveBeenCalled();
+  });
+
+  it("deletes a group only after the confirmation dialog is confirmed", async () => {
+    const { wrapper, groupClient } = await mountGroups(["node.read", "node.manage"]);
+
+    const deleteButton = wrapper.findAll("button").find((button) => button.text() === "Delete");
+    await deleteButton?.trigger("click");
+    await flushPromises();
+
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(groupClient.deleteAgentGroup).not.toHaveBeenCalled();
+    const confirmButton = Array.from(dialog?.querySelectorAll("button") ?? []).find(
+      (button) => button.textContent?.trim() === "Delete group",
+    );
+    expect(confirmButton).toBeDefined();
+    confirmButton?.click();
+    await flushPromises();
+
+    expect(groupClient.deleteAgentGroup).toHaveBeenCalledTimes(1);
+    expect(groupClient.deleteAgentGroup).toHaveBeenCalledWith(
+      expect.objectContaining({ groupId: "g1" }),
+    );
   });
 });
