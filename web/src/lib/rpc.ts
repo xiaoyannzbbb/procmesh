@@ -3,6 +3,7 @@ import { inject } from "vue";
 import {
   AlertService,
   AuditService,
+  BackupService,
   BatchService,
   ClusterService,
   ConfigService,
@@ -52,6 +53,10 @@ export type AlertClient = Pick<
   | "getAlertPolicy"
   | "putAlertPolicy"
 >;
+export type BackupClient = Pick<
+  Client<typeof BackupService>,
+  "listBackups" | "createBackup" | "deleteBackup" | "restoreBackup" | "getBackup"
+>;
 
 export function useClusterClient(): ClusterClient {
   return inject<ClusterClient | null>("clusterClient", null) ?? createClient(ClusterService, transport);
@@ -99,4 +104,8 @@ export function useBatchClient(): BatchClient {
 
 export function useAlertClient(): AlertClient {
   return inject<AlertClient | null>("alertClient", null) ?? createClient(AlertService, transport);
+}
+
+export function useBackupClient(): BackupClient {
+  return inject<BackupClient | null>("backupClient", null) ?? createClient(BackupService, transport);
 }

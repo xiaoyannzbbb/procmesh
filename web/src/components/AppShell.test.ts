@@ -29,6 +29,7 @@ testI18n.init({
           audit: 'Audit',
           batches: 'Batches',
           alerts: 'Alerts',
+          backup: 'Backup',
         },
         actions: {
           logout: 'Logout'
@@ -47,6 +48,7 @@ testI18n.init({
           audit: '审计',
           batches: '批次',
           alerts: '告警',
+          backup: '备份',
         },
         actions: {
           logout: '退出登录'
@@ -84,6 +86,7 @@ async function mountShell(current: Me, provide: Record<string, unknown> = {}) {
           { path: "groups", component: Blank },
           { path: "batches", component: Blank },
           { path: "alerts", component: Blank },
+          { path: "backup", component: Blank },
           { path: "users", component: Blank },
           { path: "roles", component: Blank },
           { path: "audit", component: Blank },
@@ -171,6 +174,25 @@ describe("AppShell", () => {
     const labels = wrapper.findAll(".nav-label").map((n) => n.text());
     expect(labels.indexOf("Alerts")).toBeGreaterThan(labels.indexOf("Batches"));
     expect(labels.indexOf("Users")).toBeGreaterThan(labels.indexOf("Alerts"));
+  });
+
+  it("shows Backup nav when backup.read", async () => {
+    const wrapper = await mountShell(me({ permissions: ["backup.read"] }));
+    expect(wrapper.text()).toContain("Backup");
+  });
+
+  it("hides Backup nav without backup.read", async () => {
+    const wrapper = await mountShell(me({ permissions: ["node.read", "alert.read", "user.read"] }));
+    expect(wrapper.text()).not.toContain("Backup");
+  });
+
+  it("places Backup after Alerts and before Users", async () => {
+    const wrapper = await mountShell(
+      me({ permissions: ["node.read", "alert.read", "backup.read", "user.read"] }),
+    );
+    const labels = wrapper.findAll(".nav-label").map((n) => n.text());
+    expect(labels.indexOf("Backup")).toBeGreaterThan(labels.indexOf("Alerts"));
+    expect(labels.indexOf("Users")).toBeGreaterThan(labels.indexOf("Backup"));
   });
 
   it("shows Users, Roles, and Audit when permitted", async () => {

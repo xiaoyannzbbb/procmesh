@@ -8,6 +8,7 @@ import {
   FolderTree,
   ListTodo,
   Bell,
+  Archive,
   Users,
   ShieldCheck,
   FileSearch,
@@ -57,6 +58,9 @@ const navItems = computed(() => {
   }
   if (perms.value.has("alert.read")) {
     items.push({ to: "/alerts", label: t("nav.alerts"), icon: Bell });
+  }
+  if (perms.value.has("backup.read")) {
+    items.push({ to: "/backup", label: t("nav.backup"), icon: Archive });
   }
   if (perms.value.has("user.read")) {
     items.push({ to: "/users", label: t("nav.users"), icon: Users });
