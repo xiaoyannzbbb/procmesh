@@ -19,14 +19,14 @@ type PeerStore struct {
 }
 
 func (p *PeerStore) validateID(id string) error {
-	if !snapshotIDRe.MatchString(id) {
+	if id == "." || id == ".." || !snapshotIDRe.MatchString(id) {
 		return errcode.E(errcode.INVALID, "invalid snapshot id")
 	}
 	return nil
 }
 
 func (p *PeerStore) validateSource(sourceNodeID string) error {
-	if !snapshotIDRe.MatchString(sourceNodeID) {
+	if sourceNodeID == "." || sourceNodeID == ".." || !snapshotIDRe.MatchString(sourceNodeID) {
 		return errcode.E(errcode.INVALID, "invalid source node id")
 	}
 	return nil

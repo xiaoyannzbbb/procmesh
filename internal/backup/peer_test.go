@@ -62,6 +62,26 @@ func TestPeerStore_RejectsPathEscape(t *testing.T) {
 	}
 }
 
+func TestPeerStore_ReceiveRejectsDotAndDotDotSource(t *testing.T) {
+	root := t.TempDir()
+	p := &backup.PeerStore{Root: root}
+	snap := backup.Snapshot{FormatVersion: 1, SnapshotID: "s1", ClusterID: "c", NodeID: "src",
+		CreatedAt: time.Unix(1, 0).UTC()}
+	payload, _, err := backup.Encode(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, src := range []string{"..", "."} {
+		if _, err := p.Receive(context.Background(), src, payload); !errcode.Is(err, errcode.INVALID) {
+			t.Fatalf("source %q err %v", src, err)
+		}
+	}
+	escaped := filepath.Join(root, "backup", "s1.json")
+	if _, err := os.Stat(escaped); !os.IsNotExist(err) {
+		t.Fatalf("must not write %s: %v", escaped, err)
+	}
+}
+
 func TestPeerStore_GetListDelete(t *testing.T) {
 	root := t.TempDir()
 	p := &backup.PeerStore{Root: root}
