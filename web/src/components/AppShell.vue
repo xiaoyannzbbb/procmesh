@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, onMounted } from "vue";
+import { computed, ref, onMounted, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   LayoutDashboard,
@@ -14,7 +14,9 @@ import {
   FileSearch,
   LogOut,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Menu,
+  X,
 } from "lucide-vue-next";
 import { newOperationId } from "../lib/opid";
 import { clearSession, session, useAuthClient } from "../lib/session";
@@ -28,6 +30,7 @@ const { t } = useI18n();
 
 const COLLAPSED_KEY = "procmesh-sidebar-collapsed";
 const isCollapsed = ref(false);
+const isMobileNavOpen = ref(false);
 
 onMounted(() => {
   const stored = localStorage.getItem(COLLAPSED_KEY);
@@ -40,6 +43,19 @@ function toggleCollapse() {
   isCollapsed.value = !isCollapsed.value;
   localStorage.setItem(COLLAPSED_KEY, String(isCollapsed.value));
 }
+
+function toggleMobileNav(): void {
+  isMobileNavOpen.value = !isMobileNavOpen.value;
+}
+
+function closeMobileNav(): void {
+  isMobileNavOpen.value = false;
+}
+
+watch(
+  () => route.fullPath,
+  () => closeMobileNav(),
+);
 
 const username = computed(() => session.value?.username ?? "");
 const perms = computed(() => new Set(session.value?.permissions ?? []));
@@ -98,7 +114,8 @@ async function onLogout(): Promise<void> {
 
 <template>
   <div class="app-shell">
-    <aside class="sidebar" :class="{ collapsed: isCollapsed }">
+    <div v-if="isMobileNavOpen" class="mobile-nav-scrim" aria-hidden="true" @click="closeMobileNav" />
+    <aside class="sidebar" :class="{ collapsed: isCollapsed, 'mobile-open': isMobileNavOpen }">
       <div class="sidebar-header">
         <div class="brand">
           <span class="brand-full">{{ t("app.name") }}</span>
@@ -123,6 +140,7 @@ async function onLogout(): Promise<void> {
           class="nav-link"
           :class="{ active: isActive(item.to) }"
           :title="isCollapsed ? item.label : ''"
+          @click="closeMobileNav"
         >
           <component :is="item.icon" :size="20" class="nav-icon" />
           <span class="nav-label">{{ item.label }}</span>
@@ -145,6 +163,19 @@ async function onLogout(): Promise<void> {
       </div>
     </aside>
     <main class="content">
+      <header class="mobile-topbar">
+        <button
+          type="button"
+          class="mobile-menu-btn"
+          :aria-label="isMobileNavOpen ? t('actions.close') : t('actions.menu')"
+          :aria-expanded="isMobileNavOpen"
+          @click="toggleMobileNav"
+        >
+          <X v-if="isMobileNavOpen" :size="22" aria-hidden="true" />
+          <Menu v-else :size="22" aria-hidden="true" />
+        </button>
+        <span class="mobile-brand">{{ t("app.name") }}</span>
+      </header>
       <div class="content-inner">
         <RouterView />
       </div>
@@ -160,6 +191,11 @@ async function onLogout(): Promise<void> {
   background: var(--color-bg);
 }
 
+.mobile-topbar,
+.mobile-nav-scrim {
+  display: none;
+}
+
 .sidebar {
   width: var(--sidebar-width);
   flex-shrink: 0;
@@ -168,7 +204,7 @@ async function onLogout(): Promise<void> {
   min-height: 0;
   border-right: 1px solid var(--color-border);
   background: var(--color-sidebar);
-  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .sidebar.collapsed {
@@ -216,6 +252,8 @@ async function onLogout(): Promise<void> {
   cursor: pointer;
   transition: all 0.2s;
   flex-shrink: 0;
+  min-width: 44px;
+  min-height: 44px;
 }
 
 .collapse-btn:hover {
@@ -250,6 +288,7 @@ async function onLogout(): Promise<void> {
   transition: all 0.2s;
   white-space: nowrap;
   position: relative;
+  min-height: 44px;
 }
 
 .nav-link:hover {
@@ -396,25 +435,127 @@ async function onLogout(): Promise<void> {
 }
 
 @media (max-width: 768px) {
-  .sidebar {
+  .mobile-topbar {
+    position: sticky;
+    top: 0;
+    z-index: 900;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-height: 3.5rem;
+    padding: 0 1rem;
+    border-bottom: 1px solid var(--color-border);
+    background: color-mix(in srgb, var(--color-bg) 94%, transparent);
+    backdrop-filter: blur(12px);
+  }
+
+  .mobile-brand {
+    font-size: 1rem;
+    font-weight: 700;
+  }
+
+  .mobile-menu-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    padding: 0;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    background: var(--color-card);
+    color: var(--color-text);
+    cursor: pointer;
+  }
+
+  .mobile-menu-btn:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  .mobile-nav-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 950;
+    display: block;
+    background: rgba(13, 13, 13, 0.42);
+  }
+
+  .sidebar,
+  .sidebar.collapsed {
     position: fixed;
     left: 0;
     top: 0;
     bottom: 0;
     z-index: 1000;
-    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+    width: min(82vw, 18rem);
+    transform: translateX(-100%);
+    box-shadow: 0 0 24px rgba(0, 0, 0, 0.16);
   }
 
-  .sidebar.collapsed {
-    width: 72px;
+  .sidebar.mobile-open {
+    transform: translateX(0);
+  }
+
+  .sidebar .collapse-btn {
+    display: none;
+  }
+
+  .sidebar .brand-full,
+  .sidebar.collapsed .brand-full {
+    display: inline;
+  }
+
+  .sidebar .brand-short,
+  .sidebar.collapsed .brand-short {
+    display: none;
+  }
+
+  .sidebar.collapsed .nav-link {
+    justify-content: flex-start;
+    padding: 0.75rem;
+  }
+
+  .sidebar.collapsed .nav-label {
+    position: static;
+    margin-left: 0;
+    padding: 0;
+    background: transparent;
+    color: inherit;
+    border-radius: 0;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .sidebar.collapsed .sidebar-foot {
+    padding: 1rem 1.25rem;
+    align-items: stretch;
+  }
+
+  .sidebar.collapsed .username {
+    width: auto;
+    opacity: 1;
+  }
+
+  .sidebar.collapsed .btn-label {
+    display: inline;
   }
 
   .content {
-    margin-left: var(--sidebar-width);
+    width: 100%;
+    margin-left: 0;
   }
 
-  .sidebar.collapsed ~ .content {
-    margin-left: 72px;
+  .content-inner {
+    padding: 1rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar,
+  .mobile-topbar,
+  .mobile-nav-scrim {
+    transition: none;
   }
 }
 </style>

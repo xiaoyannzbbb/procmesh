@@ -51,6 +51,7 @@ body,
   font-size: 0.875rem;
   font-weight: 500;
   cursor: pointer;
+  min-height: 44px;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   box-shadow: var(--shadow-sm);
 }
@@ -98,6 +99,7 @@ body,
 
 .input {
   width: 100%;
+  min-height: 44px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
   background: var(--color-card);
@@ -184,3 +186,19 @@ body,
   animation: fadeIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+@media (max-width: 768px) {
+  .input {
+    font-size: 1rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page,
+  .btn,
+  .input,
+  .table tbody tr,
+  .card {
+    animation: none;
+    transition: none;
+  }
+}

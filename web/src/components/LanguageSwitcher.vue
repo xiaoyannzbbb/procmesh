@@ -59,6 +59,7 @@ const languages = [
   font-size: 0.8125rem;
   font-weight: 500;
   cursor: pointer;
+  min-height: 44px;
   transition: all 0.2s;
   white-space: nowrap;
 }
