@@ -15,17 +15,40 @@ import (
 	"github.com/qleelulu/procmesh/internal/store"
 )
 
+// Applier is the process write surface Restore uses. *process.Manager implements it.
+type Applier interface {
+	ApplySpec(ctx context.Context, spec process.ProcessSpec, expectedRevision int64, opID, operator, comment string) (process.ProcessSpec, error)
+	GetSpec(ctx context.Context, processID string) (process.ProcessSpec, error)
+}
+
+// RestoreTarget is one process to restore, with CAS expected_revision.
+type RestoreTarget struct {
+	ProcessID        string
+	ExpectedRevision int64
+}
+
+// RestoreResult is the per-process outcome of Restore.
+type RestoreResult struct {
+	ProcessID   string
+	Status      string
+	NewRevision int64
+	Error       string
+}
+
 // Engine creates, reads, and deletes local process-spec snapshots.
 type Engine struct {
 	Store           *store.Store
 	NodeID          string
 	ClusterID       string
+	Apply           Applier
 	Sinks           map[string]Sink // "fs"|"s3"
 	DiskPercent     func() float64  // nil = 0
 	Now             func() time.Time
 	NewID           func() (string, error) // 测试注入；默认 UUID
 	LastSuccessUnix atomic.Int64
 }
+
+var _ Applier = (*process.Manager)(nil)
 
 // Create snapshots local process specs + full revision history to sinkName.
 // processIDs nil/empty means all local processes.
@@ -154,6 +177,119 @@ func (e *Engine) ListLocal(ctx context.Context) ([]Meta, error) {
 		out = append(out, m)
 	}
 	return out, nil
+}
+
+// Restore applies snapshot specs via ApplySpec + CAS. Partial CONFLICT is
+// returned in results with a nil error. Does not call store.PutSpec.
+func (e *Engine) Restore(ctx context.Context, snapshotID, sinkName, opID, operator string, targets []RestoreTarget) ([]RestoreResult, error) {
+	if len(targets) == 0 {
+		return nil, errcode.E(errcode.INVALID, "targets required")
+	}
+	_, payload, err := e.Get(ctx, snapshotID, sinkName)
+	if err != nil {
+		return nil, err
+	}
+	snap, err := Decode(payload)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]RestoreResult, 0, len(targets))
+	if snap.NodeID != e.NodeID {
+		for _, t := range targets {
+			results = append(results, RestoreResult{
+				ProcessID: t.ProcessID,
+				Status:    "INVALID",
+				Error:     "cannot restore another node's process on this agent",
+			})
+		}
+		return results, nil
+	}
+	byID := make(map[string]ProcessDump, len(snap.Processes))
+	for _, p := range snap.Processes {
+		byID[p.ProcessID] = p
+	}
+	comment := "restore from snapshot " + snapshotID
+	for _, t := range targets {
+		results = append(results, e.restoreOne(ctx, t, byID, opID, operator, comment))
+	}
+	return results, nil
+}
+
+func (e *Engine) restoreOne(ctx context.Context, t RestoreTarget, byID map[string]ProcessDump, opID, operator, comment string) RestoreResult {
+	r := RestoreResult{ProcessID: t.ProcessID}
+	if t.ProcessID == "" {
+		r.Status = "INVALID"
+		r.Error = "process_id required"
+		return r
+	}
+	dump, ok := byID[t.ProcessID]
+	if !ok {
+		r.Status = "INVALID"
+		r.Error = "process not in snapshot"
+		return r
+	}
+	raw, err := LatestSpec(dump)
+	if err != nil {
+		return restoreFail(r, err)
+	}
+	var spec process.ProcessSpec
+	if err := json.Unmarshal(raw, &spec); err != nil {
+		r.Status = "INVALID"
+		r.Error = err.Error()
+		return r
+	}
+	spec.ProcessID = dump.ProcessID
+	if dump.Name != "" {
+		spec.Name = dump.Name
+	}
+	if e.Apply == nil {
+		r.Status = "UNAVAILABLE"
+		r.Error = "apply not configured"
+		return r
+	}
+	if _, err := e.Apply.GetSpec(ctx, t.ProcessID); errcode.Is(err, errcode.NOT_FOUND) {
+		if t.ExpectedRevision != 0 {
+			r.Status = "CONFLICT"
+			r.Error = "process not found"
+			return r
+		}
+	} else if err != nil {
+		return restoreFail(r, err)
+	}
+	out, err := e.Apply.ApplySpec(ctx, spec, t.ExpectedRevision, opID+":"+t.ProcessID, operator, comment)
+	if err != nil {
+		return restoreApplyFail(r, err, t.ExpectedRevision)
+	}
+	r.Status = "SUCCESS"
+	r.NewRevision = out.LatestRevision
+	return r
+}
+
+func restoreApplyFail(r RestoreResult, err error, expected int64) RestoreResult {
+	if errcode.Is(err, errcode.NOT_FOUND) {
+		if expected != 0 {
+			r.Status = "CONFLICT"
+			r.Error = err.Error()
+			return r
+		}
+		r.Status = "INVALID"
+		r.Error = err.Error()
+		return r
+	}
+	return restoreFail(r, err)
+}
+
+func restoreFail(r RestoreResult, err error) RestoreResult {
+	r.Error = err.Error()
+	switch {
+	case errcode.Is(err, errcode.CONFLICT):
+		r.Status = "CONFLICT"
+	case errcode.Is(err, errcode.UNAVAILABLE), errcode.Is(err, errcode.TIMEOUT), errcode.Is(err, errcode.DEGRADED):
+		r.Status = "UNAVAILABLE"
+	default:
+		r.Status = "INVALID"
+	}
+	return r
 }
 
 func (e *Engine) sink(name string) (Sink, error) {

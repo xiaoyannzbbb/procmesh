@@ -10,6 +10,7 @@ import (
 
 	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/paths"
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/store"
 )
@@ -172,5 +173,261 @@ func TestEngine_GetSHA256MismatchInvalid(t *testing.T) {
 	_, _, err = e.Get(context.Background(), meta.SnapshotID, "fs")
 	if !errcode.Is(err, errcode.INVALID) {
 		t.Fatalf("err %v", err)
+	}
+}
+
+func seedManagedProcess(t *testing.T) (*process.Manager, *store.Store, process.ProcessSpec) {
+	t.Helper()
+	st, err := store.Open(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	layout := paths.New(t.TempDir())
+	if err := layout.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	mgr := process.NewManager(process.Deps{Store: st, Layout: layout, Now: time.Now})
+	spec := process.ProcessSpec{ProcessID: "p1", Name: "web", Command: "/bin/true"}
+	got, err := mgr.ApplySpec(context.Background(), spec, 0, "op-seed", "t", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return mgr, st, got
+}
+
+func engineWithMgr(t *testing.T, st *store.Store, mgr *process.Manager) *backup.Engine {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "fs")
+	return &backup.Engine{
+		Store:     st,
+		NodeID:    "n1",
+		ClusterID: "c1",
+		Apply:     mgr,
+		Sinks:     map[string]backup.Sink{"fs": backup.NewFSSink(dir)},
+		Now:       func() time.Time { return time.Unix(1_700_000_000, 0).UTC() },
+		NewID:     func() (string, error) { return "snap-1", nil },
+	}
+}
+
+type countingApplier struct {
+	inner   backup.Applier
+	applies int
+}
+
+func (c *countingApplier) ApplySpec(ctx context.Context, spec process.ProcessSpec, expectedRevision int64, opID, operator, comment string) (process.ProcessSpec, error) {
+	c.applies++
+	return c.inner.ApplySpec(ctx, spec, expectedRevision, opID, operator, comment)
+}
+
+func (c *countingApplier) GetSpec(ctx context.Context, processID string) (process.ProcessSpec, error) {
+	return c.inner.GetSpec(ctx, processID)
+}
+
+func TestEngine_RestoreAppliesNewRevisionViaCAS(t *testing.T) {
+	ctx := context.Background()
+	mgr, st, spec := seedManagedProcess(t) // latest=1
+	e := engineWithMgr(t, st, mgr)
+	meta, err := e.Create(ctx, nil, "fs")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	spec.Command = "/bin/changed"
+	if _, err := mgr.ApplySpec(ctx, spec, spec.LatestRevision, "op-change", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	latest, _ := mgr.GetSpec(ctx, spec.ProcessID)
+	if latest.LatestRevision < 2 {
+		t.Fatalf("rev %d", latest.LatestRevision)
+	}
+
+	results, err := e.Restore(ctx, meta.SnapshotID, "fs", "op-restore", "t", []backup.RestoreTarget{{
+		ProcessID: spec.ProcessID, ExpectedRevision: latest.LatestRevision,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Status != "SUCCESS" || results[0].NewRevision != latest.LatestRevision+1 {
+		t.Fatalf("%+v", results)
+	}
+	got, _ := mgr.GetSpec(ctx, spec.ProcessID)
+	if got.Command != spec.Command && got.Command != "/bin/true" {
+		// restore 应回到 snapshot 里的 command（seed 的原始值），不是 /bin/changed
+	}
+	if got.Command == "/bin/changed" {
+		t.Fatal("restore did not apply snapshot spec")
+	}
+	if got.Command != "/bin/true" {
+		t.Fatalf("command %q", got.Command)
+	}
+	revs, _ := st.ListRevisions(ctx, spec.ProcessID)
+	if len(revs) < 3 {
+		t.Fatalf("history rewritten? %d", len(revs))
+	}
+	if revs[0].Revision != 1 || revs[1].Revision != 2 || revs[2].Revision != 3 {
+		t.Fatalf("old rows missing: %+v", revs)
+	}
+}
+
+func TestEngine_RestoreWrongExpectedConflictDoesNotRewriteStore(t *testing.T) {
+	ctx := context.Background()
+	mgr, st, spec := seedManagedProcess(t)
+	e := engineWithMgr(t, st, mgr)
+	meta, _ := e.Create(ctx, nil, "fs")
+	before, _ := st.ListRevisions(ctx, spec.ProcessID)
+	results, err := e.Restore(ctx, meta.SnapshotID, "fs", "op-bad", "t", []backup.RestoreTarget{{
+		ProcessID: spec.ProcessID, ExpectedRevision: spec.LatestRevision + 9,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	} // 部分失败不返回顶层 error
+	if len(results) != 1 || results[0].Status != "CONFLICT" {
+		t.Fatalf("%+v", results)
+	}
+	after, _ := st.ListRevisions(ctx, spec.ProcessID)
+	if len(after) != len(before) {
+		t.Fatal("store was written despite CAS conflict")
+	}
+}
+
+func TestEngine_RestoreForeignSnapshotWithoutLocalProcessInvalid(t *testing.T) {
+	// Engine.NodeID="n-local"；payload 里 node_id="n-other" 且本机无该 process
+	// Restore → 该 target Status=INVALID，ApplySpec 调用次数 0
+	ctx := context.Background()
+	stOther, spec := seedProcess(t)
+	dir := filepath.Join(t.TempDir(), "fs")
+	eOther := &backup.Engine{
+		Store:     stOther,
+		NodeID:    "n-other",
+		ClusterID: "c1",
+		Sinks:     map[string]backup.Sink{"fs": backup.NewFSSink(dir)},
+		NewID:     func() (string, error) { return "snap-foreign", nil },
+	}
+	meta, err := eOther.Create(ctx, nil, "fs")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	layout := paths.New(t.TempDir())
+	if err := layout.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	mgr := process.NewManager(process.Deps{Store: st, Layout: layout, Now: time.Now})
+	counter := &countingApplier{inner: mgr}
+
+	rec, err := stOther.GetBackup(ctx, meta.SnapshotID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutBackup(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+
+	e := &backup.Engine{
+		Store:     st,
+		NodeID:    "n-local",
+		ClusterID: "c1",
+		Apply:     counter,
+		Sinks:     map[string]backup.Sink{"fs": backup.NewFSSink(dir)},
+	}
+	results, err := e.Restore(ctx, meta.SnapshotID, "fs", "op", "t", []backup.RestoreTarget{{
+		ProcessID: spec.ProcessID, ExpectedRevision: 0,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Status != "INVALID" {
+		t.Fatalf("%+v", results)
+	}
+	if counter.applies != 0 {
+		t.Fatalf("ApplySpec calls %d", counter.applies)
+	}
+	if _, err := mgr.GetSpec(ctx, spec.ProcessID); !errcode.Is(err, errcode.NOT_FOUND) {
+		t.Fatalf("must not create foreign process: %v", err)
+	}
+}
+
+func TestEngine_RestoreMissingExpectedTargetsInvalid(t *testing.T) {
+	e := seededEngine(t)
+	_, err := e.Restore(context.Background(), "x", "fs", "op", "t", nil)
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestEngine_RestoreMissingProcessCreatesWhenExpectedZero(t *testing.T) {
+	ctx := context.Background()
+	mgr, st, spec := seedManagedProcess(t)
+	e := engineWithMgr(t, st, mgr)
+	meta, err := e.Create(ctx, nil, "fs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.DeleteSpec(ctx, spec.ProcessID, spec.LatestRevision, "op-del", "t"); err != nil {
+		t.Fatal(err)
+	}
+	results, err := e.Restore(ctx, meta.SnapshotID, "fs", "op-restore", "t", []backup.RestoreTarget{{
+		ProcessID: spec.ProcessID, ExpectedRevision: 0,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Status != "SUCCESS" || results[0].NewRevision != 1 {
+		t.Fatalf("%+v", results)
+	}
+	got, err := mgr.GetSpec(ctx, spec.ProcessID)
+	if err != nil || got.Command != "/bin/true" || got.Name != "web" {
+		t.Fatalf("%+v %v", got, err)
+	}
+}
+
+func TestEngine_RestoreMissingProcessConflictWhenExpectedNonzero(t *testing.T) {
+	ctx := context.Background()
+	mgr, st, spec := seedManagedProcess(t)
+	e := engineWithMgr(t, st, mgr)
+	meta, err := e.Create(ctx, nil, "fs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.DeleteSpec(ctx, spec.ProcessID, spec.LatestRevision, "op-del", "t"); err != nil {
+		t.Fatal(err)
+	}
+	results, err := e.Restore(ctx, meta.SnapshotID, "fs", "op-restore", "t", []backup.RestoreTarget{{
+		ProcessID: spec.ProcessID, ExpectedRevision: 1,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Status != "CONFLICT" {
+		t.Fatalf("%+v", results)
+	}
+	if _, err := mgr.GetSpec(ctx, spec.ProcessID); !errcode.Is(err, errcode.NOT_FOUND) {
+		t.Fatalf("must not create: %v", err)
+	}
+}
+
+func TestEngine_RestoreUnknownProcessInSnapshotInvalid(t *testing.T) {
+	ctx := context.Background()
+	mgr, st, spec := seedManagedProcess(t)
+	e := engineWithMgr(t, st, mgr)
+	meta, err := e.Create(ctx, nil, "fs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, err := e.Restore(ctx, meta.SnapshotID, "fs", "op-restore", "t", []backup.RestoreTarget{
+		{ProcessID: spec.ProcessID, ExpectedRevision: spec.LatestRevision},
+		{ProcessID: "missing-pid", ExpectedRevision: 0},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 || results[0].Status != "SUCCESS" || results[1].Status != "INVALID" {
+		t.Fatalf("%+v", results)
 	}
 }
