@@ -173,6 +173,28 @@ const editorDirty = computed(
 );
 
 watch(
+  () => [props.idOrName, props.targetNodeId] as const,
+  ([idOrName, targetNodeId], [previousIdOrName, previousTargetNodeId]) => {
+    if (idOrName === previousIdOrName && targetNodeId === previousTargetNodeId) {
+      return;
+    }
+    acceptRemoteSpec.value = true;
+    loadedSpec.value = null;
+    editorOpen.value = false;
+    formDraft.value = null;
+    editorText.value = "";
+    editorBaseline.value = "";
+    formIssues.value = [];
+    validateRequested.value = 0;
+    jsonError.value = "";
+    comment.value = "";
+    conflictText.value = "";
+    actionError.value = "";
+    selected.value = [];
+  },
+);
+
+watch(
   () => configQuery.data.value?.spec,
   (spec) => {
     if (!spec || !acceptRemoteSpec.value) {
@@ -252,6 +274,16 @@ function closeEditor(): void {
 function updateFormDraft(next: ProcessConfigFormState): void {
   formDraft.value = next;
   formIssues.value = [];
+}
+
+function validateFormField(path: string): void {
+  if (!formDraft.value) {
+    return;
+  }
+  const collectionPath = path.match(/^(environment|dependencies)\./)?.[1];
+  formIssues.value = validateProcessConfigForm(formDraft.value).filter((issue) => (
+    issue.path === path || (collectionPath !== undefined && issue.path === collectionPath)
+  ));
 }
 
 function issueMessage(issue: ProcessConfigIssue): string {
@@ -652,6 +684,7 @@ async function onRollback(toRevision: bigint | number): Promise<void> {
           :issues="formIssues"
           :validate-requested="validateRequested"
           @update:model-value="updateFormDraft"
+          @blur-field="validateFormField"
         />
         <div v-else-if="editorMode === EDITOR_MODE.json" class="json-editor">
           <label class="field" :for="EDITOR_IDS.json">
@@ -1174,6 +1207,9 @@ h4 {
   .drawer-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+  .drawer-comment {
+    flex: 0 1 auto;
   }
   .drawer-action-buttons .btn {
     flex: 1;

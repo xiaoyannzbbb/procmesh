@@ -275,6 +275,7 @@ describe("ProcessConfigPanel", () => {
     expect(panelSource).toMatch(/\.json-editor\s*\{(?=[^}]*min-width:\s*0)[^}]*\}/s);
     expect(panelSource).toMatch(/\.editor\s*\{(?=[^}]*box-sizing:\s*border-box)(?=[^}]*max-width:\s*100%)[^}]*\}/s);
     expect(panelSource).toMatch(/@media \(max-width:\s*720px\)[\s\S]*\.editor-mode-button,[\s\S]*\.drawer-actions \.btn\s*\{[^}]*min-height:\s*44px/s);
+    expect(panelSource).toMatch(/@media \(max-width:\s*720px\)[\s\S]*\.drawer-comment\s*\{[^}]*flex:\s*0 1 auto/s);
     expect(panelSource).toMatch(/\.field\s*\{(?=[^}]*gap:\s*0\.25rem)[^}]*\}/s);
     expect(panelSource).toMatch(/\.field-error\s*\{(?=[^}]*margin:\s*-0\.5rem 0 0)[^}]*\}/s);
   });
@@ -354,6 +355,20 @@ describe("ProcessConfigPanel", () => {
     expect(updateConfig).not.toHaveBeenCalled();
     expect(document.querySelector("[data-error-summary]")).not.toBeNull();
     expect(document.activeElement).toBe(drawerField("name"));
+  });
+
+  it("validates an individual field on blur without showing the full error summary", async () => {
+    const { wrapper } = await mountPanel();
+    await openEditor(wrapper);
+
+    const name = drawerField("name");
+    name.value = "1bad";
+    name.dispatchEvent(new Event("input", { bubbles: true }));
+    name.dispatchEvent(new FocusEvent("blur", { bubbles: true }));
+    await flushPromises();
+
+    expect(document.querySelector('[data-error="name"]')).not.toBeNull();
+    expect(document.querySelector("[data-error-summary]")).toBeNull();
   });
 
   it("asks before closing form and JSON drafts with semantic unsaved changes", async () => {
@@ -546,6 +561,36 @@ describe("ProcessConfigPanel", () => {
     expect(updateConfig).toHaveBeenCalledTimes(2);
     expect(updateConfig.mock.calls[0][0].expectedRevision).toBe(3n);
     expect(updateConfig.mock.calls[1][0].expectedRevision).toBe(3n);
+  });
+
+  it("resets remote ownership and revision when the process target changes", async () => {
+    const updateConfig = vi.fn().mockResolvedValue({ spec: sampleSpec() });
+    const { wrapper, configClient } = await mountPanel({ updateConfig });
+    const nextSpec = create(ProcessSpecSchema, {
+      processId: "p2",
+      name: "api",
+      ownerAgentId: "node-b",
+      command: "/usr/bin/api",
+      instances: 1,
+      latestRevision: 9n,
+    });
+    configClient.getConfig.mockResolvedValue({ spec: nextSpec });
+
+    await wrapper.setProps({ idOrName: "api", targetNodeId: "n2" });
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.get(".config-json-viewer").text()).toContain('"processId": "p2"');
+    expect(wrapper.get(".config-json-viewer").text()).toContain('"name": "api"');
+    await openEditor(wrapper);
+    submitEditor();
+    await flushPromises();
+
+    const request = updateConfig.mock.calls.at(-1)?.[0];
+    expect(request.idOrName).toBe("api");
+    expect(request.expectedRevision).toBe(9n);
+    expect(request.spec.processId).toBe("p2");
+    expect(request.spec.ownerAgentId).toBe("node-b");
   });
 
   it("remount after save uses new latest as expected_revision", async () => {

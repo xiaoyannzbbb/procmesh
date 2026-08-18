@@ -20,6 +20,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   "update:modelValue": [value: ProcessConfigFormState];
+  "blur-field": [path: string];
 }>();
 
 const { t: typedTranslate } = useI18n();
@@ -205,11 +206,18 @@ async function focusIssue(path: string): Promise<void> {
   focusTarget(path)?.focus();
 }
 
+function onFieldBlur(event: FocusEvent): void {
+  const path = (event.target as HTMLElement | null)?.dataset.field;
+  if (path) {
+    emit("blur-field", path);
+  }
+}
+
 defineExpose({ focusIssue });
 </script>
 
 <template>
-  <div ref="formRoot" class="process-config-form">
+  <div ref="formRoot" class="process-config-form" @blur.capture="onFieldBlur">
     <div
       v-if="issues.length && validateRequested > 0"
       class="error-summary"
@@ -485,7 +493,6 @@ defineExpose({ focusIssue });
                 :aria-describedby="describedBy(`dependencies.${index}.condition`)"
                 @change="updateDependency(index, 'condition', $event)"
               >
-                <option value=""></option>
                 <option value="STARTED">{{ t("processConfig.editor.option.dependency.STARTED") }}</option>
                 <option value="HEALTHY">{{ t("processConfig.editor.option.dependency.HEALTHY") }}</option>
               </select>

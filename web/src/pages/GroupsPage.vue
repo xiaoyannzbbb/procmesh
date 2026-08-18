@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
 import { computed, ref } from "vue";
-import { Plus } from "lucide-vue-next";
+import { Info, Plus } from "lucide-vue-next";
 import ConfirmDialog from "../components/ConfirmDialog.vue";
 import Drawer from "../components/Drawer.vue";
 import NodeSelector from "../components/NodeSelector.vue";
@@ -243,7 +243,7 @@ async function onRemoveMember(groupId: string, nodeId: string): Promise<void> {
     </div>
 
     <div v-if="showClusterNotice" class="notice-banner">
-      <div class="notice-icon">ℹ️</div>
+      <Info class="notice-icon" :size="20" :aria-hidden="true" />
       <div class="notice-content" v-html="t('group.clusterRequiredNotice')"></div>
     </div>
 
@@ -321,7 +321,9 @@ async function onRemoveMember(groupId: string, nodeId: string): Promise<void> {
       <form class="drawer-form" @submit.prevent="onCreate">
         <p v-if="actionError" class="error" role="alert">{{ actionError }}</p>
         <label class="field">
-          <span class="field-label">{{ t("group.name") }} <span class="required">*</span></span>
+          <span class="field-label">
+            {{ t("group.name") }} <span class="required">{{ t("group.requiredMarker") }}</span>
+          </span>
           <input v-model="name" class="input" name="name" type="text" autocomplete="off" required />
         </label>
         <label class="field">

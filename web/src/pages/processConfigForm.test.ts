@@ -198,6 +198,25 @@ describe("ProcessSpec form validation", () => {
     expect(validateProcessConfigForm(form)).toContainEqual({ path: "health.url", code: "httpUrlRequired" });
   });
 
+  it("rejects a dependency without a supported condition", () => {
+    const form = specToProcessConfigForm(fullSpec);
+    form.dependencies[0].condition = "";
+
+    expect(validateProcessConfigForm(form)).toContainEqual({
+      path: "dependencies.0.condition",
+      code: "invalidOption",
+    });
+  });
+
+  it("accepts any protobuf-valid int32 health expected status", () => {
+    const form = specToProcessConfigForm(fullSpec);
+    form.health.expectedStatus = "-1";
+
+    expect(validateProcessConfigForm(form)).not.toContainEqual(
+      expect.objectContaining({ path: "health.expectedStatus" }),
+    );
+  });
+
   it.each([
     ["restart.mode", (form: ProcessConfigFormState) => { form.restart.mode = "sometimes"; }],
     ["health.type", (form: ProcessConfigFormState) => { form.health.type = "icmp"; }],

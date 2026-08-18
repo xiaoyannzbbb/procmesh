@@ -93,7 +93,7 @@ const INTEGER_TEXT = /^-?\d+$/;
 const DECIMAL_TEXT = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
 const RESTART_MODES = new Set(["", "never", "always", "on-failure"]);
 const HEALTH_TYPES = new Set(["", "alive", "http", "tcp", "exec"]);
-const DEPENDENCY_CONDITIONS = new Set(["", "STARTED", "HEALTHY"]);
+const DEPENDENCY_CONDITIONS = new Set(["STARTED", "HEALTHY"]);
 
 function decimal(value: bigint | number): string {
   return String(value);
@@ -449,7 +449,7 @@ export function validateProcessConfigForm(form: ProcessConfigFormState): Process
     if (form.health.type === "exec" && !form.health.command.trim()) {
       addIssue(issues, "health.command", "execCommandRequired");
     }
-    validateNonNegative(issues, "health.expectedStatus", form.health.expectedStatus, INT32_MIN, INT32_MAX, "int32OutOfRange");
+    validateInteger(issues, "health.expectedStatus", form.health.expectedStatus, INT32_MIN, INT32_MAX, "int32OutOfRange");
     validateNonNegative(issues, "health.initialDelayMs", form.health.initialDelayMs, INT64_MIN, INT64_MAX, "int64OutOfRange");
     validateNonNegative(issues, "health.intervalMs", form.health.intervalMs, INT64_MIN, INT64_MAX, "int64OutOfRange");
     validateNonNegative(issues, "health.timeoutMs", form.health.timeoutMs, INT64_MIN, INT64_MAX, "int64OutOfRange");

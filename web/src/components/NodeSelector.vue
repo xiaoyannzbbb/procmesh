@@ -60,7 +60,7 @@ function onSelect(event: Event): void {
     >
       <option value="">{{ placeholder || t("group.selectNode") }}</option>
       <option v-for="node in nodes" :key="node.nodeId" :value="node.nodeId">
-        {{ node.hostname || node.nodeId }} ({{ node.state }})
+        {{ t("group.nodeOption", { name: node.hostname || node.nodeId, state: node.state }) }}
       </option>
     </select>
     <p v-if="query.isPending.value" class="hint">{{ t("nodes.loading") }}</p>

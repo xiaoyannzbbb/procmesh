@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { AlertCircle, CheckCircle, Info, X, XCircle } from "lucide-vue-next";
+import { useI18n } from "../lib/useI18n";
 
 export type ToastType = "success" | "error" | "info" | "warning";
 
@@ -14,6 +15,9 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: [];
 }>();
+
+const { t } = useI18n();
+const POLITE_LIVE_REGION = "polite";
 
 const visible = ref(false);
 const timer = ref<ReturnType<typeof setTimeout> | null>(null);
@@ -86,11 +90,11 @@ onMounted(() => {
 <template>
   <Teleport to="body">
     <Transition name="toast">
-      <div v-if="visible" class="toast-container" role="alert" aria-live="polite">
+      <div v-if="visible" class="toast-container" role="alert" :aria-live="POLITE_LIVE_REGION">
         <div class="toast" :class="`toast-${type || 'info'}`">
           <component :is="icon" :size="20" :color="iconColor" class="toast-icon" />
           <p class="toast-message">{{ message }}</p>
-          <button type="button" class="toast-close" aria-label="Close" @click="close">
+          <button type="button" class="toast-close" :aria-label="t('actions.close')" @click="close">
             <X :size="18" />
           </button>
         </div>
