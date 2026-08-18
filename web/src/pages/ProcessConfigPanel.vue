@@ -54,6 +54,14 @@ type EditorMode = "form" | "json";
 type ProcessConfigFormHandle = {
   focusIssue(path: string): Promise<void>;
 };
+type MutationTarget = {
+  idOrName: string;
+  targetNodeId: string;
+  options: { headers: HeadersInit };
+  configKey: readonly ["process-config", string, string];
+  historyKey: readonly ["process-history", string, string];
+  processKey: readonly ["process", string, string];
+};
 
 const props = defineProps<{
   idOrName: string;
@@ -191,6 +199,8 @@ watch(
     conflictText.value = "";
     actionError.value = "";
     selected.value = [];
+    saving.value = false;
+    rollingBack.value = false;
   },
 );
 
@@ -228,8 +238,21 @@ function mutationMeta() {
   };
 }
 
-function configKey() {
-  return ["process-config", props.idOrName, props.targetNodeId];
+function captureMutationTarget(): MutationTarget {
+  const idOrName = props.idOrName;
+  const targetNodeId = props.targetNodeId;
+  return {
+    idOrName,
+    targetNodeId,
+    options: { headers: withTarget(targetNodeId) },
+    configKey: ["process-config", idOrName, targetNodeId],
+    historyKey: ["process-history", idOrName, targetNodeId],
+    processKey: ["process", idOrName, targetNodeId],
+  };
+}
+
+function isCurrentTarget(target: MutationTarget): boolean {
+  return props.idOrName === target.idOrName && props.targetNodeId === target.targetNodeId;
 }
 
 function applySpec(spec: ProcessSpec | undefined): void {
@@ -371,12 +394,13 @@ function textOrEmpty(value: string): string {
   return value || t("processConfig.config.empty");
 }
 
-function commitSpec(spec: ProcessSpec | undefined): void {
+function cacheSpec(spec: ProcessSpec | undefined, queryKey: MutationTarget["configKey"]): ProcessSpec | null {
   if (!spec) {
-    return;
+    return null;
   }
-  applySpec(spec);
-  queryClient.setQueryData(configKey(), { spec: loadedSpec.value });
+  const next = create(ProcessSpecSchema, spec);
+  queryClient.setQueryData(queryKey, { spec: next });
+  return next;
 }
 
 async function refresh(): Promise<void> {
@@ -422,32 +446,39 @@ async function onSave(): Promise<void> {
   }
   parsed.processId = loadedSpec.value.processId;
   parsed.latestRevision = loadedSpec.value.latestRevision;
+  const target = captureMutationTarget();
+  const request = {
+    meta: mutationMeta(),
+    idOrName: target.idOrName,
+    expectedRevision: loadedSpec.value.latestRevision,
+    spec: parsed,
+    comment: comment.value,
+  };
   saving.value = true;
   try {
-    const out = await config.updateConfig(
-      {
-        meta: mutationMeta(),
-        idOrName: props.idOrName,
-        expectedRevision: loadedSpec.value.latestRevision,
-        spec: parsed,
-        comment: comment.value,
-      },
-      targetOpts.value,
-    );
-    commitSpec(out.spec);
-    editorBaseline.value = semanticSpecJson(out.spec ?? parsed);
-    comment.value = "";
-    editorOpen.value = false;
-    await queryClient.invalidateQueries({ queryKey: ["process-history", props.idOrName, props.targetNodeId] });
-    await queryClient.invalidateQueries({ queryKey: ["process", props.idOrName, props.targetNodeId] });
+    const out = await config.updateConfig(request, target.options);
+    const next = cacheSpec(out.spec, target.configKey);
+    if (isCurrentTarget(target)) {
+      applySpec(next ?? undefined);
+      editorBaseline.value = semanticSpecJson(next ?? parsed);
+      comment.value = "";
+      editorOpen.value = false;
+    }
+    await queryClient.invalidateQueries({ queryKey: target.historyKey });
+    await queryClient.invalidateQueries({ queryKey: target.processKey });
   } catch (err) {
+    if (!isCurrentTarget(target)) {
+      return;
+    }
     if (isConflict(err)) {
       conflictText.value = CONFLICT_BANNER.value;
       return;
     }
     actionError.value = formatRemoteError(err);
   } finally {
-    saving.value = false;
+    if (isCurrentTarget(target)) {
+      saving.value = false;
+    }
   }
 }
 
@@ -461,29 +492,36 @@ async function onRollback(toRevision: bigint | number): Promise<void> {
   if (!window.confirm(t("processConfig.history.rollbackConfirm", { revision: String(to) }))) {
     return;
   }
+  const target = captureMutationTarget();
+  const request = {
+    meta: mutationMeta(),
+    idOrName: target.idOrName,
+    toRevision: to,
+    expectedRevision: loadedSpec.value.latestRevision,
+    comment: comment.value,
+  };
   rollingBack.value = true;
   try {
-    const out = await config.rollback(
-      {
-        meta: mutationMeta(),
-        idOrName: props.idOrName,
-        toRevision: to,
-        expectedRevision: loadedSpec.value.latestRevision,
-        comment: comment.value,
-      },
-      targetOpts.value,
-    );
-    commitSpec(out.spec);
-    await queryClient.invalidateQueries({ queryKey: ["process-history", props.idOrName, props.targetNodeId] });
-    await queryClient.invalidateQueries({ queryKey: ["process", props.idOrName, props.targetNodeId] });
+    const out = await config.rollback(request, target.options);
+    const next = cacheSpec(out.spec, target.configKey);
+    if (isCurrentTarget(target)) {
+      applySpec(next ?? undefined);
+    }
+    await queryClient.invalidateQueries({ queryKey: target.historyKey });
+    await queryClient.invalidateQueries({ queryKey: target.processKey });
   } catch (err) {
+    if (!isCurrentTarget(target)) {
+      return;
+    }
     if (isConflict(err)) {
       conflictText.value = CONFLICT_BANNER.value;
       return;
     }
     actionError.value = formatRemoteError(err);
   } finally {
-    rollingBack.value = false;
+    if (isCurrentTarget(target)) {
+      rollingBack.value = false;
+    }
   }
 }
 </script>

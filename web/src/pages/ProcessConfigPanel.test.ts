@@ -70,6 +70,16 @@ beforeEach(async () => {
 
 const mounted: Array<{ unmount: () => void }> = [];
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 function conflictError(): ConnectError {
   return new ConnectError("revision mismatch", Code.FailedPrecondition, undefined, [
     { desc: ErrorInfoSchema, value: { code: "CONFLICT", message: "revision mismatch" } },
@@ -591,6 +601,126 @@ describe("ProcessConfigPanel", () => {
     expect(request.expectedRevision).toBe(9n);
     expect(request.spec.processId).toBe("p2");
     expect(request.spec.ownerAgentId).toBe("node-b");
+  });
+
+  it("keeps a late save success scoped to its originating target while the next target saves", async () => {
+    const firstSave = deferred<{ spec: ReturnType<typeof sampleSpec> }>();
+    const secondSave = deferred<{ spec: ReturnType<typeof sampleSpec> }>();
+    const updateConfig = vi.fn()
+      .mockReturnValueOnce(firstSave.promise)
+      .mockReturnValueOnce(secondSave.promise);
+    const { wrapper, configClient, queryClient } = await mountPanel({ updateConfig });
+    const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
+
+    await openEditor(wrapper);
+    await setDrawerField("name", "web-draft");
+    submitEditor();
+    await flushPromises();
+
+    const targetBSpec = create(ProcessSpecSchema, {
+      processId: "p2",
+      name: "api",
+      command: "/usr/bin/api",
+      instances: 1,
+      latestRevision: 9n,
+    });
+    configClient.getConfig.mockResolvedValue({ spec: targetBSpec });
+    await wrapper.setProps({ idOrName: "api", targetNodeId: "n2" });
+    await flushPromises();
+    await openEditor(wrapper);
+    const targetBDialog = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"]')).find(
+      (dialog) => dialog.querySelector<HTMLInputElement>('[data-field="name"]')?.value === "api",
+    )!;
+    const nameInput = targetBDialog.querySelector<HTMLInputElement>('[data-field="name"]')!;
+    nameInput.value = "api-draft";
+    nameInput.dispatchEvent(new Event("input", { bubbles: true }));
+    const commentInput = targetBDialog.querySelector<HTMLInputElement>("#process-config-comment")!;
+    commentInput.value = "target B comment";
+    commentInput.dispatchEvent(new Event("input", { bubbles: true }));
+    targetBDialog.querySelector<HTMLFormElement>("form.config-form")!.dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true }),
+    );
+    await flushPromises();
+    expect(updateConfig).toHaveBeenCalledTimes(2);
+
+    const targetASaved = create(ProcessSpecSchema, {
+      ...sampleSpec(),
+      name: "web-saved",
+      latestRevision: 4n,
+    });
+    firstSave.resolve({ spec: targetASaved });
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+
+    const targetACache = queryClient.getQueryData<{ spec: ReturnType<typeof sampleSpec> }>([
+      "process-config",
+      "web",
+      "n1",
+    ]);
+    const targetBCache = queryClient.getQueryData<{ spec: ReturnType<typeof sampleSpec> }>([
+      "process-config",
+      "api",
+      "n2",
+    ]);
+    expect(targetACache?.spec.name).toBe("web-saved");
+    expect(targetBCache?.spec.name).toBe("api");
+    expect(wrapper.get(".config-json-viewer").text()).toContain('"name": "api"');
+    expect(targetBDialog.isConnected).toBe(true);
+    expect(targetBDialog.querySelector<HTMLInputElement>("#process-config-comment")?.value).toBe("target B comment");
+    expect(targetBDialog.querySelector<HTMLButtonElement>('form.config-form button[type="submit"]')?.disabled).toBe(true);
+
+    const firstRequestOptions = updateConfig.mock.calls[0][1] as { headers: Record<string, string> };
+    expect(updateConfig.mock.calls[0][0].idOrName).toBe("web");
+    expect(firstRequestOptions.headers["Procmesh-Target-Node"]).toBe("n1");
+    const invalidatedKeys = invalidateQueries.mock.calls.map(([filters]) => filters.queryKey);
+    expect(invalidatedKeys).toContainEqual(["process-history", "web", "n1"]);
+    expect(invalidatedKeys).toContainEqual(["process", "web", "n1"]);
+    expect(invalidatedKeys).not.toContainEqual(["process-history", "api", "n2"]);
+    expect(invalidatedKeys).not.toContainEqual(["process", "api", "n2"]);
+
+    secondSave.resolve({
+      spec: create(ProcessSpecSchema, { ...targetBSpec, name: "api-saved", latestRevision: 10n }),
+    });
+    await flushPromises();
+  });
+
+  it.each([
+    ["conflict", conflictError()],
+    ["ordinary error", new ConnectError("rollback failed", Code.Internal)],
+  ])("ignores a late rollback %s from the previous target", async (_label, lateError) => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const rollback = deferred<{ spec: ReturnType<typeof sampleSpec> }>();
+    const { wrapper, configClient } = await mountPanel({
+      updateConfig: vi.fn().mockResolvedValue({ spec: sampleSpec() }),
+      revisions: [{ revision: 2n, operator: "admin", timestampUnixMs: 1n, comment: "before" }],
+    });
+    configClient.rollback.mockReturnValueOnce(rollback.promise);
+
+    await wrapper.get("tbody button").trigger("click");
+    await flushPromises();
+    expect(configClient.rollback).toHaveBeenCalledTimes(1);
+
+    const targetBSpec = create(ProcessSpecSchema, {
+      processId: "p2",
+      name: "api",
+      command: "/usr/bin/api",
+      instances: 1,
+      latestRevision: 9n,
+    });
+    configClient.getConfig.mockResolvedValue({ spec: targetBSpec });
+    await wrapper.setProps({ idOrName: "api", targetNodeId: "n2" });
+    await flushPromises();
+
+    rollback.reject(lateError);
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+
+    const requestOptions = configClient.rollback.mock.calls[0][1] as { headers: Record<string, string> };
+    expect(configClient.rollback.mock.calls[0][0].idOrName).toBe("web");
+    expect(requestOptions.headers["Procmesh-Target-Node"]).toBe("n1");
+    expect(wrapper.get(".config-json-viewer").text()).toContain('"name": "api"');
+    expect(wrapper.find(".banner.conflict").exists()).toBe(false);
+    expect(wrapper.find('p.error[role="alert"]').exists()).toBe(false);
   });
 
   it("remount after save uses new latest as expected_revision", async () => {
