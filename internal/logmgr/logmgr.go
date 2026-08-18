@@ -53,8 +53,7 @@ type Manager struct {
 
 // InstancePaths returns stdout/stderr files under logs/<processID>/<instanceID>/.
 func InstancePaths(layout paths.Layout, processID, instanceID string) (stdout, stderr string) {
-	dir := filepath.Join(layout.LogDir, processID, instanceID)
-	return filepath.Join(dir, "stdout.log"), filepath.Join(dir, "stderr.log")
+	return Resolve(layout, "", processID, instanceID, 0)
 }
 
 // RotatePolicy is size/age/file/compress limits for a single log path.

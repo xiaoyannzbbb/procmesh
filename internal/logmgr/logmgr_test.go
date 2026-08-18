@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/logmgr"
 	"github.com/qleelulu/procmesh/internal/paths"
 )
@@ -613,5 +614,54 @@ func TestPolicy_ValidateOrder(t *testing.T) {
 	p.CleanupPercent = 85
 	if err := p.Validate(); err == nil {
 		t.Fatal("expected invalid order")
+	}
+}
+
+func TestResolve_DefaultAndCustom(t *testing.T) {
+	layout := paths.New("/data")
+	stdout, stderr := logmgr.Resolve(layout, "", "p1", "p1:0", 0)
+	if stdout != "/data/logs/p1/p1:0/stdout.log" || stderr != "/data/logs/p1/p1:0/stderr.log" {
+		t.Fatalf("default %q %q", stdout, stderr)
+	}
+	stdout, stderr = logmgr.Resolve(layout, "/var/log/myapp", "p1", "p1:0", 1)
+	if stdout != "/var/log/myapp/1/stdout.log" || stderr != "/var/log/myapp/1/stderr.log" {
+		t.Fatalf("custom %q %q", stdout, stderr)
+	}
+}
+
+func TestWritePaths_Redirect(t *testing.T) {
+	out, errp := logmgr.WritePaths("/a/stdout.log", "/a/stderr.log", true)
+	if out != "/a/stdout.log" || errp != "/a/stdout.log" {
+		t.Fatalf("got %q %q", out, errp)
+	}
+}
+
+func TestValidateDirectory(t *testing.T) {
+	root := "/var/lib/procmesh"
+	cases := []struct {
+		dir, root, want string
+	}{
+		{"", "", ""},
+		{"/var/log/myapp", root, ""},
+		{"rel", "", "log path: directory must be an absolute path"},
+		{"./foo", "", "log path: directory must be an absolute path"},
+		{"/", "", "log path: directory must not be /"},
+		{"/etc/foo", "", "log path: directory is not allowed under /etc"},
+		{"/var/log/../../etc", "", "log path: directory is not allowed under /etc"},
+		{"/etcfoo", "", ""},
+		{root + "/raft/x", root, "log path: directory must not point at Agent internal data (store.db, raft, cluster, runtime, shim)"},
+		{root + "/logs/app", root, ""},
+	}
+	for _, tc := range cases {
+		err := logmgr.ValidateDirectory(tc.dir, tc.root)
+		if tc.want == "" {
+			if err != nil {
+				t.Fatalf("dir=%q: %v", tc.dir, err)
+			}
+			continue
+		}
+		if err == nil || !errcode.Is(err, errcode.INVALID) || err.Error() != "INVALID: "+tc.want {
+			t.Fatalf("dir=%q err=%v want %q", tc.dir, err, tc.want)
+		}
 	}
 }
