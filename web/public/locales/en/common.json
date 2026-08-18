@@ -322,6 +322,10 @@
       "processCount": "Process Count",
       "labels": "Labels"
     },
+    "historyPause": {
+      "title": "History metric writes paused",
+      "description": "Disk usage is {{current}}%, above this node's configured emergency threshold of {{threshold}}%. ProcMesh paused history metric writes to protect data. Free space to {{threshold}}% or below to resume automatically. Charts only show data from before the pause; the gap is not backfilled."
+    },
     "processes": {
       "title": "Processes",
       "noProcesses": "No processes",

@@ -11,6 +11,8 @@ export type ResourceView = {
   cpuPercent: number;
   memoryPercent: number;
   diskPercent: number;
+  historyWritesPaused: boolean;
+  historyPausePercent: number;
 };
 
 export type ProcessView = {
@@ -239,6 +241,8 @@ export function mapNode(input: unknown, nowMs: number): NodeView {
       cpuPercent: toResourcePercent(pick(resources, "cpuPercent", "cpu_percent")),
       memoryPercent: toResourcePercent(pick(resources, "memoryPercent", "memory_percent")),
       diskPercent: toResourcePercent(pick(resources, "diskPercent", "disk_percent")),
+      historyWritesPaused: toBool(pick(resources, "historyWritesPaused", "history_writes_paused")),
+      historyPausePercent: toNum(pick(resources, "historyPausePercent", "history_pause_percent")),
     },
     processCount: processes.length,
     processes,

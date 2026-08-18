@@ -65,3 +65,7 @@ func checkDiskUsageAndProtect(ctx context.Context, logs *logmgr.Manager, diskPer
 		// 正常，无需操作
 	}
 }
+
+func historyWritesPaused(policy logmgr.Policy, diskPercent float64) bool {
+	return policy.EmergencyStopWrites && diskPercent > float64(policy.EmergencyPercent)
+}

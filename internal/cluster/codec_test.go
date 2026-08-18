@@ -49,6 +49,27 @@ func TestEncodeState_KeepsProcessSummary(t *testing.T) {
 	}
 }
 
+func TestEncodeState_KeepsHistoryPause(t *testing.T) {
+	s := cluster.NodeSummary{
+		NodeID: "n1",
+		Resources: cluster.ResourceSummary{
+			CPUPercent:          10,
+			MemoryPercent:       20,
+			DiskPercent:         93,
+			HistoryWritesPaused: true,
+			HistoryPausePercent: 93,
+		},
+	}
+
+	got, err := cluster.DecodeState(cluster.EncodeState(s))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Resources.HistoryWritesPaused || got.Resources.HistoryPausePercent != 93 {
+		t.Fatalf("history pause resources = %+v", got.Resources)
+	}
+}
+
 func TestDecodeState_IgnoresUnknownProcessFields(t *testing.T) {
 	raw := []byte(`{"node_id":"n1","processes":[{"name":"web","process_id":"p1","group":"finance","extra":1}]}`)
 	got, err := cluster.DecodeState(raw)

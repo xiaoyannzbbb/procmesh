@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/qleelulu/procmesh/internal/cluster"
+	"github.com/qleelulu/procmesh/internal/logmgr"
 	"github.com/qleelulu/procmesh/internal/metrics"
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/store"
@@ -16,16 +17,21 @@ import (
 // liveSource implements cluster.SummarySource from the agent process plane.
 // cluster must not import process; this adapter lives in agent.
 type liveSource struct {
-	mu       sync.RWMutex
-	nodeID   string
-	hostname string
-	bootID   string
-	apiAddr  string
-	rpcAddr  string
-	gossip   string
-	store    *store.Store
-	mgr      *process.Manager
-	metrics  *metrics.Collector
+	mu         sync.RWMutex
+	nodeID     string
+	hostname   string
+	bootID     string
+	apiAddr    string
+	rpcAddr    string
+	gossip     string
+	store      *store.Store
+	mgr        *process.Manager
+	metrics    nodeMetricsSource
+	diskPolicy logmgr.Policy
+}
+
+type nodeMetricsSource interface {
+	NodeMetrics() (*metrics.NodeMetrics, error)
 }
 
 func (s *liveSource) Snapshot() cluster.NodeSummary {
@@ -57,12 +63,14 @@ func (s *liveSource) Snapshot() cluster.NodeSummary {
 			}
 		} else {
 			res = cluster.ResourceSummary{
-				CPUPercent:    int(math.Round(node.CPUPercent)),
-				MemoryPercent: int(math.Round(node.MemoryPercent)),
-				DiskPercent:   int(math.Round(node.DiskPercent)),
+				CPUPercent:          int(math.Round(node.CPUPercent)),
+				MemoryPercent:       int(math.Round(node.MemoryPercent)),
+				DiskPercent:         int(math.Round(node.DiskPercent)),
+				HistoryWritesPaused: historyWritesPaused(s.diskPolicy, node.DiskPercent),
 			}
 		}
 	}
+	res.HistoryPausePercent = s.diskPolicy.EmergencyPercent
 
 	return cluster.NodeSummary{
 		NodeID:            s.nodeID,

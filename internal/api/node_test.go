@@ -51,6 +51,28 @@ func TestGetNode_ByIDAndHostname(t *testing.T) {
 	}
 }
 
+func TestGetNode_KeepsHistoryPause(t *testing.T) {
+	ctx := context.Background()
+	e := newClusterEnv(t)
+	e.local.Resources = cluster.ResourceSummary{
+		CPUPercent:          10,
+		MemoryPercent:       20,
+		DiskPercent:         93,
+		HistoryWritesPaused: true,
+		HistoryPausePercent: 93,
+	}
+	e.mesh.setMembers([]cluster.NodeSummary{e.local})
+
+	got, err := e.node.GetNode(ctx, connect.NewRequest(&procmeshv1.GetNodeRequest{IdOrHostname: e.nodeID}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resources := got.Msg.GetNode().GetResources()
+	if !resources.GetHistoryWritesPaused() || resources.GetHistoryPausePercent() != 93 {
+		t.Fatalf("history pause resources = %+v", resources)
+	}
+}
+
 func TestGetNode_NotFound(t *testing.T) {
 	e := newClusterEnv(t)
 	_, err := e.node.GetNode(context.Background(), connect.NewRequest(&procmeshv1.GetNodeRequest{IdOrHostname: "missing"}))

@@ -32,6 +32,7 @@ type Recorder struct {
 	CollectProcess func(pid int) (*ProcessMetrics, error)
 	ListProcesses  func() []ProcessRef
 	DiskPercent    func() float64
+	PauseWrites    func(diskPercent float64) bool
 	Now            func() time.Time
 
 	mu      sync.Mutex
@@ -146,8 +147,8 @@ func (r *Recorder) flushLocked(ctx context.Context) error {
 	flushedMin := r.curMin
 
 	var writeErr error
-	if disk >= 95 {
-		writeErr = errcode.E(errcode.DEGRADED, "disk usage at or above 95 percent; history writes paused")
+	if r.PauseWrites != nil && r.PauseWrites(disk) {
+		writeErr = errcode.E(errcode.DEGRADED, "history writes paused by disk protection")
 	} else {
 		if disk >= 90 {
 			_, _ = r.Store.DeleteOldestMetricSamples(ctx, LayerDown5m, FlushDeleteCap)

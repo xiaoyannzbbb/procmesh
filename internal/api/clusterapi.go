@@ -391,15 +391,19 @@ func resourceCollected(r cluster.ResourceSummary) bool {
 func protoResources(r cluster.ResourceSummary) *procmeshv1.ResourceSummary {
 	if !resourceCollected(r) {
 		return &procmeshv1.ResourceSummary{
-			CpuPercent:    unknownResourcePercent,
-			MemoryPercent: unknownResourcePercent,
-			DiskPercent:   unknownResourcePercent,
+			CpuPercent:          unknownResourcePercent,
+			MemoryPercent:       unknownResourcePercent,
+			DiskPercent:         unknownResourcePercent,
+			HistoryWritesPaused: r.HistoryWritesPaused,
+			HistoryPausePercent: int32(r.HistoryPausePercent),
 		}
 	}
 	return &procmeshv1.ResourceSummary{
-		CpuPercent:    int32(r.CPUPercent),
-		MemoryPercent: int32(r.MemoryPercent),
-		DiskPercent:   int32(r.DiskPercent),
+		CpuPercent:          int32(r.CPUPercent),
+		MemoryPercent:       int32(r.MemoryPercent),
+		DiskPercent:         int32(r.DiskPercent),
+		HistoryWritesPaused: r.HistoryWritesPaused,
+		HistoryPausePercent: int32(r.HistoryPausePercent),
 	}
 }
 

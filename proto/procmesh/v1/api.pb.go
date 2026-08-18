@@ -2434,12 +2434,14 @@ func (x *LogChunk) GetEof() bool {
 }
 
 type ResourceSummary struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	CpuPercent    int32                  `protobuf:"varint,1,opt,name=cpu_percent,json=cpuPercent,proto3" json:"cpu_percent,omitempty"`
-	MemoryPercent int32                  `protobuf:"varint,2,opt,name=memory_percent,json=memoryPercent,proto3" json:"memory_percent,omitempty"`
-	DiskPercent   int32                  `protobuf:"varint,3,opt,name=disk_percent,json=diskPercent,proto3" json:"disk_percent,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	CpuPercent          int32                  `protobuf:"varint,1,opt,name=cpu_percent,json=cpuPercent,proto3" json:"cpu_percent,omitempty"`
+	MemoryPercent       int32                  `protobuf:"varint,2,opt,name=memory_percent,json=memoryPercent,proto3" json:"memory_percent,omitempty"`
+	DiskPercent         int32                  `protobuf:"varint,3,opt,name=disk_percent,json=diskPercent,proto3" json:"disk_percent,omitempty"`
+	HistoryWritesPaused bool                   `protobuf:"varint,4,opt,name=history_writes_paused,json=historyWritesPaused,proto3" json:"history_writes_paused,omitempty"`
+	HistoryPausePercent int32                  `protobuf:"varint,5,opt,name=history_pause_percent,json=historyPausePercent,proto3" json:"history_pause_percent,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *ResourceSummary) Reset() {
@@ -2489,6 +2491,20 @@ func (x *ResourceSummary) GetMemoryPercent() int32 {
 func (x *ResourceSummary) GetDiskPercent() int32 {
 	if x != nil {
 		return x.DiskPercent
+	}
+	return 0
+}
+
+func (x *ResourceSummary) GetHistoryWritesPaused() bool {
+	if x != nil {
+		return x.HistoryWritesPaused
+	}
+	return false
+}
+
+func (x *ResourceSummary) GetHistoryPausePercent() int32 {
+	if x != nil {
+		return x.HistoryPausePercent
 	}
 	return 0
 }
@@ -10058,12 +10074,14 @@ const file_proto_procmesh_v1_api_proto_rawDesc = "" +
 	"\x06stream\x18\x03 \x01(\tR\x06stream\"0\n" +
 	"\bLogChunk\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\x12\x10\n" +
-	"\x03eof\x18\x02 \x01(\bR\x03eof\"|\n" +
+	"\x03eof\x18\x02 \x01(\bR\x03eof\"\xe4\x01\n" +
 	"\x0fResourceSummary\x12\x1f\n" +
 	"\vcpu_percent\x18\x01 \x01(\x05R\n" +
 	"cpuPercent\x12%\n" +
 	"\x0ememory_percent\x18\x02 \x01(\x05R\rmemoryPercent\x12!\n" +
-	"\fdisk_percent\x18\x03 \x01(\x05R\vdiskPercent\"\xa5\x02\n" +
+	"\fdisk_percent\x18\x03 \x01(\x05R\vdiskPercent\x122\n" +
+	"\x15history_writes_paused\x18\x04 \x01(\bR\x13historyWritesPaused\x122\n" +
+	"\x15history_pause_percent\x18\x05 \x01(\x05R\x13historyPausePercent\"\xa5\x02\n" +
 	"\x0eProcessSummary\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\adesired\x18\x02 \x01(\tR\adesired\x12\x1a\n" +

@@ -25,9 +25,11 @@ type ProcessSummary struct {
 }
 
 type ResourceSummary struct {
-	CPUPercent    int `json:"cpu_percent"`    // -1 = unknown / not collected
-	MemoryPercent int `json:"memory_percent"` // -1 = unknown / not collected
-	DiskPercent   int `json:"disk_percent"`   // -1 = unknown / not collected
+	CPUPercent          int  `json:"cpu_percent"`    // -1 = unknown / not collected
+	MemoryPercent       int  `json:"memory_percent"` // -1 = unknown / not collected
+	DiskPercent         int  `json:"disk_percent"`   // -1 = unknown / not collected
+	HistoryWritesPaused bool `json:"history_writes_paused,omitempty"`
+	HistoryPausePercent int  `json:"history_pause_percent,omitempty"`
 }
 
 type NodeSummary struct {

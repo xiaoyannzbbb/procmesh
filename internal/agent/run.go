@@ -220,16 +220,20 @@ func Run(ctx context.Context, opt Options) error {
 		}
 		return nm.DiskPercent
 	}
+	rec.PauseWrites = func(diskPercent float64) bool {
+		return historyWritesPaused(cfg.Disk, diskPercent)
+	}
 	_ = rec.Start(ctx)
 	defer rec.Stop()
 	hostname, _ := os.Hostname()
 	src := &liveSource{
-		nodeID:   nodeID,
-		hostname: hostname,
-		bootID:   hostBoot,
-		store:    st,
-		mgr:      mgr,
-		metrics:  collector,
+		nodeID:     nodeID,
+		hostname:   hostname,
+		bootID:     hostBoot,
+		store:      st,
+		mgr:        mgr,
+		metrics:    collector,
+		diskPolicy: cfg.Disk,
 	}
 
 	if control.AlreadyInited(layout.ClusterDir) || agentCertExists(layout.ClusterDir) {

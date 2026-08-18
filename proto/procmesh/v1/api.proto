@@ -229,6 +229,8 @@ message ResourceSummary {
   int32 cpu_percent = 1;
   int32 memory_percent = 2;
   int32 disk_percent = 3;
+  bool history_writes_paused = 4;
+  int32 history_pause_percent = 5;
 }
 
 message ProcessSummary {

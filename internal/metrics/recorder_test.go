@@ -109,13 +109,14 @@ func TestRecorder_DownsampleFiveRawMin(t *testing.T) {
 	}
 }
 
-func TestRecorder_Disk95SkipsInsert(t *testing.T) {
+func TestRecorder_FlushUsesInjectedPauseDecision(t *testing.T) {
 	ctx := context.Background()
 	mem := newMemSamples()
 	now := time.Date(2026, 8, 16, 10, 0, 10, 0, time.UTC)
 	r := metrics.NewRecorder(mem, "n1")
 	r.Now = func() time.Time { return now }
-	r.DiskPercent = func() float64 { return 96 }
+	r.DiskPercent = func() float64 { return 93.1 }
+	r.PauseWrites = func(used float64) bool { return used > 93 }
 	r.CollectNode = func() (*metrics.NodeMetrics, error) {
 		return &metrics.NodeMetrics{CPUPercent: 10, MemoryPercent: 10, DiskPercent: 10}, nil
 	}
@@ -123,12 +124,32 @@ func TestRecorder_Disk95SkipsInsert(t *testing.T) {
 	_ = r.Sample(ctx)
 	now = time.Date(2026, 8, 16, 10, 1, 0, 0, time.UTC)
 	err := r.Sample(ctx)
-	if err == nil || !strings.Contains(err.Error(), "DEGRADED") {
-		t.Fatalf("want DEGRADED, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "history writes paused") {
+		t.Fatalf("want history writes paused error, got %v", err)
 	}
 	got, _ := mem.ListMetricSamples(ctx, metrics.SeriesNodeCPU, "n1", metrics.LayerRawMin, 0, math.MaxInt64)
 	if len(got) != 0 {
-		t.Fatalf("95%% must not insert: %+v", got)
+		t.Fatalf("paused recorder must not insert: %+v", got)
+	}
+}
+
+func TestRecorder_FlushWritesWhenPauseDecisionAllows(t *testing.T) {
+	mem := newMemSamples()
+	r := metrics.NewRecorder(mem, "n1")
+	r.DiskPercent = func() float64 { return 99 }
+	r.PauseWrites = func(float64) bool { return false }
+
+	if err := r.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRecorder_FlushWithoutPauseDecisionDoesNotInventThreshold(t *testing.T) {
+	r := metrics.NewRecorder(newMemSamples(), "n1")
+	r.DiskPercent = func() float64 { return 100 }
+
+	if err := r.Flush(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }
 

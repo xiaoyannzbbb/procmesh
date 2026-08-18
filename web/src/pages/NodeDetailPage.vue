@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
+import { TriangleAlert } from "lucide-vue-next";
 import { computed, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
@@ -21,6 +22,8 @@ const { t } = useI18n();
 
 const POLL_MS = 5000;
 const HISTORY_POLL_MS = 60_000;
+const POLITE_LIVE_REGION = "polite";
+const ATOMIC_LIVE_REGION = true;
 const route = useRoute();
 const router = useRouter();
 const client = useNodeClient();
@@ -199,6 +202,26 @@ async function onRemove(): Promise<void> {
             <button type="button" :class="{ active: range === '7d' }" @click="range = '7d'">
               {{ t("metricsHistory.range7d") }}
             </button>
+          </div>
+        </div>
+        <div
+          v-if="node.resources.historyWritesPaused && node.resources.historyPausePercent > 0"
+          class="history-pause-notice"
+          role="status"
+          :aria-live="POLITE_LIVE_REGION"
+          :aria-atomic="ATOMIC_LIVE_REGION"
+        >
+          <TriangleAlert class="history-pause-icon" :size="20" aria-hidden="true" />
+          <div class="history-pause-content">
+            <strong>{{ t("nodeDetail.historyPause.title") }}</strong>
+            <p>
+              {{
+                t("nodeDetail.historyPause.description", {
+                  current: node.resources.diskPercent,
+                  threshold: node.resources.historyPausePercent,
+                })
+              }}
+            </p>
           </div>
         </div>
         <p v-if="historyQuery.isPending && !historyQuery.data" class="muted">{{ t("metricsHistory.loading") }}</p>
@@ -382,6 +405,38 @@ a:not(.back):hover {
 }
 .range-toggle button.active {
   border-color: var(--color-text);
+}
+.history-pause-notice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: start;
+  margin-bottom: 1rem;
+  border: 1px solid color-mix(in srgb, var(--color-stale-fg) 24%, var(--color-border));
+  border-radius: var(--radius-sm);
+  background: var(--color-stale);
+  color: var(--color-stale-fg);
+  padding: 0.875rem 1rem;
+}
+.history-pause-icon {
+  flex: none;
+  margin-top: 0.1rem;
+}
+.history-pause-content {
+  min-width: 0;
+}
+.history-pause-content strong {
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 650;
+  line-height: 1.4;
+}
+.history-pause-content p {
+  margin: 0.25rem 0 0;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 .charts {
   display: grid;

@@ -322,6 +322,10 @@
       "processCount": "进程数",
       "labels": "标签"
     },
+    "historyPause": {
+      "title": "历史指标写入已暂停",
+      "description": "当前磁盘使用率为 {{current}}%，已超过该节点配置的紧急水位 {{threshold}}%。ProcMesh 已暂停写入历史指标以保护数据。释放空间至 {{threshold}}% 或以下后将自动恢复；图表仅显示暂停前的数据，缺口不会回填。"
+    },
     "processes": {
       "title": "进程",
       "noProcesses": "无进程",
