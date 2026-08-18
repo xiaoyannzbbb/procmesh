@@ -723,6 +723,166 @@ describe("ProcessConfigPanel", () => {
     expect(wrapper.find('p.error[role="alert"]').exists()).toBe(false);
   });
 
+  it("does not let a save from an earlier visit to A replace the current A editor", async () => {
+    const earlierSave = deferred<{ spec: ReturnType<typeof sampleSpec> }>();
+    const currentSave = deferred<{ spec: ReturnType<typeof sampleSpec> }>();
+    const updateConfig = vi.fn()
+      .mockReturnValueOnce(earlierSave.promise)
+      .mockReturnValueOnce(currentSave.promise);
+    const { wrapper, configClient } = await mountPanel({ updateConfig });
+
+    await openEditor(wrapper);
+    await setDrawerField("name", "earlier-a-draft");
+    submitEditor();
+    await flushPromises();
+
+    const targetBSpec = create(ProcessSpecSchema, {
+      processId: "p2",
+      name: "api",
+      command: "/usr/bin/api",
+      instances: 1,
+      latestRevision: 9n,
+    });
+    configClient.getConfig.mockImplementation(({ idOrName }: { idOrName: string }) => Promise.resolve({
+      spec: idOrName === "api" ? targetBSpec : sampleSpec(),
+    }));
+    await wrapper.setProps({ idOrName: "api", targetNodeId: "n2" });
+    await flushPromises();
+    await wrapper.setProps({ idOrName: "web", targetNodeId: "n1" });
+    await flushPromises();
+
+    await openEditor(wrapper);
+    await setDrawerField("name", "current-a-draft");
+    const currentDialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    const commentInput = currentDialog.querySelector<HTMLInputElement>("#process-config-comment")!;
+    commentInput.value = "current A comment";
+    commentInput.dispatchEvent(new Event("input", { bubbles: true }));
+    submitEditor();
+    await flushPromises();
+    expect(updateConfig).toHaveBeenCalledTimes(2);
+
+    earlierSave.resolve({
+      spec: create(ProcessSpecSchema, {
+        ...sampleSpec(),
+        name: "earlier-a-saved",
+        latestRevision: 4n,
+      }),
+    });
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+
+    expect(currentDialog.isConnected).toBe(true);
+    expect(currentDialog.querySelector<HTMLInputElement>('[data-field="name"]')?.value).toBe("current-a-draft");
+    expect(currentDialog.querySelector<HTMLInputElement>("#process-config-comment")?.value).toBe("current A comment");
+    expect(currentDialog.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true);
+    expect(wrapper.get(".config-json-viewer").text()).not.toContain('"name": "earlier-a-saved"');
+
+    currentSave.resolve({
+      spec: create(ProcessSpecSchema, {
+        ...sampleSpec(),
+        name: "current-a-saved",
+        latestRevision: 5n,
+      }),
+    });
+    await flushPromises();
+  });
+
+  it.each([
+    ["conflict", conflictError()],
+    ["ordinary error", new ConnectError("earlier rollback failed", Code.Internal)],
+  ])("keeps the current A rollback pending when an earlier A rollback returns a %s", async (_label, lateError) => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const earlierRollback = deferred<{ spec: ReturnType<typeof sampleSpec> }>();
+    const currentRollback = deferred<{ spec: ReturnType<typeof sampleSpec> }>();
+    const { wrapper, configClient } = await mountPanel({
+      updateConfig: vi.fn().mockResolvedValue({ spec: sampleSpec() }),
+      revisions: [{ revision: 2n, operator: "admin", timestampUnixMs: 1n, comment: "before" }],
+    });
+    configClient.rollback
+      .mockReturnValueOnce(earlierRollback.promise)
+      .mockReturnValueOnce(currentRollback.promise);
+
+    await wrapper.get("tbody button").trigger("click");
+    await flushPromises();
+
+    const targetBSpec = create(ProcessSpecSchema, {
+      processId: "p2",
+      name: "api",
+      command: "/usr/bin/api",
+      instances: 1,
+      latestRevision: 9n,
+    });
+    configClient.getConfig.mockImplementation(({ idOrName }: { idOrName: string }) => Promise.resolve({
+      spec: idOrName === "api" ? targetBSpec : sampleSpec(),
+    }));
+    await wrapper.setProps({ idOrName: "api", targetNodeId: "n2" });
+    await flushPromises();
+    await wrapper.setProps({ idOrName: "web", targetNodeId: "n1" });
+    await flushPromises();
+
+    await wrapper.get("tbody button").trigger("click");
+    await flushPromises();
+    expect(configClient.rollback).toHaveBeenCalledTimes(2);
+
+    earlierRollback.reject(lateError);
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.find(".banner.conflict").exists()).toBe(false);
+    expect(wrapper.find('p.error[role="alert"]').exists()).toBe(false);
+    expect(wrapper.get("tbody button").attributes("disabled")).toBeDefined();
+
+    currentRollback.resolve({
+      spec: create(ProcessSpecSchema, { ...sampleSpec(), latestRevision: 4n }),
+    });
+    await flushPromises();
+  });
+
+  it("keeps the newest cached spec when same-target save responses finish out of order", async () => {
+    const earlierSave = deferred<{ spec: ReturnType<typeof sampleSpec> }>();
+    const newerSave = deferred<{ spec: ReturnType<typeof sampleSpec> }>();
+    const updateConfig = vi.fn()
+      .mockReturnValueOnce(earlierSave.promise)
+      .mockReturnValueOnce(newerSave.promise);
+    const { wrapper, queryClient } = await mountPanel({ updateConfig });
+
+    await openEditor(wrapper);
+    submitEditor();
+    await flushPromises();
+    await setDrawerField("name", "newer-a-saved");
+    submitEditor();
+    await flushPromises();
+    expect(updateConfig).toHaveBeenCalledTimes(2);
+
+    newerSave.resolve({
+      spec: create(ProcessSpecSchema, {
+        ...sampleSpec(),
+        name: "newer-a-saved",
+        latestRevision: 5n,
+      }),
+    });
+    await flushPromises();
+
+    earlierSave.resolve({
+      spec: create(ProcessSpecSchema, {
+        ...sampleSpec(),
+        name: "earlier-a-saved",
+        latestRevision: 4n,
+      }),
+    });
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+
+    const cached = queryClient.getQueryData<{ spec: ReturnType<typeof sampleSpec> }>([
+      "process-config",
+      "web",
+      "n1",
+    ]);
+    expect(cached?.spec.latestRevision).toBe(5n);
+    expect(cached?.spec.name).toBe("newer-a-saved");
+    expect(wrapper.get(".config-json-viewer").text()).toContain('"name": "newer-a-saved"');
+  });
+
   it("remount after save uses new latest as expected_revision", async () => {
     const saved = create(ProcessSpecSchema, {
       ...sampleSpec(),

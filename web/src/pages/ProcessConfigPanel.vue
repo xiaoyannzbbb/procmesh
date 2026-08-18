@@ -57,6 +57,8 @@ type ProcessConfigFormHandle = {
 type MutationTarget = {
   idOrName: string;
   targetNodeId: string;
+  selectionGeneration: number;
+  requestToken: symbol;
   options: { headers: HeadersInit };
   configKey: readonly ["process-config", string, string];
   historyKey: readonly ["process-history", string, string];
@@ -87,6 +89,8 @@ const actionError = ref("");
 const selected = ref<string[]>([]);
 const saving = ref(false);
 const rollingBack = ref(false);
+let selectionGeneration = 0;
+let activeMutationToken: symbol | null = null;
 
 const canUpdate = computed(() => (session.value?.permissions ?? []).includes("process.config.update"));
 const targetOpts = computed(() => ({ headers: withTarget(props.targetNodeId) }));
@@ -186,6 +190,8 @@ watch(
     if (idOrName === previousIdOrName && targetNodeId === previousTargetNodeId) {
       return;
     }
+    selectionGeneration += 1;
+    activeMutationToken = null;
     acceptRemoteSpec.value = true;
     loadedSpec.value = null;
     editorOpen.value = false;
@@ -241,9 +247,13 @@ function mutationMeta() {
 function captureMutationTarget(): MutationTarget {
   const idOrName = props.idOrName;
   const targetNodeId = props.targetNodeId;
+  const requestToken = Symbol();
+  activeMutationToken = requestToken;
   return {
     idOrName,
     targetNodeId,
+    selectionGeneration,
+    requestToken,
     options: { headers: withTarget(targetNodeId) },
     configKey: ["process-config", idOrName, targetNodeId],
     historyKey: ["process-history", idOrName, targetNodeId],
@@ -251,8 +261,11 @@ function captureMutationTarget(): MutationTarget {
   };
 }
 
-function isCurrentTarget(target: MutationTarget): boolean {
-  return props.idOrName === target.idOrName && props.targetNodeId === target.targetNodeId;
+function ownsVisibleMutation(target: MutationTarget): boolean {
+  return props.idOrName === target.idOrName
+    && props.targetNodeId === target.targetNodeId
+    && selectionGeneration === target.selectionGeneration
+    && activeMutationToken === target.requestToken;
 }
 
 function applySpec(spec: ProcessSpec | undefined): void {
@@ -399,6 +412,10 @@ function cacheSpec(spec: ProcessSpec | undefined, queryKey: MutationTarget["conf
     return null;
   }
   const next = create(ProcessSpecSchema, spec);
+  const cached = queryClient.getQueryData<{ spec?: ProcessSpec }>(queryKey)?.spec;
+  if (cached && cached.latestRevision > next.latestRevision) {
+    return create(ProcessSpecSchema, cached);
+  }
   queryClient.setQueryData(queryKey, { spec: next });
   return next;
 }
@@ -455,10 +472,11 @@ async function onSave(): Promise<void> {
     comment: comment.value,
   };
   saving.value = true;
+  rollingBack.value = false;
   try {
     const out = await config.updateConfig(request, target.options);
     const next = cacheSpec(out.spec, target.configKey);
-    if (isCurrentTarget(target)) {
+    if (ownsVisibleMutation(target)) {
       applySpec(next ?? undefined);
       editorBaseline.value = semanticSpecJson(next ?? parsed);
       comment.value = "";
@@ -467,7 +485,7 @@ async function onSave(): Promise<void> {
     await queryClient.invalidateQueries({ queryKey: target.historyKey });
     await queryClient.invalidateQueries({ queryKey: target.processKey });
   } catch (err) {
-    if (!isCurrentTarget(target)) {
+    if (!ownsVisibleMutation(target)) {
       return;
     }
     if (isConflict(err)) {
@@ -476,8 +494,10 @@ async function onSave(): Promise<void> {
     }
     actionError.value = formatRemoteError(err);
   } finally {
-    if (isCurrentTarget(target)) {
+    if (ownsVisibleMutation(target)) {
       saving.value = false;
+      rollingBack.value = false;
+      activeMutationToken = null;
     }
   }
 }
@@ -500,17 +520,18 @@ async function onRollback(toRevision: bigint | number): Promise<void> {
     expectedRevision: loadedSpec.value.latestRevision,
     comment: comment.value,
   };
+  saving.value = false;
   rollingBack.value = true;
   try {
     const out = await config.rollback(request, target.options);
     const next = cacheSpec(out.spec, target.configKey);
-    if (isCurrentTarget(target)) {
+    if (ownsVisibleMutation(target)) {
       applySpec(next ?? undefined);
     }
     await queryClient.invalidateQueries({ queryKey: target.historyKey });
     await queryClient.invalidateQueries({ queryKey: target.processKey });
   } catch (err) {
-    if (!isCurrentTarget(target)) {
+    if (!ownsVisibleMutation(target)) {
       return;
     }
     if (isConflict(err)) {
@@ -519,8 +540,10 @@ async function onRollback(toRevision: bigint | number): Promise<void> {
     }
     actionError.value = formatRemoteError(err);
   } finally {
-    if (isCurrentTarget(target)) {
+    if (ownsVisibleMutation(target)) {
+      saving.value = false;
       rollingBack.value = false;
+      activeMutationToken = null;
     }
   }
 }
