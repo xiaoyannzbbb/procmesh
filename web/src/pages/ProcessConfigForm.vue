@@ -34,6 +34,12 @@ const collectionPaths = new Set<ProcessConfigFieldPath>([
   "dependencies",
 ]);
 
+const executionFieldOrder = new Map<ProcessConfigFieldPath, number>([
+  ["workingDirectory", 0],
+  ["runAsUser", 1],
+  ["command", 2],
+]);
+
 const fieldsBySection = computed(() => {
   const sections = new Map<ProcessConfigSectionId, ProcessConfigField[]>();
   for (const section of PROCESS_CONFIG_SECTIONS) {
@@ -44,6 +50,10 @@ const fieldsBySection = computed(() => {
       sections.get(field.section)?.push(field);
     }
   }
+  sections.get("execution")?.sort((left, right) => (
+    (executionFieldOrder.get(left.path) ?? Number.MAX_SAFE_INTEGER)
+    - (executionFieldOrder.get(right.path) ?? Number.MAX_SAFE_INTEGER)
+  ));
   return sections;
 });
 
@@ -575,6 +585,10 @@ legend {
   min-width: 0;
   flex-direction: column;
   gap: 0.5rem;
+}
+
+.field-control[data-control="command"] {
+  grid-column: 1 / -1;
 }
 
 .field-control > label,
