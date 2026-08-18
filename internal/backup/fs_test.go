@@ -53,3 +53,66 @@ func TestFSSink_Name(t *testing.T) {
 		t.Fatal("name")
 	}
 }
+
+func TestFSSink_GetDeleteMissing_NOT_FOUND(t *testing.T) {
+	s := backup.NewFSSink(t.TempDir())
+	if _, err := s.Get(context.Background(), "missing"); !errcode.Is(err, errcode.NOT_FOUND) {
+		t.Fatalf("get err %v", err)
+	}
+	if err := s.Delete(context.Background(), "missing"); !errcode.Is(err, errcode.NOT_FOUND) {
+		t.Fatalf("delete err %v", err)
+	}
+}
+
+func TestFSSink_ListEmptyAndSkipsTmp(t *testing.T) {
+	dir := t.TempDir()
+	s := backup.NewFSSink(filepath.Join(dir, "missing"))
+	list, err := s.List(context.Background())
+	if err != nil || len(list) != 0 {
+		t.Fatalf("%+v %v", list, err)
+	}
+
+	root := filepath.Join(dir, "fs")
+	s = backup.NewFSSink(root)
+	if _, err := s.Put(context.Background(), "keep", []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "keep.json.tmp"), []byte(`tmp`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte(`x`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	list, err = s.List(context.Background())
+	if err != nil || len(list) != 1 || list[0].SnapshotID != "keep" || list[0].Location != filepath.Join(root, "keep.json") {
+		t.Fatalf("%+v %v", list, err)
+	}
+}
+
+func TestFSSink_InvalidIDOnGetDelete(t *testing.T) {
+	s := backup.NewFSSink(t.TempDir())
+	if _, err := s.Get(context.Background(), "../x"); !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("get err %v", err)
+	}
+	if err := s.Delete(context.Background(), "a/b"); !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("delete err %v", err)
+	}
+}
+
+func TestFSSink_CanceledContext(t *testing.T) {
+	s := backup.NewFSSink(t.TempDir())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := s.Put(ctx, "s1", []byte(`{}`)); err == nil {
+		t.Fatal("put expected canceled")
+	}
+	if _, err := s.Get(ctx, "s1"); err == nil {
+		t.Fatal("get expected canceled")
+	}
+	if _, err := s.List(ctx); err == nil {
+		t.Fatal("list expected canceled")
+	}
+	if err := s.Delete(ctx, "s1"); err == nil {
+		t.Fatal("delete expected canceled")
+	}
+}
