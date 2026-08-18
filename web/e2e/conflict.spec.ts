@@ -18,7 +18,9 @@ test("UpdateConfig 409 shows conflict banner", async ({ page }) => {
   await expect(page.getByRole("link", { name: "sleep" })).toBeVisible();
   await page.getByRole("link", { name: "sleep" }).click();
   await page.getByRole("tab", { name: "Config" }).click();
-  await expect(page.getByText("ProcessSpec JSON")).toBeVisible();
+  await page.getByRole("button", { name: "Edit config" }).click();
+  await expect(page.getByRole("group", { name: "Editor mode" })).toBeVisible();
+  await expect(page.locator('[data-editor-mode="form"]')).toHaveAttribute("aria-pressed", "true");
 
   await page.route("**/procmesh.v1.ConfigService/UpdateConfig", async (route) => {
     await route.fulfill({
@@ -38,6 +40,7 @@ test("UpdateConfig 409 shows conflict banner", async ({ page }) => {
     });
   });
 
-  await page.getByRole("button", { name: "Save" }).click();
-  await expect(page.getByRole("alert")).toContainText("409 Conflict");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByRole("dialog", { name: "Edit process config" }).getByRole("alert"))
+    .toContainText("409 Conflict");
 });
