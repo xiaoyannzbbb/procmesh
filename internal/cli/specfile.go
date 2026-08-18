@@ -63,10 +63,12 @@ type HealthCheckDTO struct {
 }
 
 type LogPolicyDTO struct {
-	MaxSize       int64 `json:"max_size,omitempty" yaml:"max_size,omitempty"`
-	MaxFiles      int   `json:"max_files,omitempty" yaml:"max_files,omitempty"`
-	MaxAgeSeconds int64 `json:"max_age_seconds,omitempty" yaml:"max_age_seconds,omitempty"`
-	Compress      bool  `json:"compress,omitempty" yaml:"compress,omitempty"`
+	MaxSize        int64  `json:"max_size,omitempty" yaml:"max_size,omitempty"`
+	MaxFiles       int    `json:"max_files,omitempty" yaml:"max_files,omitempty"`
+	MaxAgeSeconds  int64  `json:"max_age_seconds,omitempty" yaml:"max_age_seconds,omitempty"`
+	Compress       bool   `json:"compress,omitempty" yaml:"compress,omitempty"`
+	Directory      string `json:"directory,omitempty" yaml:"directory,omitempty"`
+	RedirectStderr bool   `json:"redirect_stderr,omitempty" yaml:"redirect_stderr,omitempty"`
 }
 
 type ResourceLimitDTO struct {
@@ -146,10 +148,12 @@ func specToProto(s ProcessSpec) *procmeshv1.ProcessSpec {
 	}
 	if s.Log != (LogPolicyDTO{}) {
 		out.Log = &procmeshv1.LogPolicy{
-			MaxSize:       s.Log.MaxSize,
-			MaxFiles:      int32(s.Log.MaxFiles),
-			MaxAgeSeconds: s.Log.MaxAgeSeconds,
-			Compress:      s.Log.Compress,
+			MaxSize:        s.Log.MaxSize,
+			MaxFiles:       int32(s.Log.MaxFiles),
+			MaxAgeSeconds:  s.Log.MaxAgeSeconds,
+			Compress:       s.Log.Compress,
+			Directory:      s.Log.Directory,
+			RedirectStderr: s.Log.RedirectStderr,
 		}
 	}
 	if s.Resources != (ResourceLimitDTO{}) {

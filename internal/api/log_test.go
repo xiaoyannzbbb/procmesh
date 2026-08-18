@@ -59,6 +59,48 @@ func TestLog_TailMissingProcess(t *testing.T) {
 	}
 }
 
+func TestLog_TailCustomDirectory(t *testing.T) {
+	ctx := context.Background()
+	proc, logs, _, layout := newLogClients(t)
+	dir := filepath.Join(t.TempDir(), "custom-logs")
+	applied, err := proc.ApplyProcess(ctx, connect.NewRequest(&procmeshv1.ApplyProcessRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-custom-log", Operator: "t"},
+		Spec: &procmeshv1.ProcessSpec{
+			Name:      "web",
+			Command:   "/bin/true",
+			Instances: 1,
+			Log:       &procmeshv1.LogPolicy{Directory: dir},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	processID := applied.Msg.GetSpec().GetProcessId()
+	ids := listInstanceIDs(t, proc, "web")
+	if len(ids) == 0 {
+		t.Fatal("no instances")
+	}
+	writeInstanceLog(t, layout, processID, ids[0], "stdout", "default-path\n")
+	custom := filepath.Join(dir, "0", "stdout.log")
+	if err := os.MkdirAll(filepath.Dir(custom), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(custom, []byte("custom-path\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	got, err := logs.TailLogs(ctx, connect.NewRequest(&procmeshv1.TailLogsRequest{IdOrName: "web"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(got.Msg.GetLines(), ",")
+	if !strings.Contains(joined, "custom-path") {
+		t.Fatalf("custom dir missing %q", joined)
+	}
+	if strings.Contains(joined, "default-path") {
+		t.Fatalf("read default path %q", joined)
+	}
+}
+
 func TestLog_TailMissingFileEmpty(t *testing.T) {
 	ctx := context.Background()
 	proc, logs, _, _ := newLogClients(t)

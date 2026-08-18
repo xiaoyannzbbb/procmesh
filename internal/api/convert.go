@@ -51,10 +51,12 @@ func SpecToProto(s process.ProcessSpec) *procmeshv1.ProcessSpec {
 			RestartCooldownMs: durationMS(s.Health.RestartCooldown),
 		},
 		Log: &procmeshv1.LogPolicy{
-			MaxSize:       s.Log.MaxSize,
-			MaxFiles:      int32(s.Log.MaxFiles),
-			MaxAgeSeconds: durationSeconds(s.Log.MaxAge),
-			Compress:      s.Log.Compress,
+			MaxSize:        s.Log.MaxSize,
+			MaxFiles:       int32(s.Log.MaxFiles),
+			MaxAgeSeconds:  durationSeconds(s.Log.MaxAge),
+			Compress:       s.Log.Compress,
+			Directory:      s.Log.Directory,
+			RedirectStderr: s.Log.RedirectStderr,
 		},
 		Resources: &procmeshv1.ResourceLimit{
 			CpuQuotaMillis: s.Resources.CPUQuotaMillis,
@@ -123,10 +125,12 @@ func ProtoToSpec(p *procmeshv1.ProcessSpec) process.ProcessSpec {
 	}
 	if l := p.GetLog(); l != nil {
 		out.Log = process.LogPolicy{
-			MaxSize:  l.GetMaxSize(),
-			MaxFiles: int(l.GetMaxFiles()),
-			MaxAge:   fromSeconds(l.GetMaxAgeSeconds()),
-			Compress: l.GetCompress(),
+			MaxSize:        l.GetMaxSize(),
+			MaxFiles:       int(l.GetMaxFiles()),
+			MaxAge:         fromSeconds(l.GetMaxAgeSeconds()),
+			Compress:       l.GetCompress(),
+			Directory:      l.GetDirectory(),
+			RedirectStderr: l.GetRedirectStderr(),
 		}
 	}
 	if r := p.GetResources(); r != nil {

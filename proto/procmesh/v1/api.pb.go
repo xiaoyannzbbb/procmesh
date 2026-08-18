@@ -402,13 +402,15 @@ func (x *HealthCheck) GetRestartCooldownMs() int64 {
 }
 
 type LogPolicy struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	MaxSize       int64                  `protobuf:"varint,1,opt,name=max_size,json=maxSize,proto3" json:"max_size,omitempty"`
-	MaxFiles      int32                  `protobuf:"varint,2,opt,name=max_files,json=maxFiles,proto3" json:"max_files,omitempty"`
-	MaxAgeSeconds int64                  `protobuf:"varint,3,opt,name=max_age_seconds,json=maxAgeSeconds,proto3" json:"max_age_seconds,omitempty"`
-	Compress      bool                   `protobuf:"varint,4,opt,name=compress,proto3" json:"compress,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	MaxSize        int64                  `protobuf:"varint,1,opt,name=max_size,json=maxSize,proto3" json:"max_size,omitempty"`
+	MaxFiles       int32                  `protobuf:"varint,2,opt,name=max_files,json=maxFiles,proto3" json:"max_files,omitempty"`
+	MaxAgeSeconds  int64                  `protobuf:"varint,3,opt,name=max_age_seconds,json=maxAgeSeconds,proto3" json:"max_age_seconds,omitempty"`
+	Compress       bool                   `protobuf:"varint,4,opt,name=compress,proto3" json:"compress,omitempty"`
+	Directory      string                 `protobuf:"bytes,5,opt,name=directory,proto3" json:"directory,omitempty"`
+	RedirectStderr bool                   `protobuf:"varint,6,opt,name=redirect_stderr,json=redirectStderr,proto3" json:"redirect_stderr,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *LogPolicy) Reset() {
@@ -465,6 +467,20 @@ func (x *LogPolicy) GetMaxAgeSeconds() int64 {
 func (x *LogPolicy) GetCompress() bool {
 	if x != nil {
 		return x.Compress
+	}
+	return false
+}
+
+func (x *LogPolicy) GetDirectory() string {
+	if x != nil {
+		return x.Directory
+	}
+	return ""
+}
+
+func (x *LogPolicy) GetRedirectStderr() bool {
+	if x != nil {
+		return x.RedirectStderr
 	}
 	return false
 }
@@ -798,6 +814,7 @@ type Instance struct {
 	ExitCode       int32                  `protobuf:"varint,9,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
 	HasExitCode    bool                   `protobuf:"varint,10,opt,name=has_exit_code,json=hasExitCode,proto3" json:"has_exit_code,omitempty"`
 	StartedUnixMs  int64                  `protobuf:"varint,11,opt,name=started_unix_ms,json=startedUnixMs,proto3" json:"started_unix_ms,omitempty"`
+	LogPathPending bool                   `protobuf:"varint,12,opt,name=log_path_pending,json=logPathPending,proto3" json:"log_path_pending,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -907,6 +924,13 @@ func (x *Instance) GetStartedUnixMs() int64 {
 		return x.StartedUnixMs
 	}
 	return 0
+}
+
+func (x *Instance) GetLogPathPending() bool {
+	if x != nil {
+		return x.LogPathPending
+	}
+	return false
 }
 
 type ProcessView struct {
@@ -9998,12 +10022,14 @@ const file_proto_procmesh_v1_api_proto_rawDesc = "" +
 	"\x11failure_threshold\x18\v \x01(\x05R\x10failureThreshold\x12+\n" +
 	"\x11success_threshold\x18\f \x01(\x05R\x10successThreshold\x12,\n" +
 	"\x12restart_on_failure\x18\r \x01(\bR\x10restartOnFailure\x12.\n" +
-	"\x13restart_cooldown_ms\x18\x0e \x01(\x03R\x11restartCooldownMs\"\x87\x01\n" +
+	"\x13restart_cooldown_ms\x18\x0e \x01(\x03R\x11restartCooldownMs\"\xce\x01\n" +
 	"\tLogPolicy\x12\x19\n" +
 	"\bmax_size\x18\x01 \x01(\x03R\amaxSize\x12\x1b\n" +
 	"\tmax_files\x18\x02 \x01(\x05R\bmaxFiles\x12&\n" +
 	"\x0fmax_age_seconds\x18\x03 \x01(\x03R\rmaxAgeSeconds\x12\x1a\n" +
-	"\bcompress\x18\x04 \x01(\bR\bcompress\"{\n" +
+	"\bcompress\x18\x04 \x01(\bR\bcompress\x12\x1c\n" +
+	"\tdirectory\x18\x05 \x01(\tR\tdirectory\x12'\n" +
+	"\x0fredirect_stderr\x18\x06 \x01(\bR\x0eredirectStderr\"{\n" +
 	"\rResourceLimit\x12(\n" +
 	"\x10cpu_quota_millis\x18\x01 \x01(\x03R\x0ecpuQuotaMillis\x12!\n" +
 	"\fmemory_bytes\x18\x02 \x01(\x03R\vmemoryBytes\x12\x1d\n" +
@@ -10041,7 +10067,7 @@ const file_proto_procmesh_v1_api_proto_rawDesc = "" +
 	"\x0flatest_revision\x18\x15 \x01(\x03R\x0elatestRevision\x1a>\n" +
 	"\x10EnvironmentEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xdc\x02\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x86\x03\n" +
 	"\bInstance\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12\x18\n" +
@@ -10055,7 +10081,8 @@ const file_proto_procmesh_v1_api_proto_rawDesc = "" +
 	"\texit_code\x18\t \x01(\x05R\bexitCode\x12\"\n" +
 	"\rhas_exit_code\x18\n" +
 	" \x01(\bR\vhasExitCode\x12&\n" +
-	"\x0fstarted_unix_ms\x18\v \x01(\x03R\rstartedUnixMs\"\x8f\x01\n" +
+	"\x0fstarted_unix_ms\x18\v \x01(\x03R\rstartedUnixMs\x12(\n" +
+	"\x10log_path_pending\x18\f \x01(\bR\x0elogPathPending\"\x8f\x01\n" +
 	"\vProcessView\x12\x1d\n" +
 	"\n" +
 	"process_id\x18\x01 \x01(\tR\tprocessId\x12,\n" +

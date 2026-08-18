@@ -385,6 +385,12 @@ func applyNonEmptyLog(dst, src *procmeshv1.LogPolicy) {
 	if src.GetCompress() {
 		dst.Compress = true
 	}
+	if src.GetDirectory() != "" {
+		dst.Directory = src.GetDirectory()
+	}
+	if src.GetRedirectStderr() {
+		dst.RedirectStderr = true
+	}
 }
 
 func applyNonEmptyResources(dst, src *procmeshv1.ResourceLimit) {

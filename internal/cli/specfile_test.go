@@ -59,3 +59,29 @@ func TestLoad_JSONSnakeCase(t *testing.T) {
 		t.Fatalf("args=%q", spec.GetArgs())
 	}
 }
+
+func TestLoad_LogDirectoryAndRedirect(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "spec.yaml")
+	yaml := "" +
+		"name: web\n" +
+		"command: /bin/true\n" +
+		"log:\n" +
+		"  directory: /var/log/myapp\n" +
+		"  redirect_stderr: true\n"
+	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spec, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.GetLog() == nil {
+		t.Fatal("log missing")
+	}
+	if spec.GetLog().GetDirectory() != "/var/log/myapp" {
+		t.Fatalf("directory=%q", spec.GetLog().GetDirectory())
+	}
+	if !spec.GetLog().GetRedirectStderr() {
+		t.Fatal("redirect_stderr=false")
+	}
+}

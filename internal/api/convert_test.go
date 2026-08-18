@@ -32,3 +32,29 @@ func TestViewOf_NilStartedAtZero(t *testing.T) {
 		t.Fatalf("started_unix_ms=%d want 0", got)
 	}
 }
+
+func TestSpecToProto_LogDirectoryRoundtrip(t *testing.T) {
+	in := process.ProcessSpec{
+		ProcessID: "p1",
+		Name:      "web",
+		Command:   "/bin/true",
+		Log: process.LogPolicy{
+			Directory:      "/var/log/myapp",
+			RedirectStderr: true,
+		},
+	}
+	got := ProtoToSpec(SpecToProto(in))
+	if got.Log.Directory != "/var/log/myapp" {
+		t.Fatalf("directory=%q", got.Log.Directory)
+	}
+	if !got.Log.RedirectStderr {
+		t.Fatal("redirect_stderr=false")
+	}
+	view := ViewOf(in, []process.Instance{{
+		InstanceID:     "p1:0",
+		ActiveRevision: 1,
+	}})
+	if len(view.Instances) != 1 || view.Instances[0].GetLogPathPending() {
+		t.Fatalf("ViewOf must not set log_path_pending: %+v", view.Instances)
+	}
+}

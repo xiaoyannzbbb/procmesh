@@ -60,6 +60,8 @@ func TestProto_P5ServicesGenerated(t *testing.T) {
 	}
 	_ = (&procmeshv1.ClusterOverviewResponse{}).GetProcessTotal
 	_ = (&procmeshv1.Instance{}).GetStartedUnixMs
+	_ = (&procmeshv1.LogPolicy{}).GetDirectory
+	_ = (&procmeshv1.Instance{}).GetLogPathPending
 }
 
 func TestProto_BatchServiceGenerated(t *testing.T) {

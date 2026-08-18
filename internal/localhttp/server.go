@@ -331,15 +331,20 @@ func (s *Server) logsHandler(w http.ResponseWriter, r *http.Request) {
 			lines = n
 		}
 	}
-	insts, err := s.mgr.ListInstances(r.Context(), id)
+	spec, err := s.mgr.Resolve(r.Context(), id)
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	insts, err := s.mgr.ListInstances(r.Context(), spec.ProcessID)
 	if err != nil {
 		s.writeErr(w, err)
 		return
 	}
 	var all []string
 	for _, inst := range insts {
-		stdout, _ := logmgr.InstancePaths(s.mgr.Layout(), id, inst.InstanceID)
-		got, err := logmgr.Tail(stdout, lines)
+		path := s.mgr.ReadLogPath(r.Context(), spec, inst, "stdout")
+		got, err := logmgr.Tail(path, lines)
 		if err != nil {
 			continue
 		}
@@ -501,10 +506,12 @@ func specToDTO(s process.ProcessSpec) ProcessSpec {
 			RestartCooldownMs: durationMS(s.Health.RestartCooldown),
 		},
 		Log: LogPolicyDTO{
-			MaxSize:       s.Log.MaxSize,
-			MaxFiles:      s.Log.MaxFiles,
-			MaxAgeSeconds: durationSeconds(s.Log.MaxAge),
-			Compress:      s.Log.Compress,
+			MaxSize:        s.Log.MaxSize,
+			MaxFiles:       s.Log.MaxFiles,
+			MaxAgeSeconds:  durationSeconds(s.Log.MaxAge),
+			Compress:       s.Log.Compress,
+			Directory:      s.Log.Directory,
+			RedirectStderr: s.Log.RedirectStderr,
 		},
 		Resources: ResourceLimitDTO{
 			CPUQuotaMillis: s.Resources.CPUQuotaMillis,
@@ -560,10 +567,12 @@ func dtoToSpec(s ProcessSpec) process.ProcessSpec {
 			RestartCooldown:  fromMS(s.Health.RestartCooldownMs),
 		},
 		Log: process.LogPolicy{
-			MaxSize:  s.Log.MaxSize,
-			MaxFiles: s.Log.MaxFiles,
-			MaxAge:   fromSeconds(s.Log.MaxAgeSeconds),
-			Compress: s.Log.Compress,
+			MaxSize:        s.Log.MaxSize,
+			MaxFiles:       s.Log.MaxFiles,
+			MaxAge:         fromSeconds(s.Log.MaxAgeSeconds),
+			Compress:       s.Log.Compress,
+			Directory:      s.Log.Directory,
+			RedirectStderr: s.Log.RedirectStderr,
 		},
 		Resources: process.ResourceLimit{
 			CPUQuotaMillis: s.Resources.CPUQuotaMillis,

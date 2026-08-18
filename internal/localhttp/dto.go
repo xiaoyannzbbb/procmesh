@@ -64,10 +64,12 @@ type HealthCheckDTO struct {
 }
 
 type LogPolicyDTO struct {
-	MaxSize       int64 `json:"max_size,omitempty"`
-	MaxFiles      int   `json:"max_files,omitempty"`
-	MaxAgeSeconds int64 `json:"max_age_seconds,omitempty"`
-	Compress      bool  `json:"compress,omitempty"`
+	MaxSize        int64  `json:"max_size,omitempty"`
+	MaxFiles       int    `json:"max_files,omitempty"`
+	MaxAgeSeconds  int64  `json:"max_age_seconds,omitempty"`
+	Compress       bool   `json:"compress,omitempty"`
+	Directory      string `json:"directory,omitempty"`
+	RedirectStderr bool   `json:"redirect_stderr,omitempty"`
 }
 
 type ResourceLimitDTO struct {

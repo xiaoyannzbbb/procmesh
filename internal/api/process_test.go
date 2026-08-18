@@ -51,6 +51,46 @@ func TestProcess_ApplyGetList(t *testing.T) {
 	}
 }
 
+func TestProcess_ApplyGetLogDirectory(t *testing.T) {
+	ctx := context.Background()
+	c := newProcessClient(t, nil)
+
+	applied, err := c.ApplyProcess(ctx, connect.NewRequest(&procmeshv1.ApplyProcessRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-logdir", Operator: "t"},
+		Spec: &procmeshv1.ProcessSpec{
+			Name:    "web",
+			Command: "/bin/true",
+			Log: &procmeshv1.LogPolicy{
+				Directory:      "/var/log/myapp",
+				RedirectStderr: true,
+			},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied.Msg.GetSpec().GetLog().GetDirectory() != "/var/log/myapp" {
+		t.Fatalf("apply log %+v", applied.Msg.GetSpec().GetLog())
+	}
+	if !applied.Msg.GetSpec().GetLog().GetRedirectStderr() {
+		t.Fatal("apply redirect_stderr=false")
+	}
+
+	got, err := c.GetProcess(ctx, connect.NewRequest(&procmeshv1.GetProcessRequest{IdOrName: "web"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := got.Msg.GetProcess().GetSpec().GetLog()
+	if log.GetDirectory() != "/var/log/myapp" || !log.GetRedirectStderr() {
+		t.Fatalf("get log %+v", log)
+	}
+	for _, inst := range got.Msg.GetProcess().GetInstances() {
+		if inst.GetLogPathPending() {
+			t.Fatalf("never-started instance pending: %+v", inst)
+		}
+	}
+}
+
 func TestProcess_StartDesiredRunning(t *testing.T) {
 	ctx := context.Background()
 	c := newProcessClient(t, nil)
@@ -188,10 +228,12 @@ func TestProcess_SpecConvertRoundtrip(t *testing.T) {
 			RestartCooldown:  2 * time.Second,
 		},
 		Log: process.LogPolicy{
-			MaxSize:  1 << 20,
-			MaxFiles: 5,
-			MaxAge:   time.Hour,
-			Compress: true,
+			MaxSize:        1 << 20,
+			MaxFiles:       5,
+			MaxAge:         time.Hour,
+			Compress:       true,
+			Directory:      "/var/log/web",
+			RedirectStderr: true,
 		},
 		Resources:      process.ResourceLimit{CPUQuotaMillis: 500, MemoryBytes: 1 << 26, OpenFiles: 1024},
 		Dependencies:   []process.Dependency{{ProcessName: "db", Condition: process.DepStarted}},
@@ -206,6 +248,9 @@ func TestProcess_SpecConvertRoundtrip(t *testing.T) {
 	}
 	if got.Log.MaxAge != in.Log.MaxAge || got.Health.Interval != in.Health.Interval {
 		t.Fatalf("log/health %+v %+v", got.Log, got.Health)
+	}
+	if got.Log.Directory != in.Log.Directory || got.Log.RedirectStderr != in.Log.RedirectStderr {
+		t.Fatalf("log path %+v", got.Log)
 	}
 	if got.Restart.Mode != in.Restart.Mode || got.Resources.MemoryBytes != in.Resources.MemoryBytes {
 		t.Fatalf("restart/res %+v %+v", got.Restart, got.Resources)

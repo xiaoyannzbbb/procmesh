@@ -13,7 +13,6 @@ import (
 	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/logmgr"
-	"github.com/qleelulu/procmesh/internal/paths"
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/rpc"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
@@ -107,7 +106,11 @@ func (s *LogAPI) TailLogs(ctx context.Context, req *connect.Request[procmeshv1.T
 	}
 	var all []string
 	for _, instID := range insts {
-		got, err := logmgr.Tail(logPath(s.Mgr.Layout(), spec.ProcessID, instID, stream), lines)
+		path, err := s.instanceLogPath(ctx, spec, instID, stream)
+		if err != nil {
+			return nil, ToConnect(err)
+		}
+		got, err := logmgr.Tail(path, lines)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -163,7 +166,10 @@ func (s *LogAPI) StreamLogs(ctx context.Context, req *connect.Request[procmeshv1
 	if len(insts) == 0 {
 		return stream.Send(&procmeshv1.LogChunk{Eof: true})
 	}
-	path := logPath(s.Mgr.Layout(), spec.ProcessID, insts[0], name)
+	path, err := s.instanceLogPath(ctx, spec, insts[0], name)
+	if err != nil {
+		return ToConnect(err)
+	}
 	ch, errCh := logmgr.Follow(ctx, path, true)
 	for ch != nil || errCh != nil {
 		select {
@@ -227,7 +233,11 @@ func (s *LogAPI) DownloadLogs(ctx context.Context, req *connect.Request[procmesh
 	if len(insts) == 0 {
 		return stream.Send(&procmeshv1.LogChunk{Eof: true})
 	}
-	f, err := os.Open(logPath(s.Mgr.Layout(), spec.ProcessID, insts[0], name))
+	path, err := s.instanceLogPath(ctx, spec, insts[0], name)
+	if err != nil {
+		return ToConnect(err)
+	}
+	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return stream.Send(&procmeshv1.LogChunk{Eof: true})
@@ -351,10 +361,10 @@ func normalizeLogStream(name string) (string, error) {
 	}
 }
 
-func logPath(layout paths.Layout, processID, instanceID, stream string) string {
-	stdout, stderr := logmgr.InstancePaths(layout, processID, instanceID)
-	if stream == "stderr" {
-		return stderr
+func (s *LogAPI) instanceLogPath(ctx context.Context, spec process.ProcessSpec, instID, stream string) (string, error) {
+	inst, err := s.Mgr.GetInstance(ctx, instID)
+	if err != nil {
+		return "", err
 	}
-	return stdout
+	return s.Mgr.ReadLogPath(ctx, spec, inst, stream), nil
 }

@@ -539,7 +539,12 @@ func (s *ProcessAPI) viewOf(ctx context.Context, spec process.ProcessSpec) (*pro
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	return ViewOf(spec, insts), nil
+	view := ViewOf(spec, insts)
+	for i, inst := range insts {
+		active := s.Mgr.EffectiveLog(ctx, spec, inst)
+		view.Instances[i].LogPathPending = process.LogPathPending(spec.Log, active, inst)
+	}
+	return view, nil
 }
 
 func (s *ProcessAPI) resolveApplySpec(ctx context.Context, expectedRevision int64, spec process.ProcessSpec) (process.ProcessSpec, error) {
