@@ -125,3 +125,17 @@ CREATE TABLE IF NOT EXISTS alerts (
 );
 CREATE INDEX IF NOT EXISTS alerts_last_at ON alerts(last_at DESC);
 CREATE INDEX IF NOT EXISTS alerts_state ON alerts(state);
+
+CREATE TABLE IF NOT EXISTS backup_index (
+    snapshot_id TEXT PRIMARY KEY,
+    cluster_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    process_ids_json TEXT NOT NULL,
+    revision_range_json TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    sink TEXT NOT NULL,
+    location TEXT NOT NULL,
+    source_node_id TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS backup_index_created ON backup_index(created_at DESC);

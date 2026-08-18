@@ -92,3 +92,13 @@ func TestLayout_NodeAndBootFiles(t *testing.T) {
 		t.Fatalf("BootIDFile=%q", l.BootIDFile())
 	}
 }
+
+func TestNew_BackupDirs(t *testing.T) {
+	l := paths.New("/data")
+	if l.BackupFSDir() != "/data/backup/fs" {
+		t.Fatal(l.BackupFSDir())
+	}
+	if l.BackupPeerDir("src") != "/data/backup/peer/src" {
+		t.Fatal(l.BackupPeerDir("src"))
+	}
+}

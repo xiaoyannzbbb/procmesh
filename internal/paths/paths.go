@@ -44,6 +44,18 @@ func (l Layout) NodeIDFile() string { return filepath.Join(l.Root, "node_id") }
 // BootIDFile is the last-seen host boot id file under the data root.
 func (l Layout) BootIDFile() string { return filepath.Join(l.Root, "boot_id") }
 
+// BackupRoot is the local backup directory under the data root.
+// Not created by Ensure; sinks MkdirAll on Put.
+func (l Layout) BackupRoot() string { return filepath.Join(l.Root, "backup") }
+
+// BackupFSDir is the filesystem sink directory.
+func (l Layout) BackupFSDir() string { return filepath.Join(l.BackupRoot(), "fs") }
+
+// BackupPeerDir is the peer-received snapshot directory for sourceNodeID.
+func (l Layout) BackupPeerDir(sourceNodeID string) string {
+	return filepath.Join(l.BackupRoot(), "peer", sourceNodeID)
+}
+
 // Ensure creates layout directories with mode 0750.
 func (l Layout) Ensure() error {
 	for _, dir := range []string{l.Root, l.ShimDir, l.LogDir, l.RuntimeDir, l.ClusterDir, l.RaftDir} {
