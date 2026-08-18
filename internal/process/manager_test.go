@@ -461,6 +461,19 @@ func TestApplySpec_AppliesLogDefaults(t *testing.T) {
 	}
 }
 
+func TestApplySpec_RejectsLogDirInsideRaft(t *testing.T) {
+	ctx := context.Background()
+	m, _, layout := newTestManager(t)
+	spec := process.ProcessSpec{
+		Name: "n", Command: "/bin/true", Instances: 1,
+		Log: process.LogPolicy{Directory: filepath.Join(layout.Root, "raft", "logs")},
+	}
+	_, err := m.ApplySpec(ctx, spec, 0, "op-log-bad", "t", "")
+	if err == nil || !strings.Contains(err.Error(), "log path:") {
+		t.Fatalf("got %v", err)
+	}
+}
+
 func TestRotateLogs_UsesSpecPolicyAndLogNow(t *testing.T) {
 	ctx := context.Background()
 	root := shortRoot(t)

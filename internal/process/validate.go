@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/logmgr"
 )
 
 var nameRE = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,62}$`)
@@ -36,6 +37,9 @@ func ValidateSpec(s ProcessSpec) error {
 	g := strings.TrimSpace(s.Group)
 	if g != "" && !groupRE.MatchString(g) {
 		return errcode.E(errcode.INVALID, "group")
+	}
+	if err := logmgr.ValidateDirectory(s.Log.Directory, ""); err != nil {
+		return err
 	}
 	return nil
 }

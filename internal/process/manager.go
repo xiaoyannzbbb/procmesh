@@ -90,6 +90,9 @@ func (m *Manager) ApplySpec(ctx context.Context, spec ProcessSpec, expectedRevis
 	if err := ValidateSpec(spec); err != nil {
 		return ProcessSpec{}, err
 	}
+	if err := logmgr.ValidateDirectory(spec.Log.Directory, m.deps.Layout.Root); err != nil {
+		return ProcessSpec{}, err
+	}
 	done, existing, err := m.beginOp(ctx, opID, operator, "apply_spec", spec.ProcessID, nil)
 	if err != nil {
 		return ProcessSpec{}, err

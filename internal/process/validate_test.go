@@ -1,6 +1,7 @@
 package process_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -129,6 +130,24 @@ func TestValidateSpec_AcceptsEmptyAndValidGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Group = "  finance  "
+	if err := process.ValidateSpec(s); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateSpec_LogDirectoryMessages(t *testing.T) {
+	s := validSpec()
+	s.Log.Directory = "relative"
+	err := process.ValidateSpec(s)
+	if err == nil || err.Error() != "INVALID: log path: directory must be an absolute path" {
+		t.Fatalf("got %v", err)
+	}
+	s.Log.Directory = "/etc/procmesh"
+	err = process.ValidateSpec(s)
+	if err == nil || !strings.Contains(err.Error(), "log path:") || !strings.Contains(err.Error(), "/etc") {
+		t.Fatalf("got %v", err)
+	}
+	s.Log.Directory = ""
 	if err := process.ValidateSpec(s); err != nil {
 		t.Fatal(err)
 	}

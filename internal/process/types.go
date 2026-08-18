@@ -142,10 +142,12 @@ func MakeInstanceID(processID string, ordinal int) string {
 type HealthCheckSpec = health.HealthCheckSpec
 
 type LogPolicy struct {
-	MaxSize  int64
-	MaxFiles int
-	MaxAge   time.Duration
-	Compress bool
+	MaxSize        int64
+	MaxFiles       int
+	MaxAge         time.Duration
+	Compress       bool
+	Directory      string
+	RedirectStderr bool
 }
 
 // WithDefaults fills empty log policy fields: 100MiB, 10 files, 7 days, compress.
