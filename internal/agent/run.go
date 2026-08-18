@@ -804,9 +804,11 @@ func startAlertScanner(ctx context.Context, opt Options, mgr *process.Manager, s
 			})
 		},
 	}
+	hostname, _ := os.Hostname()
 	sc := &alert.Scanner{
 		Engine:    eng,
 		NodeID:    clusterDeps.NodeID,
+		Hostname:  hostname,
 		ListProcs: func() []alert.ProcessSnap { return listAlertProcessSnaps(mgr) },
 		Samples:   st.ListMetricSamples,
 		Snapshot:  func() alert.NodeSample { return alertNodeSample(collector) },

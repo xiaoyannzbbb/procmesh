@@ -44,6 +44,7 @@ type NodeSample struct {
 type Scanner struct {
 	Engine    *Engine
 	NodeID    string
+	Hostname  string
 	ListProcs func() []ProcessSnap
 	Samples   func(ctx context.Context, series, subject, layer string, from, to int64) ([]store.MetricSample, error)
 	Snapshot  func() NodeSample
@@ -143,9 +144,9 @@ func (s *Scanner) scanClusterMembers(ctx context.Context, view ClusterView, now 
 func (s *Scanner) scanMemberFailed(ctx context.Context, clusterID string, m cluster.NodeSummary, now time.Time) error {
 	switch m.State {
 	case cluster.StateFailed:
-		return s.observe(ctx, Event{Type: TypeAgentFailed, NodeID: m.NodeID, ClusterID: clusterID, At: now, Firing: true})
+		return s.observe(ctx, Event{Type: TypeAgentFailed, NodeID: m.NodeID, Hostname: m.Hostname, ClusterID: clusterID, At: now, Firing: true})
 	case cluster.StateAlive:
-		return s.observe(ctx, Event{Type: TypeAgentFailed, NodeID: m.NodeID, ClusterID: clusterID, At: now, Firing: false})
+		return s.observe(ctx, Event{Type: TypeAgentFailed, NodeID: m.NodeID, Hostname: m.Hostname, ClusterID: clusterID, At: now, Firing: false})
 	default:
 		return nil
 	}
@@ -158,9 +159,9 @@ func (s *Scanner) scanMemberSuspect(ctx context.Context, clusterID string, m clu
 		if now.Sub(last) < window {
 			return nil
 		}
-		return s.observe(ctx, Event{Type: TypeAgentSuspect, NodeID: m.NodeID, ClusterID: clusterID, At: now, Firing: true})
+		return s.observe(ctx, Event{Type: TypeAgentSuspect, NodeID: m.NodeID, Hostname: m.Hostname, ClusterID: clusterID, At: now, Firing: true})
 	case cluster.StateAlive:
-		return s.observe(ctx, Event{Type: TypeAgentSuspect, NodeID: m.NodeID, ClusterID: clusterID, At: now, Firing: false})
+		return s.observe(ctx, Event{Type: TypeAgentSuspect, NodeID: m.NodeID, Hostname: m.Hostname, ClusterID: clusterID, At: now, Firing: false})
 	default:
 		return nil
 	}
@@ -171,7 +172,7 @@ func (s *Scanner) scanMemberVersion(ctx context.Context, clusterID string, m clu
 		return nil
 	}
 	mismatch := m.ProtocolVersion != 0 && m.ProtocolVersion != 1
-	return s.observe(ctx, Event{Type: TypeVersionMismatch, NodeID: m.NodeID, ClusterID: clusterID, At: now, Firing: mismatch})
+	return s.observe(ctx, Event{Type: TypeVersionMismatch, NodeID: m.NodeID, Hostname: m.Hostname, ClusterID: clusterID, At: now, Firing: mismatch})
 }
 
 func (s *Scanner) scanMemberCert(ctx context.Context, clusterID string, m cluster.NodeSummary, certs map[string]time.Time, now time.Time) error {
@@ -180,7 +181,7 @@ func (s *Scanner) scanMemberCert(ctx context.Context, clusterID string, m cluste
 		return nil
 	}
 	firing := !notAfter.After(now.Add(certExpiringWithin))
-	return s.observe(ctx, Event{Type: TypeCertExpiring, NodeID: m.NodeID, ClusterID: clusterID, At: now, Firing: firing})
+	return s.observe(ctx, Event{Type: TypeCertExpiring, NodeID: m.NodeID, Hostname: m.Hostname, ClusterID: clusterID, At: now, Firing: firing})
 }
 
 func (s *Scanner) scanProcesses(ctx context.Context, now time.Time) error {
@@ -438,6 +439,9 @@ func (s *Scanner) loadSamples(ctx context.Context, series, subject string, now t
 }
 
 func (s *Scanner) observe(ctx context.Context, ev Event) error {
+	if ev.Hostname == "" && ev.NodeID == s.NodeID {
+		ev.Hostname = s.Hostname
+	}
 	if !ev.Firing {
 		fp := Fingerprint(ev.Type, ev.NodeID, ev.ProcessID, ev.ClusterID)
 		rec, err := s.Engine.Store.GetAlertByFingerprint(ctx, fp)

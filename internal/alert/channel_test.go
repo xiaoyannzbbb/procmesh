@@ -288,7 +288,7 @@ func TestChannel_DingTalkDiskHighMarkdown(t *testing.T) {
 	rec.Type = "DISK_HIGH"
 	rec.Fingerprint = "DISK_HIGH:a0ba0978-70ed-4664-8d80-133c6c862f86"
 	rec.NodeID = "a0ba0978-70ed-4664-8d80-133c6c862f86"
-	rec.PayloadJSON = `{"current_value_percent":91.4,"threshold_percent":85,"consecutive_minutes":3}`
+	rec.PayloadJSON = `{"hostname":"node-01","current_value_percent":94.03402483821525,"threshold_percent":85,"consecutive_minutes":3}`
 
 	s := &ChannelSender{HTTP: srv.Client(), Sleep: func(time.Duration) {}}
 	if err := s.Send(context.Background(), control.AlertChannel{
@@ -314,8 +314,8 @@ func TestChannel_DingTalkDiskHighMarkdown(t *testing.T) {
 		t.Fatalf("title=%q", body.Markdown.Title)
 	}
 	for _, want := range []string{
-		"节点: `a0ba0978-70ed-4664-8d80-133c6c862f86`",
-		"当前值: **91.4%**",
+		"节点: **node-01** (`a0ba0978-70ed-4664-8d80-133c6c862f86`)",
+		"当前值: **94.03%**",
 		"阈值: **85%**",
 		"首次发生: 2026-08-16 00:00:00 UTC",
 		"最近发生: 2026-08-16 00:00:00 UTC",

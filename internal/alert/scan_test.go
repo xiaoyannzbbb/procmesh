@@ -271,6 +271,7 @@ func TestScanner_SnapshotAloneNotEnoughWhenConsecutiveMinsGT1(t *testing.T) {
 
 func TestScanner_DiskHighIncludesThresholdContext(t *testing.T) {
 	e := newScanEnv(t)
+	e.sc.Hostname = "node-01"
 	e.pol.HighConsecutiveMins = 3
 	e.pol.DiskHighPercent = 85
 	e.snap = alert.NodeSample{DiskPercent: 91.4, HaveSnapshot: true}
@@ -292,6 +293,9 @@ func TestScanner_DiskHighIncludesThresholdContext(t *testing.T) {
 	}
 	if got := payload["consecutive_minutes"]; got != float64(3) {
 		t.Fatalf("consecutive_minutes=%v want 3", got)
+	}
+	if got := payload["hostname"]; got != "node-01" {
+		t.Fatalf("hostname=%v want node-01", got)
 	}
 }
 

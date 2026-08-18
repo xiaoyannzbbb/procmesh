@@ -440,6 +440,7 @@ type dingTalkMarkdownBody struct {
 }
 
 type thresholdPayload struct {
+	Hostname            string   `json:"hostname"`
 	CurrentValuePercent *float64 `json:"current_value_percent"`
 	ThresholdPercent    *float64 `json:"threshold_percent"`
 	ConsecutiveMinutes  *int     `json:"consecutive_minutes"`
@@ -454,15 +455,18 @@ func dingTalkMarkdown(rec store.AlertRecord) dingTalkMarkdownBody {
 		"",
 		"- 告警类型: `" + rec.Type + "`",
 	}
-	if rec.NodeID != "" {
+	var payload thresholdPayload
+	payloadDecoded := json.Unmarshal([]byte(rec.PayloadJSON), &payload) == nil
+	if payload.Hostname != "" && rec.NodeID != "" {
+		lines = append(lines, "- 节点: **"+payload.Hostname+"** (`"+rec.NodeID+"`)")
+	} else if rec.NodeID != "" {
 		lines = append(lines, "- 节点: `"+rec.NodeID+"`")
 	}
 	if rec.ProcessID != "" {
 		lines = append(lines, "- 进程: `"+rec.ProcessID+"`")
 	}
 
-	var payload thresholdPayload
-	if json.Unmarshal([]byte(rec.PayloadJSON), &payload) == nil {
+	if payloadDecoded {
 		if payload.CurrentValuePercent != nil {
 			lines = append(lines, "- 当前值: **"+formatPercent(*payload.CurrentValuePercent)+"**")
 		}
@@ -522,7 +526,9 @@ func alertStateLabel(state string) string {
 }
 
 func formatPercent(value float64) string {
-	return strconv.FormatFloat(value, 'f', -1, 64) + "%"
+	formatted := strings.TrimRight(strconv.FormatFloat(value, 'f', 2, 64), "0")
+	formatted = strings.TrimRight(formatted, ".")
+	return formatted + "%"
 }
 
 func formatDingTalkTime(t time.Time) string {
