@@ -195,6 +195,39 @@ func TestBackupAPI_RestoreConflict(t *testing.T) {
 	}
 }
 
+func TestBackupAPI_RestoreLocalOwnerIgnoresRemoteSourceNode(t *testing.T) {
+	ctx := context.Background()
+	e, _ := testBackupEngine(t, "node-a")
+	if _, err := e.Create(ctx, backup.CreateOpts{Sink: "fs"}); err != nil {
+		t.Fatal(err)
+	}
+	fwd := &fakeForwarder{err: errors.New("must not hop")}
+	api := &BackupAPI{
+		Engine:  e,
+		LocalID: "node-a",
+		Router:  remoteOwnerRouter("node-a", "node-c", ""),
+		Forward: fwd,
+	}
+	for _, src := range []string{"s3", "node-c"} {
+		resp, err := api.RestoreBackup(ctx, connect.NewRequest(&procmeshv1.RestoreBackupRequest{
+			Meta:         &procmeshv1.MutationMeta{OperationId: "op-src-" + src, Operator: "t"},
+			SnapshotId:   "snap-1",
+			Sink:         "fs",
+			SourceNodeId: src,
+			Targets:      []*procmeshv1.RestoreTarget{{ProcessId: "p1", ExpectedRevision: 99}},
+		}))
+		if err != nil {
+			t.Fatalf("source=%s err %v", src, err)
+		}
+		if len(resp.Msg.GetResults()) != 1 || resp.Msg.GetResults()[0].GetStatus() != "CONFLICT" {
+			t.Fatalf("source=%s %+v", src, resp.Msg.GetResults())
+		}
+	}
+	if fwd.backupCalls() != 0 {
+		t.Fatalf("hops=%d want 0", fwd.backupCalls())
+	}
+}
+
 func TestBackupAPI_RestoreHopsToOwner(t *testing.T) {
 	ctx := context.Background()
 	e, _ := testBackupEngine(t, "node-c")

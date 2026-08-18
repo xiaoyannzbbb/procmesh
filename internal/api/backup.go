@@ -167,14 +167,14 @@ func (s *BackupAPI) RestoreBackup(ctx context.Context, req *connect.Request[proc
 		return nil, err
 	}
 	operator = operatorOf(ctx, operator)
-	ownerID, ok := s.lookupSnapshotOwner(ctx, req.Msg.GetSnapshotId(), req.Msg.GetSink(), req.Msg.GetSourceNodeId())
-	if ok && ownerID != "" && ownerID != s.LocalID {
+	ownerID, ok := s.lookupSnapshotOwner(ctx, req.Msg.GetSnapshotId(), req.Msg.GetSink())
+	if ok && isBackupNodeID(ownerID) && ownerID != s.LocalID {
 		if s.LocalOnly {
 			return nil, ToConnect(errcode.E(errcode.INVALID, "cannot restore another node's process on this agent"))
 		}
 		return s.hopRestore(ctx, req, ownerID)
 	}
-	if src := req.Msg.GetSourceNodeId(); src != "" && src != s.LocalID && !s.LocalOnly {
+	if src := req.Msg.GetSourceNodeId(); !ok && isBackupNodeID(src) && src != s.LocalID && !s.LocalOnly {
 		return s.hopRestore(ctx, req, src)
 	}
 	sink := req.Msg.GetSink()
@@ -324,29 +324,27 @@ func (s *BackupAPI) hopRestore(ctx context.Context, req *connect.Request[procmes
 	return out, nil
 }
 
-func (s *BackupAPI) lookupSnapshotOwner(ctx context.Context, snapshotID, sink, sourceNodeID string) (string, bool) {
+func (s *BackupAPI) lookupSnapshotOwner(ctx context.Context, snapshotID, sink string) (string, bool) {
 	if sink == "" {
 		sink = "fs"
 	}
-	if meta, _, err := s.Engine.Get(ctx, snapshotID, sink); err == nil && meta.NodeID != "" {
+	if meta, _, err := s.Engine.Get(ctx, snapshotID, sink); err == nil && isBackupNodeID(meta.NodeID) {
 		return meta.NodeID, true
 	}
 	metas, err := s.Engine.ListLocal(ctx)
 	if err != nil {
-		if sourceNodeID != "" {
-			return sourceNodeID, true
-		}
 		return "", false
 	}
 	for _, m := range metas {
-		if m.SnapshotID == snapshotID && m.NodeID != "" {
+		if m.SnapshotID == snapshotID && isBackupNodeID(m.NodeID) {
 			return m.NodeID, true
 		}
 	}
-	if sourceNodeID != "" {
-		return sourceNodeID, true
-	}
 	return "", false
+}
+
+func isBackupNodeID(id string) bool {
+	return id != "" && id != "s3"
 }
 
 func (s *BackupAPI) maybeHop(ctx context.Context, header http.Header, sourceNodeID string) (local bool, rt Route, hop bool) {
