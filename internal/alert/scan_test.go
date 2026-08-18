@@ -2,6 +2,7 @@ package alert_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -266,6 +267,32 @@ func TestScanner_SnapshotAloneNotEnoughWhenConsecutiveMinsGT1(t *testing.T) {
 	e.pol.HighConsecutiveMins = 1
 	e.scan(t)
 	e.requireFiring(t, "CPU_HIGH:n1")
+}
+
+func TestScanner_DiskHighIncludesThresholdContext(t *testing.T) {
+	e := newScanEnv(t)
+	e.pol.HighConsecutiveMins = 3
+	e.pol.DiskHighPercent = 85
+	e.snap = alert.NodeSample{DiskPercent: 91.4, HaveSnapshot: true}
+	e.insert(t, metrics.SeriesNodeDisk, "n1", e.now, 91.4)
+	e.insert(t, metrics.SeriesNodeDisk, "n1", e.now.Add(-time.Minute), 90.8)
+	e.insert(t, metrics.SeriesNodeDisk, "n1", e.now.Add(-2*time.Minute), 89.9)
+
+	e.scan(t)
+	rec := e.requireFiring(t, "DISK_HIGH:n1")
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(rec.PayloadJSON), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if got := payload["current_value_percent"]; got != 91.4 {
+		t.Fatalf("current_value_percent=%v want 91.4", got)
+	}
+	if got := payload["threshold_percent"]; got != float64(85) {
+		t.Fatalf("threshold_percent=%v want 85", got)
+	}
+	if got := payload["consecutive_minutes"]; got != float64(3) {
+		t.Fatalf("consecutive_minutes=%v want 3", got)
+	}
 }
 
 func TestScanner_ProcessMemSkippedWhenTotalUnknown(t *testing.T) {

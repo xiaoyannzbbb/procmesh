@@ -794,6 +794,12 @@ message DeleteAlertChannelRequest {
 }
 message DeleteAlertChannelResponse {}
 
+message TestAlertChannelRequest {
+  MutationMeta meta = 1;
+  string channel_id = 2;
+}
+message TestAlertChannelResponse {}
+
 message AlertPolicy {
   int64 dedup_window_sec = 1;
   bool notify_on_resolve = 2;
@@ -819,6 +825,7 @@ service AlertService {
   rpc ListAlertChannels(ListAlertChannelsRequest) returns (ListAlertChannelsResponse);
   rpc PutAlertChannel(PutAlertChannelRequest) returns (PutAlertChannelResponse);
   rpc DeleteAlertChannel(DeleteAlertChannelRequest) returns (DeleteAlertChannelResponse);
+  rpc TestAlertChannel(TestAlertChannelRequest) returns (TestAlertChannelResponse);
   rpc GetAlertPolicy(GetAlertPolicyRequest) returns (GetAlertPolicyResponse);
   rpc PutAlertPolicy(PutAlertPolicyRequest) returns (PutAlertPolicyResponse);
 }

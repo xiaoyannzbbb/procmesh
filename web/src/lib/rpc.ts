@@ -50,6 +50,7 @@ export type AlertClient = Pick<
   | "listAlertChannels"
   | "putAlertChannel"
   | "deleteAlertChannel"
+  | "testAlertChannel"
   | "getAlertPolicy"
   | "putAlertPolicy"
 >;

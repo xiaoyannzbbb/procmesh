@@ -788,6 +788,9 @@ func startAlertScanner(ctx context.Context, opt Options, mgr *process.Manager, s
 			return out
 		},
 		Sender: &alert.ChannelSender{},
+		OnSendError: func(ch control.AlertChannel, err error) {
+			opt.Logger.Warn("alert notification failed", "channel_id", ch.ChannelID, "channel_type", ch.Type, "error", err)
+		},
 		Audit: func(action, result, meta string) {
 			payload, err := json.Marshal(map[string]string{"channel_id": meta})
 			if err != nil {

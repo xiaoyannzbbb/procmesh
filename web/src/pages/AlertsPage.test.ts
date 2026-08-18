@@ -32,6 +32,9 @@ const alertI18n = {
   save: "Save",
   delete: "Delete",
   createChannel: "Create channel",
+  editChannel: "Edit channel",
+  testChannel: "Send test",
+  channelTestSent: "Test message sent.",
   noChannels: "No channels",
   dedupWindowSec: "Dedup window (sec)",
   notifyOnResolve: "Notify on resolve",
@@ -110,6 +113,7 @@ async function mountAlerts(
       channel: { channelId: "c-new", type: "WEBHOOK", name: "hook", enabled: true, configJson: "{}" },
     }),
     deleteAlertChannel: vi.fn().mockResolvedValue({}),
+    testAlertChannel: vi.fn().mockResolvedValue({}),
     getAlertPolicy: vi.fn().mockResolvedValue({
       policy: opts.policy ?? {
         dedupWindowSec: BigInt(600),
@@ -203,14 +207,56 @@ describe("AlertsPage", () => {
 
   it("shows save when session has alert.manage", async () => {
     const { wrapper } = await mountAlerts({ permissions: ["alert.read", "alert.manage"] });
-    expect(wrapper.find('[data-action="save-channel"]').exists()).toBe(true);
+    expect(wrapper.find('[data-action="create-channel"]').exists()).toBe(true);
     expect(wrapper.find('[data-action="save-policy"]').exists()).toBe(true);
+  });
+
+  it("opens create and edit channel forms in a right-side drawer", async () => {
+    const { wrapper } = await mountAlerts({
+      channels: [
+        { channelId: "c1", type: "WEBHOOK", name: "hook", enabled: true, configJson: '{"url":"https://hooks.example.com"}' },
+      ],
+    });
+    expect(document.querySelector("form.channel-form")).toBeNull();
+
+    await wrapper.get('[data-action="create-channel"]').trigger("click");
+    await flushPromises();
+    expect(document.querySelector('[role="dialog"]')?.getAttribute("aria-label")).toBe("Create channel");
+    expect(document.querySelector("form.channel-form")).not.toBeNull();
+
+    (document.querySelector(".drawer-close") as HTMLButtonElement).click();
+    await flushPromises();
+    await wrapper.get(".channel-main").trigger("click");
+    await flushPromises();
+    expect(document.querySelector('[role="dialog"]')?.getAttribute("aria-label")).toBe("Edit channel");
+    expect((document.querySelector('input[name="channelName"]') as HTMLInputElement).value).toBe("hook");
+  });
+
+  it("sends a test message for a saved external channel", async () => {
+    const { wrapper, alertClient } = await mountAlerts({
+      channels: [
+        { channelId: "ding-1", type: "DINGTALK", name: "ops", enabled: false, configJson: '{"webhook_url":"https://example.com"}' },
+      ],
+    });
+
+    await wrapper.get('[data-action="test-channel"]').trigger("click");
+    await flushPromises();
+
+    expect(alertClient.testAlertChannel).toHaveBeenCalledWith({
+      meta: expect.objectContaining({ operationId: expect.any(String), operator: "admin" }),
+      channelId: "ding-1",
+    });
+    expect(wrapper.text()).toContain("Test message sent.");
   });
 
   it("put channel sends operationId", async () => {
     const { wrapper, alertClient } = await mountAlerts();
-    await wrapper.get('input[name="channelName"]').setValue("hook");
-    await wrapper.get("form.channel-form").trigger("submit");
+    await wrapper.get('[data-action="create-channel"]').trigger("click");
+    await flushPromises();
+    const name = document.querySelector('input[name="channelName"]') as HTMLInputElement;
+    name.value = "hook";
+    name.dispatchEvent(new Event("input", { bubbles: true }));
+    document.querySelector("form.channel-form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await flushPromises();
     expect(alertClient.putAlertChannel).toHaveBeenCalled();
     const arg = alertClient.putAlertChannel.mock.calls[0][0] as {
@@ -243,8 +289,8 @@ describe("AlertsPage", () => {
       await channel.get(".channel-main").trigger("click");
       await wrapper.vm.$nextTick();
 
-      const config = wrapper.get('textarea[name="channelConfig"]').element as HTMLTextAreaElement;
-      const secret = wrapper.get('input[name="channelSecret"]').element as HTMLInputElement;
+      const config = document.querySelector('textarea[name="channelConfig"]') as HTMLTextAreaElement;
+      const secret = document.querySelector('input[name="channelSecret"]') as HTMLInputElement;
       expect(JSON.parse(config.value)).toEqual({ url: "https://hooks.example.com" });
       expect(secret.value).toBe("");
     } finally {

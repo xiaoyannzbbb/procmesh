@@ -30,6 +30,7 @@ type AlertAPI struct {
 	Store     *store.Store
 	Auth      *auth.Service
 	Engine    *alert.Engine // 可空；List 不需要
+	Sender    alert.Sender
 	LocalOnly bool
 	LocalID   string
 	Router    *Router
@@ -293,6 +294,47 @@ func (s *AlertAPI) DeleteAlertChannel(ctx context.Context, req *connect.Request[
 		return nil, err
 	}
 	return connect.NewResponse(&procmeshv1.DeleteAlertChannelResponse{}), nil
+}
+
+func (s *AlertAPI) TestAlertChannel(ctx context.Context, req *connect.Request[procmeshv1.TestAlertChannelRequest]) (*connect.Response[procmeshv1.TestAlertChannelResponse], error) {
+	if err := requireAuthConfigured(s.Auth); err != nil {
+		return nil, err
+	}
+	if err := requirePerm(ctx, s.Auth, auth.PermAlertManage, "", true, true); err != nil {
+		return nil, err
+	}
+	if _, _, err := metaOf(req.Msg.GetMeta()); err != nil {
+		return nil, err
+	}
+	id := strings.TrimSpace(req.Msg.GetChannelId())
+	ch, ok := s.Auth.Store().View().AlertChannels[id]
+	if !ok {
+		return nil, ToConnect(errcode.E(errcode.NOT_FOUND, "alert channel"))
+	}
+	if ch.Type == "WEB" {
+		return nil, ToConnect(errcode.E(errcode.INVALID, "WEB channel has no external delivery"))
+	}
+	ch.Enabled = true
+	sender := s.Sender
+	if sender == nil {
+		sender = &alert.ChannelSender{}
+	}
+	now := s.now().UTC()
+	rec := store.AlertRecord{
+		AlertID:     "channel-test",
+		Fingerprint: "channel-test:" + id,
+		Type:        "CHANNEL_TEST",
+		Severity:    "INFO",
+		State:       "TEST",
+		NodeID:      s.LocalID,
+		PayloadJSON: `{"test":true}`,
+		FirstAt:     now,
+		LastAt:      now,
+	}
+	if err := sender.Send(ctx, ch, rec); err != nil {
+		return nil, ToConnect(alert.MapDeliveryError(err))
+	}
+	return connect.NewResponse(&procmeshv1.TestAlertChannelResponse{}), nil
 }
 
 func (s *AlertAPI) GetAlertPolicy(ctx context.Context, _ *connect.Request[procmeshv1.GetAlertPolicyRequest]) (*connect.Response[procmeshv1.GetAlertPolicyResponse], error) {

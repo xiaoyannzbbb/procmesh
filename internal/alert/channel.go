@@ -160,7 +160,7 @@ func (s *ChannelSender) sendWecom(ctx context.Context, ch control.AlertChannel, 
 	if err != nil {
 		return err
 	}
-	return s.postJSON(ctx, cfg.WebhookURL, nil, body)
+	return s.postJSONValidated(ctx, cfg.WebhookURL, nil, body, validateWecomResponse)
 }
 
 func (s *ChannelSender) sendSlack(ctx context.Context, ch control.AlertChannel, rec store.AlertRecord) error {
@@ -195,13 +195,13 @@ func (s *ChannelSender) sendDingTalk(ctx context.Context, ch control.AlertChanne
 		target = signed
 	}
 	body, err := json.Marshal(map[string]any{
-		"msgtype": "text",
-		"text":    map[string]string{"content": textContent(rec)},
+		"msgtype":  "markdown",
+		"markdown": dingTalkMarkdown(rec),
 	})
 	if err != nil {
 		return err
 	}
-	return s.postJSON(ctx, target, nil, body)
+	return s.postJSONValidated(ctx, target, nil, body, validateDingTalkResponse)
 }
 
 func (s *ChannelSender) sendEmail(ctx context.Context, ch control.AlertChannel, rec store.AlertRecord) error {
@@ -250,6 +250,10 @@ func (s *ChannelSender) sendEmail(ctx context.Context, ch control.AlertChannel, 
 }
 
 func (s *ChannelSender) postJSON(ctx context.Context, rawURL string, headers map[string]string, body []byte) error {
+	return s.postJSONValidated(ctx, rawURL, headers, body, nil)
+}
+
+func (s *ChannelSender) postJSONValidated(ctx context.Context, rawURL string, headers map[string]string, body []byte, validate func([]byte) error) error {
 	return s.withRetry(ctx, func() error {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, bytes.NewReader(body))
 		if err != nil {
@@ -264,12 +268,43 @@ func (s *ChannelSender) postJSON(ctx context.Context, rawURL string, headers map
 			return err
 		}
 		defer resp.Body.Close()
-		_, _ = io.Copy(io.Discard, resp.Body)
+		responseBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		if readErr != nil {
+			return readErr
+		}
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			if validate != nil {
+				return validate(responseBody)
+			}
 			return nil
 		}
 		return httpStatusError{code: resp.StatusCode}
 	})
+}
+
+func validateDingTalkResponse(body []byte) error {
+	return validateRobotResponse("DingTalk", body)
+}
+
+func validateWecomResponse(body []byte) error {
+	return validateRobotResponse("WeCom", body)
+}
+
+func validateRobotResponse(provider string, body []byte) error {
+	var response struct {
+		ErrCode *int   `json:"errcode"`
+		ErrMsg  string `json:"errmsg"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return fmt.Errorf("decode %s response: %w", provider, err)
+	}
+	if response.ErrCode == nil {
+		return fmt.Errorf("decode %s response: missing errcode", provider)
+	}
+	if *response.ErrCode != 0 {
+		return errcode.E(errcode.INVALID, fmt.Sprintf("%s error %d: %s", provider, *response.ErrCode, response.ErrMsg))
+	}
+	return nil
 }
 
 func (s *ChannelSender) withRetry(ctx context.Context, fn func() error) error {
@@ -336,6 +371,26 @@ func retryable(err error) bool {
 	return true
 }
 
+// MapDeliveryError converts transport failures into stable API-facing codes
+// while preserving provider and configuration errors already classified by a sender.
+func MapDeliveryError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var coded *errcode.Error
+	if errors.As(err, &coded) {
+		return err
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return &errcode.Error{Code: errcode.TIMEOUT, Msg: err.Error(), Err: err}
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return &errcode.Error{Code: errcode.TIMEOUT, Msg: err.Error(), Err: err}
+	}
+	return &errcode.Error{Code: errcode.UNAVAILABLE, Msg: err.Error(), Err: err}
+}
+
 func decodeConfig(raw string, dest any) error {
 	if strings.TrimSpace(raw) == "" {
 		raw = "{}"
@@ -373,7 +428,105 @@ func formatAlertTime(t time.Time) string {
 }
 
 func textContent(rec store.AlertRecord) string {
+	if rec.Type == "CHANNEL_TEST" {
+		return "[ProcMesh] Notification channel test\nChannel: " + strings.TrimPrefix(rec.Fingerprint, "channel-test:")
+	}
 	return rec.Type + " " + rec.Severity + " " + rec.Fingerprint + " " + rec.State
+}
+
+type dingTalkMarkdownBody struct {
+	Title string `json:"title"`
+	Text  string `json:"text"`
+}
+
+type thresholdPayload struct {
+	CurrentValuePercent *float64 `json:"current_value_percent"`
+	ThresholdPercent    *float64 `json:"threshold_percent"`
+	ConsecutiveMinutes  *int     `json:"consecutive_minutes"`
+}
+
+func dingTalkMarkdown(rec store.AlertRecord) dingTalkMarkdownBody {
+	name := alertDisplayName(rec.Type)
+	lines := []string{
+		"### ProcMesh " + alertStateLabel(rec.State),
+		"",
+		"> **" + name + "** · " + rec.Severity + " · " + alertStateLabel(rec.State),
+		"",
+		"- 告警类型: `" + rec.Type + "`",
+	}
+	if rec.NodeID != "" {
+		lines = append(lines, "- 节点: `"+rec.NodeID+"`")
+	}
+	if rec.ProcessID != "" {
+		lines = append(lines, "- 进程: `"+rec.ProcessID+"`")
+	}
+
+	var payload thresholdPayload
+	if json.Unmarshal([]byte(rec.PayloadJSON), &payload) == nil {
+		if payload.CurrentValuePercent != nil {
+			lines = append(lines, "- 当前值: **"+formatPercent(*payload.CurrentValuePercent)+"**")
+		}
+		if payload.ThresholdPercent != nil {
+			lines = append(lines, "- 阈值: **"+formatPercent(*payload.ThresholdPercent)+"**")
+		}
+		if payload.ConsecutiveMinutes != nil && *payload.ConsecutiveMinutes > 0 {
+			lines = append(lines, fmt.Sprintf("- 持续条件: 连续 %d 分钟", *payload.ConsecutiveMinutes))
+		}
+	}
+	if !rec.FirstAt.IsZero() {
+		lines = append(lines, "- 首次发生: "+formatDingTalkTime(rec.FirstAt))
+	}
+	if !rec.LastAt.IsZero() {
+		lines = append(lines, "- 最近发生: "+formatDingTalkTime(rec.LastAt))
+	}
+	if rec.Fingerprint != "" {
+		lines = append(lines, "- 指纹: `"+rec.Fingerprint+"`")
+	}
+
+	return dingTalkMarkdownBody{
+		Title: fmt.Sprintf("[%s] %s", rec.Severity, name),
+		Text:  strings.Join(lines, "\n"),
+	}
+}
+
+func alertDisplayName(typ string) string {
+	if name, ok := map[string]string{
+		"PROCESS_EXIT":           "进程异常退出",
+		"PROCESS_FATAL":          "进程启动失败",
+		"PROCESS_CRASH_LOOP":     "进程反复崩溃",
+		"HEALTH_FAILED":          "进程健康检查失败",
+		"CPU_HIGH":               "CPU 使用率过高",
+		"MEMORY_HIGH":            "内存使用率过高",
+		"DISK_HIGH":              "磁盘使用率过高",
+		"LOCAL_DB_ERROR":         "本地数据库异常",
+		"AGENT_FAILED":           "节点不可用",
+		"AGENT_SUSPECT_TOO_LONG": "节点疑似失联",
+		"CONTROL_NO_QUORUM":      "控制面失去法定人数",
+		"CERT_EXPIRING":          "证书即将过期",
+		"VERSION_MISMATCH":       "版本不兼容",
+		"CHANNEL_TEST":           "通知通道测试",
+	}[typ]; ok {
+		return name
+	}
+	return typ
+}
+
+func alertStateLabel(state string) string {
+	if state == string(StateResolved) {
+		return "已恢复"
+	}
+	if state == "TEST" {
+		return "通知测试"
+	}
+	return "告警"
+}
+
+func formatPercent(value float64) string {
+	return strconv.FormatFloat(value, 'f', -1, 64) + "%"
+}
+
+func formatDingTalkTime(t time.Time) string {
+	return t.UTC().Format("2006-01-02 15:04:05 UTC")
 }
 
 func signDingTalk(rawURL, secret string, now time.Time) (string, error) {

@@ -123,12 +123,14 @@ func TestQ4_FiveChannelsFakeServer(t *testing.T) {
 		wecomN.Add(1)
 		_, _ = io.Copy(io.Discard, r.Body)
 		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"errcode":0,"errmsg":"ok"}`))
 	}))
 	t.Cleanup(wecom.Close)
 	ding := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		dingN.Add(1)
 		_, _ = io.Copy(io.Discard, r.Body)
 		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"errcode":0,"errmsg":"ok"}`))
 	}))
 	t.Cleanup(ding.Close)
 	slack := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

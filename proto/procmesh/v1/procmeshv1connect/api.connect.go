@@ -212,6 +212,9 @@ const (
 	// AlertServiceDeleteAlertChannelProcedure is the fully-qualified name of the AlertService's
 	// DeleteAlertChannel RPC.
 	AlertServiceDeleteAlertChannelProcedure = "/procmesh.v1.AlertService/DeleteAlertChannel"
+	// AlertServiceTestAlertChannelProcedure is the fully-qualified name of the AlertService's
+	// TestAlertChannel RPC.
+	AlertServiceTestAlertChannelProcedure = "/procmesh.v1.AlertService/TestAlertChannel"
 	// AlertServiceGetAlertPolicyProcedure is the fully-qualified name of the AlertService's
 	// GetAlertPolicy RPC.
 	AlertServiceGetAlertPolicyProcedure = "/procmesh.v1.AlertService/GetAlertPolicy"
@@ -2202,6 +2205,7 @@ type AlertServiceClient interface {
 	ListAlertChannels(context.Context, *connect.Request[v1.ListAlertChannelsRequest]) (*connect.Response[v1.ListAlertChannelsResponse], error)
 	PutAlertChannel(context.Context, *connect.Request[v1.PutAlertChannelRequest]) (*connect.Response[v1.PutAlertChannelResponse], error)
 	DeleteAlertChannel(context.Context, *connect.Request[v1.DeleteAlertChannelRequest]) (*connect.Response[v1.DeleteAlertChannelResponse], error)
+	TestAlertChannel(context.Context, *connect.Request[v1.TestAlertChannelRequest]) (*connect.Response[v1.TestAlertChannelResponse], error)
 	GetAlertPolicy(context.Context, *connect.Request[v1.GetAlertPolicyRequest]) (*connect.Response[v1.GetAlertPolicyResponse], error)
 	PutAlertPolicy(context.Context, *connect.Request[v1.PutAlertPolicyRequest]) (*connect.Response[v1.PutAlertPolicyResponse], error)
 }
@@ -2247,6 +2251,12 @@ func NewAlertServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(alertServiceMethods.ByName("DeleteAlertChannel")),
 			connect.WithClientOptions(opts...),
 		),
+		testAlertChannel: connect.NewClient[v1.TestAlertChannelRequest, v1.TestAlertChannelResponse](
+			httpClient,
+			baseURL+AlertServiceTestAlertChannelProcedure,
+			connect.WithSchema(alertServiceMethods.ByName("TestAlertChannel")),
+			connect.WithClientOptions(opts...),
+		),
 		getAlertPolicy: connect.NewClient[v1.GetAlertPolicyRequest, v1.GetAlertPolicyResponse](
 			httpClient,
 			baseURL+AlertServiceGetAlertPolicyProcedure,
@@ -2269,6 +2279,7 @@ type alertServiceClient struct {
 	listAlertChannels  *connect.Client[v1.ListAlertChannelsRequest, v1.ListAlertChannelsResponse]
 	putAlertChannel    *connect.Client[v1.PutAlertChannelRequest, v1.PutAlertChannelResponse]
 	deleteAlertChannel *connect.Client[v1.DeleteAlertChannelRequest, v1.DeleteAlertChannelResponse]
+	testAlertChannel   *connect.Client[v1.TestAlertChannelRequest, v1.TestAlertChannelResponse]
 	getAlertPolicy     *connect.Client[v1.GetAlertPolicyRequest, v1.GetAlertPolicyResponse]
 	putAlertPolicy     *connect.Client[v1.PutAlertPolicyRequest, v1.PutAlertPolicyResponse]
 }
@@ -2298,6 +2309,11 @@ func (c *alertServiceClient) DeleteAlertChannel(ctx context.Context, req *connec
 	return c.deleteAlertChannel.CallUnary(ctx, req)
 }
 
+// TestAlertChannel calls procmesh.v1.AlertService.TestAlertChannel.
+func (c *alertServiceClient) TestAlertChannel(ctx context.Context, req *connect.Request[v1.TestAlertChannelRequest]) (*connect.Response[v1.TestAlertChannelResponse], error) {
+	return c.testAlertChannel.CallUnary(ctx, req)
+}
+
 // GetAlertPolicy calls procmesh.v1.AlertService.GetAlertPolicy.
 func (c *alertServiceClient) GetAlertPolicy(ctx context.Context, req *connect.Request[v1.GetAlertPolicyRequest]) (*connect.Response[v1.GetAlertPolicyResponse], error) {
 	return c.getAlertPolicy.CallUnary(ctx, req)
@@ -2315,6 +2331,7 @@ type AlertServiceHandler interface {
 	ListAlertChannels(context.Context, *connect.Request[v1.ListAlertChannelsRequest]) (*connect.Response[v1.ListAlertChannelsResponse], error)
 	PutAlertChannel(context.Context, *connect.Request[v1.PutAlertChannelRequest]) (*connect.Response[v1.PutAlertChannelResponse], error)
 	DeleteAlertChannel(context.Context, *connect.Request[v1.DeleteAlertChannelRequest]) (*connect.Response[v1.DeleteAlertChannelResponse], error)
+	TestAlertChannel(context.Context, *connect.Request[v1.TestAlertChannelRequest]) (*connect.Response[v1.TestAlertChannelResponse], error)
 	GetAlertPolicy(context.Context, *connect.Request[v1.GetAlertPolicyRequest]) (*connect.Response[v1.GetAlertPolicyResponse], error)
 	PutAlertPolicy(context.Context, *connect.Request[v1.PutAlertPolicyRequest]) (*connect.Response[v1.PutAlertPolicyResponse], error)
 }
@@ -2356,6 +2373,12 @@ func NewAlertServiceHandler(svc AlertServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(alertServiceMethods.ByName("DeleteAlertChannel")),
 		connect.WithHandlerOptions(opts...),
 	)
+	alertServiceTestAlertChannelHandler := connect.NewUnaryHandler(
+		AlertServiceTestAlertChannelProcedure,
+		svc.TestAlertChannel,
+		connect.WithSchema(alertServiceMethods.ByName("TestAlertChannel")),
+		connect.WithHandlerOptions(opts...),
+	)
 	alertServiceGetAlertPolicyHandler := connect.NewUnaryHandler(
 		AlertServiceGetAlertPolicyProcedure,
 		svc.GetAlertPolicy,
@@ -2380,6 +2403,8 @@ func NewAlertServiceHandler(svc AlertServiceHandler, opts ...connect.HandlerOpti
 			alertServicePutAlertChannelHandler.ServeHTTP(w, r)
 		case AlertServiceDeleteAlertChannelProcedure:
 			alertServiceDeleteAlertChannelHandler.ServeHTTP(w, r)
+		case AlertServiceTestAlertChannelProcedure:
+			alertServiceTestAlertChannelHandler.ServeHTTP(w, r)
 		case AlertServiceGetAlertPolicyProcedure:
 			alertServiceGetAlertPolicyHandler.ServeHTTP(w, r)
 		case AlertServicePutAlertPolicyProcedure:
@@ -2411,6 +2436,10 @@ func (UnimplementedAlertServiceHandler) PutAlertChannel(context.Context, *connec
 
 func (UnimplementedAlertServiceHandler) DeleteAlertChannel(context.Context, *connect.Request[v1.DeleteAlertChannelRequest]) (*connect.Response[v1.DeleteAlertChannelResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.AlertService.DeleteAlertChannel is not implemented"))
+}
+
+func (UnimplementedAlertServiceHandler) TestAlertChannel(context.Context, *connect.Request[v1.TestAlertChannelRequest]) (*connect.Response[v1.TestAlertChannelResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.AlertService.TestAlertChannel is not implemented"))
 }
 
 func (UnimplementedAlertServiceHandler) GetAlertPolicy(context.Context, *connect.Request[v1.GetAlertPolicyRequest]) (*connect.Response[v1.GetAlertPolicyResponse], error) {

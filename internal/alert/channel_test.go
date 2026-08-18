@@ -153,6 +153,7 @@ func TestChannel_WecomAndSlack(t *testing.T) {
 	wecomSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		wecom, _ = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"errcode":0,"errmsg":"ok"}`))
 	}))
 	t.Cleanup(wecomSrv.Close)
 	slackSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -198,6 +199,28 @@ func TestChannel_WecomAndSlack(t *testing.T) {
 	}
 }
 
+func TestChannel_WecomHTTP200BusinessError(t *testing.T) {
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"errcode":93000,"errmsg":"invalid webhook url"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	s := &ChannelSender{HTTP: srv.Client(), Sleep: func(time.Duration) {}}
+	err := s.Send(context.Background(), control.AlertChannel{
+		Type: "WECOM", Enabled: true,
+		ConfigJSON: `{"webhook_url":"` + srv.URL + `"}`,
+	}, sampleAlert())
+	if err == nil || !strings.Contains(err.Error(), "invalid webhook url") {
+		t.Fatalf("got %v, want WeCom business error", err)
+	}
+	if hits != 1 {
+		t.Fatalf("hits=%d want 1 for non-retryable business error", hits)
+	}
+}
+
 func TestChannel_DingTalkSign(t *testing.T) {
 	const secret = "SECabc"
 	var gotURL string
@@ -206,6 +229,7 @@ func TestChannel_DingTalkSign(t *testing.T) {
 		gotURL = r.URL.String()
 		gotBody, _ = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"errcode":0,"errmsg":"ok"}`))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -237,16 +261,118 @@ func TestChannel_DingTalkSign(t *testing.T) {
 		t.Fatalf("sign=%s want=%s url=%s", sign, want, gotURL)
 	}
 	var body struct {
-		MsgType string `json:"msgtype"`
-		Text    struct {
-			Content string `json:"content"`
-		} `json:"text"`
+		MsgType  string `json:"msgtype"`
+		Markdown struct {
+			Title string `json:"title"`
+			Text  string `json:"text"`
+		} `json:"markdown"`
 	}
 	if err := json.Unmarshal(gotBody, &body); err != nil {
 		t.Fatal(err)
 	}
-	if body.MsgType != "text" || body.Text.Content != "PROCESS_EXIT WARNING PROCESS_EXIT:p1 FIRING" {
+	if body.MsgType != "markdown" || body.Markdown.Title != "[WARNING] 进程异常退出" || !strings.Contains(body.Markdown.Text, "进程: `p1`") {
 		t.Fatalf("dingtalk body %s", gotBody)
+	}
+}
+
+func TestChannel_DingTalkDiskHighMarkdown(t *testing.T) {
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"errcode":0,"errmsg":"ok"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	rec := sampleAlert()
+	rec.Type = "DISK_HIGH"
+	rec.Fingerprint = "DISK_HIGH:a0ba0978-70ed-4664-8d80-133c6c862f86"
+	rec.NodeID = "a0ba0978-70ed-4664-8d80-133c6c862f86"
+	rec.PayloadJSON = `{"current_value_percent":91.4,"threshold_percent":85,"consecutive_minutes":3}`
+
+	s := &ChannelSender{HTTP: srv.Client(), Sleep: func(time.Duration) {}}
+	if err := s.Send(context.Background(), control.AlertChannel{
+		Type: "DINGTALK", Enabled: true, ConfigJSON: `{"webhook_url":"` + srv.URL + `"}`,
+	}, rec); err != nil {
+		t.Fatal(err)
+	}
+
+	var body struct {
+		MsgType  string `json:"msgtype"`
+		Markdown struct {
+			Title string `json:"title"`
+			Text  string `json:"text"`
+		} `json:"markdown"`
+	}
+	if err := json.Unmarshal(gotBody, &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.MsgType != "markdown" {
+		t.Fatalf("msgtype=%q want markdown; body=%s", body.MsgType, gotBody)
+	}
+	if body.Markdown.Title != "[WARNING] 磁盘使用率过高" {
+		t.Fatalf("title=%q", body.Markdown.Title)
+	}
+	for _, want := range []string{
+		"节点: `a0ba0978-70ed-4664-8d80-133c6c862f86`",
+		"当前值: **91.4%**",
+		"阈值: **85%**",
+		"首次发生: 2026-08-16 00:00:00 UTC",
+		"最近发生: 2026-08-16 00:00:00 UTC",
+	} {
+		if !strings.Contains(body.Markdown.Text, want) {
+			t.Fatalf("markdown missing %q:\n%s", want, body.Markdown.Text)
+		}
+	}
+}
+
+func TestChannel_DingTalkHTTP200BusinessError(t *testing.T) {
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"errcode":310000,"errmsg":"keywords not in content"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	s := &ChannelSender{HTTP: srv.Client(), Sleep: func(time.Duration) {}}
+	err := s.Send(context.Background(), control.AlertChannel{
+		Type: "DINGTALK", Enabled: true,
+		ConfigJSON: `{"webhook_url":"` + srv.URL + `"}`,
+	}, sampleAlert())
+	if err == nil || !strings.Contains(err.Error(), "keywords not in content") {
+		t.Fatalf("got %v, want DingTalk business error", err)
+	}
+	if hits != 1 {
+		t.Fatalf("hits=%d want 1 for non-retryable business error", hits)
+	}
+}
+
+func TestChannel_RobotResponseRequiresErrCode(t *testing.T) {
+	cases := []string{
+		`{}`,
+		`null`,
+		`{"errmsg":"ok"}`,
+		`{"errcode":null,"errmsg":"ok"}`,
+	}
+	for _, body := range cases {
+		t.Run(body, func(t *testing.T) {
+			if err := validateDingTalkResponse([]byte(body)); err == nil {
+				t.Fatalf("validateDingTalkResponse(%s) succeeded without errcode", body)
+			}
+		})
+	}
+}
+
+func TestChannel_TestMessageTextIsHumanReadable(t *testing.T) {
+	rec := sampleAlert()
+	rec.Type = "CHANNEL_TEST"
+	rec.Fingerprint = "channel-test:ding-1"
+	rec.State = "TEST"
+
+	got := textContent(rec)
+	if !strings.Contains(got, "[ProcMesh] Notification channel test") || !strings.Contains(got, "ding-1") {
+		t.Fatalf("test message %q", got)
 	}
 }
 
@@ -494,6 +620,7 @@ func TestChannel_DingTalkNoSecret(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rawQuery = r.URL.RawQuery
 		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"errcode":0,"errmsg":"ok"}`))
 	}))
 	t.Cleanup(srv.Close)
 	s := &ChannelSender{HTTP: srv.Client(), Sleep: func(time.Duration) {}}

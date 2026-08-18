@@ -9,8 +9,10 @@ import {
   Filter,
   LoaderCircle,
   Mail,
+  Plus,
   RefreshCw,
   Search,
+  Send,
   Settings2,
   SlidersHorizontal,
   Trash2,
@@ -106,6 +108,8 @@ const detailLoading = ref(false);
 const detailError = ref("");
 const copyState = ref<"idle" | "copied" | "failed">("idle");
 const channelToDelete = ref<ChannelRow | null>(null);
+const channelDrawerOpen = ref(false);
+const testingChannelId = ref("");
 
 const perms = computed(() => new Set(session.value?.permissions ?? []));
 const canManage = computed(() => perms.value.has("alert.manage"));
@@ -568,6 +572,19 @@ function resetChannelForm(): void {
   channelAdvanced.value = false;
 }
 
+function openCreateChannel(): void {
+  resetChannelForm();
+  channelDrawerOpen.value = true;
+}
+
+function closeChannelDrawer(): void {
+  if (putChannelMut.isPending.value) {
+    return;
+  }
+  channelDrawerOpen.value = false;
+  resetChannelForm();
+}
+
 function hydrateChannelConfig(raw: string): void {
   const config = parseConfig(raw);
   channelConfig.value = redactConfigJson(raw);
@@ -596,7 +613,7 @@ function loadChannel(channel: ChannelRow): void {
   hydratingChannel.value = false;
   activeView.value = "settings";
   settingsSection.value = "channels";
-  window.setTimeout(() => document.querySelector<HTMLElement>(".channel-form")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+  channelDrawerOpen.value = true;
 }
 
 function parseRecipients(): string[] {
@@ -643,11 +660,25 @@ const putChannelMut = useMutation({
       configJson: buildChannelConfig(),
     }),
   onSuccess: async () => {
+    channelDrawerOpen.value = false;
     resetChannelForm();
     notify("success", t("alert.channelSaved"));
     await queryClient.invalidateQueries({ queryKey: ["alert-channels"] });
   },
   onError: (error: unknown) => notify("error", formatRemoteError(error)),
+});
+
+const testChannelMut = useMutation({
+  mutationFn: (id: string) =>
+    client.testAlertChannel({
+      meta: mutationMeta(),
+      channelId: id,
+    }),
+  onSuccess: () => notify("success", t("alert.channelTestSent")),
+  onError: (error: unknown) => notify("error", formatRemoteError(error)),
+  onSettled: () => {
+    testingChannelId.value = "";
+  },
 });
 
 const deleteChannelMut = useMutation({
@@ -689,11 +720,23 @@ const putPolicyMut = useMutation({
 });
 
 const acting = computed(
-  () => putChannelMut.isPending.value || deleteChannelMut.isPending.value || putPolicyMut.isPending.value,
+  () => putChannelMut.isPending.value || deleteChannelMut.isPending.value || testChannelMut.isPending.value || putPolicyMut.isPending.value,
 );
 const channelSaving = computed(() => putChannelMut.isPending.value);
 const policySaving = computed(() => putPolicyMut.isPending.value);
 const deleteChannelPending = computed(() => deleteChannelMut.isPending.value);
+
+async function testChannel(channel: ChannelRow): Promise<void> {
+  if (!canManage.value || !channel.channelId || channel.type === "WEB" || acting.value) {
+    return;
+  }
+  testingChannelId.value = channel.channelId;
+  try {
+    await testChannelMut.mutateAsync(channel.channelId);
+  } catch {
+    // onError already recorded
+  }
+}
 
 async function onSaveChannel(): Promise<void> {
   if (!canManage.value || channelNameError.value || acting.value) {
@@ -986,7 +1029,12 @@ async function onSavePolicy(): Promise<void> {
             <h3 id="channels-title">{{ t("alert.channels") }}</h3>
             <p class="section-hint">{{ t("alert.channelsHint") }}</p>
           </div>
-          <span class="result-count">{{ channels.length }}</span>
+          <div class="channel-heading-actions">
+            <span class="result-count">{{ channels.length }}</span>
+            <button v-if="canManage" type="button" class="btn btn-primary" data-action="create-channel" @click="openCreateChannel">
+              <Plus :size="17" aria-hidden="true" /> {{ t("alert.createChannel") }}
+            </button>
+          </div>
         </div>
         <div class="channel-list">
           <div v-for="channel in channels" :key="channel.channelId || channel.name" class="channel-row">
@@ -1001,12 +1049,18 @@ async function onSavePolicy(): Promise<void> {
               <span class="channel-icon" aria-hidden="true"><Mail v-if="channel.type === 'EMAIL'" :size="18" /><Webhook v-else :size="18" /></span>
               <span class="channel-copy"><strong>{{ channel.name }}</strong><span>{{ channelTypeLabel(channel.type) }} · {{ channel.summary }}</span></span>
             </div>
-            <span class="channel-status" :class="channel.enabled ? 'status-enabled' : 'status-disabled'">
-              <span class="status-dot" aria-hidden="true" />{{ t(channel.enabled ? "alert.enabled" : "alert.disabled") }}
-            </span>
-            <button v-if="canManage" type="button" class="icon-button danger-button" :aria-label="t('alert.deleteChannel', { name: channel.name })" :disabled="acting" @click="requestDeleteChannel(channel)">
-              <Trash2 :size="17" aria-hidden="true" />
-            </button>
+            <div class="channel-row-actions">
+              <span class="channel-status" :class="channel.enabled ? 'status-enabled' : 'status-disabled'">
+                <span class="status-dot" aria-hidden="true" />{{ t(channel.enabled ? "alert.enabled" : "alert.disabled") }}
+              </span>
+              <button v-if="canManage && channel.type !== 'WEB'" type="button" class="icon-text-button" data-action="test-channel" :disabled="acting" @click="testChannel(channel)">
+                <LoaderCircle v-if="testingChannelId === channel.channelId" class="spin" :size="16" aria-hidden="true" />
+                <Send v-else :size="16" aria-hidden="true" /> {{ t("alert.testChannel") }}
+              </button>
+              <button v-if="canManage" type="button" class="icon-button danger-button" :aria-label="t('alert.deleteChannel', { name: channel.name })" :disabled="acting" @click="requestDeleteChannel(channel)">
+                <Trash2 :size="17" aria-hidden="true" />
+              </button>
+            </div>
           </div>
           <div v-if="!channels.length" class="settings-empty">
             <Webhook :size="24" aria-hidden="true" />
@@ -1014,64 +1068,6 @@ async function onSavePolicy(): Promise<void> {
             <span>{{ t("alert.noChannelsHint") }}</span>
           </div>
         </div>
-
-        <form v-if="canManage" class="channel-form form-section" @submit.prevent="onSaveChannel">
-          <div class="form-section-heading">
-            <div>
-              <h3>{{ channelId ? t("alert.editChannel") : t("alert.createChannel") }}</h3>
-              <p class="section-hint">{{ t("alert.channelFormHint") }}</p>
-            </div>
-            <button v-if="channelId" type="button" class="btn btn-quiet" @click="resetChannelForm"><X :size="16" aria-hidden="true" /> {{ t("alert.cancelEdit") }}</button>
-          </div>
-          <div class="form-grid form-grid-two">
-            <label class="field">
-              <span>{{ t("alert.name") }}</span>
-              <input v-model="channelName" class="input" name="channelName" type="text" autocomplete="off" maxlength="64" pattern="[A-Za-z0-9._-]{1,64}" required />
-              <small v-if="channelName && channelNameError" class="field-error">{{ channelNameError }}</small>
-            </label>
-            <label class="field">
-              <span>{{ t("alert.type") }}</span>
-              <select v-model="channelType" class="input" name="channelType">
-                <option v-for="type in CHANNEL_TYPES" :key="type" :value="type">{{ channelTypeLabel(type) }}</option>
-              </select>
-            </label>
-          </div>
-          <label class="toggle-field">
-            <input v-model="channelEnabled" name="channelEnabled" type="checkbox" />
-            <span><strong>{{ t("alert.enabled") }}</strong><small>{{ t("alert.enabledHint") }}</small></span>
-          </label>
-          <div v-if="channelType === 'EMAIL'" class="form-grid form-grid-two">
-            <label class="field"><span>{{ t("alert.smtpHost") }}</span><input v-model="channelSmtpHost" class="input" name="smtpHost" type="text" /></label>
-            <label class="field"><span>{{ t("alert.smtpPort") }}</span><input v-model.number="channelSmtpPort" class="input" name="smtpPort" type="number" min="1" max="65535" /></label>
-            <label class="field"><span>{{ t("alert.username") }}</span><input v-model="channelUsername" class="input" name="smtpUsername" type="text" autocomplete="username" /></label>
-            <label class="field"><span>{{ t("alert.sender") }}</span><input v-model="channelFrom" class="input" name="sender" type="email" /></label>
-            <label class="field field-wide"><span>{{ t("alert.recipients") }}</span><input v-model="channelRecipients" class="input" name="recipients" type="text" :placeholder="t('alert.recipientsPlaceholder')" /></label>
-            <label class="toggle-field"><input v-model="channelStartTls" name="startTls" type="checkbox" /><span><strong>{{ t("alert.startTls") }}</strong><small>{{ t("alert.startTlsHint") }}</small></span></label>
-          </div>
-          <label v-if="showEndpoint" class="field">
-            <span>{{ t("alert.webhookUrl") }}</span>
-            <input v-model="channelEndpoint" class="input" name="channelEndpoint" type="url" :placeholder="t('alert.webhookUrlPlaceholder')" />
-          </label>
-          <label v-if="showSecret" class="field">
-            <span>{{ channelType === 'EMAIL' ? t("alert.password") : t("alert.signingSecret") }}</span>
-            <input v-model="channelSecret" class="input" name="channelSecret" type="password" autocomplete="new-password" :placeholder="t('alert.secretPlaceholder')" />
-          </label>
-          <details class="advanced-config">
-            <summary>{{ t("alert.advancedConfig") }}</summary>
-            <label class="field">
-              <span>{{ t("alert.configJson") }}</span>
-              <textarea v-model="channelConfig" class="input textarea" name="channelConfig" rows="5" spellcheck="false" />
-              <small>{{ t("alert.configJsonHint") }}</small>
-            </label>
-            <label class="toggle-field advanced-toggle"><input v-model="channelAdvanced" type="checkbox" /><span><strong>{{ t("alert.useAdvancedConfig") }}</strong><small>{{ t("alert.useAdvancedConfigHint") }}</small></span></label>
-          </details>
-          <div class="form-actions">
-            <button class="btn btn-primary" type="submit" data-action="save-channel" :disabled="Boolean(channelNameError) || acting" :aria-busy="channelSaving">
-              <LoaderCircle v-if="channelSaving" class="spin" :size="17" aria-hidden="true" />
-              {{ channelSaving ? t("alert.saving") : t("alert.saveChannel") }}
-            </button>
-          </div>
-        </form>
       </section>
 
       <form v-show="settingsSection === 'policy'" class="policy-form settings-section" @submit.prevent="onSavePolicy">
@@ -1094,6 +1090,61 @@ async function onSavePolicy(): Promise<void> {
       </form>
     </section>
   </div>
+
+  <Drawer :open="channelDrawerOpen" :title="channelId ? t('alert.editChannel') : t('alert.createChannel')" :close-label="t('actions.close')" @close="closeChannelDrawer">
+    <form v-if="canManage" class="channel-form drawer-form" @submit.prevent="onSaveChannel">
+      <p class="section-hint drawer-form-hint">{{ t("alert.channelFormHint") }}</p>
+      <div class="form-grid form-grid-two">
+        <label class="field">
+          <span>{{ t("alert.name") }}</span>
+          <input v-model="channelName" class="input" name="channelName" type="text" autocomplete="off" maxlength="64" pattern="[A-Za-z0-9._-]{1,64}" required />
+          <small v-if="channelName && channelNameError" class="field-error">{{ channelNameError }}</small>
+        </label>
+        <label class="field">
+          <span>{{ t("alert.type") }}</span>
+          <select v-model="channelType" class="input" name="channelType">
+            <option v-for="type in CHANNEL_TYPES" :key="type" :value="type">{{ channelTypeLabel(type) }}</option>
+          </select>
+        </label>
+      </div>
+      <label class="toggle-field">
+        <input v-model="channelEnabled" name="channelEnabled" type="checkbox" />
+        <span><strong>{{ t("alert.enabled") }}</strong><small>{{ t("alert.enabledHint") }}</small></span>
+      </label>
+      <div v-if="channelType === 'EMAIL'" class="form-grid form-grid-two">
+        <label class="field"><span>{{ t("alert.smtpHost") }}</span><input v-model="channelSmtpHost" class="input" name="smtpHost" type="text" /></label>
+        <label class="field"><span>{{ t("alert.smtpPort") }}</span><input v-model.number="channelSmtpPort" class="input" name="smtpPort" type="number" min="1" max="65535" /></label>
+        <label class="field"><span>{{ t("alert.username") }}</span><input v-model="channelUsername" class="input" name="smtpUsername" type="text" autocomplete="username" /></label>
+        <label class="field"><span>{{ t("alert.sender") }}</span><input v-model="channelFrom" class="input" name="sender" type="email" /></label>
+        <label class="field field-wide"><span>{{ t("alert.recipients") }}</span><input v-model="channelRecipients" class="input" name="recipients" type="text" :placeholder="t('alert.recipientsPlaceholder')" /></label>
+        <label class="toggle-field"><input v-model="channelStartTls" name="startTls" type="checkbox" /><span><strong>{{ t("alert.startTls") }}</strong><small>{{ t("alert.startTlsHint") }}</small></span></label>
+      </div>
+      <label v-if="showEndpoint" class="field">
+        <span>{{ t("alert.webhookUrl") }}</span>
+        <input v-model="channelEndpoint" class="input" name="channelEndpoint" type="url" :placeholder="t('alert.webhookUrlPlaceholder')" />
+      </label>
+      <label v-if="showSecret" class="field">
+        <span>{{ channelType === 'EMAIL' ? t("alert.password") : t("alert.signingSecret") }}</span>
+        <input v-model="channelSecret" class="input" name="channelSecret" type="password" autocomplete="new-password" :placeholder="t('alert.secretPlaceholder')" />
+      </label>
+      <details class="advanced-config">
+        <summary>{{ t("alert.advancedConfig") }}</summary>
+        <label class="field">
+          <span>{{ t("alert.configJson") }}</span>
+          <textarea v-model="channelConfig" class="input textarea" name="channelConfig" rows="5" spellcheck="false" />
+          <small>{{ t("alert.configJsonHint") }}</small>
+        </label>
+        <label class="toggle-field advanced-toggle"><input v-model="channelAdvanced" type="checkbox" /><span><strong>{{ t("alert.useAdvancedConfig") }}</strong><small>{{ t("alert.useAdvancedConfigHint") }}</small></span></label>
+      </details>
+      <div class="form-actions drawer-form-actions">
+        <button class="btn" type="button" :disabled="channelSaving" @click="closeChannelDrawer">{{ t("actions.cancel") }}</button>
+        <button class="btn btn-primary" type="submit" data-action="save-channel" :disabled="Boolean(channelNameError) || acting" :aria-busy="channelSaving">
+          <LoaderCircle v-if="channelSaving" class="spin" :size="17" aria-hidden="true" />
+          {{ channelSaving ? t("alert.saving") : t("alert.saveChannel") }}
+        </button>
+      </div>
+    </form>
+  </Drawer>
 
   <Drawer :open="Boolean(detailRow)" :title="detailTitle" :close-label="t('actions.close')" size="wide" @close="closeDetail">
     <div v-if="detailLoading" class="drawer-loading" role="status"><LoaderCircle class="spin" :size="22" aria-hidden="true" /> {{ t("alert.loadingDetail") }}</div>
@@ -1659,6 +1710,13 @@ h3 {
   margin-bottom: 0.8rem;
 }
 
+.channel-heading-actions,
+.channel-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .channel-list {
   border: 1px solid var(--color-border);
   border-radius: 8px;
@@ -1735,6 +1793,21 @@ h3 {
 
 .settings-empty {
   padding: 2rem 1rem;
+}
+
+.drawer-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.drawer-form-hint {
+  margin-bottom: 0;
+}
+
+.drawer-form-actions {
+  justify-content: flex-end;
+  padding-top: 0.25rem;
 }
 
 .form-section {
@@ -2000,6 +2073,14 @@ h3 {
 }
 
 @media (max-width: 860px) {
+  .channel-row {
+    flex-wrap: wrap;
+  }
+
+  .channel-row-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
   .summary-meta {
     width: 100%;
     margin-left: 0;

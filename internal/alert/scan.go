@@ -311,23 +311,45 @@ func (s *Scanner) evalThreshold(ctx context.Context, ev threshEval) error {
 }
 
 func (s *Scanner) applyThreshold(ctx context.Context, typ Type, processID string, samples []store.MetricSample, snap float64, haveSnap bool, threshold float64, need int, now time.Time) error {
+	payload := thresholdContext(samples, snap, haveSnap, threshold, need)
 	switch thresholdDecision(samples, snap, haveSnap, threshold, need) {
 	case threshHold:
 		return nil
 	case threshFire:
 		if err := s.observe(ctx, Event{
-			Type: typ, NodeID: s.NodeID, ProcessID: processID, At: now, Firing: true,
+			Type: typ, NodeID: s.NodeID, ProcessID: processID, Payload: payload, At: now, Firing: true,
 		}); err != nil {
 			return fmt.Errorf("scan %s %s: %w", typ, processID, err)
 		}
 	case threshResolve:
 		if err := s.observe(ctx, Event{
-			Type: typ, NodeID: s.NodeID, ProcessID: processID, At: now, Firing: false,
+			Type: typ, NodeID: s.NodeID, ProcessID: processID, Payload: payload, At: now, Firing: false,
 		}); err != nil {
 			return fmt.Errorf("scan %s %s: %w", typ, processID, err)
 		}
 	}
 	return nil
+}
+
+func thresholdContext(samples []store.MetricSample, snap float64, haveSnap bool, threshold float64, need int) map[string]any {
+	payload := map[string]any{
+		"threshold_percent":   threshold,
+		"consecutive_minutes": need,
+	}
+	if haveSnap {
+		payload["current_value_percent"] = snap
+		return payload
+	}
+	var latest store.MetricSample
+	for _, sample := range samples {
+		if sample.TSUnix > latest.TSUnix {
+			latest = sample
+		}
+	}
+	if latest.TSUnix != 0 {
+		payload["current_value_percent"] = latest.Value
+	}
+	return payload
 }
 
 type threshDecision int

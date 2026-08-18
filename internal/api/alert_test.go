@@ -4,17 +4,37 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/qleelulu/procmesh/internal/alert"
+	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/cluster"
+	"github.com/qleelulu/procmesh/internal/control"
+	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/freshness"
 	"github.com/qleelulu/procmesh/internal/store"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
+
+type captureAlertSender struct {
+	channel control.AlertChannel
+	record  store.AlertRecord
+	err     error
+	calls   int
+}
+
+func (s *captureAlertSender) Send(_ context.Context, ch control.AlertChannel, rec store.AlertRecord) error {
+	s.calls++
+	s.channel = ch
+	s.record = rec
+	return s.err
+}
 
 func TestAlertAPI_PutChannelMissingOperationID(t *testing.T) {
 	e := newRBACEnv(t)
@@ -29,6 +49,113 @@ func TestAlertAPI_PutChannelMissingOperationID(t *testing.T) {
 	code, detail := connectDetail(t, err)
 	if code != connect.CodeInvalidArgument || detail != "INVALID" {
 		t.Fatalf("code=%v detail=%s err=%v", code, detail, err)
+	}
+}
+
+func TestAlertAPI_TestChannelUsesStoredSecretAndIgnoresEnabledState(t *testing.T) {
+	e := newRBACEnv(t)
+	applyAuthCmd(t, e.svc, control.CmdAlertChannelPut, control.AlertChannelPutBody{
+		ChannelID: "ding-1", Type: "DINGTALK", Name: "ops", Enabled: false,
+		ConfigJSON: `{"webhook_url":"https://example.invalid/robot","secret":"SEC-stored"}`,
+	})
+	sender := &captureAlertSender{}
+	api := &AlertAPI{Auth: e.svc, Sender: sender}
+	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-admin", Username: "admin"})
+
+	_, err := api.TestAlertChannel(ctx, connect.NewRequest(&procmeshv1.TestAlertChannelRequest{
+		Meta:      &procmeshv1.MutationMeta{OperationId: "op-test-ding", Operator: "admin"},
+		ChannelId: "ding-1",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sender.calls != 1 {
+		t.Fatalf("calls=%d want 1", sender.calls)
+	}
+	if !sender.channel.Enabled || !strings.Contains(sender.channel.ConfigJSON, "SEC-stored") {
+		t.Fatalf("test channel did not use enabled full config: %+v", sender.channel)
+	}
+	if sender.record.Type != "CHANNEL_TEST" || sender.record.State != "TEST" {
+		t.Fatalf("test record=%+v", sender.record)
+	}
+}
+
+func TestAlertAPI_TestChannelMapsDeliveryErrors(t *testing.T) {
+	cases := []struct {
+		name       string
+		sendErr    error
+		wantCode   connect.Code
+		wantDetail string
+	}{
+		{name: "network", sendErr: errors.New("dial tcp: connection refused"), wantCode: connect.CodeUnavailable, wantDetail: "UNAVAILABLE"},
+		{name: "timeout", sendErr: context.DeadlineExceeded, wantCode: connect.CodeDeadlineExceeded, wantDetail: "TIMEOUT"},
+		{name: "provider business error", sendErr: errcode.E(errcode.INVALID, "DingTalk error 310000"), wantCode: connect.CodeInvalidArgument, wantDetail: "INVALID"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newRBACEnv(t)
+			applyAuthCmd(t, e.svc, control.CmdAlertChannelPut, control.AlertChannelPutBody{
+				ChannelID: "ding-1", Type: "DINGTALK", Name: "ops", Enabled: true,
+				ConfigJSON: `{"webhook_url":"https://example.invalid/robot"}`,
+			})
+			api := &AlertAPI{Auth: e.svc, Sender: &captureAlertSender{err: tc.sendErr}}
+			ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-admin", Username: "admin"})
+
+			_, err := api.TestAlertChannel(ctx, connect.NewRequest(&procmeshv1.TestAlertChannelRequest{
+				Meta:      &procmeshv1.MutationMeta{OperationId: "op-test-error", Operator: "admin"},
+				ChannelId: "ding-1",
+			}))
+			code, detail := connectDetail(t, err)
+			if code != tc.wantCode || detail != tc.wantDetail {
+				t.Fatalf("code=%v detail=%s err=%v", code, detail, err)
+			}
+		})
+	}
+}
+
+func TestAlertAPI_TestChannelMapsHTTP5xxToUnavailable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+	e := newRBACEnv(t)
+	applyAuthCmd(t, e.svc, control.CmdAlertChannelPut, control.AlertChannelPutBody{
+		ChannelID: "hook-1", Type: "WEBHOOK", Name: "ops", Enabled: true,
+		ConfigJSON: `{"url":"` + srv.URL + `"}`,
+	})
+	api := &AlertAPI{
+		Auth:   e.svc,
+		Sender: &alert.ChannelSender{HTTP: srv.Client(), Attempts: 1},
+	}
+	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-admin", Username: "admin"})
+
+	_, err := api.TestAlertChannel(ctx, connect.NewRequest(&procmeshv1.TestAlertChannelRequest{
+		Meta:      &procmeshv1.MutationMeta{OperationId: "op-test-503", Operator: "admin"},
+		ChannelId: "hook-1",
+	}))
+	code, detail := connectDetail(t, err)
+	if code != connect.CodeUnavailable || detail != "UNAVAILABLE" {
+		t.Fatalf("code=%v detail=%s err=%v", code, detail, err)
+	}
+}
+
+func TestAlertAPI_ViewerCannotTestChannel(t *testing.T) {
+	e := newRBACEnv(t)
+	applyAuthCmd(t, e.svc, control.CmdAlertChannelPut, control.AlertChannelPutBody{
+		ChannelID: "hook-1", Type: "WEBHOOK", Name: "ops", Enabled: true,
+		ConfigJSON: `{"url":"https://example.invalid/hook"}`,
+	})
+	sender := &captureAlertSender{}
+	api := &AlertAPI{Auth: e.svc, Sender: sender}
+	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-view", Username: "viewer"})
+
+	_, err := api.TestAlertChannel(ctx, connect.NewRequest(&procmeshv1.TestAlertChannelRequest{
+		Meta:      &procmeshv1.MutationMeta{OperationId: "op-test-viewer", Operator: "viewer"},
+		ChannelId: "hook-1",
+	}))
+	assertDenied(t, err)
+	if sender.calls != 0 {
+		t.Fatalf("calls=%d want 0", sender.calls)
 	}
 }
 

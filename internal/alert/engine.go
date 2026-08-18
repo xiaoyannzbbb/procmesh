@@ -23,14 +23,15 @@ type Sender interface {
 }
 
 type Engine struct {
-	Store    *store.Store
-	NodeID   string
-	NewID    func() string
-	Policy   func() control.AlertPolicy
-	Channels func() []control.AlertChannel
-	Sender   Sender
-	Audit    func(action, result, meta string) // 可空
-	Now      func() time.Time
+	Store       *store.Store
+	NodeID      string
+	NewID       func() string
+	Policy      func() control.AlertPolicy
+	Channels    func() []control.AlertChannel
+	Sender      Sender
+	Audit       func(action, result, meta string) // 可空
+	OnSendError func(ch control.AlertChannel, err error)
+	Now         func() time.Time
 }
 
 func (e *Engine) Observe(ctx context.Context, ev Event) (store.AlertRecord, error) {
@@ -108,6 +109,9 @@ func (e *Engine) dispatch(ctx context.Context, rec *store.AlertRecord, ev Event)
 		attempted = true
 		if err := e.Sender.Send(ctx, ch, *rec); err != nil {
 			lastErr = err
+			if e.OnSendError != nil {
+				e.OnSendError(ch, err)
+			}
 			if e.Audit != nil {
 				e.Audit("alert.send", "error", ch.ChannelID)
 			}

@@ -222,3 +222,42 @@ func TestEngine_AuditOnSendResult(t *testing.T) {
 		t.Fatalf("error audit %v", got)
 	}
 }
+
+func TestEngine_ReportsEachChannelSendError(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	snd := &recordingSender{errs: map[string]error{"ding-1": errors.New("DingTalk rejected message")}}
+	var gotChannel control.AlertChannel
+	var gotErr error
+	now := time.Unix(1_700_000_000, 0).UTC()
+	eng := &alert.Engine{
+		Store: st, NewID: func() string { return "a-send-error" },
+		Policy: func() control.AlertPolicy { return control.DefaultAlertPolicy() },
+		Channels: func() []control.AlertChannel {
+			return []control.AlertChannel{{ChannelID: "ding-1", Type: "DINGTALK", Enabled: true}}
+		},
+		Sender: snd,
+		OnSendError: func(ch control.AlertChannel, err error) {
+			gotChannel = ch
+			gotErr = err
+		},
+	}
+
+	_, err = eng.Observe(ctx, alert.Event{
+		Type: alert.TypeDiskHigh, NodeID: "n1", At: now, Firing: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotChannel.ChannelID != "ding-1" || gotChannel.Type != "DINGTALK" {
+		t.Fatalf("channel=%+v", gotChannel)
+	}
+	if gotErr == nil || gotErr.Error() != "DingTalk rejected message" {
+		t.Fatalf("error=%v", gotErr)
+	}
+}
