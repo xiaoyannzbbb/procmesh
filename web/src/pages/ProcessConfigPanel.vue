@@ -68,6 +68,7 @@ type MutationTarget = {
 const props = defineProps<{
   idOrName: string;
   targetNodeId: string;
+  ownerNodeHostname?: string;
 }>();
 
 const config = useConfigClient();
@@ -599,7 +600,15 @@ async function onRollback(toRevision: bigint | number): Promise<void> {
           </div>
           <div>
             <dt>{{ t("processConfig.config.owner") }}</dt>
-            <dd class="mono breakable">{{ textOrEmpty(loadedSpec.ownerAgentId) }}</dd>
+            <dd class="mono breakable">
+              <RouterLink
+                v-if="targetNodeId"
+                :to="`/nodes/${encodeURIComponent(targetNodeId)}`"
+              >
+                {{ ownerNodeHostname || loadedSpec.ownerAgentId || "—" }}
+              </RouterLink>
+              <span v-else>{{ textOrEmpty(loadedSpec.ownerAgentId) }}</span>
+            </dd>
           </div>
           <div>
             <dt>{{ t("processConfig.config.latestRevision") }}</dt>

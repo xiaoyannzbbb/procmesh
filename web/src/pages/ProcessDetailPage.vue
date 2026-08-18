@@ -20,7 +20,6 @@ import {
   flattenClusterProcesses,
   formatRemoteError,
   mapProcessDetail,
-  ownerDisplay,
   rowsFromProcessViews,
 } from "./processView";
 import ProcessConfigPanel from "./ProcessConfigPanel.vue";
@@ -78,12 +77,12 @@ const ownerNodeId = computed(() => {
   return listed.length === 1 ? listed[0].ownerNodeId : "";
 });
 
+const ownerHostname = computed(() => (
+  nodesQuery.data.value?.nodes.find((node) => node.nodeId === ownerNodeId.value)?.hostname ?? ""
+));
+
 const ownerLabel = computed(() => {
-  const match = gossipRows.value.find((r) => r.ownerNodeId === ownerNodeId.value && r.name === idOrName.value);
-  if (match) {
-    return ownerDisplay(match.ownerHostname, match.ownerNodeId);
-  }
-  return ownerNodeId.value;
+  return ownerHostname.value || ownerNodeId.value;
 });
 
 const targetOpts = computed(() => ({ headers: withTarget(ownerNodeId.value) }));
@@ -264,7 +263,12 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
           {{ t("processDetail.tabs.logs") }}
         </button>
       </div>
-      <ProcessConfigPanel v-if="tab === 'config'" :id-or-name="idOrName" :target-node-id="ownerNodeId" />
+      <ProcessConfigPanel
+        v-if="tab === 'config'"
+        :id-or-name="idOrName"
+        :target-node-id="ownerNodeId"
+        :owner-node-hostname="ownerHostname"
+      />
       <ProcessLogsPanel
         v-else-if="tab === 'logs'"
         :id-or-name="idOrName"
@@ -285,7 +289,15 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
           </div>
           <div>
             <dt>{{ t("processDetail.process.owner") }}</dt>
-            <dd>{{ detail.owner || "—" }}</dd>
+            <dd>
+              <RouterLink
+                v-if="ownerNodeId"
+                :to="`/nodes/${encodeURIComponent(ownerNodeId)}`"
+              >
+                {{ ownerHostname || ownerNodeId }}
+              </RouterLink>
+              <span v-else>{{ detail.owner || "—" }}</span>
+            </dd>
           </div>
           <div>
             <dt>{{ t("processDetail.process.instances") }}</dt>
