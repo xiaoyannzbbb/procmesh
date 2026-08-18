@@ -17,6 +17,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/store"
 	"github.com/qleelulu/procmesh/internal/version"
+	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 )
 
 func TestCLI_ApplyAndList(t *testing.T) {
@@ -324,6 +325,122 @@ func TestCLI_AlertChannelPutEnabledDefault(t *testing.T) {
 	}
 	if !channelPutEnabled(opt) {
 		t.Fatal("explicit --enabled true must send Enabled=true")
+	}
+}
+
+func TestMain_BackupUsage(t *testing.T) {
+	wantLines := []string{
+		"backup create --sink=fs|s3|peer [--process-id ID]... [--peer-node ID]...",
+		"backup list [--sink S] [--peer-node ID]... [--include-s3]",
+		"backup get SNAPSHOT_ID [--sink S] [--source-node ID] [--payload]",
+		"backup delete SNAPSHOT_ID --sink S",
+		"backup restore SNAPSHOT_ID --sink S --process-id ID --expected-revision N [--source-node ID]",
+	}
+	for _, line := range wantLines {
+		if !strings.Contains(usageText, line) {
+			t.Fatalf("usage missing %q", line)
+		}
+	}
+
+	code, _, errb := runCLI("backup")
+	if code != 2 {
+		t.Fatalf("backup without subcommand exit=%d stderr=%q", code, errb)
+	}
+	if strings.Contains(errb, "unknown command") {
+		t.Fatalf("backup must not be unknown command: %q", errb)
+	}
+
+	code, _, errb = runCLI("backup", "nope")
+	if code != 2 {
+		t.Fatalf("unknown backup subcommand exit=%d stderr=%q", code, errb)
+	}
+	if !strings.Contains(errb, "unknown backup command") {
+		t.Fatalf("stderr=%q", errb)
+	}
+}
+
+func TestParseArgs_BackupFlags(t *testing.T) {
+	opt, err := parseArgs([]string{
+		"backup", "create",
+		"--sink", "peer",
+		"--process-id", "p1",
+		"--process-id", "p2",
+		"--peer-node", "n1",
+		"--peer-node", "n2",
+	})
+	if err != nil {
+		t.Fatalf("create parse: %v", err)
+	}
+	if len(opt.args) != 2 || opt.args[0] != "backup" || opt.args[1] != "create" {
+		t.Fatalf("args=%v", opt.args)
+	}
+	if opt.sink != "peer" {
+		t.Fatalf("sink=%q", opt.sink)
+	}
+	if len(opt.processIDs) != 2 || opt.processIDs[0] != "p1" || opt.processIDs[1] != "p2" {
+		t.Fatalf("processIDs=%v", opt.processIDs)
+	}
+	if len(opt.peerNodes) != 2 || opt.peerNodes[0] != "n1" || opt.peerNodes[1] != "n2" {
+		t.Fatalf("peerNodes=%v", opt.peerNodes)
+	}
+
+	opt, err = parseArgs([]string{"backup", "list", "--sink", "fs", "--include-s3", "--peer-node", "peer-a"})
+	if err != nil {
+		t.Fatalf("list parse: %v", err)
+	}
+	if !opt.includeS3 {
+		t.Fatal("include-s3 presence flag")
+	}
+	if opt.sink != "fs" || len(opt.peerNodes) != 1 || opt.peerNodes[0] != "peer-a" {
+		t.Fatalf("sink=%q peerNodes=%v", opt.sink, opt.peerNodes)
+	}
+
+	opt, err = parseArgs([]string{"backup", "get", "snap-1", "--source-node", "node-b", "--payload"})
+	if err != nil {
+		t.Fatalf("get parse: %v", err)
+	}
+	if opt.sourceNode != "node-b" || !opt.payload {
+		t.Fatalf("sourceNode=%q payload=%v", opt.sourceNode, opt.payload)
+	}
+
+	opt, err = parseArgs([]string{"backup", "get", "snap-1", "--payload=false"})
+	if err != nil {
+		t.Fatalf("payload=false parse: %v", err)
+	}
+	if opt.payload {
+		t.Fatal("payload=false must clear payload")
+	}
+
+	opt, err = parseArgs([]string{
+		"backup", "restore", "snap-1",
+		"--sink", "fs",
+		"--process-id", "p1",
+		"--expected-revision", "3",
+		"--source-node", "s3",
+	})
+	if err != nil {
+		t.Fatalf("restore parse: %v", err)
+	}
+	if opt.sink != "fs" || !opt.expectedSet || opt.expectedRevision != 3 {
+		t.Fatalf("sink=%q expected=%d set=%v", opt.sink, opt.expectedRevision, opt.expectedSet)
+	}
+	if len(opt.processIDs) != 1 || opt.processIDs[0] != "p1" {
+		t.Fatalf("processIDs=%v", opt.processIDs)
+	}
+	if backupSourceNodeID(opt) != "" {
+		t.Fatalf("source-node s3 must be omitted for hop, got %q", backupSourceNodeID(opt))
+	}
+}
+
+func TestPrintBackupEntry_STALEPlaceholder(t *testing.T) {
+	var buf bytes.Buffer
+	printBackupEntry(&buf, &procmeshv1.BackupEntry{
+		SourceNode: "peer-x",
+		Freshness:  "STALE",
+	})
+	line := buf.String()
+	if !strings.Contains(line, "STALE") {
+		t.Fatalf("want STALE uppercase, got %q", line)
 	}
 }
 

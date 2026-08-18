@@ -30,6 +30,7 @@ type client struct {
 	batch    procmeshv1connect.BatchServiceClient
 	metrics  procmeshv1connect.MetricsServiceClient
 	alert    procmeshv1connect.AlertServiceClient
+	backup   procmeshv1connect.BackupServiceClient
 	opID     string
 	operator string
 }
@@ -63,6 +64,7 @@ func newClient(server, opID, operator, node, authToken string) *client {
 		batch:    procmeshv1connect.NewBatchServiceClient(hc, base, opts...),
 		metrics:  procmeshv1connect.NewMetricsServiceClient(hc, base, opts...),
 		alert:    procmeshv1connect.NewAlertServiceClient(hc, base, opts...),
+		backup:   procmeshv1connect.NewBackupServiceClient(hc, base, opts...),
 		opID:     opID,
 		operator: operator,
 	}

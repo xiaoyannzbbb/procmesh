@@ -73,6 +73,11 @@ commands:
   alert channel delete CHANNEL_ID
   alert policy get
   alert policy put --dedup-window-sec N --notify-on-resolve true|false --cpu N --memory N --disk N --consecutive N --suspect-too-long-sec N
+  backup create --sink=fs|s3|peer [--process-id ID]... [--peer-node ID]...
+  backup list [--sink S] [--peer-node ID]... [--include-s3]
+  backup get SNAPSHOT_ID [--sink S] [--source-node ID] [--payload]
+  backup delete SNAPSHOT_ID --sink S
+  backup restore SNAPSHOT_ID --sink S --process-id ID --expected-revision N [--source-node ID]
 `
 
 type usageError string
@@ -147,6 +152,12 @@ type options struct {
 	consecutiveSet     bool
 	suspectTooLongSec  int64
 	suspectTooLongSet  bool
+
+	sink       string
+	peerNodes  []string
+	includeS3  bool
+	sourceNode string
+	payload    bool
 
 	args []string
 }
@@ -243,6 +254,11 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return printUsage(stderr, usageError("missing alert subcommand"))
 		}
 		runErr = runAlert(c, rest[0], rest[1:], opt, stdout)
+	case "backup":
+		if len(rest) == 0 {
+			return printUsage(stderr, usageError("missing backup subcommand"))
+		}
+		runErr = runBackup(c, rest[0], rest[1:], opt, stdout)
 	default:
 		return printUsage(stderr, usageError("unknown command"))
 	}
@@ -277,11 +293,15 @@ func parseArgs(args []string) (options, error) {
 			return options{}, usageError("unknown flag")
 		}
 		if !hasVal {
-			i++
-			if i >= len(args) {
-				return options{}, usageError("flag --" + name + " requires a value")
+			if isPresenceBoolFlag(name) {
+				val = "true"
+			} else {
+				i++
+				if i >= len(args) {
+					return options{}, usageError("flag --" + name + " requires a value")
+				}
+				val = args[i]
 			}
-			val = args[i]
 		}
 		if err := applyFlag(&opt, name, val); err != nil {
 			return options{}, err
@@ -481,10 +501,37 @@ func applyFlag(opt *options, name, val string) error {
 		}
 		opt.suspectTooLongSec = n
 		opt.suspectTooLongSet = true
+	case "sink":
+		opt.sink = val
+	case "peer-node":
+		opt.peerNodes = append(opt.peerNodes, val)
+	case "include-s3":
+		b, err := parseBoolFlag(val)
+		if err != nil {
+			return usageError("invalid --include-s3")
+		}
+		opt.includeS3 = b
+	case "source-node":
+		opt.sourceNode = val
+	case "payload":
+		b, err := parseBoolFlag(val)
+		if err != nil {
+			return usageError("invalid --payload")
+		}
+		opt.payload = b
 	default:
 		return usageError("unknown flag --" + name)
 	}
 	return nil
+}
+
+func isPresenceBoolFlag(name string) bool {
+	switch name {
+	case "payload", "include-s3":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseBoolFlag(val string) (bool, error) {
