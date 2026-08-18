@@ -175,6 +175,10 @@ func startClusterAgentAt(t *testing.T, root, bootID string) string {
 }
 
 func startClusterAgentAtCtl(t *testing.T, root, bootID string) (string, context.CancelFunc) {
+	return startClusterAgentAtOpts(t, root, Options{BootID: bootID})
+}
+
+func startClusterAgentAtOpts(t *testing.T, root string, extra Options) (string, context.CancelFunc) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -189,8 +193,10 @@ func startClusterAgentAtCtl(t *testing.T, root, bootID string) (string, context.
 			RPCListen:     "127.0.0.1:0",
 			ControlListen: "127.0.0.1:0",
 			ShimBin:       testShimBin,
-			BootID:        bootID,
+			BootID:        extra.BootID,
 			OnListen:      func(addr string) { got <- addr },
+			DiskPercent:   extra.DiskPercent,
+			Backup:        extra.Backup,
 		})
 	}()
 	var addr string

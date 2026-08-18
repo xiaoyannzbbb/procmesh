@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** 执行中
+**Status:** 已完成
 
 **Goal:** Owner 上的 Process Spec + 全量 `config_revisions` 可备份到 Filesystem / S3 Compatible / Peer；恢复只走 Owner `ApplySpec` + CAS 产生新 revision；Peer 文件永不被对端 apply；Backup 页 restore 确认强制展示 Owner + expected revision。
 
@@ -1456,23 +1456,23 @@ func TestQ5_Disk95StopsBackupWrites(t *testing.T) {
 
 更新 `docs/superpowers/plans/2026-08-16-v1.1.md`：Q5 行改为 **已完成** 并链到本文件。
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 按上。
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/agent -run TestQ5_ -count=1 -timeout 180s`
 
 Expected: FAIL
 
-- [ ] **Step 3: 补齐接线缺口并 `make web`**
+- [x] **Step 3: 补齐接线缺口并 `make web`**
 
 若 Engine 未挂到 run loop、或 CLI 未注册、或 LocalOnly 未 mount PutPeerSnapshot，在本任务修到验收绿。不要趁机做 V1.2 DR。
 
 覆盖率：`go test ./internal/backup -cover` ≥ 80%。
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 ```bash
 go test ./internal/backup ./internal/store ./internal/api ./internal/cli ./internal/agent -count=1 -timeout 180s
@@ -1482,7 +1482,7 @@ make web
 
 Expected: PASS。`internal/backup` cover ≥ 80%。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/agent/q5_accept_test.go internal/web/dist docs/superpowers/plans

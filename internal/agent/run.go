@@ -58,6 +58,7 @@ type Options struct {
 	OnControlListen  func(addr string)
 	BootID           string // empty = paths.CurrentBootID(); tests may override
 	Backup           agentcfg.Backup
+	DiskPercent      func() float64 // optional override for backup disk protection (tests)
 }
 
 // Run owns the agent lifecycle and blocks until ctx is cancelled.
@@ -366,6 +367,9 @@ func newBackupEngine(opt Options, mgr *process.Manager, st *store.Store, collect
 			return ok && m.Status == control.MemberAdmitted
 		},
 		DiskPercent: func() float64 {
+			if opt.DiskPercent != nil {
+				return opt.DiskPercent()
+			}
 			if collector == nil {
 				return 0
 			}

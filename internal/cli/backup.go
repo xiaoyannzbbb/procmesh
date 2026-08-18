@@ -148,8 +148,16 @@ func backupRestore(c *client, snapshotID string, opt options, stdout io.Writer) 
 	if err != nil {
 		return err
 	}
+	var failed []string
 	for _, r := range resp.Msg.GetResults() {
 		printRestoreResult(stdout, r)
+		st := strings.ToUpper(strings.TrimSpace(r.GetStatus()))
+		if st != "" && st != "SUCCESS" {
+			failed = append(failed, st)
+		}
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("%s", strings.Join(failed, ","))
 	}
 	return nil
 }
