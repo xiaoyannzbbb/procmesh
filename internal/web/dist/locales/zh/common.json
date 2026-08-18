@@ -344,6 +344,7 @@
   "processConfig": {
     "loading": "加载中…",
     "conflictBanner": "409 冲突 — 重新加载后重试",
+    "logPathPending": "日志路径将在重启后生效",
     "editor": {
       "modeLabel": "编辑模式",
       "mode": {
@@ -396,6 +397,8 @@
         "successThreshold": "成功阈值",
         "restartOnFailure": "失败时重启",
         "restartCooldownMs": "重启冷却时间",
+        "logDirectory": "日志目录",
+        "redirectStderr": "将 stderr 重定向到 stdout",
         "maxSize": "最大日志大小",
         "maxFiles": "最大日志文件数",
         "maxAgeSeconds": "日志最长保留时间",
@@ -463,7 +466,8 @@
         "int32OutOfRange": "请输入 -2,147,483,648 到 2,147,483,647 之间的整数。",
         "int64OutOfRange": "请输入 -9,223,372,036,854,775,808 到 9,223,372,036,854,775,807 之间的整数。",
         "invalidDecimal": "请输入有限的十进制数。",
-        "invalidOption": "当前选项无效，请从可用选项中选择。"
+        "invalidOption": "当前选项无效，请从可用选项中选择。",
+        "invalidLogDirectory": "日志目录必须是绝对路径"
       }
     },
     "config": {
@@ -536,6 +540,7 @@
     "back": "← 进程",
     "loading": "加载中…",
     "ownerNodeRequired": "需要所有者节点。",
+    "logPathPending": "日志路径将在重启后生效",
     "actions": {
       "start": "启动",
       "stop": "停止",
@@ -592,7 +597,9 @@
     "tail": "查看最后100行",
     "streamButton": "流式查看",
     "stop": "停止",
-    "download": "下载"
+    "download": "下载",
+    "stderrMerged": "stderr 已合并到 stdout",
+    "stderrMergePending": "重启后 stderr 将合并到 stdout"
   },
   "roles": {
     "title": "角色",

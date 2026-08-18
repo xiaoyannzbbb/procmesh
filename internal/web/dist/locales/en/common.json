@@ -344,6 +344,7 @@
   "processConfig": {
     "loading": "Loading…",
     "conflictBanner": "409 Conflict — reload and retry",
+    "logPathPending": "Log path will apply after restart",
     "editor": {
       "modeLabel": "Editor mode",
       "mode": {
@@ -396,6 +397,8 @@
         "successThreshold": "Success threshold",
         "restartOnFailure": "Restart on failure",
         "restartCooldownMs": "Restart cooldown",
+        "logDirectory": "Log directory",
+        "redirectStderr": "Redirect stderr to stdout",
         "maxSize": "Maximum log size",
         "maxFiles": "Maximum log files",
         "maxAgeSeconds": "Maximum log age",
@@ -463,7 +466,8 @@
         "int32OutOfRange": "Enter an integer from -2,147,483,648 to 2,147,483,647.",
         "int64OutOfRange": "Enter an integer from -9,223,372,036,854,775,808 to 9,223,372,036,854,775,807.",
         "invalidDecimal": "Enter a finite decimal number.",
-        "invalidOption": "Select one of the available options."
+        "invalidOption": "Select one of the available options.",
+        "invalidLogDirectory": "Log directory must be an absolute path"
       }
     },
     "config": {
@@ -536,6 +540,7 @@
     "back": "← Processes",
     "loading": "Loading…",
     "ownerNodeRequired": "Owner node is required.",
+    "logPathPending": "Log path will apply after restart",
     "actions": {
       "start": "Start",
       "stop": "Stop",
@@ -592,7 +597,9 @@
     "tail": "Tail 100",
     "streamButton": "Stream",
     "stop": "Stop",
-    "download": "Download"
+    "download": "Download",
+    "stderrMerged": "stderr is merged into stdout",
+    "stderrMergePending": "stderr will merge into stdout after restart"
   },
   "roles": {
     "title": "Roles",
