@@ -39,7 +39,8 @@ async function mountProcessesPage(nodes: unknown[] = [], processes: unknown[] = 
       provide: { nodeClient, processClient },
       stubs: {
         RouterLink: {
-          template: '<a><slot /></a>',
+          props: ["to"],
+          template: `<a :href="typeof to === 'string' ? to : to?.path"><slot /></a>`,
         },
       },
     },
@@ -150,5 +151,58 @@ describe("ProcessesPage PROCESS_GROUP", () => {
     const text = wrapper.text();
     expect(text).toContain("pay");
     expect(text).not.toContain("No processes");
+  });
+});
+
+describe("ProcessesPage owner column", () => {
+  it("shows only the owner hostname and links to the node page", async () => {
+    await i18n.changeLanguage("en");
+    await i18n.addResourceBundle("en", "common", {
+      processes: {
+        title: "Processes",
+        loading: "Loading…",
+        noProcesses: "No processes",
+        filterGroup: "Group",
+        filterGroupPlaceholder: "Filter group",
+        table: {
+          name: "Name",
+          owner: "Owner",
+          desired: "Desired",
+          observed: "Observed",
+          health: "Health",
+          revisions: "Revisions",
+          freshness: "Freshness",
+        },
+      },
+      status: { live: "LIVE", stale: "STALE", unknown: "UNKNOWN" },
+    });
+
+    const { wrapper } = await mountProcessesPage(
+      [
+        {
+          nodeId: "n-a",
+          hostname: "agent-a",
+          state: "ALIVE",
+          lastUpdatedUnixMs: Date.now(),
+          processes: [
+            {
+              name: "pay",
+              group: "finance",
+              desired: "RUNNING",
+              observed: "RUNNING",
+              health: "HEALTHY",
+              latestRevision: 1,
+              activeRevision: 1,
+              freshnessUnixMs: Date.now(),
+            },
+          ],
+        },
+      ],
+    );
+
+    const ownerLink = wrapper.get("tbody tr td:nth-child(2) a");
+    expect(ownerLink.text()).toBe("agent-a");
+    expect(ownerLink.text()).not.toContain("n-a");
+    expect(ownerLink.attributes("href")).toBe("/nodes/n-a");
   });
 });

@@ -8,6 +8,7 @@ import {
   formatRemoteError,
   needsRestartBanner,
   RESTART_REQUIRED_BANNER,
+  ownerDisplay,
   rowsFromProcessViews,
 } from "./processView";
 
@@ -133,6 +134,14 @@ describe("formatRemoteError", () => {
       },
     ]);
     expect(formatRemoteError(err)).toBe("INVALID: node is not an admitted member");
+  });
+});
+
+describe("ownerDisplay", () => {
+  it("shows hostname only and never appends the node id", () => {
+    expect(ownerDisplay("agent-a", "n-a")).toBe("agent-a");
+    expect(ownerDisplay("", "n-a")).toBe("n-a");
+    expect(ownerDisplay("", "")).toBe("—");
   });
 });
 

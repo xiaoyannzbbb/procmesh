@@ -5,6 +5,7 @@ import FreshnessBadge from "../components/FreshnessBadge.vue";
 import { useNodeClient, useProcessClient } from "../lib/rpc";
 import { useI18n } from "../lib/useI18n";
 import { useProcessState } from "../lib/useProcessState";
+import { mapNode } from "./clusterView";
 import {
   flattenClusterProcesses,
   formatRemoteError,
@@ -35,9 +36,20 @@ const processesQuery = useQuery({
 });
 
 const rows = computed(() => {
-  const gossip = flattenClusterProcesses(nodesQuery.data.value?.nodes ?? [], Date.now());
-  const listed = rowsFromProcessViews(processesQuery.data.value?.processes ?? [], Date.now());
-  const all = mergeProcessRows(gossip, listed);
+  const now = Date.now();
+  const nodeList = nodesQuery.data.value?.nodes ?? [];
+  const gossip = flattenClusterProcesses(nodeList, now);
+  const listed = rowsFromProcessViews(processesQuery.data.value?.processes ?? [], now);
+  const hosts = new Map(
+    nodeList.map((raw) => {
+      const node = mapNode(raw, now);
+      return [node.nodeId, node.hostname] as const;
+    }),
+  );
+  const all = mergeProcessRows(gossip, listed).map((row) => ({
+    ...row,
+    ownerHostname: row.ownerHostname || hosts.get(row.ownerNodeId) || "",
+  }));
   const filter = groupFilter.value.trim();
   if (!filter) {
     return all;
@@ -104,7 +116,13 @@ const errorText = computed(() => {
               </RouterLink>
             </td>
             <td>
-              <div>{{ ownerDisplay(row.ownerHostname, row.ownerNodeId) }}</div>
+              <RouterLink
+                v-if="row.ownerNodeId"
+                :to="`/nodes/${encodeURIComponent(row.ownerNodeId)}`"
+              >
+                {{ ownerDisplay(row.ownerHostname, row.ownerNodeId) }}
+              </RouterLink>
+              <span v-else>{{ ownerDisplay(row.ownerHostname, row.ownerNodeId) }}</span>
             </td>
             <td>{{ row.desired ? translateDesiredState(row.desired) : '—' }}</td>
             <td>{{ row.observed ? translateObservedState(row.observed) : '—' }}</td>

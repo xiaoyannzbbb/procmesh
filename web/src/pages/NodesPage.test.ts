@@ -38,7 +38,8 @@ async function mountNodesPage(nodes: unknown[] = []) {
       provide: { nodeClient },
       stubs: {
         RouterLink: {
-          template: '<a><slot /></a>',
+          props: ["to"],
+          template: `<a :href="typeof to === 'string' ? to : to?.path"><slot /></a>`,
         },
       },
     },
@@ -81,7 +82,7 @@ describe("NodesPage i18n", () => {
     const text = wrapper.text();
     expect(text).toContain("Nodes");
     expect(text).toContain("Hostname");
-    expect(text).toContain("Node ID");
+    expect(wrapper.findAll("thead th").map((th) => th.text())).not.toContain("Node ID");
     expect(text).toContain("No nodes");
   });
 
@@ -110,7 +111,51 @@ describe("NodesPage i18n", () => {
     const text = wrapper.text();
     expect(text).toContain("节点");
     expect(text).toContain("主机名");
-    expect(text).toContain("节点ID");
+    expect(wrapper.findAll("thead th").map((th) => th.text())).not.toContain("节点ID");
     expect(text).toContain("无节点");
+  });
+});
+
+describe("NodesPage identity column", () => {
+  it("shows hostname and node id stacked in the same column", async () => {
+    await i18n.changeLanguage("en");
+    await i18n.addResourceBundle("en", "common", {
+      nodes: {
+        title: "Nodes",
+        loading: "Loading…",
+        noNodes: "No nodes",
+        table: {
+          hostname: "Hostname",
+          nodeId: "Node ID",
+          state: "State",
+          version: "Version",
+          resources: "Resources",
+          processes: "Processes",
+          freshness: "Freshness",
+          updated: "Updated",
+        },
+      },
+      status: { live: "LIVE", stale: "STALE", unknown: "UNKNOWN" },
+    });
+
+    const wrapper = await mountNodesPage([
+      {
+        nodeId: "n-a",
+        hostname: "agent-a",
+        state: "ALIVE",
+        lastUpdatedUnixMs: Date.now(),
+        processes: [],
+      },
+    ]);
+
+    const headers = wrapper.findAll("thead th").map((th) => th.text());
+    expect(headers).toContain("Hostname");
+    expect(headers).not.toContain("Node ID");
+    expect(headers).toHaveLength(7);
+
+    const identity = wrapper.get("tbody tr td");
+    expect(identity.get("a").text()).toBe("agent-a");
+    expect(identity.get("a").attributes("href")).toBe("/nodes/n-a");
+    expect(identity.get(".node-id").text()).toBe("n-a");
   });
 });

@@ -42,7 +42,6 @@ const errorText = computed(() => {
         <thead>
           <tr>
             <th>{{ t("nodes.table.hostname") }}</th>
-            <th>{{ t("nodes.table.nodeId") }}</th>
             <th>{{ t("nodes.table.state") }}</th>
             <th>{{ t("nodes.table.version") }}</th>
             <th>{{ t("nodes.table.resources") }}</th>
@@ -54,9 +53,11 @@ const errorText = computed(() => {
         <tbody>
           <tr v-for="node in nodes" :key="node.nodeId">
             <td>
-              <RouterLink :to="`/nodes/${encodeURIComponent(node.nodeId)}`">{{ node.hostname || node.nodeId }}</RouterLink>
+              <div class="node-identity">
+                <RouterLink :to="`/nodes/${encodeURIComponent(node.nodeId)}`">{{ node.hostname || node.nodeId }}</RouterLink>
+                <div v-if="node.hostname && node.hostname !== node.nodeId" class="mono muted node-id">{{ node.nodeId }}</div>
+              </div>
             </td>
-            <td class="mono">{{ node.nodeId }}</td>
             <td>{{ node.state }}</td>
             <td>{{ node.agentVersion || "—" }}</td>
             <td>{{ formatResources(node.resources) }}</td>
@@ -75,7 +76,7 @@ const errorText = computed(() => {
             <td>{{ node.lastUpdated }}</td>
           </tr>
           <tr v-if="!nodes.length">
-            <td colspan="8" class="muted">{{ t("nodes.noNodes") }}</td>
+            <td colspan="7" class="muted">{{ t("nodes.noNodes") }}</td>
           </tr>
         </tbody>
       </table>
@@ -109,9 +110,19 @@ h1 {
   background: var(--color-card);
   overflow: auto;
 }
+.node-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 0;
+}
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.8rem;
+}
+.node-id {
+  overflow-wrap: anywhere;
+  font-size: 0.75rem;
 }
 a {
   color: var(--color-accent);

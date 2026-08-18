@@ -382,9 +382,6 @@ export function mapProcessDetail(
 }
 
 export function ownerDisplay(hostname: string, nodeId: string): string {
-  if (hostname && nodeId && hostname !== nodeId) {
-    return `${hostname} (${nodeId})`;
-  }
   return hostname || nodeId || "—";
 }
 
