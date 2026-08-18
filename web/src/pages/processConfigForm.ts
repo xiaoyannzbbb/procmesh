@@ -50,7 +50,14 @@ export type ProcessConfigFormState = {
     restartOnFailure: boolean;
     restartCooldownMs: string;
   };
-  log: { maxSize: string; maxFiles: string; maxAgeSeconds: string; compress: boolean };
+  log: {
+    directory: string;
+    redirectStderr: boolean;
+    maxSize: string;
+    maxFiles: string;
+    maxAgeSeconds: string;
+    compress: boolean;
+  };
   resources: { cpuQuotaMillis: string; memoryBytes: string; openFiles: string };
   dependencies: ProcessConfigDependency[];
   latestRevision: string;
@@ -78,7 +85,8 @@ export type ProcessConfigIssueCode =
   | "int32OutOfRange"
   | "int64OutOfRange"
   | "invalidDecimal"
-  | "invalidOption";
+  | "invalidOption"
+  | "invalidLogDirectory";
 
 export type ProcessConfigIssue = {
   path: string;
@@ -179,6 +187,8 @@ export function specToProcessConfigForm(spec: ProcessSpec): ProcessConfigFormSta
       restartCooldownMs: decimal(health?.restartCooldownMs ?? 0n),
     },
     log: {
+      directory: log?.directory ?? "",
+      redirectStderr: log?.redirectStderr ?? false,
       maxSize: decimal(log?.maxSize ?? 0n),
       maxFiles: decimal(log?.maxFiles ?? 0),
       maxAgeSeconds: decimal(log?.maxAgeSeconds ?? 0n),
@@ -239,6 +249,8 @@ function shouldIncludeHealth(form: ProcessConfigFormState): boolean {
 
 function shouldIncludeLog(form: ProcessConfigFormState): boolean {
   return form.hasLog
+    || form.log.directory.trim() !== ""
+    || form.log.redirectStderr
     || hasEditedNumber(form.log.maxSize)
     || hasEditedNumber(form.log.maxFiles)
     || hasEditedNumber(form.log.maxAgeSeconds)
@@ -288,6 +300,8 @@ export function processConfigFormToSpec(form: ProcessConfigFormState): ProcessSp
     : undefined;
   const log = shouldIncludeLog(form)
     ? create(LogPolicySchema, {
+        directory: form.log.directory,
+        redirectStderr: form.log.redirectStderr,
         maxSize: parseInt64(form.log.maxSize, "log.maxSize"),
         maxFiles: parseInt32(form.log.maxFiles, "log.maxFiles"),
         maxAgeSeconds: parseInt64(form.log.maxAgeSeconds, "log.maxAgeSeconds"),
@@ -459,6 +473,10 @@ export function validateProcessConfigForm(form: ProcessConfigFormState): Process
   }
 
   if (shouldIncludeLog(form)) {
+    const directory = form.log.directory.trim();
+    if (directory !== "" && !directory.startsWith("/")) {
+      addIssue(issues, "log.directory", "invalidLogDirectory");
+    }
     validateNonNegative(issues, "log.maxSize", form.log.maxSize, INT64_MIN, INT64_MAX, "int64OutOfRange");
     validateNonNegative(issues, "log.maxFiles", form.log.maxFiles, INT32_MIN, INT32_MAX, "int32OutOfRange");
     validateNonNegative(issues, "log.maxAgeSeconds", form.log.maxAgeSeconds, INT64_MIN, INT64_MAX, "int64OutOfRange");

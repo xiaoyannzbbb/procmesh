@@ -48,6 +48,7 @@ const validationTranslationKeys: Record<ProcessConfigIssueCode, string> = {
   int64OutOfRange: "processConfig.editor.validation.int64OutOfRange",
   invalidDecimal: "processConfig.editor.validation.invalidDecimal",
   invalidOption: "processConfig.editor.validation.invalidOption",
+  invalidLogDirectory: "processConfig.editor.validation.invalidLogDirectory",
 };
 
 function processConfigTranslationKeys(): string[] {
@@ -128,6 +129,8 @@ beforeEach(async () => {
                 successThreshold: "Success threshold",
                 restartOnFailure: "Restart on failure",
                 restartCooldownMs: "Restart cooldown",
+                logDirectory: "Log directory",
+                redirectStderr: "Redirect stderr to stdout",
                 maxSize: "Maximum log size",
                 maxFiles: "Maximum log files",
                 maxAgeSeconds: "Maximum log age",
@@ -236,7 +239,14 @@ function completeModel(): ProcessConfigFormState {
       restartOnFailure: true,
       restartCooldownMs: "30000",
     },
-    log: { maxSize: "104857600", maxFiles: "10", maxAgeSeconds: "604800", compress: true },
+    log: {
+      directory: "/var/log/api",
+      redirectStderr: true,
+      maxSize: "104857600",
+      maxFiles: "10",
+      maxAgeSeconds: "604800",
+      compress: true,
+    },
     resources: { cpuQuotaMillis: "500", memoryBytes: "536870912", openFiles: "4096" },
     dependencies: [{ processName: "db", condition: "HEALTHY" }],
     latestRevision: "7",

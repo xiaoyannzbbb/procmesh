@@ -8,7 +8,7 @@ import { ProcessSpecSchema, type ProcessSpec } from "../gen/procmesh/v1/api_pb";
 import { isConflict } from "../lib/connecterr";
 import { withTarget } from "../lib/headers";
 import { newOperationId } from "../lib/opid";
-import { useConfigClient } from "../lib/rpc";
+import { useConfigClient, useProcessClient } from "../lib/rpc";
 import { session } from "../lib/session";
 import { useI18n } from "../lib/useI18n";
 import ProcessConfigForm from "./ProcessConfigForm.vue";
@@ -72,6 +72,7 @@ const props = defineProps<{
 }>();
 
 const config = useConfigClient();
+const processes = useProcessClient();
 const queryClient = useQueryClient();
 const editorMode = ref<EditorMode>("form");
 const formDraft = ref<ProcessConfigFormState | null>(null);
@@ -104,6 +105,18 @@ const configQuery = useQuery({
   queryFn: () => config.getConfig({ idOrName: props.idOrName }, targetOpts.value),
   enabled,
   refetchOnWindowFocus: false,
+});
+
+const processQuery = useQuery({
+  queryKey: computed(() => ["process", props.idOrName, props.targetNodeId]),
+  queryFn: () => processes.getProcess({ idOrName: props.idOrName }, targetOpts.value),
+  enabled,
+  refetchOnWindowFocus: false,
+});
+
+const logPathPending = computed(() => {
+  const instances = processQuery.data.value?.process?.instances ?? [];
+  return instances.some((inst) => inst.logPathPending);
 });
 
 const historyQuery = useQuery({
@@ -553,6 +566,7 @@ async function onRollback(toRevision: bigint | number): Promise<void> {
 <template>
   <div class="panel">
     <div v-if="conflictText" class="banner conflict" role="alert">{{ conflictText }}</div>
+    <div v-if="logPathPending" class="banner" role="status">{{ t("processConfig.logPathPending") }}</div>
     <p v-if="errorText" class="error" role="alert">{{ errorText }}</p>
     <p v-if="configPending && !loadedSpec" class="muted">{{ t("processConfig.loading") }}</p>
 
@@ -731,6 +745,7 @@ async function onRollback(toRevision: bigint | number): Promise<void> {
     >
       <form class="config-form drawer-form" @submit.prevent="onSave">
         <div v-if="conflictText" class="banner conflict" role="alert">{{ conflictText }}</div>
+        <div v-if="logPathPending" class="banner" role="status">{{ t("processConfig.logPathPending") }}</div>
         <p v-if="actionError" class="error" role="alert">{{ actionError }}</p>
         <p class="muted drawer-intro">{{ t("processConfig.config.editHint") }}</p>
         <div class="editor-mode" role="group" :aria-label="t('processConfig.editor.modeLabel')">

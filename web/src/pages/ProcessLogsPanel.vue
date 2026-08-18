@@ -13,8 +13,10 @@ const props = withDefaults(
     idOrName: string;
     targetNodeId: string;
     instances?: string[];
+    redirectStderr?: boolean;
+    logPathPending?: boolean;
   }>(),
-  { instances: () => [] },
+  { instances: () => [], redirectStderr: false, logPathPending: false },
 );
 
 const logs = useLogClient();
@@ -170,6 +172,12 @@ void tail();
         </button>
       </div>
     </div>
+    <p v-if="streamName === 'stderr' && redirectStderr && !logPathPending" class="muted" role="status">
+      {{ t("processLogs.stderrMerged") }}
+    </p>
+    <p v-else-if="streamName === 'stderr' && redirectStderr && logPathPending" class="muted" role="status">
+      {{ t("processLogs.stderrMergePending") }}
+    </p>
     <p v-if="errorText" class="error" role="alert">{{ errorText }}</p>
     <pre class="log-window" tabindex="0">{{ logText }}</pre>
   </section>
@@ -211,6 +219,10 @@ h2 {
 .field .input {
   width: auto;
   min-width: 8rem;
+}
+.muted {
+  color: var(--color-muted);
+  font-size: 0.875rem;
 }
 .error {
   margin: 0 0 0.75rem;

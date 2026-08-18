@@ -234,6 +234,9 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
       <div v-if="detail.showRestartBanner" class="banner restart" role="status">
         {{ detail.restartBanner }}
       </div>
+      <div v-if="detail.logPathPending" class="banner" role="status">
+        {{ t("processDetail.logPathPending") }}
+      </div>
       <div class="tabs" role="tablist">
         <button
           type="button"
@@ -274,6 +277,8 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
         :id-or-name="idOrName"
         :target-node-id="ownerNodeId"
         :instances="detail.instanceRows.map((r) => r.instanceId).filter(Boolean)"
+        :redirect-stderr="detail.redirectStderr"
+        :log-path-pending="detail.logPathPending"
       />
       <template v-else>
       <section class="card">

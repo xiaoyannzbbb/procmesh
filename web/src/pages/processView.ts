@@ -53,6 +53,8 @@ export type ProcessDetailView = {
   latestRevision: number;
   showRestartBanner: boolean;
   restartBanner: string;
+  logPathPending: boolean;
+  redirectStderr: boolean;
   cpu: string;
   cpuNote: string;
   memory: string;
@@ -356,6 +358,7 @@ export function mapProcessDetail(
   const processId = toStr(pick(rec, "processId", "process_id")) || toStr(pick(spec, "processId", "process_id"));
   const owner = ownerLabel || toStr(pick(spec, "ownerAgentId", "owner_agent_id"));
   const showBanner = needsRestartBanner(latestRevision, activeRevision);
+  const log = pick(spec, "log") ?? {};
 
   return {
     name,
@@ -373,6 +376,8 @@ export function mapProcessDetail(
     latestRevision,
     showRestartBanner: showBanner,
     restartBanner: showBanner ? RESTART_REQUIRED_BANNER : "",
+    logPathPending: instances.some((inst) => toBool(pick(asRecord(inst), "logPathPending", "log_path_pending"))),
+    redirectStderr: toBool(pick(asRecord(log), "redirectStderr", "redirect_stderr")),
     cpu: hasMetrics ? cpuMetric.text : "—",
     cpuNote: hasMetrics ? cpuMetric.note : "",
     memory: hasMetrics ? memMetric.text : "—",

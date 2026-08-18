@@ -50,7 +50,14 @@ const fullSpec = create(ProcessSpecSchema, {
     restartOnFailure: true,
     restartCooldownMs: 30_000n,
   },
-  log: { maxSize: 104_857_600n, maxFiles: 10, maxAgeSeconds: 604_800n, compress: true },
+  log: {
+    directory: "/var/log/api",
+    redirectStderr: true,
+    maxSize: 104_857_600n,
+    maxFiles: 10,
+    maxAgeSeconds: 604_800n,
+    compress: true,
+  },
   resources: { cpuQuotaMillis: 500n, memoryBytes: 536_870_912n, openFiles: 4096n },
   dependencies: [{ processName: "db", condition: "HEALTHY" }],
   latestRevision: 7n,
@@ -92,6 +99,8 @@ const expectedAllLeafPaths = [
   "health.successThreshold",
   "health.restartOnFailure",
   "health.restartCooldownMs",
+  "log.directory",
+  "log.redirectStderr",
   "log.maxSize",
   "log.maxFiles",
   "log.maxAgeSeconds",
@@ -176,6 +185,7 @@ describe("ProcessSpec form validation", () => {
     ["stopTimeoutMs", (form) => { form.stopTimeoutMs = "one-second"; }, "invalidInteger"],
     ["health.expectedStatus", (form) => { form.health.expectedStatus = "2147483648"; }, "int32OutOfRange"],
     ["stopTimeoutMs", (form) => { form.stopTimeoutMs = "9223372036854775808"; }, "int64OutOfRange"],
+    ["log.directory", (form) => { form.log.directory = "relative/logs"; }, "invalidLogDirectory"],
   ])("reports %s", (path, mutate, code) => {
     const form = specToProcessConfigForm(fullSpec);
     mutate(form);

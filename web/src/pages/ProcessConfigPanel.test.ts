@@ -22,6 +22,7 @@ beforeEach(async () => {
         common: {
           processConfig: {
             conflictBanner: "409 Conflict — reload and retry",
+            logPathPending: "Log path will apply after restart",
             loading: "Loading…",
             config: {
               title: "Config",
@@ -184,11 +185,14 @@ async function mountPanel(opts: MountOpts | ReturnType<typeof vi.fn> = {}) {
     diff: vi.fn().mockResolvedValue({ diff: resolved.diff ?? "" }),
     rollback: vi.fn(),
   };
+  const processClient = {
+    getProcess: vi.fn().mockResolvedValue({ process: { spec, instances: [] } }),
+  };
   const wrapper = mount(ProcessConfigPanel, {
     props: { idOrName: "web", targetNodeId: "n1" },
     global: {
       plugins: [[VueQueryPlugin, { queryClient }], [I18NextVue, { i18next: i18n }]],
-      provide: { configClient },
+      provide: { configClient, processClient },
       stubs: {
         RouterLink: {
           template: '<a><slot /></a>',

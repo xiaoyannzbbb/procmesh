@@ -54,6 +54,8 @@ export type ProcessConfigFieldPath =
   | "health.successThreshold"
   | "health.restartOnFailure"
   | "health.restartCooldownMs"
+  | "log.directory"
+  | "log.redirectStderr"
   | "log.maxSize"
   | "log.maxFiles"
   | "log.maxAgeSeconds"
@@ -132,6 +134,8 @@ export const PROCESS_CONFIG_FIELDS: readonly ProcessConfigField[] = [
   { path: "health.successThreshold", section: "health", control: "integer", labelKey: "processConfig.editor.field.successThreshold" },
   { path: "health.restartOnFailure", section: "health", control: "boolean", labelKey: "processConfig.editor.field.restartOnFailure" },
   { path: "health.restartCooldownMs", section: "health", control: "integer", labelKey: "processConfig.editor.field.restartCooldownMs", unitKey: "processConfig.editor.unit.ms" },
+  { path: "log.directory", section: "logsResources", control: "text", labelKey: "processConfig.editor.field.logDirectory" },
+  { path: "log.redirectStderr", section: "logsResources", control: "boolean", labelKey: "processConfig.editor.field.redirectStderr" },
   { path: "log.maxSize", section: "logsResources", control: "integer", labelKey: "processConfig.editor.field.maxSize", unitKey: "processConfig.editor.unit.bytes" },
   { path: "log.maxFiles", section: "logsResources", control: "integer", labelKey: "processConfig.editor.field.maxFiles" },
   { path: "log.maxAgeSeconds", section: "logsResources", control: "integer", labelKey: "processConfig.editor.field.maxAgeSeconds", unitKey: "processConfig.editor.unit.seconds" },

@@ -22,7 +22,10 @@ beforeEach(async () => {
 
 const mounted: Array<{ unmount: () => void }> = [];
 
-async function mountProcessLogsPanel(instances: string[] = []) {
+async function mountProcessLogsPanel(
+  instances: string[] = [],
+  extra: { redirectStderr?: boolean; logPathPending?: boolean } = {},
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -36,6 +39,8 @@ async function mountProcessLogsPanel(instances: string[] = []) {
       idOrName: "test-process",
       targetNodeId: "node1",
       instances,
+      redirectStderr: extra.redirectStderr,
+      logPathPending: extra.logPathPending,
     },
     global: {
       plugins: [
@@ -106,5 +111,47 @@ describe("ProcessLogsPanel i18n", () => {
     expect(text).toContain("实例");
     expect(text).toContain("所有实例");
     expect(text).toContain("查看最后100行");
+  });
+});
+
+describe("ProcessLogsPanel stderr merge hint", () => {
+  async function addMergeCopy() {
+    await i18n.addResourceBundle("en", "common", {
+      processLogs: {
+        title: "Logs",
+        stream: "Stream",
+        instance: "Instance",
+        allInstances: "All instances",
+        stdout: "stdout",
+        stderr: "stderr",
+        tail: "Tail 100",
+        streamButton: "Stream",
+        download: "Download",
+        stderrMerged: "stderr is merged into stdout",
+        stderrMergePending: "stderr will merge into stdout after restart",
+      },
+    }, true, true);
+  }
+
+  it("keeps the stderr tab clickable and shows the merged hint from latest spec", async () => {
+    await addMergeCopy();
+    const wrapper = await mountProcessLogsPanel(["inst1"], { redirectStderr: true, logPathPending: false });
+    const stderr = wrapper.get("select").findAll("option").find((option) => option.element.value === "stderr");
+    expect(stderr).toBeDefined();
+    expect(stderr!.attributes("disabled")).toBeUndefined();
+
+    await wrapper.get("select").setValue("stderr");
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.get("[role='status']").text()).toBe("stderr is merged into stdout");
+  });
+
+  it("shows a pending merge hint when latest spec redirects but the path is pending", async () => {
+    await addMergeCopy();
+    const wrapper = await mountProcessLogsPanel(["inst1"], { redirectStderr: true, logPathPending: true });
+    await wrapper.get("select").setValue("stderr");
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.get("[role='status']").text()).toBe("stderr will merge into stdout after restart");
   });
 });
