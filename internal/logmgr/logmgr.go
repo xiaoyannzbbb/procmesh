@@ -47,6 +47,9 @@ type Manager struct {
 	Now    func() time.Time
 	Policy Policy // 零值在 Protect 前视为 DefaultPolicy()
 
+	ExtraLogDirs []string
+	SameDeviceFn func(a, b string) bool // nil → SameDevice
+
 	mu      sync.Mutex
 	blocked bool
 }
@@ -332,8 +335,8 @@ func Prepare(paths ...string) error {
 }
 
 // Protect classifies disk usage using Policy. AutoDelete deletes oldest logs
-// under logs/ until used ≤ WarnPercent; EmergencyStopWrites blocks writes
-// until used ≤ CleanupPercent.
+// under logs/ and same-device ExtraLogDirs until used ≤ WarnPercent;
+// EmergencyStopWrites blocks writes until used ≤ CleanupPercent.
 func (m *Manager) Protect(ctx context.Context) (Level, error) {
 	if m == nil {
 		return OK, nil
@@ -476,7 +479,7 @@ func (m *Manager) deleteOldestLogs(ctx context.Context, stopAt float64) (float64
 		if err := ctx.Err(); err != nil {
 			return used, err
 		}
-		files, err := listDeletableLogs(m.Root)
+		files, err := listDeletableLogs(m)
 		if err != nil {
 			return used, err
 		}
@@ -494,8 +497,8 @@ func (m *Manager) deleteOldestLogs(ctx context.Context, stopAt float64) (float64
 	return used, nil
 }
 
-func listDeletableLogs(root string) ([]logFile, error) {
-	dir := filepath.Join(root, "logs")
+func listDeletableLogs(m *Manager) ([]logFile, error) {
+	dir := filepath.Join(m.Root, "logs")
 	var files []logFile
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -510,7 +513,7 @@ func listDeletableLogs(root string) ([]logFile, error) {
 		if !deletableLogName(info.Name()) {
 			return nil
 		}
-		if protectedPath(root, path) {
+		if protectedPath(m.Root, path) {
 			return nil
 		}
 		files = append(files, logFile{path: path, modTime: info.ModTime()})
@@ -519,6 +522,32 @@ func listDeletableLogs(root string) ([]logFile, error) {
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
+
+	fn := m.SameDeviceFn
+	if fn == nil {
+		fn = SameDevice
+	}
+	for _, extra := range m.ExtraLogDirs {
+		if extra == "" || !fn(m.Root, extra) {
+			continue
+		}
+		extraFiles, err := listExtraOrdinalLogs(m.Root, extra)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, extraFiles...)
+	}
+
+	seen := make(map[string]struct{}, len(files))
+	deduped := make([]logFile, 0, len(files))
+	for _, f := range files {
+		if _, ok := seen[f.path]; ok {
+			continue
+		}
+		seen[f.path] = struct{}{}
+		deduped = append(deduped, f)
+	}
+	files = deduped
 	sort.Slice(files, func(i, j int) bool {
 		if !files[i].modTime.Equal(files[j].modTime) {
 			return files[i].modTime.Before(files[j].modTime)
@@ -526,6 +555,60 @@ func listDeletableLogs(root string) ([]logFile, error) {
 		return files[i].path < files[j].path
 	})
 	return files, nil
+}
+
+func listExtraOrdinalLogs(root, extra string) ([]logFile, error) {
+	ents, err := os.ReadDir(extra)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var files []logFile
+	for _, e := range ents {
+		if !e.IsDir() || !decimalIntegerName(e.Name()) {
+			continue
+		}
+		child := filepath.Join(extra, e.Name())
+		childEnts, err := os.ReadDir(child)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, err
+		}
+		for _, ce := range childEnts {
+			if ce.IsDir() || !deletableLogName(ce.Name()) {
+				continue
+			}
+			path := filepath.Join(child, ce.Name())
+			if protectedPath(root, path) {
+				continue
+			}
+			info, err := ce.Info()
+			if err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				return nil, err
+			}
+			files = append(files, logFile{path: path, modTime: info.ModTime()})
+		}
+	}
+	return files, nil
+}
+
+func decimalIntegerName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		if name[i] < '0' || name[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func deletableLogName(name string) bool {

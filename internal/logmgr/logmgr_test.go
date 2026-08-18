@@ -617,6 +617,118 @@ func TestPolicy_ValidateOrder(t *testing.T) {
 	}
 }
 
+func TestProtect_DeletesSameDeviceCustomDirOnlyManagedFiles(t *testing.T) {
+	root := t.TempDir()
+	custom := filepath.Join(t.TempDir(), "app")
+	managed := filepath.Join(custom, "0", "stdout.log")
+	other := filepath.Join(custom, "notes.txt")
+	if err := os.MkdirAll(filepath.Dir(managed), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour)
+	if err := os.WriteFile(managed, []byte("old"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(managed, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(other, []byte("keep"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	pol := logmgr.DefaultPolicy()
+	pol.AutoDelete = true
+	m := &logmgr.Manager{
+		Root:         root,
+		Usage:        func(string) (float64, error) { return 96, nil },
+		Now:          time.Now,
+		Policy:       pol,
+		ExtraLogDirs: []string{custom},
+		SameDeviceFn: func(a, b string) bool { return true },
+	}
+	if _, err := m.Protect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(managed); !os.IsNotExist(err) {
+		t.Fatal("managed custom log should be deleted")
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Fatal("unrelated file must stay")
+	}
+}
+
+func TestProtect_SkipsOtherDeviceCustomDir(t *testing.T) {
+	root := t.TempDir()
+	custom := filepath.Join(t.TempDir(), "app")
+	managed := filepath.Join(custom, "0", "stdout.log")
+	if err := os.MkdirAll(filepath.Dir(managed), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(managed, []byte("keep"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	pol := logmgr.DefaultPolicy()
+	pol.AutoDelete = true
+	m := &logmgr.Manager{
+		Root:         root,
+		Usage:        func(string) (float64, error) { return 96, nil },
+		Policy:       pol,
+		ExtraLogDirs: []string{custom},
+		SameDeviceFn: func(a, b string) bool { return false },
+	}
+	if _, err := m.Protect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(managed); err != nil {
+		t.Fatal("other-device custom log must stay")
+	}
+}
+
+func TestProtect_CustomDirSkipsLooseAndNonOrdinalLogs(t *testing.T) {
+	root := t.TempDir()
+	custom := filepath.Join(t.TempDir(), "app")
+	managed := filepath.Join(custom, "0", "stdout.log")
+	archive := filepath.Join(custom, "0", "stdout.log.1")
+	loose := filepath.Join(custom, "stdout.log")
+	nonOrdinal := filepath.Join(custom, "notes", "stdout.log")
+	for _, p := range []string{managed, archive, loose, nonOrdinal} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o640); err != nil {
+			t.Fatal(err)
+		}
+		old := time.Now().Add(-time.Hour)
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pol := logmgr.DefaultPolicy()
+	pol.AutoDelete = true
+	m := &logmgr.Manager{
+		Root:         root,
+		Usage:        func(string) (float64, error) { return 96, nil },
+		Now:          time.Now,
+		Policy:       pol,
+		ExtraLogDirs: []string{custom, custom},
+		SameDeviceFn: func(a, b string) bool { return true },
+	}
+	if _, err := m.Protect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(managed); !os.IsNotExist(err) {
+		t.Fatal("managed custom log should be deleted")
+	}
+	if _, err := os.Stat(archive); !os.IsNotExist(err) {
+		t.Fatal("rotated custom archive should be deleted")
+	}
+	if _, err := os.Stat(loose); err != nil {
+		t.Fatal("extra/stdout.log must stay")
+	}
+	if _, err := os.Stat(nonOrdinal); err != nil {
+		t.Fatal("non-ordinal child log must stay")
+	}
+}
+
 func TestResolve_DefaultAndCustom(t *testing.T) {
 	layout := paths.New("/data")
 	stdout, stderr := logmgr.Resolve(layout, "", "p1", "p1:0", 0)

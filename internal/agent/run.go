@@ -620,6 +620,7 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 						opt.Logger.Warn("process reconcile failed", "error", err)
 					}
 					if logs != nil {
+						logs.ExtraLogDirs = mgr.CustomLogDirs(ctx)
 						if _, err := logs.Protect(ctx); err != nil {
 							opt.Logger.Warn("disk protection failed", "error", err)
 						}
