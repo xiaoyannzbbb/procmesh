@@ -17,6 +17,23 @@ type Config struct {
 	RPC     RPC
 	Control Control
 	Batch   Batch
+	Backup  Backup
+}
+
+type Backup struct {
+	FSDir    string
+	Schedule string
+	S3       S3
+}
+
+type S3 struct {
+	Endpoint  string
+	Bucket    string
+	Prefix    string
+	Region    string
+	AccessKey string
+	SecretKey string
+	Insecure  bool
 }
 
 type Gossip struct {
@@ -45,6 +62,7 @@ type file struct {
 	RPC     *rpcFile     `yaml:"rpc"`
 	Control *controlFile `yaml:"control"`
 	Batch   *batchFile   `yaml:"batch"`
+	Backup  *backupFile  `yaml:"backup"`
 }
 
 type diskFile struct {
@@ -73,6 +91,22 @@ type controlFile struct {
 type batchFile struct {
 	MaxConcurrency *int   `yaml:"max_concurrency"`
 	TargetTimeout  string `yaml:"target_timeout"`
+}
+
+type backupFile struct {
+	FSDir    string  `yaml:"fs_dir"`
+	Schedule string  `yaml:"schedule"`
+	S3       *s3File `yaml:"s3"`
+}
+
+type s3File struct {
+	Endpoint  string `yaml:"endpoint"`
+	Bucket    string `yaml:"bucket"`
+	Prefix    string `yaml:"prefix"`
+	Region    string `yaml:"region"`
+	AccessKey string `yaml:"access_key"`
+	SecretKey string `yaml:"secret_key"`
+	Insecure  bool   `yaml:"insecure"`
 }
 
 func DefaultBatch() Batch {
@@ -117,7 +151,7 @@ func LoadAll(path string, required bool) (Config, error) {
 		if required {
 			return Config{}, errcode.E(errcode.INVALID, "config file not found")
 		}
-		return Config{Disk: logmgr.DefaultPolicy(), Batch: DefaultBatch()}, nil
+		return applyS3Env(Config{Disk: logmgr.DefaultPolicy(), Batch: DefaultBatch()}), nil
 	}
 
 	b, err := os.ReadFile(path)
@@ -126,7 +160,7 @@ func LoadAll(path string, required bool) (Config, error) {
 			if required {
 				return Config{}, errcode.E(errcode.INVALID, "config file not found")
 			}
-			return Config{Disk: logmgr.DefaultPolicy(), Batch: DefaultBatch()}, nil
+			return applyS3Env(Config{Disk: logmgr.DefaultPolicy(), Batch: DefaultBatch()}), nil
 		}
 		return Config{}, err
 	}
@@ -186,5 +220,30 @@ func LoadAll(path string, required bool) (Config, error) {
 		cfg.Control.Listen = c.Listen
 		cfg.Control.Advertise = c.Advertise
 	}
-	return cfg, nil
+	if bf := f.Backup; bf != nil {
+		cfg.Backup.FSDir = bf.FSDir
+		cfg.Backup.Schedule = bf.Schedule
+		if s3 := bf.S3; s3 != nil {
+			cfg.Backup.S3 = S3{
+				Endpoint:  s3.Endpoint,
+				Bucket:    s3.Bucket,
+				Prefix:    s3.Prefix,
+				Region:    s3.Region,
+				AccessKey: s3.AccessKey,
+				SecretKey: s3.SecretKey,
+				Insecure:  s3.Insecure,
+			}
+		}
+	}
+	return applyS3Env(cfg), nil
+}
+
+func applyS3Env(cfg Config) Config {
+	if v := os.Getenv("PROCMESH_S3_ACCESS_KEY"); v != "" {
+		cfg.Backup.S3.AccessKey = v
+	}
+	if v := os.Getenv("PROCMESH_S3_SECRET_KEY"); v != "" {
+		cfg.Backup.S3.SecretKey = v
+	}
+	return cfg
 }

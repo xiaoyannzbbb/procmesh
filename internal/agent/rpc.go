@@ -12,6 +12,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/api"
 	"github.com/qleelulu/procmesh/internal/auth"
+	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/metrics"
@@ -46,6 +47,7 @@ type rpcRuntime struct {
 	started     time.Time
 	logger      *slog.Logger
 	metrics     *metrics.Collector
+	backup      *backup.Engine
 }
 
 func (r *rpcRuntime) startRPC() error {
@@ -217,6 +219,11 @@ func (r *rpcRuntime) localHandler() http.Handler {
 		LocalOnly: true, LocalID: r.nodeID,
 	}, opts...)
 	mux.Handle(alp, alh)
+	bpkup, bkh := procmeshv1connect.NewBackupServiceHandler(&api.BackupAPI{
+		Engine: r.backup, Auth: r.auth,
+		LocalOnly: true, LocalID: r.nodeID,
+	}, opts...)
+	mux.Handle(bpkup, bkh)
 	return mux
 }
 
@@ -291,6 +298,7 @@ const (
 	auditHopTimeout   = 2 * time.Second
 	metricsHopTimeout = rpc.UnaryTimeout
 	alertHopTimeout   = 2 * time.Second
+	backupHopTimeout  = rpc.MutationTimeout
 )
 
 func (f *agentForwarder) dial(rt api.Route, timeout time.Duration) (*http.Client, string, error) {
@@ -351,4 +359,12 @@ func (f *agentForwarder) Alert(_ context.Context, rt api.Route) (procmeshv1conne
 		return nil, err
 	}
 	return rpc.NewAlertClient(hc, base), nil
+}
+
+func (f *agentForwarder) Backup(_ context.Context, rt api.Route) (procmeshv1connect.BackupServiceClient, error) {
+	hc, base, err := f.dial(rt, backupHopTimeout)
+	if err != nil {
+		return nil, err
+	}
+	return rpc.NewBackupClient(hc, base), nil
 }

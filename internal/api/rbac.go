@@ -123,6 +123,10 @@ func hopRPCPerm(procedure string) (perm string, write bool, ok bool) {
 		return auth.PermClusterRead, false, true
 	case "GetProcessMetrics", "GetProcessHistory":
 		return auth.PermProcessRead, false, true
+	case "ListBackups", "GetBackup":
+		return auth.PermBackupRead, false, true
+	case "CreateBackup", "DeleteBackup", "RestoreBackup", "PutPeerSnapshot":
+		return auth.PermBackupManage, true, true
 	default:
 		// ApplyProcess 的 create/update 由 handler 判定
 		return "", false, false

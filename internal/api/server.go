@@ -14,6 +14,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/gin-gonic/gin"
 	"github.com/qleelulu/procmesh/internal/auth"
+	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/batch"
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
@@ -62,6 +63,7 @@ type Options struct {
 	Members       func() []cluster.NodeSummary
 	Metrics       *metrics.Collector
 	Batch         *batch.Engine
+	Backup        *backup.Engine
 }
 
 func NewServer(opts Options) (*Server, error) {
@@ -139,6 +141,8 @@ func NewServer(opts Options) (*Server, error) {
 	mountConnect(engine, adp, adh)
 	alp, alh := procmeshv1connect.NewAlertServiceHandler(newAlertAPI(opts), intercept)
 	mountConnect(engine, alp, alh)
+	bpkup, bkh := procmeshv1connect.NewBackupServiceHandler(newBackupAPI(opts), intercept)
+	mountConnect(engine, bpkup, bkh)
 	var histStore *store.Store
 	if st, ok := opts.Store.(*store.Store); ok {
 		histStore = st
@@ -294,6 +298,7 @@ func (s *Server) metrics(c *gin.Context) {
 		s.controlQuorum(),
 		collectBatchMetrics(s.opts.Batch),
 		countMetricSampleRows(s.opts.Store),
+		backupLastSuccessUnix(s.opts.Backup),
 	))
 }
 
@@ -338,6 +343,17 @@ func (s *Server) isDegraded() bool {
 
 func mountConnect(engine *gin.Engine, path string, h http.Handler) {
 	engine.Any(strings.TrimSuffix(path, "/")+"/*path", gin.WrapH(h))
+}
+
+func newBackupAPI(opts Options) *BackupAPI {
+	return &BackupAPI{
+		Engine:    opts.Backup,
+		Auth:      opts.Auth,
+		LocalOnly: opts.LocalOnly,
+		LocalID:   opts.LocalID,
+		Router:    opts.Router,
+		Forward:   opts.Forward,
+	}
 }
 
 func newAlertAPI(opts Options) *AlertAPI {

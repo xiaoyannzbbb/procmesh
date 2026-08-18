@@ -15,10 +15,12 @@ import (
 	"strconv"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/agentcfg"
 	"github.com/qleelulu/procmesh/internal/alert"
 	"github.com/qleelulu/procmesh/internal/api"
 	"github.com/qleelulu/procmesh/internal/auth"
+	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/batch"
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
@@ -28,8 +30,10 @@ import (
 	"github.com/qleelulu/procmesh/internal/metrics"
 	"github.com/qleelulu/procmesh/internal/paths"
 	"github.com/qleelulu/procmesh/internal/process"
+	"github.com/qleelulu/procmesh/internal/rpc"
 	"github.com/qleelulu/procmesh/internal/store"
 	"github.com/qleelulu/procmesh/internal/version"
+	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 )
 
 const defaultGossipListen = "127.0.0.1:7946"
@@ -53,6 +57,7 @@ type Options struct {
 	ControlAdvertise string
 	OnControlListen  func(addr string)
 	BootID           string // empty = paths.CurrentBootID(); tests may override
+	Backup           agentcfg.Backup
 }
 
 // Run owns the agent lifecycle and blocks until ctx is cancelled.
@@ -272,6 +277,7 @@ func Run(ctx context.Context, opt Options) error {
 		return nil
 	}
 	batchEng := newBatchEngine(st, cfg, nodeID)
+	opt.Backup = cfg.Backup
 	return serveHTTP(ctx, opt, mgr, logs, st, degraded, ready, mesh, src, collector, api.ClusterDeps{
 		Dir:        layout.ClusterDir,
 		Store:      st,
@@ -309,6 +315,122 @@ func listProcessRefs(mgr *process.Manager) []metrics.ProcessRef {
 		}
 	}
 	return out
+}
+
+func newBackupEngine(opt Options, mgr *process.Manager, st *store.Store, collector *metrics.Collector, rt *rpcRuntime, fwd *agentForwarder) *backup.Engine {
+	if st == nil || opt.DataDir == "" {
+		return nil
+	}
+	layout := paths.New(opt.DataDir)
+	fsDir := opt.Backup.FSDir
+	if fsDir == "" {
+		fsDir = layout.BackupFSDir()
+	}
+	sinks := map[string]backup.Sink{"fs": backup.NewFSSink(fsDir)}
+	clusterID, _ := st.GetClusterID(context.Background())
+	if opt.Backup.S3.Bucket != "" {
+		s3, err := backup.NewS3Sink(backup.S3Config{
+			Endpoint:  opt.Backup.S3.Endpoint,
+			Bucket:    opt.Backup.S3.Bucket,
+			Prefix:    opt.Backup.S3.Prefix,
+			Region:    opt.Backup.S3.Region,
+			AccessKey: opt.Backup.S3.AccessKey,
+			SecretKey: opt.Backup.S3.SecretKey,
+			Insecure:  opt.Backup.S3.Insecure,
+			ClusterID: clusterID,
+			NodeID:    rt.nodeID,
+		})
+		if err != nil {
+			opt.Logger.Warn("s3 backup sink disabled", "error", err)
+		} else {
+			sinks["s3"] = s3
+		}
+	}
+	return &backup.Engine{
+		Store:     st,
+		NodeID:    rt.nodeID,
+		ClusterID: clusterID,
+		Apply:     mgr,
+		Sinks:     sinks,
+		PeerStore: &backup.PeerStore{Root: opt.DataDir},
+		PeerPush: backup.PeerPushFunc(func(ctx context.Context, nodeID, sourceNodeID string, payload []byte) error {
+			return pushPeerSnapshot(ctx, fwd, rt, nodeID, sourceNodeID, payload)
+		}),
+		Admitted: func(nodeID string) bool {
+			n := rt.control()
+			if n == nil {
+				return false
+			}
+			view := n.View()
+			m, ok := view.Member(nodeID)
+			return ok && m.Status == control.MemberAdmitted
+		},
+		DiskPercent: func() float64 {
+			if collector == nil {
+				return 0
+			}
+			nm, err := collector.NodeMetrics()
+			if err != nil || nm == nil {
+				return 0
+			}
+			return nm.DiskPercent
+		},
+		Schedule: opt.Backup.Schedule,
+	}
+}
+
+func pushPeerSnapshot(ctx context.Context, fwd *agentForwarder, rt *rpcRuntime, nodeID, sourceNodeID string, payload []byte) error {
+	if fwd == nil {
+		return errcode.E(errcode.UNAVAILABLE, "peer push not configured")
+	}
+	addr := ""
+	if rt != nil {
+		for _, m := range rt.memberList() {
+			if m.NodeID == nodeID {
+				addr = m.RPCAddress
+				break
+			}
+		}
+	}
+	cli, err := fwd.Backup(ctx, api.Route{NodeID: nodeID, RPC: addr})
+	if err != nil {
+		return err
+	}
+	req := connect.NewRequest(&procmeshv1.PutPeerSnapshotRequest{
+		Meta:         &procmeshv1.MutationMeta{OperationId: newBatchID(), Operator: "peer"},
+		SourceNodeId: sourceNodeID,
+		Payload:      payload,
+	})
+	if rt != nil {
+		rpc.SetSource(req.Header(), rt.nodeID)
+	}
+	rpc.SetTarget(req.Header(), nodeID)
+	if p, ok := api.PrincipalFrom(ctx); ok {
+		src := make(http.Header)
+		rpc.SetUserID(src, p.UserID)
+		if p.SessionID != "" {
+			rpc.SetSessionID(src, p.SessionID)
+		} else if p.TokenID != "" {
+			rpc.SetTokenID(src, p.TokenID)
+		}
+		rpc.CopyIdentity(req.Header(), src)
+	}
+	req.Header().Del("Authorization")
+	_, err = cli.PutPeerSnapshot(ctx, req)
+	return err
+}
+
+func (r *rpcRuntime) memberList() []cluster.NodeSummary {
+	if r == nil {
+		return nil
+	}
+	if r.mesh != nil {
+		return r.mesh.Members()
+	}
+	if r.src != nil {
+		return []cluster.NodeSummary{r.src.Snapshot()}
+	}
+	return nil
 }
 
 func newBatchEngine(st *store.Store, cfg agentcfg.Config, nodeID string) *batch.Engine {
@@ -376,6 +498,7 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		logger:      opt.Logger,
 		metrics:     collector,
 	}
+	rt.backup = newBackupEngine(opt, mgr, st, collector, rt, fwd)
 	if control.AlreadyInited(clusterDeps.Dir) {
 		if err := rt.startRaft(false); err != nil {
 			_ = ln.Close()
@@ -453,6 +576,7 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		Members:       members,
 		Metrics:       collector,
 		Batch:         batchEng,
+		Backup:        rt.backup,
 	})
 	if err != nil {
 		_ = ln.Close()
@@ -478,6 +602,7 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		go func() {
 			ticker := time.NewTicker(time.Second)
 			defer ticker.Stop()
+			var lastBackupMin time.Time
 			for {
 				select {
 				case <-ctx.Done():
@@ -494,6 +619,15 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 					_ = mgr.RotateLogs(ctx)
 					if mesh != nil {
 						mesh.Update()
+					}
+					if bak := rt.backup; bak != nil {
+						min := time.Now().Truncate(time.Minute)
+						if lastBackupMin.IsZero() || !min.Equal(lastBackupMin) {
+							lastBackupMin = min
+							if err := bak.TickSchedule(ctx); err != nil && ctx.Err() == nil {
+								opt.Logger.Warn("backup schedule tick failed", "error", err)
+							}
+						}
 					}
 				}
 			}

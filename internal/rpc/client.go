@@ -72,6 +72,11 @@ func NewAlertClient(hc *http.Client, base string) procmeshv1connect.AlertService
 	return procmeshv1connect.NewAlertServiceClient(hc, base)
 }
 
+// NewBackupClient returns a BackupService client over the given HTTP client and base URL.
+func NewBackupClient(hc *http.Client, base string) procmeshv1connect.BackupServiceClient {
+	return procmeshv1connect.NewBackupServiceClient(hc, base)
+}
+
 func baseURL(addr string) string {
 	if strings.HasPrefix(addr, "https://") {
 		return addr

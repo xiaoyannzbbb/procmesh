@@ -70,6 +70,7 @@ type Engine struct {
 	Now             func() time.Time
 	NewID           func() (string, error) // 测试注入；默认 UUID
 	LastSuccessUnix atomic.Int64
+	Schedule        string // 空 = 关；五字段 cron
 }
 
 var _ Applier = (*process.Manager)(nil)

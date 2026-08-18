@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 
 	"github.com/qleelulu/procmesh/internal/alert"
+	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/batch"
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/store"
@@ -60,6 +61,11 @@ func (f *countingForwarder) Metrics(ctx context.Context, rt Route) (procmeshv1co
 func (f *countingForwarder) Alert(ctx context.Context, rt Route) (procmeshv1connect.AlertServiceClient, error) {
 	f.n.Add(1)
 	return f.inner.Alert(ctx, rt)
+}
+
+func (f *countingForwarder) Backup(ctx context.Context, rt Route) (procmeshv1connect.BackupServiceClient, error) {
+	f.n.Add(1)
+	return f.inner.Backup(ctx, rt)
 }
 
 func wrapForwarder(f Forwarder, n *atomic.Uint64) Forwarder {
@@ -120,7 +126,7 @@ func collectBatchMetrics(eng *batch.Engine) batchMetricSnapshot {
 	return out
 }
 
-func renderMetrics(uptimeSeconds float64, running, members, alive int, rpcForward uint64, quorum int, batchStats batchMetricSnapshot, sampleRows int64) []byte {
+func renderMetrics(uptimeSeconds float64, running, members, alive int, rpcForward uint64, quorum int, batchStats batchMetricSnapshot, sampleRows int64, backupLastSuccess int64) []byte {
 	body := fmt.Sprintf(
 		"# HELP procmesh_agent_uptime Agent uptime in seconds.\n"+
 			"# TYPE procmesh_agent_uptime gauge\n"+
@@ -160,7 +166,20 @@ func renderMetrics(uptimeSeconds float64, running, members, alive int, rpcForwar
 		batchStats.Denied, batchStats.Conflict, batchStats.Unavailable, batchStats.Invalid,
 		sampleRows,
 	)
-	return []byte(body + renderAlertSendMetrics())
+	return []byte(body + renderAlertSendMetrics() + renderBackupMetrics(backupLastSuccess))
+}
+
+func backupLastSuccessUnix(eng *backup.Engine) int64 {
+	if eng == nil {
+		return 0
+	}
+	return eng.LastSuccessUnix.Load()
+}
+
+func renderBackupMetrics(lastSuccess int64) string {
+	return "# HELP procmesh_backup_last_success_unix Unix time of last successful local backup create.\n" +
+		"# TYPE procmesh_backup_last_success_unix gauge\n" +
+		fmt.Sprintf("procmesh_backup_last_success_unix %d\n", lastSuccess)
 }
 
 func renderAlertSendMetrics() string {

@@ -34,6 +34,13 @@ type S3Config struct {
 	HTTP      *http.Client // 测试注入
 }
 
+// Redacted returns a copy with AccessKey and SecretKey cleared.
+func (c S3Config) Redacted() S3Config {
+	c.AccessKey = ""
+	c.SecretKey = ""
+	return c
+}
+
 // S3Sink stores snapshot payloads on an S3-compatible endpoint.
 type S3Sink struct {
 	cfg S3Config

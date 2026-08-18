@@ -25,6 +25,7 @@ type Forwarder interface {
 	Audit(ctx context.Context, rt Route) (procmeshv1connect.AuditServiceClient, error)
 	Metrics(ctx context.Context, rt Route) (procmeshv1connect.MetricsServiceClient, error)
 	Alert(ctx context.Context, rt Route) (procmeshv1connect.AlertServiceClient, error)
+	Backup(ctx context.Context, rt Route) (procmeshv1connect.BackupServiceClient, error)
 }
 
 type ProcessAPI struct {

@@ -159,3 +159,30 @@ func TestLoadAll_BatchRejectsOutOfRange(t *testing.T) {
 		t.Fatal("expected INVALID")
 	}
 }
+
+func TestLoadAll_BackupS3AndDefaultSchedule(t *testing.T) {
+	cfg, err := agentcfg.LoadAll(filepath.Join(t.TempDir(), "nope.yaml"), false)
+	if err != nil || cfg.Backup.Schedule != "" || cfg.Backup.S3.Bucket != "" {
+		t.Fatalf("default backup %+v %v", cfg.Backup, err)
+	}
+
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	body := "backup:\n  s3:\n    bucket: snaps\n    endpoint: https://s3.example.com\n    access_key: yaml-ak\n    secret_key: yaml-sk\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = agentcfg.LoadAll(path, true)
+	if err != nil || cfg.Backup.S3.Bucket != "snaps" || cfg.Backup.Schedule != "" {
+		t.Fatalf("parsed %+v %v", cfg.Backup, err)
+	}
+	if cfg.Backup.S3.AccessKey != "yaml-ak" || cfg.Backup.S3.SecretKey != "yaml-sk" {
+		t.Fatalf("yaml keys %+v", cfg.Backup.S3)
+	}
+
+	t.Setenv("PROCMESH_S3_ACCESS_KEY", "env-ak")
+	t.Setenv("PROCMESH_S3_SECRET_KEY", "env-sk")
+	cfg, err = agentcfg.LoadAll(path, true)
+	if err != nil || cfg.Backup.S3.AccessKey != "env-ak" || cfg.Backup.S3.SecretKey != "env-sk" {
+		t.Fatalf("env override %+v %v", cfg.Backup.S3, err)
+	}
+}

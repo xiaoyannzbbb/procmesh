@@ -317,3 +317,22 @@ func TestS3Sink_FakeRequiresSigV4(t *testing.T) {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
 }
+
+func TestS3Config_Redacted(t *testing.T) {
+	cfg := backup.S3Config{
+		Endpoint:  "https://s3.example.com",
+		Bucket:    "snaps",
+		AccessKey: "AKIA",
+		SecretKey: "secret",
+	}
+	got := cfg.Redacted()
+	if got.AccessKey != "" || got.SecretKey != "" {
+		t.Fatalf("secrets leaked: %+v", got)
+	}
+	if got.Bucket != "snaps" || got.Endpoint != "https://s3.example.com" {
+		t.Fatalf("non-secret fields: %+v", got)
+	}
+	if cfg.AccessKey == "" || cfg.SecretKey == "" {
+		t.Fatal("Redacted must not mutate original")
+	}
+}
