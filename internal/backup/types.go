@@ -50,9 +50,9 @@ type Meta struct {
 
 // RevisionRange summarizes min/max revision for one process in a snapshot.
 type RevisionRange struct {
-	ProcessID   string
-	MinRevision int64
-	MaxRevision int64
+	ProcessID   string `json:"process_id"`
+	MinRevision int64  `json:"min_revision"`
+	MaxRevision int64  `json:"max_revision"`
 }
 
 // MetaFromSnapshot builds Meta identity and process ranges from a Snapshot.

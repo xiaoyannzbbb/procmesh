@@ -216,6 +216,11 @@ func (s *Store) ListRevisions(ctx context.Context, processID string) ([]process.
 	return out, nil
 }
 
+// ListRevisionDumps returns full revision rows including spec_json for backup.
+func (s *Store) ListRevisionDumps(ctx context.Context, processID string) ([]Revision, error) {
+	return s.listRevisionRows(ctx, processID)
+}
+
 func (s *Store) listRevisionRows(ctx context.Context, processID string) ([]Revision, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT revision, operator, ts, diff, comment, spec_json

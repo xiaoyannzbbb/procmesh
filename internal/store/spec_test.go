@@ -108,6 +108,29 @@ func TestRollbackSpec_CreatesNewRevision(t *testing.T) {
 	}
 }
 
+func TestListRevisionDumps_IncludesSpecJSON(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	spec := process.ProcessSpec{ProcessID: "p1", Name: "web", Command: "/bin/true"}
+	if _, err := s.PutSpec(ctx, spec, 0, "t", "create"); err != nil {
+		t.Fatal(err)
+	}
+	spec.Command = "/bin/web"
+	if _, err := s.PutSpec(ctx, spec, 1, "t", "update"); err != nil {
+		t.Fatal(err)
+	}
+	revs, err := s.ListRevisionDumps(ctx, "p1")
+	if err != nil || len(revs) != 2 {
+		t.Fatalf("revs=%d err=%v", len(revs), err)
+	}
+	if len(revs[0].SpecJSON) == 0 || len(revs[1].SpecJSON) == 0 {
+		t.Fatal("spec_json missing")
+	}
+	if revs[0].Revision != 1 || revs[1].Revision != 2 {
+		t.Fatalf("order %+v", revs)
+	}
+}
+
 func TestPutSpec_CreateRejectsDuplicateName(t *testing.T) {
 	ctx := context.Background()
 	s := openStore(t)
