@@ -46,6 +46,7 @@ func seededEngine(t *testing.T) *backup.Engine {
 		NodeID:    "n1",
 		ClusterID: "c1",
 		Sinks:     map[string]backup.Sink{"fs": backup.NewFSSink(dir)},
+		PeerStore: &backup.PeerStore{Root: t.TempDir()},
 		Now:       func() time.Time { return time.Unix(1_700_000_000, 0).UTC() },
 		NewID:     func() (string, error) { return "snap-1", nil },
 	}
@@ -556,5 +557,68 @@ func TestEngine_CreatePeerPartialPushUnavailable(t *testing.T) {
 	}
 	if e.LastSuccessUnix.Load() != 1_700_000_000 {
 		t.Fatalf("metric %d", e.LastSuccessUnix.Load())
+	}
+}
+
+func TestEngine_CreatePeerRestoreAndDeleteOnOwner(t *testing.T) {
+	ctx := context.Background()
+	mgr, st, spec := seedManagedProcess(t)
+	e := engineWithMgr(t, st, mgr)
+	e.Admitted = func(string) bool { return true }
+	e.PeerPush = backup.PeerPushFunc(func(context.Context, string, string, []byte) error { return nil })
+
+	meta, err := e.CreatePeer(ctx, nil, []string{"peer-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Sink != "peer" || meta.SourceNodeID != e.NodeID {
+		t.Fatalf("index %+v", meta)
+	}
+
+	spec.Command = "/bin/changed"
+	if _, err := mgr.ApplySpec(ctx, spec, spec.LatestRevision, "op-change", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	latest, err := mgr.GetSpec(ctx, spec.ProcessID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := e.Restore(ctx, meta.SnapshotID, "peer", "op-restore", "t", []backup.RestoreTarget{{
+		ProcessID: spec.ProcessID, ExpectedRevision: latest.LatestRevision,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Status != "SUCCESS" || results[0].NewRevision != latest.LatestRevision+1 {
+		t.Fatalf("%+v", results)
+	}
+	got, err := mgr.GetSpec(ctx, spec.ProcessID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Command != "/bin/true" {
+		t.Fatalf("command %q", got.Command)
+	}
+
+	peerPath := filepath.Join(e.PeerStore.Root, "backup", "peer", e.NodeID, meta.SnapshotID+".json")
+	if _, err := os.Stat(peerPath); err != nil {
+		t.Fatalf("owner peer payload missing: %v", err)
+	}
+	if err := e.Delete(ctx, meta.SnapshotID, "peer"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(peerPath); !os.IsNotExist(err) {
+		t.Fatalf("peer file still present: %v", err)
+	}
+	if _, _, err := e.Get(ctx, meta.SnapshotID, "peer"); !errcode.Is(err, errcode.NOT_FOUND) {
+		t.Fatalf("index leftover: %v", err)
+	}
+	recs, err := st.ListBackups(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 0 {
+		t.Fatalf("index leftover %+v", recs)
 	}
 }

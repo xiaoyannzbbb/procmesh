@@ -160,6 +160,9 @@ func (e *Engine) validatePeerTargets(targets []string) error {
 }
 
 func (e *Engine) createPeer(ctx context.Context, snap Snapshot, payload []byte, sha string, targets []string) (Meta, error) {
+	if e.PeerStore == nil {
+		return Meta{}, errcode.E(errcode.UNAVAILABLE, "peer store not configured")
+	}
 	var locs []string
 	var pushErr error
 	for _, node := range targets {
@@ -179,7 +182,12 @@ func (e *Engine) createPeer(ctx context.Context, snap Snapshot, payload []byte, 
 		}
 		return Meta{}, errcode.E(errcode.UNAVAILABLE, "peer push failed")
 	}
-	meta, err := e.indexSnapshot(ctx, snap, sha, "peer", strings.Join(locs, ","), "")
+	// Keep a local peer copy so Restore/Get/Delete work on the Owner.
+	// Receive never ApplySpec; restore still requires snap.NodeID == e.NodeID.
+	if _, err := e.PeerStore.Receive(ctx, e.NodeID, payload); err != nil {
+		return Meta{}, err
+	}
+	meta, err := e.indexSnapshot(ctx, snap, sha, "peer", strings.Join(locs, ","), e.NodeID)
 	if err != nil {
 		return Meta{}, err
 	}
@@ -292,12 +300,28 @@ func (e *Engine) readPayload(ctx context.Context, rec store.BackupRecord, snapsh
 
 // Delete removes the sink object and the local index row.
 func (e *Engine) Delete(ctx context.Context, snapshotID, sinkName string) error {
+	if sinkName == "peer" {
+		return e.deletePeer(ctx, snapshotID)
+	}
 	sink, err := e.sink(sinkName)
 	if err != nil {
 		return err
 	}
 	if err := sink.Delete(ctx, snapshotID); err != nil {
 		return err
+	}
+	return e.Store.DeleteBackup(ctx, snapshotID)
+}
+
+func (e *Engine) deletePeer(ctx context.Context, snapshotID string) error {
+	rec, err := e.Store.GetBackup(ctx, snapshotID)
+	if err != nil {
+		return err
+	}
+	if e.PeerStore != nil && rec.SourceNodeID != "" {
+		if err := e.PeerStore.Delete(ctx, rec.SourceNodeID, snapshotID); err != nil && !errcode.Is(err, errcode.NOT_FOUND) {
+			return err
+		}
 	}
 	return e.Store.DeleteBackup(ctx, snapshotID)
 }

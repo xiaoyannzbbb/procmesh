@@ -3,8 +3,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
 import { LIVE, STALE, UNKNOWN, formatAge, type Freshness } from "../lib/freshness";
+import { withTarget } from "../lib/headers";
 import { newOperationId } from "../lib/opid";
-import { useBackupClient, useNodeClient } from "../lib/rpc";
+import { useBackupClient, useNodeClient, useProcessClient } from "../lib/rpc";
 import { session } from "../lib/session";
 import { useI18n } from "../lib/useI18n";
 import { formatRemoteError } from "./processView";
@@ -15,6 +16,7 @@ const { t } = useI18n();
 const POLL_MS = 5000;
 const client = useBackupClient();
 const nodeClient = useNodeClient();
+const processClient = useProcessClient();
 const queryClient = useQueryClient();
 const actionError = ref("");
 const actionNotice = ref("");
@@ -165,7 +167,7 @@ function mapEntry(
     sha256: shortSha(snapshot?.sha256 ?? ""),
     freshness,
     lastUpdated: formatAge(Date.now(), lastUpdatedUnixMs),
-    canAct: Boolean(canManage.value && snapshot?.snapshotId),
+    canAct: Boolean(canManage.value && snapshot?.snapshotId && canRestoreEntry(entry, snapshot)),
     snapshot: snapshot
       ? {
           snapshotId: snapshot.snapshotId ?? "",
@@ -179,6 +181,18 @@ function mapEntry(
   };
 }
 
+function canRestoreEntry(
+  entry: { sourceNode?: string },
+  snapshot: { sink?: string; sourceNodeId?: string },
+): boolean {
+  const sink = snapshot.sink || "";
+  if (sink !== "s3") {
+    return true;
+  }
+  const source = entry.sourceNode || snapshot.sourceNodeId || "";
+  return source !== "" && source !== "s3";
+}
+
 function prefillRevision(
   processId: string,
   ranges: RestoreSnapshot["revisionRanges"],
@@ -190,19 +204,46 @@ function prefillRevision(
   return String(range.maxRevision);
 }
 
-function openRestore(snapshot: RestoreSnapshot): void {
+function liveRevision(raw: unknown): string {
+  if (raw === undefined || raw === null || raw === "") {
+    return "";
+  }
+  return String(raw);
+}
+
+async function fetchLiveRevision(processId: string, ownerId: string, fallback: string): Promise<string> {
+  try {
+    const res = await processClient.getProcess({ idOrName: processId }, { headers: withTarget(ownerId) });
+    const live = liveRevision(res.process?.spec?.latestRevision);
+    if (live !== "") {
+      return live;
+    }
+    return fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+async function openRestore(snapshot: RestoreSnapshot): Promise<void> {
   if (!canManage.value || !snapshot.snapshotId) {
     return;
   }
   actionError.value = "";
   actionNotice.value = "";
   restoreSnapshot.value = snapshot;
-  const processIds = snapshot.processIds.length ? snapshot.processIds : [];
-  restoreTargets.value = processIds.map((processId) => ({
-    processId,
-    expectedRevision: prefillRevision(processId, snapshot.revisionRanges),
-  }));
+  restoreTargets.value = [];
   restoreOpen.value = true;
+  const processIds = snapshot.processIds.length ? snapshot.processIds : [];
+  restoreTargets.value = await Promise.all(
+    processIds.map(async (processId) => ({
+      processId,
+      expectedRevision: await fetchLiveRevision(
+        processId,
+        snapshot.nodeId,
+        prefillRevision(processId, snapshot.revisionRanges),
+      ),
+    })),
+  );
 }
 
 function closeRestore(): void {

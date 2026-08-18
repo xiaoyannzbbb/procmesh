@@ -92,6 +92,7 @@ async function mountBackup(
     restoreResults?: { processId: string; status: string; newRevision?: bigint; error?: string }[];
     listNodes?: unknown[];
     listNodesError?: Error;
+    getProcess?: ReturnType<typeof vi.fn>;
   } = {},
 ) {
   session.value = {
@@ -128,19 +129,31 @@ async function mountBackup(
     getNode: vi.fn(),
     removeNode: vi.fn(),
   };
+  const processClient = {
+    listProcesses: vi.fn(),
+    getProcess:
+      opts.getProcess ??
+      vi.fn().mockResolvedValue({
+        process: { spec: { latestRevision: 2n } },
+      }),
+    startProcess: vi.fn(),
+    stopProcess: vi.fn(),
+    restartProcess: vi.fn(),
+    killProcess: vi.fn(),
+  };
   const wrapper = mount(BackupPage, {
     global: {
       plugins: [
         [VueQueryPlugin, { queryClient }],
         [I18NextVue, { i18next: i18n }],
       ],
-      provide: { backupClient, nodeClient },
+      provide: { backupClient, nodeClient, processClient },
     },
   });
   mounted.push(wrapper);
   await flushPromises();
   await wrapper.vm.$nextTick();
-  return { wrapper, backupClient, nodeClient, queryClient };
+  return { wrapper, backupClient, nodeClient, processClient, queryClient };
 }
 
 afterEach(() => {
@@ -178,6 +191,7 @@ describe("BackupPage", () => {
   it("shows Owner text and expected revision input in restore dialog", async () => {
     const { wrapper } = await mountBackup();
     await wrapper.get('[data-action="restore"]').trigger("click");
+    await flushPromises();
     await wrapper.vm.$nextTick();
     const dialog = wrapper.get('[data-restore-dialog]');
     expect(dialog.text()).toContain("Owner");
@@ -189,6 +203,64 @@ describe("BackupPage", () => {
     await revision.setValue("");
     await wrapper.vm.$nextTick();
     expect((wrapper.get('[data-action="confirm-restore"]').element as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("prefills expectedRevision from live Owner latestRevision, not snapshot maxRevision", async () => {
+    const snapshot = {
+      snapshot: {
+        snapshotId: "snap-old",
+        clusterId: "c1",
+        nodeId: "n1",
+        createdUnixMs: BigInt(1_700_000_000_000),
+        processIds: ["web"],
+        revisionRanges: [{ processId: "web", minRevision: BigInt(1), maxRevision: BigInt(1) }],
+        sha256: "abcdef0123456789deadbeef",
+        sink: "fs",
+        location: "/backup/fs/snap-old.json",
+        sourceNodeId: "",
+      },
+      sourceNode: "n1",
+      freshness: "LIVE",
+      lastUpdatedUnixMs: BigInt(1_700_000_010_000),
+    };
+    const getProcess = vi.fn().mockResolvedValue({
+      process: { spec: { latestRevision: 2n } },
+    });
+    const { wrapper, processClient } = await mountBackup({
+      entries: [snapshot],
+      getProcess,
+    });
+    await wrapper.get('[data-action="restore"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+    expect(processClient.getProcess).toHaveBeenCalled();
+    const revision = wrapper.get('input[name="expectedRevision"]');
+    expect((revision.element as HTMLInputElement).value).toBe("2");
+    expect(wrapper.get('[data-restore-owner]').text()).toContain("n1");
+  });
+
+  it("hides Restore and Delete for S3 extras without a local index", async () => {
+    const s3Extra = {
+      snapshot: {
+        snapshotId: "snap-s3-extra",
+        clusterId: "c1",
+        nodeId: "n1",
+        createdUnixMs: BigInt(1_700_000_000_000),
+        processIds: ["web"],
+        revisionRanges: [{ processId: "web", minRevision: BigInt(1), maxRevision: BigInt(1) }],
+        sha256: "abcdef0123456789deadbeef",
+        sink: "s3",
+        location: "s3://bucket/snap-s3-extra.json",
+        sourceNodeId: "",
+      },
+      sourceNode: "s3",
+      freshness: "LIVE",
+      lastUpdatedUnixMs: BigInt(1_700_000_010_000),
+    };
+    const { wrapper } = await mountBackup({ entries: [s3Extra] });
+    expect(wrapper.text()).toContain("snap-s3-extra");
+    expect(wrapper.find('[data-action="restore"]').exists()).toBe(false);
+    expect(wrapper.find('[data-action="delete"]').exists()).toBe(false);
   });
 
   it("lists backups with includeS3 and ALIVE peer ids", async () => {
@@ -221,6 +293,7 @@ describe("BackupPage", () => {
       restoreResults: [{ processId: "web", status: "CONFLICT", newRevision: BigInt(0), error: "revision mismatch" }],
     });
     await wrapper.get('[data-action="restore"]').trigger("click");
+    await flushPromises();
     await wrapper.vm.$nextTick();
     await wrapper.get('[data-action="confirm-restore"]').trigger("click");
     await flushPromises();
