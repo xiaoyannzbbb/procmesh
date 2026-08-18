@@ -189,6 +189,11 @@ async function mountPanel(opts: MountOpts | ReturnType<typeof vi.fn> = {}) {
     global: {
       plugins: [[VueQueryPlugin, { queryClient }], [I18NextVue, { i18next: i18n }]],
       provide: { configClient },
+      stubs: {
+        RouterLink: {
+          template: '<a><slot /></a>',
+        },
+      },
     },
   });
   mounted.push(wrapper);

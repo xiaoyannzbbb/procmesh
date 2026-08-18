@@ -10,7 +10,9 @@ import { session } from "../lib/session";
 import { useI18n } from "../lib/useI18n";
 import { formatRemoteError } from "./processView";
 
-const SINKS = ["fs", "s3", "peer"] as const;
+const PEER_SINK = "peer" as const;
+const NUMERIC_INPUT_MODE = "numeric" as const;
+const SINKS = ["fs", "s3", PEER_SINK] as const;
 
 const { t } = useI18n();
 const POLL_MS = 5000;
@@ -92,7 +94,7 @@ const showPeerHint = computed(
 );
 
 const createReady = computed(() => {
-  if (createSink.value !== "peer") {
+  if (createSink.value !== PEER_SINK) {
     return true;
   }
   return parseLines(createPeerNodeIds.value).length > 0;
@@ -470,7 +472,7 @@ async function onConfirmRestore(): Promise<void> {
             :placeholder="t('backup.processIdsPlaceholder')"
           />
         </label>
-        <label v-if="createSink === 'peer'" class="field">
+        <label v-if="createSink === PEER_SINK" class="field">
           {{ t("backup.peerNodeIds") }}
           <textarea
             v-model="createPeerNodeIds"
@@ -480,7 +482,7 @@ async function onConfirmRestore(): Promise<void> {
             :placeholder="t('backup.peerNodeIdsPlaceholder')"
           />
         </label>
-        <p v-if="createSink === 'peer' && !createReady" class="muted">{{ t("backup.peerRequired") }}</p>
+        <p v-if="createSink === PEER_SINK && !createReady" class="muted">{{ t("backup.peerRequired") }}</p>
         <button
           class="btn btn-primary"
           type="submit"
@@ -493,7 +495,7 @@ async function onConfirmRestore(): Promise<void> {
     </template>
 
     <div v-if="restoreOpen && restoreSnapshot" class="restore-backdrop" data-restore-dialog>
-      <section class="restore-panel" role="dialog" aria-modal="true">
+      <section class="restore-panel" role="dialog" :aria-modal="true">
         <h2>{{ t("backup.restoreConfirm") }}</h2>
         <dl class="facts">
           <div>
@@ -517,7 +519,7 @@ async function onConfirmRestore(): Promise<void> {
               class="input"
               name="expectedRevision"
               type="text"
-              inputmode="numeric"
+              :inputmode="NUMERIC_INPUT_MODE"
               autocomplete="off"
             />
           </label>

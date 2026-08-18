@@ -192,8 +192,9 @@ describe("AlertsPage", () => {
         { channelId: "c2", type: "WEBHOOK", name: "off", enabled: false, configJson: "{}" },
       ],
     });
-    const rows = wrapper.findAll("table")[1].findAll("tbody tr");
+    const rows = wrapper.findAll(".channel-row");
 
+    expect(rows).toHaveLength(2);
     expect(rows[0].text()).toContain("Enabled");
     expect(rows[0].text()).not.toContain("true");
     expect(rows[1].text()).toContain("Disabled");
@@ -234,11 +235,22 @@ describe("AlertsPage", () => {
         },
       ],
     });
-    const html = wrapper.html();
-    expect(html).not.toContain("hmac_secret");
-    expect(html).not.toContain("s3cret");
-    expect(html).not.toContain('"secret"');
-    expect(html).not.toContain('"password"');
+    vi.useFakeTimers();
+    try {
+      const channel = wrapper.get(".channel-row");
+      expect(channel.text()).not.toContain("s3cret");
+
+      await channel.get(".channel-main").trigger("click");
+      await wrapper.vm.$nextTick();
+
+      const config = wrapper.get('textarea[name="channelConfig"]').element as HTMLTextAreaElement;
+      const secret = wrapper.get('input[name="channelSecret"]').element as HTMLInputElement;
+      expect(JSON.parse(config.value)).toEqual({ url: "https://hooks.example.com" });
+      expect(secret.value).toBe("");
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
   });
 
   it("does not clobber dirty policy fields on refetch", async () => {
