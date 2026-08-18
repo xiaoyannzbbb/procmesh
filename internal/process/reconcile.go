@@ -358,12 +358,20 @@ func (m *Manager) startInstance(ctx context.Context, spec ProcessSpec, inst *Ins
 		inst.Observed = ObservedStarting
 	}
 
-	stdout, stderr := logmgr.InstancePaths(m.deps.Layout, spec.ProcessID, inst.InstanceID)
+	stdout, stderr := m.writeLogPaths(spec, *inst)
 	if m.deps.Logs != nil && !m.deps.Logs.WritesAllowed() {
 		stdout, stderr = os.DevNull, os.DevNull
 		m.audit(ctx, inst.ProcessID, "LOG_WRITES_DISABLED", "", "", "")
-	} else if err := logmgr.Prepare(stdout, stderr); err != nil {
-		return err
+	} else {
+		var err error
+		if stdout == stderr {
+			err = logmgr.Prepare(stdout)
+		} else {
+			err = logmgr.Prepare(stdout, stderr)
+		}
+		if err != nil {
+			return err
+		}
 	}
 
 	resp, err := client.Start(ctx, &shimpb.StartRequest{

@@ -26,6 +26,7 @@ type StateStore interface {
 	ListSpecs(ctx context.Context) ([]ProcessSpec, error)
 	DeleteSpec(ctx context.Context, processID string, expectedRevision int64) error
 	ListRevisions(ctx context.Context, processID string) ([]Revision, error)
+	GetRevisionSpec(ctx context.Context, processID string, rev int64) (ProcessSpec, error)
 	RollbackSpec(ctx context.Context, processID string, toRevision, expectedLatest int64, operator, comment string) (ProcessSpec, error)
 	PutInstance(ctx context.Context, inst Instance) error
 	GetInstance(ctx context.Context, instanceID string) (Instance, error)
@@ -371,20 +372,18 @@ func (m *Manager) RotateLogs(ctx context.Context) error {
 			}
 			continue
 		}
-		lp := spec.Log.WithDefaults()
-		pol := logmgr.RotatePolicy{
-			MaxSize:  lp.MaxSize,
-			MaxFiles: lp.MaxFiles,
-			MaxAge:   lp.MaxAge,
-			Compress: lp.Compress,
-		}
 		for _, inst := range insts {
-			stdout, stderr := logmgr.InstancePaths(m.deps.Layout, spec.ProcessID, inst.InstanceID)
-			if err := logmgr.Rotate(stdout, pol, now); err != nil && first == nil {
+			pol := m.EffectiveLog(ctx, spec, inst)
+			lp := pol.WithDefaults()
+			rpol := logmgr.RotatePolicy{MaxSize: lp.MaxSize, MaxFiles: lp.MaxFiles, MaxAge: lp.MaxAge, Compress: lp.Compress}
+			stdout, stderr := logmgr.Resolve(m.deps.Layout, pol.Directory, spec.ProcessID, inst.InstanceID, inst.Ordinal)
+			if err := logmgr.Rotate(stdout, rpol, now); err != nil && first == nil {
 				first = err
 			}
-			if err := logmgr.Rotate(stderr, pol, now); err != nil && first == nil {
-				first = err
+			if stderr != stdout {
+				if err := logmgr.Rotate(stderr, rpol, now); err != nil && first == nil {
+					first = err
+				}
 			}
 		}
 	}

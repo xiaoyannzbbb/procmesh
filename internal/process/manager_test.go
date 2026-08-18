@@ -2200,3 +2200,78 @@ func TestRollback_EmptyOpID(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestReconcile_CustomDirectoryAndRedirect(t *testing.T) {
+	ctx := context.Background()
+	m, st, layout := newTestManager(t)
+	t.Cleanup(func() { killManaged(t, st, "p1") })
+	dir := filepath.Join(t.TempDir(), "app")
+	spec := process.ProcessSpec{
+		ProcessID: "p1", Name: "echo", Command: "/bin/sh",
+		Args:      []string{"-c", "printf 'out\\n'; printf 'err\\n' >&2; exec sleep 60"},
+		Instances: 1,
+		Log:       process.LogPolicy{Directory: dir, RedirectStderr: true},
+	}
+	if _, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetDesired(ctx, "p1", process.DesiredRunning, "op-s", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	stdout := filepath.Join(dir, "0", "stdout.log")
+	stderr := filepath.Join(dir, "0", "stderr.log")
+	waitFileContains(t, stdout, "out")
+	if _, err := os.Stat(stderr); !os.IsNotExist(err) {
+		t.Fatal("stderr.log must not exist when redirected")
+	}
+	body, err := os.ReadFile(stdout)
+	if err != nil || !strings.Contains(string(body), "err") {
+		t.Fatalf("merged stderr missing: %q %v", body, err)
+	}
+	_ = layout
+}
+
+func TestRotateLogs_UsesActiveRevisionPath(t *testing.T) {
+	ctx := context.Background()
+	m, st, layout := newTestManager(t)
+	t.Cleanup(func() { killManaged(t, st, "p1") })
+	oldDir := filepath.Join(t.TempDir(), "old")
+	spec := process.ProcessSpec{
+		ProcessID: "p1", Name: "n", Command: "/bin/sleep", Args: []string{"60"},
+		Instances: 1, Log: process.LogPolicy{Directory: oldDir, MaxSize: 32, MaxFiles: 2},
+	}
+	got, err := m.ApplySpec(ctx, spec, 0, "op1", "t", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetDesired(ctx, "p1", process.DesiredRunning, "op-s", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	oldStdout := filepath.Join(oldDir, "0", "stdout.log")
+	if err := os.WriteFile(oldStdout, bytes.Repeat([]byte("x"), 64), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	newDir := filepath.Join(t.TempDir(), "new")
+	got.Log.Directory = newDir
+	if _, err := m.ApplySpec(ctx, got, got.LatestRevision, "op2", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RotateLogs(ctx); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(oldStdout)
+	if err != nil || info.Size() != 0 {
+		t.Fatalf("should rotate old file, size err=%v info=%v", err, info)
+	}
+	if _, err := os.Stat(filepath.Join(newDir, "0", "stdout.log")); !os.IsNotExist(err) {
+		t.Fatal("must not create new path before restart")
+	}
+	_ = layout
+	_ = st
+}
