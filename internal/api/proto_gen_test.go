@@ -124,3 +124,22 @@ func TestProto_AlertServiceGenerated(t *testing.T) {
 	_ = (&procmeshv1.PutAlertChannelRequest{}).GetMeta
 	var _ procmeshv1connect.AlertServiceHandler = (*AlertAPI)(nil)
 }
+
+func TestProto_BackupServiceGenerated(t *testing.T) {
+	if procmeshv1connect.BackupServiceName != "procmesh.v1.BackupService" {
+		t.Fatalf("backup=%s", procmeshv1connect.BackupServiceName)
+	}
+	if procmeshv1connect.BackupServiceCreateBackupProcedure == "" {
+		t.Fatal("missing CreateBackup")
+	}
+	if procmeshv1connect.BackupServiceRestoreBackupProcedure == "" {
+		t.Fatal("missing RestoreBackup")
+	}
+	if procmeshv1connect.BackupServicePutPeerSnapshotProcedure == "" {
+		t.Fatal("missing PutPeerSnapshot")
+	}
+	_ = (&procmeshv1.BackupSnapshot{}).GetSha256
+	_ = (&procmeshv1.BackupEntry{}).GetFreshness
+	_ = (&procmeshv1.RestoreBackupRequest{}).GetTargets
+	_ = (&procmeshv1.CreateBackupRequest{}).GetTargetNodeIds
+}

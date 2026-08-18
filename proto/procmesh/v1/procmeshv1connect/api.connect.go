@@ -47,6 +47,8 @@ const (
 	BatchServiceName = "procmesh.v1.BatchService"
 	// AlertServiceName is the fully-qualified name of the AlertService service.
 	AlertServiceName = "procmesh.v1.AlertService"
+	// BackupServiceName is the fully-qualified name of the BackupService service.
+	BackupServiceName = "procmesh.v1.BackupService"
 )
 
 // These constants are the fully-qualified names of the RPCs defined in this package. They're
@@ -216,6 +218,23 @@ const (
 	// AlertServicePutAlertPolicyProcedure is the fully-qualified name of the AlertService's
 	// PutAlertPolicy RPC.
 	AlertServicePutAlertPolicyProcedure = "/procmesh.v1.AlertService/PutAlertPolicy"
+	// BackupServiceCreateBackupProcedure is the fully-qualified name of the BackupService's
+	// CreateBackup RPC.
+	BackupServiceCreateBackupProcedure = "/procmesh.v1.BackupService/CreateBackup"
+	// BackupServiceListBackupsProcedure is the fully-qualified name of the BackupService's ListBackups
+	// RPC.
+	BackupServiceListBackupsProcedure = "/procmesh.v1.BackupService/ListBackups"
+	// BackupServiceGetBackupProcedure is the fully-qualified name of the BackupService's GetBackup RPC.
+	BackupServiceGetBackupProcedure = "/procmesh.v1.BackupService/GetBackup"
+	// BackupServiceDeleteBackupProcedure is the fully-qualified name of the BackupService's
+	// DeleteBackup RPC.
+	BackupServiceDeleteBackupProcedure = "/procmesh.v1.BackupService/DeleteBackup"
+	// BackupServiceRestoreBackupProcedure is the fully-qualified name of the BackupService's
+	// RestoreBackup RPC.
+	BackupServiceRestoreBackupProcedure = "/procmesh.v1.BackupService/RestoreBackup"
+	// BackupServicePutPeerSnapshotProcedure is the fully-qualified name of the BackupService's
+	// PutPeerSnapshot RPC.
+	BackupServicePutPeerSnapshotProcedure = "/procmesh.v1.BackupService/PutPeerSnapshot"
 )
 
 // ProcessServiceClient is a client for the procmesh.v1.ProcessService service.
@@ -2400,4 +2419,204 @@ func (UnimplementedAlertServiceHandler) GetAlertPolicy(context.Context, *connect
 
 func (UnimplementedAlertServiceHandler) PutAlertPolicy(context.Context, *connect.Request[v1.PutAlertPolicyRequest]) (*connect.Response[v1.PutAlertPolicyResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.AlertService.PutAlertPolicy is not implemented"))
+}
+
+// BackupServiceClient is a client for the procmesh.v1.BackupService service.
+type BackupServiceClient interface {
+	CreateBackup(context.Context, *connect.Request[v1.CreateBackupRequest]) (*connect.Response[v1.CreateBackupResponse], error)
+	ListBackups(context.Context, *connect.Request[v1.ListBackupsRequest]) (*connect.Response[v1.ListBackupsResponse], error)
+	GetBackup(context.Context, *connect.Request[v1.GetBackupRequest]) (*connect.Response[v1.GetBackupResponse], error)
+	DeleteBackup(context.Context, *connect.Request[v1.DeleteBackupRequest]) (*connect.Response[v1.DeleteBackupResponse], error)
+	RestoreBackup(context.Context, *connect.Request[v1.RestoreBackupRequest]) (*connect.Response[v1.RestoreBackupResponse], error)
+	PutPeerSnapshot(context.Context, *connect.Request[v1.PutPeerSnapshotRequest]) (*connect.Response[v1.PutPeerSnapshotResponse], error)
+}
+
+// NewBackupServiceClient constructs a client for the procmesh.v1.BackupService service. By default,
+// it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses, and
+// sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the connect.WithGRPC()
+// or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewBackupServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) BackupServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	backupServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("BackupService").Methods()
+	return &backupServiceClient{
+		createBackup: connect.NewClient[v1.CreateBackupRequest, v1.CreateBackupResponse](
+			httpClient,
+			baseURL+BackupServiceCreateBackupProcedure,
+			connect.WithSchema(backupServiceMethods.ByName("CreateBackup")),
+			connect.WithClientOptions(opts...),
+		),
+		listBackups: connect.NewClient[v1.ListBackupsRequest, v1.ListBackupsResponse](
+			httpClient,
+			baseURL+BackupServiceListBackupsProcedure,
+			connect.WithSchema(backupServiceMethods.ByName("ListBackups")),
+			connect.WithClientOptions(opts...),
+		),
+		getBackup: connect.NewClient[v1.GetBackupRequest, v1.GetBackupResponse](
+			httpClient,
+			baseURL+BackupServiceGetBackupProcedure,
+			connect.WithSchema(backupServiceMethods.ByName("GetBackup")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteBackup: connect.NewClient[v1.DeleteBackupRequest, v1.DeleteBackupResponse](
+			httpClient,
+			baseURL+BackupServiceDeleteBackupProcedure,
+			connect.WithSchema(backupServiceMethods.ByName("DeleteBackup")),
+			connect.WithClientOptions(opts...),
+		),
+		restoreBackup: connect.NewClient[v1.RestoreBackupRequest, v1.RestoreBackupResponse](
+			httpClient,
+			baseURL+BackupServiceRestoreBackupProcedure,
+			connect.WithSchema(backupServiceMethods.ByName("RestoreBackup")),
+			connect.WithClientOptions(opts...),
+		),
+		putPeerSnapshot: connect.NewClient[v1.PutPeerSnapshotRequest, v1.PutPeerSnapshotResponse](
+			httpClient,
+			baseURL+BackupServicePutPeerSnapshotProcedure,
+			connect.WithSchema(backupServiceMethods.ByName("PutPeerSnapshot")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// backupServiceClient implements BackupServiceClient.
+type backupServiceClient struct {
+	createBackup    *connect.Client[v1.CreateBackupRequest, v1.CreateBackupResponse]
+	listBackups     *connect.Client[v1.ListBackupsRequest, v1.ListBackupsResponse]
+	getBackup       *connect.Client[v1.GetBackupRequest, v1.GetBackupResponse]
+	deleteBackup    *connect.Client[v1.DeleteBackupRequest, v1.DeleteBackupResponse]
+	restoreBackup   *connect.Client[v1.RestoreBackupRequest, v1.RestoreBackupResponse]
+	putPeerSnapshot *connect.Client[v1.PutPeerSnapshotRequest, v1.PutPeerSnapshotResponse]
+}
+
+// CreateBackup calls procmesh.v1.BackupService.CreateBackup.
+func (c *backupServiceClient) CreateBackup(ctx context.Context, req *connect.Request[v1.CreateBackupRequest]) (*connect.Response[v1.CreateBackupResponse], error) {
+	return c.createBackup.CallUnary(ctx, req)
+}
+
+// ListBackups calls procmesh.v1.BackupService.ListBackups.
+func (c *backupServiceClient) ListBackups(ctx context.Context, req *connect.Request[v1.ListBackupsRequest]) (*connect.Response[v1.ListBackupsResponse], error) {
+	return c.listBackups.CallUnary(ctx, req)
+}
+
+// GetBackup calls procmesh.v1.BackupService.GetBackup.
+func (c *backupServiceClient) GetBackup(ctx context.Context, req *connect.Request[v1.GetBackupRequest]) (*connect.Response[v1.GetBackupResponse], error) {
+	return c.getBackup.CallUnary(ctx, req)
+}
+
+// DeleteBackup calls procmesh.v1.BackupService.DeleteBackup.
+func (c *backupServiceClient) DeleteBackup(ctx context.Context, req *connect.Request[v1.DeleteBackupRequest]) (*connect.Response[v1.DeleteBackupResponse], error) {
+	return c.deleteBackup.CallUnary(ctx, req)
+}
+
+// RestoreBackup calls procmesh.v1.BackupService.RestoreBackup.
+func (c *backupServiceClient) RestoreBackup(ctx context.Context, req *connect.Request[v1.RestoreBackupRequest]) (*connect.Response[v1.RestoreBackupResponse], error) {
+	return c.restoreBackup.CallUnary(ctx, req)
+}
+
+// PutPeerSnapshot calls procmesh.v1.BackupService.PutPeerSnapshot.
+func (c *backupServiceClient) PutPeerSnapshot(ctx context.Context, req *connect.Request[v1.PutPeerSnapshotRequest]) (*connect.Response[v1.PutPeerSnapshotResponse], error) {
+	return c.putPeerSnapshot.CallUnary(ctx, req)
+}
+
+// BackupServiceHandler is an implementation of the procmesh.v1.BackupService service.
+type BackupServiceHandler interface {
+	CreateBackup(context.Context, *connect.Request[v1.CreateBackupRequest]) (*connect.Response[v1.CreateBackupResponse], error)
+	ListBackups(context.Context, *connect.Request[v1.ListBackupsRequest]) (*connect.Response[v1.ListBackupsResponse], error)
+	GetBackup(context.Context, *connect.Request[v1.GetBackupRequest]) (*connect.Response[v1.GetBackupResponse], error)
+	DeleteBackup(context.Context, *connect.Request[v1.DeleteBackupRequest]) (*connect.Response[v1.DeleteBackupResponse], error)
+	RestoreBackup(context.Context, *connect.Request[v1.RestoreBackupRequest]) (*connect.Response[v1.RestoreBackupResponse], error)
+	PutPeerSnapshot(context.Context, *connect.Request[v1.PutPeerSnapshotRequest]) (*connect.Response[v1.PutPeerSnapshotResponse], error)
+}
+
+// NewBackupServiceHandler builds an HTTP handler from the service implementation. It returns the
+// path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewBackupServiceHandler(svc BackupServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	backupServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("BackupService").Methods()
+	backupServiceCreateBackupHandler := connect.NewUnaryHandler(
+		BackupServiceCreateBackupProcedure,
+		svc.CreateBackup,
+		connect.WithSchema(backupServiceMethods.ByName("CreateBackup")),
+		connect.WithHandlerOptions(opts...),
+	)
+	backupServiceListBackupsHandler := connect.NewUnaryHandler(
+		BackupServiceListBackupsProcedure,
+		svc.ListBackups,
+		connect.WithSchema(backupServiceMethods.ByName("ListBackups")),
+		connect.WithHandlerOptions(opts...),
+	)
+	backupServiceGetBackupHandler := connect.NewUnaryHandler(
+		BackupServiceGetBackupProcedure,
+		svc.GetBackup,
+		connect.WithSchema(backupServiceMethods.ByName("GetBackup")),
+		connect.WithHandlerOptions(opts...),
+	)
+	backupServiceDeleteBackupHandler := connect.NewUnaryHandler(
+		BackupServiceDeleteBackupProcedure,
+		svc.DeleteBackup,
+		connect.WithSchema(backupServiceMethods.ByName("DeleteBackup")),
+		connect.WithHandlerOptions(opts...),
+	)
+	backupServiceRestoreBackupHandler := connect.NewUnaryHandler(
+		BackupServiceRestoreBackupProcedure,
+		svc.RestoreBackup,
+		connect.WithSchema(backupServiceMethods.ByName("RestoreBackup")),
+		connect.WithHandlerOptions(opts...),
+	)
+	backupServicePutPeerSnapshotHandler := connect.NewUnaryHandler(
+		BackupServicePutPeerSnapshotProcedure,
+		svc.PutPeerSnapshot,
+		connect.WithSchema(backupServiceMethods.ByName("PutPeerSnapshot")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/procmesh.v1.BackupService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case BackupServiceCreateBackupProcedure:
+			backupServiceCreateBackupHandler.ServeHTTP(w, r)
+		case BackupServiceListBackupsProcedure:
+			backupServiceListBackupsHandler.ServeHTTP(w, r)
+		case BackupServiceGetBackupProcedure:
+			backupServiceGetBackupHandler.ServeHTTP(w, r)
+		case BackupServiceDeleteBackupProcedure:
+			backupServiceDeleteBackupHandler.ServeHTTP(w, r)
+		case BackupServiceRestoreBackupProcedure:
+			backupServiceRestoreBackupHandler.ServeHTTP(w, r)
+		case BackupServicePutPeerSnapshotProcedure:
+			backupServicePutPeerSnapshotHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedBackupServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedBackupServiceHandler struct{}
+
+func (UnimplementedBackupServiceHandler) CreateBackup(context.Context, *connect.Request[v1.CreateBackupRequest]) (*connect.Response[v1.CreateBackupResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.BackupService.CreateBackup is not implemented"))
+}
+
+func (UnimplementedBackupServiceHandler) ListBackups(context.Context, *connect.Request[v1.ListBackupsRequest]) (*connect.Response[v1.ListBackupsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.BackupService.ListBackups is not implemented"))
+}
+
+func (UnimplementedBackupServiceHandler) GetBackup(context.Context, *connect.Request[v1.GetBackupRequest]) (*connect.Response[v1.GetBackupResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.BackupService.GetBackup is not implemented"))
+}
+
+func (UnimplementedBackupServiceHandler) DeleteBackup(context.Context, *connect.Request[v1.DeleteBackupRequest]) (*connect.Response[v1.DeleteBackupResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.BackupService.DeleteBackup is not implemented"))
+}
+
+func (UnimplementedBackupServiceHandler) RestoreBackup(context.Context, *connect.Request[v1.RestoreBackupRequest]) (*connect.Response[v1.RestoreBackupResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.BackupService.RestoreBackup is not implemented"))
+}
+
+func (UnimplementedBackupServiceHandler) PutPeerSnapshot(context.Context, *connect.Request[v1.PutPeerSnapshotRequest]) (*connect.Response[v1.PutPeerSnapshotResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.BackupService.PutPeerSnapshot is not implemented"))
 }

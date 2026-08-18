@@ -820,3 +820,99 @@ service AlertService {
   rpc GetAlertPolicy(GetAlertPolicyRequest) returns (GetAlertPolicyResponse);
   rpc PutAlertPolicy(PutAlertPolicyRequest) returns (PutAlertPolicyResponse);
 }
+
+message BackupRevisionRange {
+  string process_id = 1;
+  int64 min_revision = 2;
+  int64 max_revision = 3;
+}
+
+message BackupSnapshot {
+  string snapshot_id = 1;
+  string cluster_id = 2;
+  string node_id = 3;
+  int64 created_unix_ms = 4;
+  repeated string process_ids = 5;
+  repeated BackupRevisionRange revision_ranges = 6;
+  string sha256 = 7;
+  string sink = 8;
+  string location = 9;
+  string source_node_id = 10;
+}
+
+message BackupEntry {
+  BackupSnapshot snapshot = 1;
+  string source_node = 2;
+  string freshness = 3; // LIVE | STALE | UNKNOWN
+  int64 last_updated_unix_ms = 4;
+}
+
+message CreateBackupRequest {
+  MutationMeta meta = 1;
+  string sink = 2;                    // fs | s3 | peer
+  repeated string process_ids = 3;    // 空 = 本机全部
+  repeated string target_node_ids = 4; // peer 必填
+}
+message CreateBackupResponse { BackupSnapshot snapshot = 1; }
+
+message ListBackupsRequest {
+  string sink = 1;                    // 空 = 全部本机 index
+  repeated string peer_node_ids = 2;  // 按需 hop
+  bool include_s3 = 3;
+  int32 limit = 4;                    // 0 = 50；封顶 200
+}
+message ListBackupsResponse { repeated BackupEntry entries = 1; }
+
+message GetBackupRequest {
+  string snapshot_id = 1;
+  string sink = 2;
+  string source_node_id = 3;
+  bool include_payload = 4;
+}
+message GetBackupResponse {
+  BackupSnapshot snapshot = 1;
+  bytes payload = 2;
+}
+
+message DeleteBackupRequest {
+  MutationMeta meta = 1;
+  string snapshot_id = 2;
+  string sink = 3;
+  string source_node_id = 4;
+}
+message DeleteBackupResponse {}
+
+message RestoreTarget {
+  string process_id = 1;
+  int64 expected_revision = 2;
+}
+message RestoreBackupRequest {
+  MutationMeta meta = 1;
+  string snapshot_id = 2;
+  string sink = 3;
+  string source_node_id = 4;
+  repeated RestoreTarget targets = 5;
+}
+message RestoreProcessResult {
+  string process_id = 1;
+  string status = 2; // SUCCESS | CONFLICT | INVALID | NOT_FOUND | UNAVAILABLE | DENIED
+  int64 new_revision = 3;
+  string error = 4;
+}
+message RestoreBackupResponse { repeated RestoreProcessResult results = 1; }
+
+message PutPeerSnapshotRequest {
+  MutationMeta meta = 1;
+  string source_node_id = 2;
+  bytes payload = 3;
+}
+message PutPeerSnapshotResponse { BackupSnapshot snapshot = 1; }
+
+service BackupService {
+  rpc CreateBackup(CreateBackupRequest) returns (CreateBackupResponse);
+  rpc ListBackups(ListBackupsRequest) returns (ListBackupsResponse);
+  rpc GetBackup(GetBackupRequest) returns (GetBackupResponse);
+  rpc DeleteBackup(DeleteBackupRequest) returns (DeleteBackupResponse);
+  rpc RestoreBackup(RestoreBackupRequest) returns (RestoreBackupResponse);
+  rpc PutPeerSnapshot(PutPeerSnapshotRequest) returns (PutPeerSnapshotResponse);
+}
