@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -35,6 +36,26 @@ type RestoreResult struct {
 	Error       string
 }
 
+// PeerPusher sends a snapshot payload to a remote admitted node.
+type PeerPusher interface {
+	PutPeerSnapshot(ctx context.Context, nodeID string, sourceNodeID string, payload []byte) error
+}
+
+// PeerPushFunc adapts a function to PeerPusher.
+type PeerPushFunc func(ctx context.Context, nodeID, sourceNodeID string, payload []byte) error
+
+// PutPeerSnapshot calls f.
+func (f PeerPushFunc) PutPeerSnapshot(ctx context.Context, nodeID, sourceNodeID string, payload []byte) error {
+	return f(ctx, nodeID, sourceNodeID, payload)
+}
+
+// CreateOpts selects processes, sink, and optional peer targets for Create.
+type CreateOpts struct {
+	ProcessIDs    []string
+	Sink          string
+	TargetNodeIDs []string
+}
+
 // Engine creates, reads, and deletes local process-spec snapshots.
 type Engine struct {
 	Store           *store.Store
@@ -42,7 +63,10 @@ type Engine struct {
 	ClusterID       string
 	Apply           Applier
 	Sinks           map[string]Sink // "fs"|"s3"
-	DiskPercent     func() float64  // nil = 0
+	PeerStore       *PeerStore
+	PeerPush        PeerPusher
+	Admitted        func(nodeID string) bool
+	DiskPercent     func() float64 // nil = 0
 	Now             func() time.Time
 	NewID           func() (string, error) // 测试注入；默认 UUID
 	LastSuccessUnix atomic.Int64
@@ -50,18 +74,22 @@ type Engine struct {
 
 var _ Applier = (*process.Manager)(nil)
 
-// Create snapshots local process specs + full revision history to sinkName.
-// processIDs nil/empty means all local processes.
-func (e *Engine) Create(ctx context.Context, processIDs []string, sinkName string) (Meta, error) {
-	sink, err := e.sink(sinkName)
-	if err != nil {
+// Create snapshots local process specs + full revision history.
+// ProcessIDs nil/empty means all local processes.
+// sink fs/s3 ignores TargetNodeIDs; sink peer requires them.
+func (e *Engine) Create(ctx context.Context, opt CreateOpts) (Meta, error) {
+	if opt.Sink == "peer" {
+		if err := e.validatePeerTargets(opt.TargetNodeIDs); err != nil {
+			return Meta{}, err
+		}
+	} else if _, err := e.sink(opt.Sink); err != nil {
 		return Meta{}, err
 	}
 	if e.diskPercent() >= 95 {
 		return Meta{}, errcode.E(errcode.DEGRADED, "disk usage at or above 95%")
 	}
 
-	specs, err := e.collectSpecs(ctx, processIDs)
+	specs, err := e.collectSpecs(ctx, opt.ProcessIDs)
 	if err != nil {
 		return Meta{}, err
 	}
@@ -93,15 +121,79 @@ func (e *Engine) Create(ctx context.Context, processIDs []string, sinkName strin
 	if err != nil {
 		return Meta{}, err
 	}
+
+	if opt.Sink == "peer" {
+		return e.createPeer(ctx, snap, payload, sha, opt.TargetNodeIDs)
+	}
+
+	sink, err := e.sink(opt.Sink)
+	if err != nil {
+		return Meta{}, err
+	}
 	loc, err := sink.Put(ctx, id, payload)
 	if err != nil {
 		return Meta{}, err
 	}
+	return e.indexSnapshot(ctx, snap, sha, opt.Sink, loc, "")
+}
 
+// CreatePeer is Create with Sink=peer.
+func (e *Engine) CreatePeer(ctx context.Context, processIDs, targetNodeIDs []string) (Meta, error) {
+	return e.Create(ctx, CreateOpts{
+		ProcessIDs:    processIDs,
+		Sink:          "peer",
+		TargetNodeIDs: targetNodeIDs,
+	})
+}
+
+func (e *Engine) validatePeerTargets(targets []string) error {
+	if len(targets) == 0 {
+		return errcode.E(errcode.INVALID, "target_node_ids required")
+	}
+	for _, id := range targets {
+		if e.Admitted == nil || !e.Admitted(id) {
+			return errcode.E(errcode.INVALID, "target node not admitted")
+		}
+	}
+	return nil
+}
+
+func (e *Engine) createPeer(ctx context.Context, snap Snapshot, payload []byte, sha string, targets []string) (Meta, error) {
+	var locs []string
+	var pushErr error
+	for _, node := range targets {
+		if e.PeerPush == nil {
+			pushErr = errcode.E(errcode.UNAVAILABLE, "peer push not configured")
+			continue
+		}
+		if err := e.PeerPush.PutPeerSnapshot(ctx, node, e.NodeID, payload); err != nil {
+			pushErr = errcode.E(errcode.UNAVAILABLE, "peer push failed")
+			continue
+		}
+		locs = append(locs, "peer://"+node+"/"+snap.SnapshotID)
+	}
+	if len(locs) == 0 {
+		if pushErr != nil {
+			return Meta{}, pushErr
+		}
+		return Meta{}, errcode.E(errcode.UNAVAILABLE, "peer push failed")
+	}
+	meta, err := e.indexSnapshot(ctx, snap, sha, "peer", strings.Join(locs, ","), "")
+	if err != nil {
+		return Meta{}, err
+	}
+	if pushErr != nil {
+		return meta, pushErr
+	}
+	return meta, nil
+}
+
+func (e *Engine) indexSnapshot(ctx context.Context, snap Snapshot, sha, sink, loc, sourceNodeID string) (Meta, error) {
 	meta := MetaFromSnapshot(snap)
 	meta.SHA256 = sha
-	meta.Sink = sinkName
+	meta.Sink = sink
 	meta.Location = loc
+	meta.SourceNodeID = sourceNodeID
 
 	rangesJSON, err := json.Marshal(meta.RevisionRanges)
 	if err != nil {
@@ -115,27 +207,60 @@ func (e *Engine) Create(ctx context.Context, processIDs []string, sinkName strin
 		ProcessIDs:         meta.ProcessIDs,
 		RevisionRangesJSON: string(rangesJSON),
 		SHA256:             sha,
-		Sink:               sinkName,
+		Sink:               sink,
 		Location:           loc,
+		SourceNodeID:       sourceNodeID,
 	}
 	if err := e.Store.PutBackup(ctx, rec); err != nil {
 		return Meta{}, err
 	}
-	e.LastSuccessUnix.Store(created.Unix())
+	e.LastSuccessUnix.Store(snap.CreatedAt.Unix())
+	return meta, nil
+}
+
+// ReceivePeer stores a peer snapshot on disk and indexes it. It never Apply/ApplySpec.
+func (e *Engine) ReceivePeer(ctx context.Context, sourceNodeID string, payload []byte) (Meta, error) {
+	if e.PeerStore == nil {
+		return Meta{}, errcode.E(errcode.UNAVAILABLE, "peer store not configured")
+	}
+	meta, err := e.PeerStore.Receive(ctx, sourceNodeID, payload)
+	if err != nil {
+		return Meta{}, err
+	}
+	rangesJSON, err := json.Marshal(meta.RevisionRanges)
+	if err != nil {
+		return Meta{}, fmt.Errorf("marshal revision ranges: %w", err)
+	}
+	rec := store.BackupRecord{
+		SnapshotID:         meta.SnapshotID,
+		ClusterID:          meta.ClusterID,
+		NodeID:             meta.NodeID,
+		CreatedAt:          meta.CreatedAt,
+		ProcessIDs:         meta.ProcessIDs,
+		RevisionRangesJSON: string(rangesJSON),
+		SHA256:             meta.SHA256,
+		Sink:               "peer",
+		Location:           meta.Location,
+		SourceNodeID:       sourceNodeID,
+	}
+	if err := e.Store.PutBackup(ctx, rec); err != nil {
+		return Meta{}, err
+	}
 	return meta, nil
 }
 
 // Get returns index metadata and the sink payload. SHA-256 must match the index.
 func (e *Engine) Get(ctx context.Context, snapshotID, sinkName string) (Meta, []byte, error) {
-	sink, err := e.sink(sinkName)
-	if err != nil {
-		return Meta{}, nil, err
+	if sinkName != "peer" {
+		if _, err := e.sink(sinkName); err != nil {
+			return Meta{}, nil, err
+		}
 	}
 	rec, err := e.Store.GetBackup(ctx, snapshotID)
 	if err != nil {
 		return Meta{}, nil, err
 	}
-	payload, err := sink.Get(ctx, snapshotID)
+	payload, err := e.readPayload(ctx, rec, snapshotID, sinkName)
 	if err != nil {
 		return Meta{}, nil, err
 	}
@@ -148,6 +273,20 @@ func (e *Engine) Get(ctx context.Context, snapshotID, sinkName string) (Meta, []
 		return Meta{}, nil, err
 	}
 	return meta, payload, nil
+}
+
+func (e *Engine) readPayload(ctx context.Context, rec store.BackupRecord, snapshotID, sinkName string) ([]byte, error) {
+	if sinkName == "peer" {
+		if e.PeerStore == nil {
+			return nil, errcode.E(errcode.UNAVAILABLE, "peer store not configured")
+		}
+		return e.PeerStore.Get(ctx, rec.SourceNodeID, snapshotID)
+	}
+	sink, err := e.sink(sinkName)
+	if err != nil {
+		return nil, err
+	}
+	return sink.Get(ctx, snapshotID)
 }
 
 // Delete removes the sink object and the local index row.

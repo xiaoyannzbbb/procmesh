@@ -2,6 +2,7 @@ package backup_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,7 +61,7 @@ func TestEngine_CreateListsAndGetsFS(t *testing.T) {
 		Now:   func() time.Time { return time.Unix(1_700_000_000, 0).UTC() },
 		NewID: func() (string, error) { return "snap-1", nil },
 	}
-	meta, err := e.Create(ctx, nil, "fs")
+	meta, err := e.Create(ctx, backup.CreateOpts{Sink: "fs"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +93,7 @@ func TestEngine_CreateListsAndGetsFS(t *testing.T) {
 
 func TestEngine_UnknownSinkInvalid(t *testing.T) {
 	e := &backup.Engine{Sinks: map[string]backup.Sink{}}
-	_, err := e.Create(context.Background(), nil, "tape")
+	_, err := e.Create(context.Background(), backup.CreateOpts{Sink: "tape"})
 	if !errcode.Is(err, errcode.INVALID) {
 		t.Fatalf("err %v", err)
 	}
@@ -100,7 +101,7 @@ func TestEngine_UnknownSinkInvalid(t *testing.T) {
 
 func TestEngine_MissingProcessNotFound(t *testing.T) {
 	e := seededEngine(t)
-	_, err := e.Create(context.Background(), []string{"nope"}, "fs")
+	_, err := e.Create(context.Background(), backup.CreateOpts{ProcessIDs: []string{"nope"}, Sink: "fs"})
 	if !errcode.Is(err, errcode.NOT_FOUND) {
 		t.Fatalf("err %v", err)
 	}
@@ -109,7 +110,7 @@ func TestEngine_MissingProcessNotFound(t *testing.T) {
 func TestEngine_Disk95RejectsCreate(t *testing.T) {
 	e := seededEngine(t)
 	e.DiskPercent = func() float64 { return 95 }
-	_, err := e.Create(context.Background(), nil, "fs")
+	_, err := e.Create(context.Background(), backup.CreateOpts{Sink: "fs"})
 	if !errcode.Is(err, errcode.DEGRADED) {
 		t.Fatalf("err %v", err)
 	}
@@ -128,7 +129,7 @@ func TestEngine_Disk95RejectsCreate(t *testing.T) {
 
 func TestEngine_DeleteRemovesFileAndIndex(t *testing.T) {
 	e := seededEngine(t)
-	meta, err := e.Create(context.Background(), nil, "fs")
+	meta, err := e.Create(context.Background(), backup.CreateOpts{Sink: "fs"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +153,7 @@ func TestEngine_EmptyLocalProcessListInvalid(t *testing.T) {
 		ClusterID: "c1",
 		Sinks:     map[string]backup.Sink{"fs": backup.NewFSSink(t.TempDir())},
 	}
-	_, err = e.Create(context.Background(), nil, "fs")
+	_, err = e.Create(context.Background(), backup.CreateOpts{Sink: "fs"})
 	if !errcode.Is(err, errcode.INVALID) {
 		t.Fatalf("err %v", err)
 	}
@@ -163,7 +164,7 @@ func TestEngine_EmptyLocalProcessListInvalid(t *testing.T) {
 
 func TestEngine_GetSHA256MismatchInvalid(t *testing.T) {
 	e := seededEngine(t)
-	meta, err := e.Create(context.Background(), nil, "fs")
+	meta, err := e.Create(context.Background(), backup.CreateOpts{Sink: "fs"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,6 +206,7 @@ func engineWithMgr(t *testing.T, st *store.Store, mgr *process.Manager) *backup.
 		ClusterID: "c1",
 		Apply:     mgr,
 		Sinks:     map[string]backup.Sink{"fs": backup.NewFSSink(dir)},
+		PeerStore: &backup.PeerStore{Root: t.TempDir()},
 		Now:       func() time.Time { return time.Unix(1_700_000_000, 0).UTC() },
 		NewID:     func() (string, error) { return "snap-1", nil },
 	}
@@ -228,7 +230,7 @@ func TestEngine_RestoreAppliesNewRevisionViaCAS(t *testing.T) {
 	ctx := context.Background()
 	mgr, st, spec := seedManagedProcess(t) // latest=1
 	e := engineWithMgr(t, st, mgr)
-	meta, err := e.Create(ctx, nil, "fs")
+	meta, err := e.Create(ctx, backup.CreateOpts{Sink: "fs"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +276,7 @@ func TestEngine_RestoreWrongExpectedConflictDoesNotRewriteStore(t *testing.T) {
 	ctx := context.Background()
 	mgr, st, spec := seedManagedProcess(t)
 	e := engineWithMgr(t, st, mgr)
-	meta, _ := e.Create(ctx, nil, "fs")
+	meta, _ := e.Create(ctx, backup.CreateOpts{Sink: "fs"})
 	before, _ := st.ListRevisions(ctx, spec.ProcessID)
 	results, err := e.Restore(ctx, meta.SnapshotID, "fs", "op-bad", "t", []backup.RestoreTarget{{
 		ProcessID: spec.ProcessID, ExpectedRevision: spec.LatestRevision + 9,
@@ -304,7 +306,7 @@ func TestEngine_RestoreForeignSnapshotWithoutLocalProcessInvalid(t *testing.T) {
 		Sinks:     map[string]backup.Sink{"fs": backup.NewFSSink(dir)},
 		NewID:     func() (string, error) { return "snap-foreign", nil },
 	}
-	meta, err := eOther.Create(ctx, nil, "fs")
+	meta, err := eOther.Create(ctx, backup.CreateOpts{Sink: "fs"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +367,7 @@ func TestEngine_RestoreMissingProcessCreatesWhenExpectedZero(t *testing.T) {
 	ctx := context.Background()
 	mgr, st, spec := seedManagedProcess(t)
 	e := engineWithMgr(t, st, mgr)
-	meta, err := e.Create(ctx, nil, "fs")
+	meta, err := e.Create(ctx, backup.CreateOpts{Sink: "fs"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -391,7 +393,7 @@ func TestEngine_RestoreMissingProcessConflictWhenExpectedNonzero(t *testing.T) {
 	ctx := context.Background()
 	mgr, st, spec := seedManagedProcess(t)
 	e := engineWithMgr(t, st, mgr)
-	meta, err := e.Create(ctx, nil, "fs")
+	meta, err := e.Create(ctx, backup.CreateOpts{Sink: "fs"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -416,7 +418,7 @@ func TestEngine_RestoreUnknownProcessInSnapshotInvalid(t *testing.T) {
 	ctx := context.Background()
 	mgr, st, spec := seedManagedProcess(t)
 	e := engineWithMgr(t, st, mgr)
-	meta, err := e.Create(ctx, nil, "fs")
+	meta, err := e.Create(ctx, backup.CreateOpts{Sink: "fs"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,5 +431,130 @@ func TestEngine_RestoreUnknownProcessInSnapshotInvalid(t *testing.T) {
 	}
 	if len(results) != 2 || results[0].Status != "SUCCESS" || results[1].Status != "INVALID" {
 		t.Fatalf("%+v", results)
+	}
+}
+
+func foreignSnapshotPayload(t *testing.T) []byte {
+	t.Helper()
+	snap := backup.Snapshot{
+		FormatVersion: 1,
+		SnapshotID:    "foreign-1",
+		ClusterID:     "c1",
+		NodeID:        "other",
+		CreatedAt:     time.Unix(1, 0).UTC(),
+		Processes: []backup.ProcessDump{{
+			ProcessID:   "foreign",
+			Name:        "other",
+			MaxRevision: 1,
+			Revisions: []backup.RevisionDump{{
+				Revision: 1,
+				Spec:     json.RawMessage(`{"Name":"other","ProcessID":"foreign"}`),
+			}},
+		}},
+	}
+	payload, _, err := backup.Encode(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
+}
+
+func TestEngine_ReceivePeerDoesNotApply(t *testing.T) {
+	mgr, st, _ := seedManagedProcess(t)
+	e := engineWithMgr(t, st, mgr)
+	before, _ := st.ListSpecs(context.Background())
+	payload := foreignSnapshotPayload(t) // node_id=other, process_id=foreign
+	if _, err := e.ReceivePeer(context.Background(), "other", payload); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := st.ListSpecs(context.Background())
+	if len(after) != len(before) {
+		t.Fatal("peer receive must not create processes")
+	}
+	// 再 Restore 这条 peer 快照：本机 NodeID != other → INVALID，specs 仍不变
+	recs, _ := st.ListBackups(context.Background())
+	var peerID string
+	for _, r := range recs {
+		if r.Sink == "peer" {
+			peerID = r.SnapshotID
+		}
+	}
+	results, err := e.Restore(context.Background(), peerID, "peer", "op", "t", []backup.RestoreTarget{{
+		ProcessID: "foreign", ExpectedRevision: 0,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if results[0].Status != "INVALID" {
+		t.Fatalf("%+v", results)
+	}
+	after2, _ := st.ListSpecs(context.Background())
+	if len(after2) != len(before) {
+		t.Fatal("restore of peer copy created a process")
+	}
+}
+
+func TestEngine_CreatePeerCallsPusher(t *testing.T) {
+	e := seededEngine(t)
+	var got []string
+	e.PeerPush = backup.PeerPushFunc(func(ctx context.Context, nodeID, source string, payload []byte) error {
+		got = append(got, nodeID)
+		if source != e.NodeID || len(payload) == 0 {
+			t.Fatalf("bad push %s %s", source, nodeID)
+		}
+		return nil
+	})
+	e.Admitted = func(id string) bool { return id == "peer-1" }
+	meta, err := e.CreatePeer(context.Background(), nil, []string{"peer-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Sink != "peer" || got[0] != "peer-1" {
+		t.Fatalf("%+v %v", meta, got)
+	}
+}
+
+func TestEngine_CreatePeerRejectsNonAdmitted(t *testing.T) {
+	e := seededEngine(t)
+	e.Admitted = func(string) bool { return false }
+	_, err := e.CreatePeer(context.Background(), nil, []string{"x"})
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestEngine_CreatePeerRequiresTargets(t *testing.T) {
+	e := seededEngine(t)
+	e.Admitted = func(string) bool { return true }
+	_, err := e.Create(context.Background(), backup.CreateOpts{Sink: "peer"})
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestEngine_CreatePeerPartialPushUnavailable(t *testing.T) {
+	e := seededEngine(t)
+	e.Admitted = func(string) bool { return true }
+	e.PeerPush = backup.PeerPushFunc(func(ctx context.Context, nodeID, source string, payload []byte) error {
+		if nodeID == "b" {
+			return errcode.E(errcode.UNAVAILABLE, "down")
+		}
+		return nil
+	})
+	meta, err := e.Create(context.Background(), backup.CreateOpts{
+		Sink: "peer", TargetNodeIDs: []string{"a", "b"},
+	})
+	if !errcode.Is(err, errcode.UNAVAILABLE) {
+		t.Fatalf("err %v", err)
+	}
+	if meta.Location != "peer://a/snap-1" {
+		t.Fatalf("loc %s", meta.Location)
+	}
+	recs, _ := e.Store.ListBackups(context.Background())
+	if len(recs) != 1 || recs[0].Location != "peer://a/snap-1" {
+		t.Fatalf("index %+v", recs)
+	}
+	if e.LastSuccessUnix.Load() != 1_700_000_000 {
+		t.Fatalf("metric %d", e.LastSuccessUnix.Load())
 	}
 }
