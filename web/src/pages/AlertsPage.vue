@@ -1304,6 +1304,7 @@ h3 {
   border-radius: 8px;
   background: var(--color-card);
   box-shadow: var(--shadow-sm);
+  margin: 10px 0;
 }
 
 .summary-item {

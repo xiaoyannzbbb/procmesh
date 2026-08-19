@@ -7,6 +7,7 @@ export const RESTART_REQUIRED_BANNER = "Configuration changed. Restart required.
 
 export type ClusterProcessRow = {
   name: string;
+  processId: string;
   group: string;
   ownerNodeId: string;
   ownerHostname: string;
@@ -108,6 +109,7 @@ export function flattenClusterProcesses(nodes: unknown[], nowMs: number): Cluste
     for (const proc of node.processes) {
       rows.push({
         name: proc.name,
+        processId: "",
         group: proc.group,
         ownerNodeId: node.nodeId,
         ownerHostname: node.hostname,
@@ -142,6 +144,7 @@ export function rowsFromProcessViews(processes: unknown[], nowMs: number): Clust
     const first = asRecord(instances[0]);
     rows.push({
       name: toStr(pick(spec, "name")),
+      processId: toStr(pick(rec, "processId", "process_id") ?? pick(spec, "processId", "process_id")),
       group: toStr(pick(spec, "group")),
       ownerNodeId: toStr(pick(spec, "ownerAgentId", "owner_agent_id")),
       ownerHostname: "",
@@ -161,8 +164,19 @@ export function rowsFromProcessViews(processes: unknown[], nowMs: number): Clust
 }
 
 export function mergeProcessRows(gossip: ClusterProcessRow[], listed: ClusterProcessRow[]): ClusterProcessRow[] {
-  const seen = new Set(gossip.map(rowKey));
-  const out = gossip.slice();
+  const listedByKey = new Map(listed.map((row) => [rowKey(row), row]));
+  const seen = new Set<string>();
+  const out: ClusterProcessRow[] = [];
+  for (const row of gossip) {
+    const key = rowKey(row);
+    seen.add(key);
+    const extra = listedByKey.get(key);
+    if (extra?.processId && !row.processId) {
+      out.push({ ...row, processId: extra.processId });
+    } else {
+      out.push(row);
+    }
+  }
   for (const row of listed) {
     const key = rowKey(row);
     if (seen.has(key)) {

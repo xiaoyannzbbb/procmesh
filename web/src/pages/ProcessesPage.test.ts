@@ -200,7 +200,7 @@ describe("ProcessesPage owner column", () => {
       ],
     );
 
-    const ownerLink = wrapper.get("tbody tr td:nth-child(2) a");
+    const ownerLink = wrapper.get("tbody tr td.cell-owner a");
     expect(ownerLink.text()).toBe("agent-a");
     expect(ownerLink.text()).not.toContain("n-a");
     expect(ownerLink.attributes("href")).toBe("/nodes/n-a");
