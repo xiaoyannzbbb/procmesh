@@ -962,6 +962,9 @@ func (s *State) ClaimFire(b FireClaimBody, now time.Time) (FireRecord, bool, err
 	if !validMetadataString(b.FireKey, maxFireKeyLen) || !validMetadataString(b.PolicyID, maxMetadataIDLen) || b.LeaderTerm == 0 {
 		return FireRecord{}, false, errcode.E(errcode.INVALID, "fire key, policy id, and leader term required")
 	}
+	if b.LeaseUntilUnix != 0 && (b.LeaseUntilUnix <= now.Unix() || b.LeaseUntilUnix > now.Add(24*time.Hour).Unix()) {
+		return FireRecord{}, false, errcode.E(errcode.INVALID, "invalid fire lease")
+	}
 	if current, ok := s.BackupFireLedger[b.FireKey]; ok {
 		if current.PolicyID != b.PolicyID {
 			return FireRecord{}, false, errcode.E(errcode.CONFLICT, "fire key belongs to another policy")
@@ -982,6 +985,9 @@ func (s *State) ClaimFire(b FireClaimBody, now time.Time) (FireRecord, bool, err
 	leaseUntil := b.LeaseUntilUnix
 	if leaseUntil == 0 {
 		leaseUntil = now.Add(defaultFireLease).Unix()
+	}
+	if leaseUntil <= now.Unix() || leaseUntil > now.Add(24*time.Hour).Unix() {
+		return FireRecord{}, false, errcode.E(errcode.INVALID, "invalid fire lease")
 	}
 	scheduled := b.ScheduledUnix
 	if scheduled == 0 {
@@ -1142,6 +1148,9 @@ func (s *State) applyUpdateTask(b UpdateTaskBody) error {
 	if err := validateTaskMetadata(b.Task); err != nil {
 		return err
 	}
+	if b.Task.Bytes < 0 {
+		return errcode.E(errcode.INVALID, "negative task bytes")
+	}
 	runs, tasks := runMaps(s, b.Replication)
 	terms := runTerms(s, b.Replication)
 	if term := terms[b.Task.RunID]; term > b.LeaderTerm {
@@ -1161,6 +1170,9 @@ func (s *State) applyUpdateTask(b UpdateTaskBody) error {
 	}
 	b.Task.LeaderTerm = b.LeaderTerm
 	tasks[key] = b.Task
+	if b.LeaderTerm > terms[b.Task.RunID] {
+		terms[b.Task.RunID] = b.LeaderTerm
+	}
 	return nil
 }
 
@@ -1173,6 +1185,9 @@ func (s *State) applyFinishRun(b FinishRunBody) error {
 	}
 	if b.LeaderTerm == 0 || !validMetadataString(b.RunID, maxMetadataIDLen) || !validRunStatus(b.Status) {
 		return errcode.E(errcode.INVALID, "run id, status, and leader term required")
+	}
+	if b.Success < 0 || b.Failed < 0 || b.Unavailable < 0 || b.Timeout < 0 {
+		return errcode.E(errcode.INVALID, "negative run counters")
 	}
 	if b.Success < 0 || b.Failed < 0 || b.Unavailable < 0 || b.Timeout < 0 {
 		return errcode.E(errcode.INVALID, "invalid run counters")
@@ -1196,6 +1211,9 @@ func (s *State) applyFinishRun(b FinishRunBody) error {
 	}
 	run.Status, run.Success, run.Failed, run.Unavailable, run.Timeout, run.FinishedUnix = b.Status, b.Success, b.Failed, b.Unavailable, b.Timeout, b.FinishedUnix
 	runs[b.RunID] = run
+	if b.LeaderTerm > terms[b.RunID] {
+		terms[b.RunID] = b.LeaderTerm
+	}
 	return nil
 }
 

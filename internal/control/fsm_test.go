@@ -488,10 +488,8 @@ func TestFSM_PruneRunMetadataRetainsLiveFireLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	old, _, err := s.ClaimFire(control.FireClaimBody{OperationID: "op-old", FireKey: "bp-1:old-expired", PolicyID: "bp-1", LeaderTerm: 1, ScheduledUnix: now.Add(-time.Hour).Unix(), LeaseUntilUnix: now.Add(-time.Minute).Unix()}, now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	old := control.FireRecord{FireKey: "bp-1:old-expired", PolicyID: "bp-1", RunID: "run-old", ScheduledUnix: now.Add(-time.Hour).Unix(), LeaseUntilUnix: now.Add(-time.Minute).Unix(), LeaderTerm: 1, Status: "CLAIMED"}
+	s.BackupFireLedger[old.FireKey] = old
 	s.PruneRunMetadata(now.Add(-time.Minute).Unix())
 	if _, ok := s.BackupFireLedger[live.FireKey]; !ok {
 		t.Fatal("live lease pruned")
@@ -523,6 +521,25 @@ func TestFSM_CreateRunValidatesAndFreezesPolicy(t *testing.T) {
 	badTargets.TargetNodeIDs = []string{"node-a"}
 	if err := s.CreateRun(control.CreateRunBody{OperationID: "op-bad-target", LeaderTerm: 1, Run: badTargets}); !errcode.Is(err, errcode.CONFLICT) {
 		t.Fatalf("targets: %v", err)
+	}
+}
+
+func TestFSM_MetadataFencesNewerTermsAndRejectsInvalidLeases(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := control.NewState()
+	s.BackupPolicies["bp-term"] = control.BackupPolicy{PolicyID: "bp-term", Revision: 1}
+	run := control.ClusterBackupRun{RunID: "run-term", PolicyID: "bp-term", PolicyRevision: 1, Status: "RUNNING"}
+	if err := s.CreateRun(control.CreateRunBody{OperationID: "op-term-run", LeaderTerm: 1, Run: run}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateTask(control.UpdateTaskBody{OperationID: "op-term-task-new", LeaderTerm: 4, Task: control.ClusterBackupTask{RunID: run.RunID, TaskID: "task", NodeID: "node", Status: "RUNNING"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FinishRun(control.FinishRunBody{OperationID: "op-term-finish-old", RunID: run.RunID, LeaderTerm: 2, Status: "FAILED"}); !errcode.Is(err, errcode.CONFLICT) {
+		t.Fatalf("stale finish after newer task: %v", err)
+	}
+	if _, _, err := s.ClaimFire(control.FireClaimBody{OperationID: "op-bad-lease", FireKey: "bp-term:1", PolicyID: "bp-term", LeaderTerm: 1, LeaseUntilUnix: now.Unix() - 1}, now); !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("invalid lease: %v", err)
 	}
 }
 
