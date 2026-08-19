@@ -914,7 +914,14 @@ func TestFSM_BackupPolicyPutRejectsInvalidFields(t *testing.T) {
 		{name: "invalid cron", body: func() control.BackupPolicyPutBody { b := valid; b.ScheduleCron = "0 * *"; return b }()},
 		{name: "invalid timezone", body: func() control.BackupPolicyPutBody { b := valid; b.Timezone = "Moon/Base"; return b }()},
 		{name: "unknown selector", body: func() control.BackupPolicyPutBody { b := valid; b.TargetSelector = "NEARBY"; return b }()},
+		{name: "unknown explicit node", body: func() control.BackupPolicyPutBody {
+			b := valid
+			b.TargetSelector = "EXPLICIT_NODES"
+			b.TargetIDs = []string{"missing"}
+			return b
+		}()},
 		{name: "s3 missing profile", body: func() control.BackupPolicyPutBody { b := valid; b.Sink = "s3"; return b }()},
+		{name: "invalid unavailable policy", body: func() control.BackupPolicyPutBody { b := valid; b.UnavailablePolicy = "IGNORE"; return b }()},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -922,6 +929,49 @@ func TestFSM_BackupPolicyPutRejectsInvalidFields(t *testing.T) {
 				t.Fatalf("got %v", err)
 			}
 		})
+	}
+}
+
+func TestFSM_BackupPolicyPutDefaultsAndValidatesUnavailablePolicy(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := mustBootstrap(t, now)
+	body := control.BackupPolicyPutBody{
+		PolicyID: "bp-default", Name: "default-unavailable", ScheduleCron: "0 2 * * *", Timezone: "UTC",
+		TargetSelector: "ALL_ADMITTED", Sink: "fs",
+	}
+	if err := s.Apply(mustEncode(t, control.CmdBackupPolicyPut, body), now); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.BackupPolicies[body.PolicyID].UnavailablePolicy; got != "RECORD_AND_CONTINUE" {
+		t.Fatalf("unavailable policy=%q", got)
+	}
+}
+
+func TestFSM_PolicyPutRejectsInvalidAgentGroupSelectors(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := mustBootstrap(t, now)
+	if err := s.Apply(mustEncode(t, control.CmdGroupPut, control.GroupPutBody{GroupID: "g-1", Name: "ops", NowUnix: now.Unix()}), now); err != nil {
+		t.Fatal(err)
+	}
+	backupCases := []control.BackupPolicyPutBody{
+		{PolicyID: "bp-group-blank", Name: "group-blank", ScheduleCron: "0 2 * * *", Timezone: "UTC", TargetSelector: "AGENT_GROUP", TargetIDs: []string{" "}, Sink: "fs"},
+		{PolicyID: "bp-group-duplicate", Name: "group-duplicate", ScheduleCron: "0 2 * * *", Timezone: "UTC", TargetSelector: "AGENT_GROUP", TargetIDs: []string{"g-1", "g-1"}, Sink: "fs"},
+		{PolicyID: "bp-group-missing", Name: "group-missing", ScheduleCron: "0 2 * * *", Timezone: "UTC", TargetSelector: "AGENT_GROUP", TargetIDs: []string{"missing"}, Sink: "fs"},
+	}
+	for _, body := range backupCases {
+		if err := s.Apply(mustEncode(t, control.CmdBackupPolicyPut, body), now); !errcode.Is(err, errcode.INVALID) {
+			t.Fatalf("backup %s: %v", body.PolicyID, err)
+		}
+	}
+	replicationCases := []control.ReplicationPolicyPutBody{
+		{PolicyID: "rp-group-blank", Name: "group-blank", SourceSelector: "AGENT_GROUP", SourceIDs: []string{" "}, ReplicaFactor: 1, Trigger: "MANUAL"},
+		{PolicyID: "rp-group-duplicate", Name: "group-duplicate", SourceSelector: "AGENT_GROUP", SourceIDs: []string{"g-1", "g-1"}, ReplicaFactor: 1, Trigger: "MANUAL"},
+		{PolicyID: "rp-group-missing", Name: "group-missing", SourceSelector: "AGENT_GROUP", SourceIDs: []string{"missing"}, ReplicaFactor: 1, Trigger: "MANUAL"},
+	}
+	for _, body := range replicationCases {
+		if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), now); !errcode.Is(err, errcode.INVALID) {
+			t.Fatalf("replication %s: %v", body.PolicyID, err)
+		}
 	}
 }
 
@@ -937,9 +987,17 @@ func TestFSM_BackupPolicyDeleteRejectsMissingPolicy(t *testing.T) {
 func TestFSM_ReplicationPolicyPutRejectsUnsafeRoutes(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	s := mustBootstrap(t, now)
+	for _, nodeID := range []string{"node-a", "node-b", "node-c"} {
+		if err := s.Apply(mustEncode(t, control.CmdMemberPut, control.MemberPutBody{NodeID: nodeID, Status: control.MemberAdmitted}), now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Apply(mustEncode(t, control.CmdMemberPut, control.MemberPutBody{NodeID: "node-revoked", Status: control.MemberRevoked}), now); err != nil {
+		t.Fatal(err)
+	}
 	valid := control.ReplicationPolicyPutBody{
 		PolicyID: "rp-1", Name: "dr", Enabled: true,
-		SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1,
+		SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1, Trigger: "MANUAL",
 		Routes: []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}}},
 	}
 	if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, valid), now); err != nil {
@@ -947,6 +1005,17 @@ func TestFSM_ReplicationPolicyPutRejectsUnsafeRoutes(t *testing.T) {
 	}
 	if got := s.ReplicationPolicies["rp-1"].Routes[0].TargetNodeIDs; len(got) != 1 || got[0] != "node-b" {
 		t.Fatalf("routes=%v", got)
+	}
+	if err := s.Apply(mustEncode(t, control.CmdBackupPolicyPut, control.BackupPolicyPutBody{
+		PolicyID: "bp-primary", Name: "primary", ScheduleCron: "0 2 * * *", Timezone: "UTC", TargetSelector: "ALL_ADMITTED", Sink: "fs",
+	}), now); err != nil {
+		t.Fatal(err)
+	}
+	afterPrimary := valid
+	afterPrimary.PolicyID, afterPrimary.Name, afterPrimary.Trigger = "rp-after-primary", "after-primary", "AFTER_PRIMARY_BACKUP"
+	afterPrimary.PrimaryPolicyIDs = []string{"bp-primary"}
+	if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, afterPrimary), now); err != nil {
+		t.Fatal(err)
 	}
 
 	cases := []struct {
@@ -972,6 +1041,184 @@ func TestFSM_ReplicationPolicyPutRejectsUnsafeRoutes(t *testing.T) {
 			b.PolicyID = "rp-dup"
 			b.Name = "dup"
 			b.Routes = []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b", "node-b"}}}
+			return b
+		}()},
+		{name: "invalid trigger", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-trigger"
+			b.Name = "trigger"
+			b.Trigger = "ON_DEMAND"
+			return b
+		}()},
+		{name: "scheduled trigger missing schedule", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-schedule-empty"
+			b.Name = "schedule-empty"
+			b.Trigger = "SCHEDULE"
+			b.ScheduleCron = ""
+			b.Timezone = "UTC"
+			return b
+		}()},
+		{name: "scheduled trigger invalid timezone", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-schedule-timezone"
+			b.Name = "schedule-timezone"
+			b.Trigger = "SCHEDULE"
+			b.ScheduleCron = "0 2 * * *"
+			b.Timezone = "Moon/Base"
+			return b
+		}()},
+		{name: "scheduled trigger invalid cron", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-schedule-cron"
+			b.Name = "schedule-cron"
+			b.Trigger = "SCHEDULE"
+			b.ScheduleCron = "0 * *"
+			b.Timezone = "UTC"
+			return b
+		}()},
+		{name: "after primary missing policies", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-primary-empty"
+			b.Name = "primary-empty"
+			b.Trigger = "AFTER_PRIMARY_BACKUP"
+			return b
+		}()},
+		{name: "after primary blank policy", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-primary-blank"
+			b.Name = "primary-blank"
+			b.Trigger = "AFTER_PRIMARY_BACKUP"
+			b.PrimaryPolicyIDs = []string{" "}
+			return b
+		}()},
+		{name: "after primary unknown policy", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-primary-unknown"
+			b.Name = "primary-unknown"
+			b.Trigger = "AFTER_PRIMARY_BACKUP"
+			b.PrimaryPolicyIDs = []string{"missing"}
+			return b
+		}()},
+		{name: "after primary duplicate policy", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-primary-duplicate"
+			b.Name = "primary-duplicate"
+			b.Trigger = "AFTER_PRIMARY_BACKUP"
+			b.PrimaryPolicyIDs = []string{"bp-primary", "bp-primary"}
+			return b
+		}()},
+		{name: "negative retention", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-negative-retention"
+			b.Name = "negative-retention"
+			b.RetentionKeepLast = -1
+			return b
+		}()},
+		{name: "negative retention days", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-negative-days"
+			b.Name = "negative-days"
+			b.RetentionKeepDays = -1
+			return b
+		}()},
+		{name: "negative retention bytes", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-negative-bytes"
+			b.Name = "negative-bytes"
+			b.RetentionMaxBytes = -1
+			return b
+		}()},
+		{name: "negative concurrency", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-negative-concurrency"
+			b.Name = "negative-concurrency"
+			b.MaxConcurrency = -1
+			return b
+		}()},
+		{name: "negative bandwidth", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-negative-bandwidth"
+			b.Name = "negative-bandwidth"
+			b.BandwidthLimit = -1
+			return b
+		}()},
+		{name: "blank source route", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-blank-source"
+			b.Name = "blank-source"
+			b.Routes = []control.ReplicationRoute{{SourceNodeID: "  ", TargetNodeIDs: []string{"node-b"}}}
+			return b
+		}()},
+		{name: "blank route target", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-blank-target"
+			b.Name = "blank-target"
+			b.Routes = []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"  "}}}
+			return b
+		}()},
+		{name: "duplicate source route", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-dup-source"
+			b.Name = "dup-source"
+			b.Routes = []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}}, {SourceNodeID: "node-a", TargetNodeIDs: []string{"node-c"}}}
+			return b
+		}()},
+		{name: "unknown explicit source", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-unknown-source"
+			b.Name = "unknown-source"
+			b.SourceSelector = "EXPLICIT_NODES"
+			b.SourceIDs = []string{"node-z"}
+			b.Routes = nil
+			return b
+		}()},
+		{name: "unknown route target", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-unknown-target"
+			b.Name = "unknown-target"
+			b.Routes = []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-z"}}}
+			return b
+		}()},
+		{name: "revoked route target", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-revoked-target"
+			b.Name = "revoked-target"
+			b.Routes = []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-revoked"}}}
+			return b
+		}()},
+		{name: "unknown route source", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-unknown-route-source"
+			b.Name = "unknown-route-source"
+			b.Routes = []control.ReplicationRoute{{SourceNodeID: "node-z", TargetNodeIDs: []string{"node-b"}}}
+			return b
+		}()},
+		{name: "duplicate explicit sources", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-dup-explicit"
+			b.Name = "dup-explicit"
+			b.SourceSelector = "EXPLICIT_NODES"
+			b.SourceIDs = []string{"node-a", "node-a"}
+			b.Routes = nil
+			return b
+		}()},
+		{name: "blank explicit source", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-blank-explicit"
+			b.Name = "blank-explicit"
+			b.SourceSelector = "EXPLICIT_NODES"
+			b.SourceIDs = []string{" "}
+			b.Routes = nil
+			return b
+		}()},
+		{name: "revoked explicit source", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-revoked-explicit"
+			b.Name = "revoked-explicit"
+			b.SourceSelector = "EXPLICIT_NODES"
+			b.SourceIDs = []string{"node-revoked"}
+			b.Routes = nil
 			return b
 		}()},
 	}

@@ -747,13 +747,14 @@ func validateTargetIDs(selector string, ids []string) error {
 	}
 	seen := make(map[string]struct{}, len(ids))
 	for _, id := range ids {
-		if strings.TrimSpace(id) == "" {
+		trimmed := strings.TrimSpace(id)
+		if trimmed == "" || trimmed != id {
 			return errcode.E(errcode.INVALID, "target id")
 		}
-		if _, ok := seen[id]; ok {
+		if _, ok := seen[trimmed]; ok {
 			return errcode.E(errcode.INVALID, "duplicate target")
 		}
-		seen[id] = struct{}{}
+		seen[trimmed] = struct{}{}
 	}
 	return nil
 }
@@ -769,6 +770,22 @@ func (s *State) validateExplicitTargets(selector string, ids []string) error {
 		}
 	}
 	return nil
+}
+
+func (s *State) validateAgentGroups(selector string, ids []string) error {
+	if selector != "AGENT_GROUP" {
+		return nil
+	}
+	for _, id := range ids {
+		if _, ok := s.AgentGroups[id]; !ok {
+			return errcode.E(errcode.INVALID, "agent group not found")
+		}
+	}
+	return nil
+}
+
+func validUnavailablePolicy(policy string) bool {
+	return policy == "RECORD_AND_CONTINUE" || policy == "FAIL_FAST"
 }
 
 func (s *State) applyBackupPolicyPut(b BackupPolicyPutBody) error {
@@ -790,6 +807,9 @@ func (s *State) applyBackupPolicyPut(b BackupPolicyPutBody) error {
 	if err := s.validateExplicitTargets(b.TargetSelector, b.TargetIDs); err != nil {
 		return err
 	}
+	if err := s.validateAgentGroups(b.TargetSelector, b.TargetIDs); err != nil {
+		return err
+	}
 	if b.Sink != "fs" && b.Sink != "s3" {
 		return errcode.E(errcode.INVALID, "sink")
 	}
@@ -799,13 +819,20 @@ func (s *State) applyBackupPolicyPut(b BackupPolicyPutBody) error {
 	if b.RetentionKeepLast < 0 || b.RetentionKeepDays < 0 || b.RetentionMaxBytes < 0 || b.TimeoutSeconds < 0 || b.MaxConcurrency < 0 {
 		return errcode.E(errcode.INVALID, "invalid retention or limits")
 	}
+	unavailablePolicy := b.UnavailablePolicy
+	if unavailablePolicy == "" {
+		unavailablePolicy = "RECORD_AND_CONTINUE"
+	}
+	if !validUnavailablePolicy(unavailablePolicy) {
+		return errcode.E(errcode.INVALID, "unavailable policy")
+	}
 	cur := s.BackupPolicies[b.PolicyID]
 	cur.PolicyID, cur.Name, cur.Enabled = b.PolicyID, name, b.Enabled
 	cur.ScheduleCron, cur.Timezone = strings.TrimSpace(b.ScheduleCron), strings.TrimSpace(b.Timezone)
 	cur.TargetSelector, cur.TargetIDs = b.TargetSelector, append([]string(nil), b.TargetIDs...)
 	cur.Sink, cur.DestinationProfile = b.Sink, strings.TrimSpace(b.DestinationProfile)
 	cur.RetentionKeepLast, cur.RetentionKeepDays, cur.RetentionMaxBytes = b.RetentionKeepLast, b.RetentionKeepDays, b.RetentionMaxBytes
-	cur.TimeoutSeconds, cur.MaxConcurrency, cur.UnavailablePolicy = b.TimeoutSeconds, b.MaxConcurrency, b.UnavailablePolicy
+	cur.TimeoutSeconds, cur.MaxConcurrency, cur.UnavailablePolicy = b.TimeoutSeconds, b.MaxConcurrency, unavailablePolicy
 	cur.Revision++
 	s.BackupPolicies[b.PolicyID] = cur
 	return nil
@@ -829,36 +856,64 @@ func (s *State) applyReplicationPolicyPut(b ReplicationPolicyPutBody) error {
 			return errcode.E(errcode.CONFLICT, "replication policy name already exists")
 		}
 	}
-	if !validPolicySelector(b.SourceSelector) {
-		return errcode.E(errcode.INVALID, "source selector")
+	if err := validateTargetIDs(b.SourceSelector, b.SourceIDs); err != nil {
+		return errcode.E(errcode.INVALID, "source ids")
 	}
-	if (b.SourceSelector == "AGENT_GROUP" || b.SourceSelector == "EXPLICIT_NODES") && len(b.SourceIDs) == 0 {
-		return errcode.E(errcode.INVALID, "source ids required")
+	if err := s.validateExplicitTargets(b.SourceSelector, b.SourceIDs); err != nil {
+		return errcode.E(errcode.INVALID, "source node not admitted")
+	}
+	if err := s.validateAgentGroups(b.SourceSelector, b.SourceIDs); err != nil {
+		return errcode.E(errcode.INVALID, "source agent group")
 	}
 	if b.ReplicaFactor <= 0 {
 		return errcode.E(errcode.INVALID, "replica factor")
 	}
-	if b.ScheduleCron != "" || b.Timezone != "" {
+	if b.RetentionKeepLast < 0 || b.RetentionKeepDays < 0 || b.RetentionMaxBytes < 0 || b.MaxConcurrency < 0 || b.BandwidthLimit < 0 {
+		return errcode.E(errcode.INVALID, "invalid retention or limits")
+	}
+	if !validReplicationTrigger(b.Trigger) {
+		return errcode.E(errcode.INVALID, "trigger")
+	}
+	if b.Trigger == "SCHEDULE" {
+		if strings.TrimSpace(b.ScheduleCron) == "" {
+			return errcode.E(errcode.INVALID, "schedule cron required")
+		}
 		if err := validatePolicySchedule(b.ScheduleCron, b.Timezone); err != nil {
+			return err
+		}
+	}
+	if b.Trigger == "AFTER_PRIMARY_BACKUP" {
+		if err := s.validatePrimaryPolicies(b.PrimaryPolicyIDs); err != nil {
 			return err
 		}
 	}
 	seenSources := map[string]struct{}{}
 	for _, route := range b.Routes {
-		if strings.TrimSpace(route.SourceNodeID) == "" {
+		source := strings.TrimSpace(route.SourceNodeID)
+		if source == "" || source != route.SourceNodeID {
 			return errcode.E(errcode.INVALID, "route source")
 		}
-		if _, ok := seenSources[route.SourceNodeID]; ok {
+		if _, ok := seenSources[source]; ok {
 			return errcode.E(errcode.INVALID, "duplicate route source")
 		}
-		seenSources[route.SourceNodeID] = struct{}{}
+		if !s.isAdmittedMember(source) {
+			return errcode.E(errcode.INVALID, "route source not admitted")
+		}
+		seenSources[source] = struct{}{}
 		seenTargets := map[string]struct{}{}
-		for _, target := range route.TargetNodeIDs {
-			if target == route.SourceNodeID {
+		for _, rawTarget := range route.TargetNodeIDs {
+			target := strings.TrimSpace(rawTarget)
+			if target == "" || target != rawTarget {
+				return errcode.E(errcode.INVALID, "route target")
+			}
+			if target == source {
 				return errcode.E(errcode.INVALID, "self replication")
 			}
 			if _, ok := seenTargets[target]; ok {
 				return errcode.E(errcode.INVALID, "duplicate target")
+			}
+			if !s.isAdmittedMember(target) {
+				return errcode.E(errcode.INVALID, "route target not admitted")
 			}
 			seenTargets[target] = struct{}{}
 		}
@@ -878,6 +933,41 @@ func (s *State) applyReplicationPolicyPut(b ReplicationPolicyPutBody) error {
 	cur.Revision++
 	s.ReplicationPolicies[b.PolicyID] = cur
 	return nil
+}
+
+func validReplicationTrigger(trigger string) bool {
+	switch trigger {
+	case "AFTER_PRIMARY_BACKUP", "SCHEDULE", "MANUAL":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *State) validatePrimaryPolicies(ids []string) error {
+	if len(ids) == 0 {
+		return errcode.E(errcode.INVALID, "primary policy ids required")
+	}
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		trimmed := strings.TrimSpace(id)
+		if trimmed == "" || trimmed != id {
+			return errcode.E(errcode.INVALID, "primary policy id")
+		}
+		if _, ok := seen[trimmed]; ok {
+			return errcode.E(errcode.INVALID, "duplicate primary policy")
+		}
+		if _, ok := s.BackupPolicies[trimmed]; !ok {
+			return errcode.E(errcode.INVALID, "primary backup policy not found")
+		}
+		seen[trimmed] = struct{}{}
+	}
+	return nil
+}
+
+func (s *State) isAdmittedMember(nodeID string) bool {
+	m, ok := s.Members[nodeID]
+	return ok && m.Status == MemberAdmitted
 }
 
 func mapsClone(in map[string]string) map[string]string {
