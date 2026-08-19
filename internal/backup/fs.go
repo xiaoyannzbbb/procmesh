@@ -149,6 +149,55 @@ func (s *FSSink) List(ctx context.Context) ([]Listed, error) {
 	return out, nil
 }
 
+// ListCluster enumerates snapshots under {dir}/{clusterID}/*/*.json.
+// If policyID is provided, it's ignored (FS sink doesn't use policy-based filtering).
+func (s *FSSink) ListCluster(ctx context.Context, clusterID, policyID string) ([]Listed, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	clusterDir := filepath.Join(s.dir, clusterID)
+	if _, err := os.Stat(clusterDir); os.IsNotExist(err) {
+		return []Listed{}, nil
+	}
+
+	var out []Listed
+	nodeEntries, err := os.ReadDir(clusterDir)
+	if err != nil {
+		return nil, fmt.Errorf("list cluster backup fs: %w", err)
+	}
+
+	for _, nodeEntry := range nodeEntries {
+		if !nodeEntry.IsDir() {
+			continue
+		}
+		nodeID := nodeEntry.Name()
+		nodeDir := filepath.Join(clusterDir, nodeID)
+		snapEntries, err := os.ReadDir(nodeDir)
+		if err != nil {
+			continue
+		}
+
+		for _, snapEntry := range snapEntries {
+			if snapEntry.IsDir() {
+				continue
+			}
+			name := snapEntry.Name()
+			if !strings.HasSuffix(name, ".json") {
+				continue
+			}
+			id := strings.TrimSuffix(name, ".json")
+			if err := s.validateID(id); err != nil {
+				continue
+			}
+			out = append(out, Listed{
+				SnapshotID: id,
+				Location:   s.clusterPathFor(clusterID, nodeID, id),
+			})
+		}
+	}
+	return out, nil
+}
+
 // Delete removes a snapshot file by id.
 func (s *FSSink) Delete(ctx context.Context, id string) error {
 	if err := ctx.Err(); err != nil {
@@ -168,3 +217,4 @@ func (s *FSSink) Delete(ctx context.Context, id string) error {
 }
 
 var _ Sink = (*FSSink)(nil)
+var _ ClusterSink = (*FSSink)(nil)

@@ -15,13 +15,13 @@ type RetentionResult struct {
 // Run executes retention policy on snapshots within the policy's namespace/prefix.
 // It skips snapshots that are running, restoring, or are the only available replica.
 // Returns deletion results for each removed snapshot.
-func Run(ctx context.Context, policy Policy, sink Sink) ([]RetentionResult, error) {
+func Run(ctx context.Context, clusterID string, policy Policy, sink ClusterSink) ([]RetentionResult, error) {
 	if policy.RetentionKeepLast <= 0 {
 		return nil, nil
 	}
 
-	// List all snapshots from the sink
-	listed, err := sink.List(ctx)
+	// List snapshots only within this policy's namespace
+	listed, err := sink.ListCluster(ctx, clusterID, policy.PolicyID)
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +47,7 @@ func Run(ctx context.Context, policy Policy, sink Sink) ([]RetentionResult, erro
 		if err != nil {
 			results = append(results, RetentionResult{
 				SnapshotID: snapshotID,
-				Status:     "FAILED",
+				Status:     "RETENTION_FAILED",
 				Error:      err.Error(),
 			})
 		} else {

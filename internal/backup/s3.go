@@ -177,6 +177,45 @@ func (s *S3Sink) List(ctx context.Context) ([]Listed, error) {
 	return out, nil
 }
 
+// ListCluster enumerates cluster backup snapshots under {prefix}/{clusterID}/{policyID}/.
+func (s *S3Sink) ListCluster(ctx context.Context, clusterID, policyID string) ([]Listed, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	q := url.Values{}
+	q.Set("list-type", "2")
+	prefix := path.Join(s.cfg.Prefix, clusterID, policyID) + "/"
+	q.Set("prefix", prefix)
+	data, err := s.do(ctx, http.MethodGet, "/"+s.cfg.Bucket, q, nil)
+	if err != nil {
+		return nil, err
+	}
+	var result listBucketResult
+	if err := xml.Unmarshal(data, &result); err != nil {
+		return nil, errcode.E(errcode.UNAVAILABLE, "s3 list xml")
+	}
+	out := make([]Listed, 0, len(result.Contents))
+	for _, c := range result.Contents {
+		// Extract {nodeID}/{id}.json from full key
+		suffix := strings.TrimPrefix(c.Key, prefix)
+		parts := strings.Split(suffix, "/")
+		if len(parts) != 2 || !strings.HasSuffix(parts[1], ".json") {
+			continue
+		}
+		id := strings.TrimSuffix(parts[1], ".json")
+		if !snapshotIDRe.MatchString(id) {
+			continue
+		}
+		nodeID := parts[0]
+		out = append(out, Listed{
+			SnapshotID: id,
+			Location:   s.clusterLocation(clusterID, policyID, nodeID, id),
+		})
+	}
+	return out, nil
+}
+
+
 // Delete removes a snapshot object by id.
 func (s *S3Sink) Delete(ctx context.Context, id string) error {
 	if err := ctx.Err(); err != nil {

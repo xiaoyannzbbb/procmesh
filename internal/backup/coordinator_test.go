@@ -17,6 +17,16 @@ type fakeControl struct {
 	claimN    int
 	reacquire bool
 	updates   []backup.TaskUpdate
+	runs      map[string]*runState // runID -> aggregated state
+}
+
+type runState struct {
+	runID         string
+	totalTasks    int
+	successCount  int
+	failureCount  int
+	pendingCount  int
+	finalStatus   string // SUCCESS | PARTIAL | FAILED
 }
 
 func (f *fakeControl) ListEnabledBackupPolicies(context.Context) ([]backup.PolicyView, error) {
@@ -41,7 +51,55 @@ func (f *fakeControl) UpdateTask(_ context.Context, u backup.TaskUpdate) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.updates = append(f.updates, u)
+
+	// Update run state aggregation
+	if f.runs == nil {
+		f.runs = make(map[string]*runState)
+	}
+	rs := f.runs[u.RunID]
+	if rs == nil {
+		rs = &runState{runID: u.RunID}
+		f.runs[u.RunID] = rs
+	}
+
+	// Track task status
+	switch u.Status {
+	case "SUCCESS":
+		rs.successCount++
+	case "FAILED", "UNAVAILABLE", "TIMEOUT":
+		rs.failureCount++
+	}
+
 	return nil
+}
+
+func (f *fakeControl) GetRunState(runID string) *runState {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.runs[runID]
+}
+
+func (f *fakeControl) ComputeFinalStatus(runID string, totalTasks int) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rs := f.runs[runID]
+	if rs == nil {
+		return "PENDING"
+	}
+	rs.totalTasks = totalTasks
+
+	// Compute final status
+	if rs.successCount == totalTasks {
+		rs.finalStatus = "SUCCESS"
+	} else if rs.successCount > 0 && rs.failureCount > 0 {
+		rs.finalStatus = "PARTIAL"
+	} else if rs.failureCount == totalTasks {
+		rs.finalStatus = "FAILED"
+	} else {
+		rs.finalStatus = "PENDING"
+	}
+
+	return rs.finalStatus
 }
 
 type fakeDispatcher struct {
@@ -263,6 +321,24 @@ func TestCoordinator_AggregatesPartialSuccess(t *testing.T) {
 	if ctrl.updates[0].NodeID != "c" || ctrl.updates[0].Status != "UNAVAILABLE" {
 		t.Fatalf("expected UNAVAILABLE for node c, got %+v", ctrl.updates[0])
 	}
+
+	// Verify run final status is PARTIAL (2 success + 1 failure)
+	// Simulate the 2 successful nodes reporting back
+	_ = ctrl.UpdateTask(context.Background(), backup.TaskUpdate{
+		RunID:  ctrl.updates[0].RunID,
+		NodeID: "a",
+		Status: "SUCCESS",
+	})
+	_ = ctrl.UpdateTask(context.Background(), backup.TaskUpdate{
+		RunID:  ctrl.updates[0].RunID,
+		NodeID: "b",
+		Status: "SUCCESS",
+	})
+
+	finalStatus := ctrl.ComputeFinalStatus(ctrl.updates[0].RunID, 3)
+	if finalStatus != "PARTIAL" {
+		t.Fatalf("expected PARTIAL final status, got %s", finalStatus)
+	}
 }
 
 func TestCoordinator_RetryFailedTasksOnly(t *testing.T) {
@@ -310,8 +386,8 @@ func TestCoordinator_RetryFailedTasksOnly(t *testing.T) {
 }
 
 type fakeSink struct {
-	deleted  []string
-	errors   map[string]bool
+	deleted   []string
+	errors    map[string]bool
 	snapshots []backup.Listed
 }
 
@@ -339,6 +415,24 @@ func (f *fakeSink) List(context.Context) ([]backup.Listed, error) {
 	return f.snapshots, nil
 }
 
+// ListCluster implements ClusterSink interface for retention filtering
+func (f *fakeSink) ListCluster(context.Context, string, string) ([]backup.Listed, error) {
+	return f.snapshots, nil
+}
+
+func (f *fakeSink) PutCluster(context.Context, string, string, string, string, []byte) (string, error) {
+	return "", nil
+}
+
+func (f *fakeSink) GetCluster(context.Context, string) ([]byte, error) {
+	return nil, nil
+}
+
+func (f *fakeSink) DeleteCluster(context.Context, string) error {
+	return nil
+}
+
+
 func TestRetention_KeepsLast(t *testing.T) {
 	// Test: retention policy keeps last N snapshots
 	sink := &fakeSink{
@@ -353,7 +447,7 @@ func TestRetention_KeepsLast(t *testing.T) {
 		PolicyID:          "bp",
 		RetentionKeepLast: 2,
 	}
-	results, err := backup.Run(context.Background(), policy, sink)
+	results, err := backup.Run(context.Background(), "cluster-1", policy, sink)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -380,7 +474,7 @@ func TestRetention_S3DeleteFailureReturnsRetentionFailed(t *testing.T) {
 		PolicyID:          "bp",
 		RetentionKeepLast: 1,
 	}
-	results, err := backup.Run(context.Background(), policy, sink)
+	results, err := backup.Run(context.Background(), "cluster-1", policy, sink)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -388,16 +482,16 @@ func TestRetention_S3DeleteFailureReturnsRetentionFailed(t *testing.T) {
 	if len(results) != 2 {
 		t.Fatalf("expected 2 deletion results, got %d: %+v", len(results), results)
 	}
-	// snap-1 should have Status=FAILED
+	// snap-1 should have Status=RETENTION_FAILED
 	found := false
 	for _, r := range results {
-		if r.SnapshotID == "snap-1" && r.Status == "FAILED" {
+		if r.SnapshotID == "snap-1" && r.Status == "RETENTION_FAILED" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("expected FAILED status for snap-1, got %+v", results)
+		t.Fatalf("expected RETENTION_FAILED status for snap-1, got %+v", results)
 	}
 }
 
@@ -413,7 +507,7 @@ func TestRetention_NoRetentionPolicyDoesNothing(t *testing.T) {
 		PolicyID:          "bp",
 		RetentionKeepLast: 0,
 	}
-	results, err := backup.Run(context.Background(), policy, sink)
+	results, err := backup.Run(context.Background(), "cluster-1", policy, sink)
 	if err != nil {
 		t.Fatal(err)
 	}
