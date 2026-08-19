@@ -39,6 +39,7 @@ Relevant failure output before implementation:
 ## Commit
 
 Implementation commit: `956c0fc4cf3d5681a81a9eff414e7443abfd1654` — `feat(backup): add fire ledger and cluster run metadata`.
+Fencing follow-up: `c85a648fe7e099fec7c65787d734965180bfce40` — includes the stale first-task update guard and its regression test.
 
 ## Self-Review Findings
 
