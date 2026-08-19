@@ -17,6 +17,7 @@ export type ResourceView = {
 
 export type ProcessView = {
   name: string;
+  processId: string;
   group: string;
   desired: string;
   observed: string;
@@ -205,6 +206,7 @@ export function mapProcess(input: unknown, nodeState: string, nowMs: number): Pr
   const freshnessUnixMs = toNum(pick(input, "freshnessUnixMs", "freshness_unix_ms"));
   return {
     name: toStr(pick(input, "name")),
+    processId: toStr(pick(input, "processId", "process_id")),
     group: toStr(pick(input, "group")),
     desired: toStr(pick(input, "desired")),
     observed: toStr(pick(input, "observed")),

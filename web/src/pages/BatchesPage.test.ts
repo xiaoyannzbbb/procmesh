@@ -4,6 +4,7 @@ import i18next from "i18next";
 import I18NextVue from "i18next-vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
+import Drawer from "../components/Drawer.vue";
 import { session } from "../lib/session";
 import BatchesPage from "./BatchesPage.vue";
 
@@ -47,7 +48,10 @@ beforeEach(async () => {
     fallbackLng: "en",
     resources: {
       en: {
-        common: { batch: batchI18n },
+        common: {
+          actions: { cancel: "Cancel", close: "Close" },
+          batch: batchI18n,
+        },
       },
     },
   });
@@ -119,6 +123,20 @@ async function mountBatches(opts: {
       filename: "b1.json",
     }),
   };
+  const processClient = {
+    listProcesses: vi.fn().mockResolvedValue({
+      processes: [
+        { processId: "p1", spec: { name: "api", group: "web" } },
+        { processId: "p2", spec: { name: "worker", group: "jobs" } },
+      ],
+    }),
+  };
+  const nodeClient = {
+    listNodes: vi.fn().mockResolvedValue({ nodes: [] }),
+  };
+  const groupClient = {
+    listAgentGroups: vi.fn().mockResolvedValue({ groups: [] }),
+  };
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -135,7 +153,8 @@ async function mountBatches(opts: {
         [I18NextVue, { i18next: i18n }],
         router,
       ],
-      provide: { batchClient },
+      provide: { batchClient, processClient, nodeClient, groupClient },
+      stubs: { Teleport: true },
     },
   });
   mounted.push(wrapper);
@@ -168,12 +187,15 @@ describe("BatchesPage", () => {
 
   it("shows create form when session has batch.execute", async () => {
     const { wrapper } = await mountBatches({ permissions: ["batch.execute"] });
-    expect(wrapper.text()).toContain("Create batch");
+    expect(wrapper.get('[data-action="create-batch"]').text()).toContain("Create batch");
+    expect(wrapper.find("form.create-batch").exists()).toBe(false);
+    await wrapper.get('[data-action="create-batch"]').trigger("click");
     expect(wrapper.find("form.create-batch").exists()).toBe(true);
   });
 
   it("hides create form without batch.execute", async () => {
     const { wrapper } = await mountBatches({ permissions: ["process.read"] });
+    expect(wrapper.find('[data-action="create-batch"]').exists()).toBe(false);
     expect(wrapper.find("form.create-batch").exists()).toBe(false);
     expect(wrapper.text()).not.toContain("Create batch");
   });
@@ -185,8 +207,12 @@ describe("BatchesPage", () => {
 
   it("create mutation sends operationId and operator", async () => {
     const { wrapper, batchClient } = await mountBatches();
-    await wrapper.get('input[name="selectorValue"]').setValue("p1, p2");
-    await wrapper.get("form.create-batch").trigger("submit");
+    await wrapper.get('[data-action="create-batch"]').trigger("click");
+    await flushPromises();
+    const drawer = wrapper.getComponent(Drawer);
+    await drawer.get('input[name="processId"][value="p1"]').setValue(true);
+    await drawer.get('input[name="processId"][value="p2"]').setValue(true);
+    await drawer.get("form.create-batch").trigger("submit");
     await flushPromises();
     expect(batchClient.createBatch).toHaveBeenCalled();
     const arg = batchClient.createBatch.mock.calls[0][0] as {

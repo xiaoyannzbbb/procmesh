@@ -109,7 +109,7 @@ export function flattenClusterProcesses(nodes: unknown[], nowMs: number): Cluste
     for (const proc of node.processes) {
       rows.push({
         name: proc.name,
-        processId: "",
+        processId: proc.processId,
         group: proc.group,
         ownerNodeId: node.nodeId,
         ownerHostname: node.hostname,
