@@ -35,3 +35,4 @@ Task 2: fix round 1 dispatched to original implementer; scope includes all revie
 Task 2: fix round 1 `f9603b0`/`dbd9374` addressed terminal vocabulary, bounds, lease-aware pruning, and policy freeze; focused/full control tests pass.
 Task 2: fix round 2 `e71300b`/`afdc0f3` added explicit lease bounds, negative counter rejection, monotonic run-term fencing after newer task/finish updates, and regression coverage; focused/full control tests, vet, and diff checks pass.
 Task 2: complete (initial review findings addressed; remaining reviewer observations adjudicated as coordinator/API boundary or non-blocking compatibility details; no Critical/Important findings remain in the scoped fix diff).
+Task 3: ready; brief `task-3-brief.md` generated at base `613a35a`.
