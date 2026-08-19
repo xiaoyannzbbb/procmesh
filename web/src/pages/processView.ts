@@ -41,6 +41,7 @@ export type ProcessInstanceRow = {
 export type ProcessDetailView = {
   name: string;
   processId: string;
+  group: string;
   owner: string;
   instances: number;
   desired: string;
@@ -370,6 +371,7 @@ export function mapProcessDetail(
 
   const name = toStr(pick(spec, "name")) || toStr(pick(rec, "name"));
   const processId = toStr(pick(rec, "processId", "process_id")) || toStr(pick(spec, "processId", "process_id"));
+  const group = toStr(pick(spec, "group"));
   const owner = ownerLabel || toStr(pick(spec, "ownerAgentId", "owner_agent_id"));
   const showBanner = needsRestartBanner(latestRevision, activeRevision);
   const log = pick(spec, "log") ?? {};
@@ -377,6 +379,7 @@ export function mapProcessDetail(
   return {
     name,
     processId,
+    group,
     owner,
     instances: instanceCount,
     desired: toStr(pick(firstRec, "desired")),

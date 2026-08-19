@@ -293,6 +293,10 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
             <dd class="mono">{{ detail.processId || "—" }}</dd>
           </div>
           <div>
+            <dt>{{ t("processDetail.process.group") }}</dt>
+            <dd>{{ detail.group || "—" }}</dd>
+          </div>
+          <div>
             <dt>{{ t("processDetail.process.owner") }}</dt>
             <dd>
               <RouterLink
