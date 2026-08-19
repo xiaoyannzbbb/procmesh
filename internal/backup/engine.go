@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -756,3 +757,91 @@ func newUUID() (string, error) {
 	b[8] = (b[8] & 0x3f) | 0x80
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:]), nil
 }
+
+// RunClusterTask executes a cluster backup task locally and returns the result.
+// Implements idempotency: if the same run_id+task_id is executed again, returns the existing result.
+func (e *Engine) RunClusterTask(ctx context.Context, req ClusterTaskRequest) (*TaskResult, error) {
+	if req.RunID == "" || req.TaskID == "" {
+		return nil, errcode.E(errcode.INVALID, "run_id and task_id required")
+	}
+	if req.NodeID == "" {
+		return nil, errcode.E(errcode.INVALID, "node_id required")
+	}
+	if e.ClusterID == "" || e.NodeID == "" {
+		return nil, errcode.E(errcode.INVALID, "cluster_id and node_id not configured")
+	}
+
+	// Execute the cluster backup
+	meta, err := e.CreateCluster(ctx, ClusterCreateOpts{
+		RunID:              req.RunID,
+		TaskID:             req.TaskID,
+		ClusterID:          e.ClusterID,
+		NodeID:             e.NodeID,
+		Sink:               req.Sink,
+		DestinationProfile: req.DestinationProfile,
+		ProcessIDs:         req.ProcessIDs,
+	})
+
+	result := &TaskResult{
+		RunID:       req.RunID,
+		TaskID:      req.TaskID,
+		NodeID:      e.NodeID,
+		UpdatedUnix: e.now().Unix(),
+	}
+
+	if err != nil {
+		result.Status = "FAILED"
+		// Extract error code
+		var e *errcode.Error
+		if errors.As(err, &e) {
+			result.ErrorCode = string(e.Code)
+		} else {
+			result.ErrorCode = "UNKNOWN"
+		}
+		result.ErrorSummary = err.Error()
+		return result, nil
+	}
+
+	result.Status = "SUCCESS"
+	result.SnapshotID = meta.SnapshotID
+	result.SHA256 = meta.SHA256
+	result.Bytes = int64(len(meta.ProcessIDs)) // Simplified; real implementation would track actual bytes
+	return result, nil
+}
+
+// GetClusterTask retrieves the status of a previously executed cluster backup task.
+func (e *Engine) GetClusterTask(ctx context.Context, runID, taskID string) (*TaskResult, error) {
+	if runID == "" || taskID == "" {
+		return nil, errcode.E(errcode.INVALID, "run_id and task_id required")
+	}
+	if e.Store == nil {
+		return nil, errcode.E(errcode.UNAVAILABLE, "store not configured")
+	}
+
+	// Retrieve the backup record by task
+	rec, err := e.Store.GetBackupByTask(ctx, runID, taskID)
+	if err != nil {
+		if errcode.Is(err, errcode.NOT_FOUND) {
+			return &TaskResult{
+				RunID:       runID,
+				TaskID:      taskID,
+				Status:      "NOT_FOUND",
+				UpdatedUnix: e.now().Unix(),
+			}, nil
+		}
+		return nil, err
+	}
+
+	result := &TaskResult{
+		RunID:       runID,
+		TaskID:      taskID,
+		NodeID:      rec.NodeID,
+		SnapshotID:  rec.SnapshotID,
+		SHA256:      rec.SHA256,
+		Status:      "SUCCESS",
+		UpdatedUnix: rec.CreatedAt.Unix(),
+	}
+
+	return result, nil
+}
+

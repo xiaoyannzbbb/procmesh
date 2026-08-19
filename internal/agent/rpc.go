@@ -243,6 +243,16 @@ func (r *rpcRuntime) localHandler() http.Handler {
 		},
 	}, opts...)
 	mux.Handle(cbp, cbh)
+
+	// Internal Agent-to-Agent backup task RPC (no user auth, mTLS only)
+	cbap, cbah := procmeshv1connect.NewClusterBackupAgentServiceHandler(&api.ClusterBackupAgentAPI{
+		Engine:    r.backup,
+		Auth:      r.auth,
+		ClusterID: r.clusterID,
+		NodeID:    r.nodeID,
+	})
+	mux.Handle(cbap, cbah)
+
 	return mux
 }
 

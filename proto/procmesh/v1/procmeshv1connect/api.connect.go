@@ -51,6 +51,9 @@ const (
 	BackupServiceName = "procmesh.v1.BackupService"
 	// ClusterBackupServiceName is the fully-qualified name of the ClusterBackupService service.
 	ClusterBackupServiceName = "procmesh.v1.ClusterBackupService"
+	// ClusterBackupAgentServiceName is the fully-qualified name of the ClusterBackupAgentService
+	// service.
+	ClusterBackupAgentServiceName = "procmesh.v1.ClusterBackupAgentService"
 )
 
 // These constants are the fully-qualified names of the RPCs defined in this package. They're
@@ -270,6 +273,12 @@ const (
 	// ClusterBackupServiceGetDestinationHealthProcedure is the fully-qualified name of the
 	// ClusterBackupService's GetDestinationHealth RPC.
 	ClusterBackupServiceGetDestinationHealthProcedure = "/procmesh.v1.ClusterBackupService/GetDestinationHealth"
+	// ClusterBackupAgentServiceRunTaskProcedure is the fully-qualified name of the
+	// ClusterBackupAgentService's RunTask RPC.
+	ClusterBackupAgentServiceRunTaskProcedure = "/procmesh.v1.ClusterBackupAgentService/RunTask"
+	// ClusterBackupAgentServiceGetTaskProcedure is the fully-qualified name of the
+	// ClusterBackupAgentService's GetTask RPC.
+	ClusterBackupAgentServiceGetTaskProcedure = "/procmesh.v1.ClusterBackupAgentService/GetTask"
 )
 
 // ProcessServiceClient is a client for the procmesh.v1.ProcessService service.
@@ -2984,4 +2993,102 @@ func (UnimplementedClusterBackupServiceHandler) RetryFailedTasks(context.Context
 
 func (UnimplementedClusterBackupServiceHandler) GetDestinationHealth(context.Context, *connect.Request[v1.GetClusterBackupDestinationHealthRequest]) (*connect.Response[v1.GetClusterBackupDestinationHealthResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterBackupService.GetDestinationHealth is not implemented"))
+}
+
+// ClusterBackupAgentServiceClient is a client for the procmesh.v1.ClusterBackupAgentService
+// service.
+type ClusterBackupAgentServiceClient interface {
+	RunTask(context.Context, *connect.Request[v1.RunClusterBackupTaskRequest]) (*connect.Response[v1.RunClusterBackupTaskResponse], error)
+	GetTask(context.Context, *connect.Request[v1.GetClusterBackupTaskRequest]) (*connect.Response[v1.GetClusterBackupTaskResponse], error)
+}
+
+// NewClusterBackupAgentServiceClient constructs a client for the
+// procmesh.v1.ClusterBackupAgentService service. By default, it uses the Connect protocol with the
+// binary Protobuf Codec, asks for gzipped responses, and sends uncompressed requests. To use the
+// gRPC or gRPC-Web protocols, supply the connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewClusterBackupAgentServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) ClusterBackupAgentServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	clusterBackupAgentServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("ClusterBackupAgentService").Methods()
+	return &clusterBackupAgentServiceClient{
+		runTask: connect.NewClient[v1.RunClusterBackupTaskRequest, v1.RunClusterBackupTaskResponse](
+			httpClient,
+			baseURL+ClusterBackupAgentServiceRunTaskProcedure,
+			connect.WithSchema(clusterBackupAgentServiceMethods.ByName("RunTask")),
+			connect.WithClientOptions(opts...),
+		),
+		getTask: connect.NewClient[v1.GetClusterBackupTaskRequest, v1.GetClusterBackupTaskResponse](
+			httpClient,
+			baseURL+ClusterBackupAgentServiceGetTaskProcedure,
+			connect.WithSchema(clusterBackupAgentServiceMethods.ByName("GetTask")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// clusterBackupAgentServiceClient implements ClusterBackupAgentServiceClient.
+type clusterBackupAgentServiceClient struct {
+	runTask *connect.Client[v1.RunClusterBackupTaskRequest, v1.RunClusterBackupTaskResponse]
+	getTask *connect.Client[v1.GetClusterBackupTaskRequest, v1.GetClusterBackupTaskResponse]
+}
+
+// RunTask calls procmesh.v1.ClusterBackupAgentService.RunTask.
+func (c *clusterBackupAgentServiceClient) RunTask(ctx context.Context, req *connect.Request[v1.RunClusterBackupTaskRequest]) (*connect.Response[v1.RunClusterBackupTaskResponse], error) {
+	return c.runTask.CallUnary(ctx, req)
+}
+
+// GetTask calls procmesh.v1.ClusterBackupAgentService.GetTask.
+func (c *clusterBackupAgentServiceClient) GetTask(ctx context.Context, req *connect.Request[v1.GetClusterBackupTaskRequest]) (*connect.Response[v1.GetClusterBackupTaskResponse], error) {
+	return c.getTask.CallUnary(ctx, req)
+}
+
+// ClusterBackupAgentServiceHandler is an implementation of the
+// procmesh.v1.ClusterBackupAgentService service.
+type ClusterBackupAgentServiceHandler interface {
+	RunTask(context.Context, *connect.Request[v1.RunClusterBackupTaskRequest]) (*connect.Response[v1.RunClusterBackupTaskResponse], error)
+	GetTask(context.Context, *connect.Request[v1.GetClusterBackupTaskRequest]) (*connect.Response[v1.GetClusterBackupTaskResponse], error)
+}
+
+// NewClusterBackupAgentServiceHandler builds an HTTP handler from the service implementation. It
+// returns the path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewClusterBackupAgentServiceHandler(svc ClusterBackupAgentServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	clusterBackupAgentServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("ClusterBackupAgentService").Methods()
+	clusterBackupAgentServiceRunTaskHandler := connect.NewUnaryHandler(
+		ClusterBackupAgentServiceRunTaskProcedure,
+		svc.RunTask,
+		connect.WithSchema(clusterBackupAgentServiceMethods.ByName("RunTask")),
+		connect.WithHandlerOptions(opts...),
+	)
+	clusterBackupAgentServiceGetTaskHandler := connect.NewUnaryHandler(
+		ClusterBackupAgentServiceGetTaskProcedure,
+		svc.GetTask,
+		connect.WithSchema(clusterBackupAgentServiceMethods.ByName("GetTask")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/procmesh.v1.ClusterBackupAgentService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case ClusterBackupAgentServiceRunTaskProcedure:
+			clusterBackupAgentServiceRunTaskHandler.ServeHTTP(w, r)
+		case ClusterBackupAgentServiceGetTaskProcedure:
+			clusterBackupAgentServiceGetTaskHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedClusterBackupAgentServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedClusterBackupAgentServiceHandler struct{}
+
+func (UnimplementedClusterBackupAgentServiceHandler) RunTask(context.Context, *connect.Request[v1.RunClusterBackupTaskRequest]) (*connect.Response[v1.RunClusterBackupTaskResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterBackupAgentService.RunTask is not implemented"))
+}
+
+func (UnimplementedClusterBackupAgentServiceHandler) GetTask(context.Context, *connect.Request[v1.GetClusterBackupTaskRequest]) (*connect.Response[v1.GetClusterBackupTaskResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterBackupAgentService.GetTask is not implemented"))
 }

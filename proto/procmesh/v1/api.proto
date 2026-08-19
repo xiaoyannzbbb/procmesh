@@ -1043,6 +1043,26 @@ message GetClusterBackupDestinationHealthRequest {
 }
 message GetClusterBackupDestinationHealthResponse { ClusterBackupDestinationHealth health = 1; }
 
+message RunClusterBackupTaskRequest {
+  string run_id = 1;
+  string task_id = 2;
+  string node_id = 3;
+  int64 policy_revision = 4;
+  string sink = 5;
+  string destination_profile = 6;
+}
+message RunClusterBackupTaskResponse {
+  ClusterBackupTask task = 1;
+}
+
+message GetClusterBackupTaskRequest {
+  string run_id = 1;
+  string task_id = 2;
+}
+message GetClusterBackupTaskResponse {
+  ClusterBackupTask task = 1;
+}
+
 service ClusterBackupService {
   rpc CreatePolicy(CreateClusterBackupPolicyRequest) returns (CreateClusterBackupPolicyResponse);
   rpc UpdatePolicy(UpdateClusterBackupPolicyRequest) returns (UpdateClusterBackupPolicyResponse);
@@ -1054,4 +1074,9 @@ service ClusterBackupService {
   rpc ListRuns(ListClusterBackupRunsRequest) returns (ListClusterBackupRunsResponse);
   rpc RetryFailedTasks(RetryFailedClusterBackupTasksRequest) returns (RetryFailedClusterBackupTasksResponse);
   rpc GetDestinationHealth(GetClusterBackupDestinationHealthRequest) returns (GetClusterBackupDestinationHealthResponse);
+}
+
+service ClusterBackupAgentService {
+  rpc RunTask(RunClusterBackupTaskRequest) returns (RunClusterBackupTaskResponse);
+  rpc GetTask(GetClusterBackupTaskRequest) returns (GetClusterBackupTaskResponse);
 }
