@@ -77,6 +77,11 @@ func NewBackupClient(hc *http.Client, base string) procmeshv1connect.BackupServi
 	return procmeshv1connect.NewBackupServiceClient(hc, base)
 }
 
+// NewClusterBackupClient returns a ClusterBackupService client over the given HTTP client and base URL.
+func NewClusterBackupClient(hc *http.Client, base string) procmeshv1connect.ClusterBackupServiceClient {
+	return procmeshv1connect.NewClusterBackupServiceClient(hc, base)
+}
+
 func baseURL(addr string) string {
 	if strings.HasPrefix(addr, "https://") {
 		return addr

@@ -209,6 +209,7 @@ type AlertPolicyPutBody struct {
 }
 
 type BackupPolicyPutBody struct {
+	OperationID              string `json:"operation_id,omitempty"`
 	PolicyID, Name           string
 	Enabled                  bool
 	ScheduleCron, Timezone   string
@@ -224,7 +225,8 @@ type BackupPolicyPutBody struct {
 }
 
 type BackupPolicyDeleteBody struct {
-	PolicyID string `json:"policy_id"`
+	OperationID string `json:"operation_id,omitempty"`
+	PolicyID    string `json:"policy_id"`
 }
 
 type ReplicationRoute struct {

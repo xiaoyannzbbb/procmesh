@@ -143,6 +143,19 @@ func NewServer(opts Options) (*Server, error) {
 	mountConnect(engine, alp, alh)
 	bpkup, bkh := procmeshv1connect.NewBackupServiceHandler(newBackupAPI(opts), intercept)
 	mountConnect(engine, bpkup, bkh)
+	cbp, cbh := procmeshv1connect.NewClusterBackupServiceHandler(&ClusterBackupAPI{
+		Auth: opts.Auth, ControlFn: opts.Cluster.ControlFn, Router: opts.Router,
+		Forward: opts.Forward, LocalOnly: opts.LocalOnly, LocalID: opts.LocalID,
+		IsLeader: func() bool { n := opts.Cluster.controlNode(); return n == nil || n.IsLeader() },
+		ApplyFn: func(cmd control.Command, timeout time.Duration) error {
+			n := opts.Cluster.controlNode()
+			if n == nil {
+				return errcode.E(errcode.UNAVAILABLE, "control plane unavailable")
+			}
+			return n.Apply(cmd, timeout)
+		},
+	}, intercept)
+	mountConnect(engine, cbp, cbh)
 	var histStore *store.Store
 	if st, ok := opts.Store.(*store.Store); ok {
 		histStore = st

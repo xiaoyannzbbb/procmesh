@@ -49,6 +49,8 @@ const (
 	AlertServiceName = "procmesh.v1.AlertService"
 	// BackupServiceName is the fully-qualified name of the BackupService service.
 	BackupServiceName = "procmesh.v1.BackupService"
+	// ClusterBackupServiceName is the fully-qualified name of the ClusterBackupService service.
+	ClusterBackupServiceName = "procmesh.v1.ClusterBackupService"
 )
 
 // These constants are the fully-qualified names of the RPCs defined in this package. They're
@@ -238,6 +240,36 @@ const (
 	// BackupServicePutPeerSnapshotProcedure is the fully-qualified name of the BackupService's
 	// PutPeerSnapshot RPC.
 	BackupServicePutPeerSnapshotProcedure = "/procmesh.v1.BackupService/PutPeerSnapshot"
+	// ClusterBackupServiceCreatePolicyProcedure is the fully-qualified name of the
+	// ClusterBackupService's CreatePolicy RPC.
+	ClusterBackupServiceCreatePolicyProcedure = "/procmesh.v1.ClusterBackupService/CreatePolicy"
+	// ClusterBackupServiceUpdatePolicyProcedure is the fully-qualified name of the
+	// ClusterBackupService's UpdatePolicy RPC.
+	ClusterBackupServiceUpdatePolicyProcedure = "/procmesh.v1.ClusterBackupService/UpdatePolicy"
+	// ClusterBackupServiceDeletePolicyProcedure is the fully-qualified name of the
+	// ClusterBackupService's DeletePolicy RPC.
+	ClusterBackupServiceDeletePolicyProcedure = "/procmesh.v1.ClusterBackupService/DeletePolicy"
+	// ClusterBackupServiceListPoliciesProcedure is the fully-qualified name of the
+	// ClusterBackupService's ListPolicies RPC.
+	ClusterBackupServiceListPoliciesProcedure = "/procmesh.v1.ClusterBackupService/ListPolicies"
+	// ClusterBackupServiceValidatePolicyProcedure is the fully-qualified name of the
+	// ClusterBackupService's ValidatePolicy RPC.
+	ClusterBackupServiceValidatePolicyProcedure = "/procmesh.v1.ClusterBackupService/ValidatePolicy"
+	// ClusterBackupServiceStartRunProcedure is the fully-qualified name of the ClusterBackupService's
+	// StartRun RPC.
+	ClusterBackupServiceStartRunProcedure = "/procmesh.v1.ClusterBackupService/StartRun"
+	// ClusterBackupServiceGetRunProcedure is the fully-qualified name of the ClusterBackupService's
+	// GetRun RPC.
+	ClusterBackupServiceGetRunProcedure = "/procmesh.v1.ClusterBackupService/GetRun"
+	// ClusterBackupServiceListRunsProcedure is the fully-qualified name of the ClusterBackupService's
+	// ListRuns RPC.
+	ClusterBackupServiceListRunsProcedure = "/procmesh.v1.ClusterBackupService/ListRuns"
+	// ClusterBackupServiceRetryFailedTasksProcedure is the fully-qualified name of the
+	// ClusterBackupService's RetryFailedTasks RPC.
+	ClusterBackupServiceRetryFailedTasksProcedure = "/procmesh.v1.ClusterBackupService/RetryFailedTasks"
+	// ClusterBackupServiceGetDestinationHealthProcedure is the fully-qualified name of the
+	// ClusterBackupService's GetDestinationHealth RPC.
+	ClusterBackupServiceGetDestinationHealthProcedure = "/procmesh.v1.ClusterBackupService/GetDestinationHealth"
 )
 
 // ProcessServiceClient is a client for the procmesh.v1.ProcessService service.
@@ -2648,4 +2680,308 @@ func (UnimplementedBackupServiceHandler) RestoreBackup(context.Context, *connect
 
 func (UnimplementedBackupServiceHandler) PutPeerSnapshot(context.Context, *connect.Request[v1.PutPeerSnapshotRequest]) (*connect.Response[v1.PutPeerSnapshotResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.BackupService.PutPeerSnapshot is not implemented"))
+}
+
+// ClusterBackupServiceClient is a client for the procmesh.v1.ClusterBackupService service.
+type ClusterBackupServiceClient interface {
+	CreatePolicy(context.Context, *connect.Request[v1.CreateClusterBackupPolicyRequest]) (*connect.Response[v1.CreateClusterBackupPolicyResponse], error)
+	UpdatePolicy(context.Context, *connect.Request[v1.UpdateClusterBackupPolicyRequest]) (*connect.Response[v1.UpdateClusterBackupPolicyResponse], error)
+	DeletePolicy(context.Context, *connect.Request[v1.DeleteClusterBackupPolicyRequest]) (*connect.Response[v1.DeleteClusterBackupPolicyResponse], error)
+	ListPolicies(context.Context, *connect.Request[v1.ListClusterBackupPoliciesRequest]) (*connect.Response[v1.ListClusterBackupPoliciesResponse], error)
+	ValidatePolicy(context.Context, *connect.Request[v1.ValidateClusterBackupPolicyRequest]) (*connect.Response[v1.ValidateClusterBackupPolicyResponse], error)
+	StartRun(context.Context, *connect.Request[v1.StartClusterBackupRunRequest]) (*connect.Response[v1.StartClusterBackupRunResponse], error)
+	GetRun(context.Context, *connect.Request[v1.GetClusterBackupRunRequest]) (*connect.Response[v1.GetClusterBackupRunResponse], error)
+	ListRuns(context.Context, *connect.Request[v1.ListClusterBackupRunsRequest]) (*connect.Response[v1.ListClusterBackupRunsResponse], error)
+	RetryFailedTasks(context.Context, *connect.Request[v1.RetryFailedClusterBackupTasksRequest]) (*connect.Response[v1.RetryFailedClusterBackupTasksResponse], error)
+	GetDestinationHealth(context.Context, *connect.Request[v1.GetClusterBackupDestinationHealthRequest]) (*connect.Response[v1.GetClusterBackupDestinationHealthResponse], error)
+}
+
+// NewClusterBackupServiceClient constructs a client for the procmesh.v1.ClusterBackupService
+// service. By default, it uses the Connect protocol with the binary Protobuf Codec, asks for
+// gzipped responses, and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply
+// the connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewClusterBackupServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) ClusterBackupServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	clusterBackupServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("ClusterBackupService").Methods()
+	return &clusterBackupServiceClient{
+		createPolicy: connect.NewClient[v1.CreateClusterBackupPolicyRequest, v1.CreateClusterBackupPolicyResponse](
+			httpClient,
+			baseURL+ClusterBackupServiceCreatePolicyProcedure,
+			connect.WithSchema(clusterBackupServiceMethods.ByName("CreatePolicy")),
+			connect.WithClientOptions(opts...),
+		),
+		updatePolicy: connect.NewClient[v1.UpdateClusterBackupPolicyRequest, v1.UpdateClusterBackupPolicyResponse](
+			httpClient,
+			baseURL+ClusterBackupServiceUpdatePolicyProcedure,
+			connect.WithSchema(clusterBackupServiceMethods.ByName("UpdatePolicy")),
+			connect.WithClientOptions(opts...),
+		),
+		deletePolicy: connect.NewClient[v1.DeleteClusterBackupPolicyRequest, v1.DeleteClusterBackupPolicyResponse](
+			httpClient,
+			baseURL+ClusterBackupServiceDeletePolicyProcedure,
+			connect.WithSchema(clusterBackupServiceMethods.ByName("DeletePolicy")),
+			connect.WithClientOptions(opts...),
+		),
+		listPolicies: connect.NewClient[v1.ListClusterBackupPoliciesRequest, v1.ListClusterBackupPoliciesResponse](
+			httpClient,
+			baseURL+ClusterBackupServiceListPoliciesProcedure,
+			connect.WithSchema(clusterBackupServiceMethods.ByName("ListPolicies")),
+			connect.WithClientOptions(opts...),
+		),
+		validatePolicy: connect.NewClient[v1.ValidateClusterBackupPolicyRequest, v1.ValidateClusterBackupPolicyResponse](
+			httpClient,
+			baseURL+ClusterBackupServiceValidatePolicyProcedure,
+			connect.WithSchema(clusterBackupServiceMethods.ByName("ValidatePolicy")),
+			connect.WithClientOptions(opts...),
+		),
+		startRun: connect.NewClient[v1.StartClusterBackupRunRequest, v1.StartClusterBackupRunResponse](
+			httpClient,
+			baseURL+ClusterBackupServiceStartRunProcedure,
+			connect.WithSchema(clusterBackupServiceMethods.ByName("StartRun")),
+			connect.WithClientOptions(opts...),
+		),
+		getRun: connect.NewClient[v1.GetClusterBackupRunRequest, v1.GetClusterBackupRunResponse](
+			httpClient,
+			baseURL+ClusterBackupServiceGetRunProcedure,
+			connect.WithSchema(clusterBackupServiceMethods.ByName("GetRun")),
+			connect.WithClientOptions(opts...),
+		),
+		listRuns: connect.NewClient[v1.ListClusterBackupRunsRequest, v1.ListClusterBackupRunsResponse](
+			httpClient,
+			baseURL+ClusterBackupServiceListRunsProcedure,
+			connect.WithSchema(clusterBackupServiceMethods.ByName("ListRuns")),
+			connect.WithClientOptions(opts...),
+		),
+		retryFailedTasks: connect.NewClient[v1.RetryFailedClusterBackupTasksRequest, v1.RetryFailedClusterBackupTasksResponse](
+			httpClient,
+			baseURL+ClusterBackupServiceRetryFailedTasksProcedure,
+			connect.WithSchema(clusterBackupServiceMethods.ByName("RetryFailedTasks")),
+			connect.WithClientOptions(opts...),
+		),
+		getDestinationHealth: connect.NewClient[v1.GetClusterBackupDestinationHealthRequest, v1.GetClusterBackupDestinationHealthResponse](
+			httpClient,
+			baseURL+ClusterBackupServiceGetDestinationHealthProcedure,
+			connect.WithSchema(clusterBackupServiceMethods.ByName("GetDestinationHealth")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// clusterBackupServiceClient implements ClusterBackupServiceClient.
+type clusterBackupServiceClient struct {
+	createPolicy         *connect.Client[v1.CreateClusterBackupPolicyRequest, v1.CreateClusterBackupPolicyResponse]
+	updatePolicy         *connect.Client[v1.UpdateClusterBackupPolicyRequest, v1.UpdateClusterBackupPolicyResponse]
+	deletePolicy         *connect.Client[v1.DeleteClusterBackupPolicyRequest, v1.DeleteClusterBackupPolicyResponse]
+	listPolicies         *connect.Client[v1.ListClusterBackupPoliciesRequest, v1.ListClusterBackupPoliciesResponse]
+	validatePolicy       *connect.Client[v1.ValidateClusterBackupPolicyRequest, v1.ValidateClusterBackupPolicyResponse]
+	startRun             *connect.Client[v1.StartClusterBackupRunRequest, v1.StartClusterBackupRunResponse]
+	getRun               *connect.Client[v1.GetClusterBackupRunRequest, v1.GetClusterBackupRunResponse]
+	listRuns             *connect.Client[v1.ListClusterBackupRunsRequest, v1.ListClusterBackupRunsResponse]
+	retryFailedTasks     *connect.Client[v1.RetryFailedClusterBackupTasksRequest, v1.RetryFailedClusterBackupTasksResponse]
+	getDestinationHealth *connect.Client[v1.GetClusterBackupDestinationHealthRequest, v1.GetClusterBackupDestinationHealthResponse]
+}
+
+// CreatePolicy calls procmesh.v1.ClusterBackupService.CreatePolicy.
+func (c *clusterBackupServiceClient) CreatePolicy(ctx context.Context, req *connect.Request[v1.CreateClusterBackupPolicyRequest]) (*connect.Response[v1.CreateClusterBackupPolicyResponse], error) {
+	return c.createPolicy.CallUnary(ctx, req)
+}
+
+// UpdatePolicy calls procmesh.v1.ClusterBackupService.UpdatePolicy.
+func (c *clusterBackupServiceClient) UpdatePolicy(ctx context.Context, req *connect.Request[v1.UpdateClusterBackupPolicyRequest]) (*connect.Response[v1.UpdateClusterBackupPolicyResponse], error) {
+	return c.updatePolicy.CallUnary(ctx, req)
+}
+
+// DeletePolicy calls procmesh.v1.ClusterBackupService.DeletePolicy.
+func (c *clusterBackupServiceClient) DeletePolicy(ctx context.Context, req *connect.Request[v1.DeleteClusterBackupPolicyRequest]) (*connect.Response[v1.DeleteClusterBackupPolicyResponse], error) {
+	return c.deletePolicy.CallUnary(ctx, req)
+}
+
+// ListPolicies calls procmesh.v1.ClusterBackupService.ListPolicies.
+func (c *clusterBackupServiceClient) ListPolicies(ctx context.Context, req *connect.Request[v1.ListClusterBackupPoliciesRequest]) (*connect.Response[v1.ListClusterBackupPoliciesResponse], error) {
+	return c.listPolicies.CallUnary(ctx, req)
+}
+
+// ValidatePolicy calls procmesh.v1.ClusterBackupService.ValidatePolicy.
+func (c *clusterBackupServiceClient) ValidatePolicy(ctx context.Context, req *connect.Request[v1.ValidateClusterBackupPolicyRequest]) (*connect.Response[v1.ValidateClusterBackupPolicyResponse], error) {
+	return c.validatePolicy.CallUnary(ctx, req)
+}
+
+// StartRun calls procmesh.v1.ClusterBackupService.StartRun.
+func (c *clusterBackupServiceClient) StartRun(ctx context.Context, req *connect.Request[v1.StartClusterBackupRunRequest]) (*connect.Response[v1.StartClusterBackupRunResponse], error) {
+	return c.startRun.CallUnary(ctx, req)
+}
+
+// GetRun calls procmesh.v1.ClusterBackupService.GetRun.
+func (c *clusterBackupServiceClient) GetRun(ctx context.Context, req *connect.Request[v1.GetClusterBackupRunRequest]) (*connect.Response[v1.GetClusterBackupRunResponse], error) {
+	return c.getRun.CallUnary(ctx, req)
+}
+
+// ListRuns calls procmesh.v1.ClusterBackupService.ListRuns.
+func (c *clusterBackupServiceClient) ListRuns(ctx context.Context, req *connect.Request[v1.ListClusterBackupRunsRequest]) (*connect.Response[v1.ListClusterBackupRunsResponse], error) {
+	return c.listRuns.CallUnary(ctx, req)
+}
+
+// RetryFailedTasks calls procmesh.v1.ClusterBackupService.RetryFailedTasks.
+func (c *clusterBackupServiceClient) RetryFailedTasks(ctx context.Context, req *connect.Request[v1.RetryFailedClusterBackupTasksRequest]) (*connect.Response[v1.RetryFailedClusterBackupTasksResponse], error) {
+	return c.retryFailedTasks.CallUnary(ctx, req)
+}
+
+// GetDestinationHealth calls procmesh.v1.ClusterBackupService.GetDestinationHealth.
+func (c *clusterBackupServiceClient) GetDestinationHealth(ctx context.Context, req *connect.Request[v1.GetClusterBackupDestinationHealthRequest]) (*connect.Response[v1.GetClusterBackupDestinationHealthResponse], error) {
+	return c.getDestinationHealth.CallUnary(ctx, req)
+}
+
+// ClusterBackupServiceHandler is an implementation of the procmesh.v1.ClusterBackupService service.
+type ClusterBackupServiceHandler interface {
+	CreatePolicy(context.Context, *connect.Request[v1.CreateClusterBackupPolicyRequest]) (*connect.Response[v1.CreateClusterBackupPolicyResponse], error)
+	UpdatePolicy(context.Context, *connect.Request[v1.UpdateClusterBackupPolicyRequest]) (*connect.Response[v1.UpdateClusterBackupPolicyResponse], error)
+	DeletePolicy(context.Context, *connect.Request[v1.DeleteClusterBackupPolicyRequest]) (*connect.Response[v1.DeleteClusterBackupPolicyResponse], error)
+	ListPolicies(context.Context, *connect.Request[v1.ListClusterBackupPoliciesRequest]) (*connect.Response[v1.ListClusterBackupPoliciesResponse], error)
+	ValidatePolicy(context.Context, *connect.Request[v1.ValidateClusterBackupPolicyRequest]) (*connect.Response[v1.ValidateClusterBackupPolicyResponse], error)
+	StartRun(context.Context, *connect.Request[v1.StartClusterBackupRunRequest]) (*connect.Response[v1.StartClusterBackupRunResponse], error)
+	GetRun(context.Context, *connect.Request[v1.GetClusterBackupRunRequest]) (*connect.Response[v1.GetClusterBackupRunResponse], error)
+	ListRuns(context.Context, *connect.Request[v1.ListClusterBackupRunsRequest]) (*connect.Response[v1.ListClusterBackupRunsResponse], error)
+	RetryFailedTasks(context.Context, *connect.Request[v1.RetryFailedClusterBackupTasksRequest]) (*connect.Response[v1.RetryFailedClusterBackupTasksResponse], error)
+	GetDestinationHealth(context.Context, *connect.Request[v1.GetClusterBackupDestinationHealthRequest]) (*connect.Response[v1.GetClusterBackupDestinationHealthResponse], error)
+}
+
+// NewClusterBackupServiceHandler builds an HTTP handler from the service implementation. It returns
+// the path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewClusterBackupServiceHandler(svc ClusterBackupServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	clusterBackupServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("ClusterBackupService").Methods()
+	clusterBackupServiceCreatePolicyHandler := connect.NewUnaryHandler(
+		ClusterBackupServiceCreatePolicyProcedure,
+		svc.CreatePolicy,
+		connect.WithSchema(clusterBackupServiceMethods.ByName("CreatePolicy")),
+		connect.WithHandlerOptions(opts...),
+	)
+	clusterBackupServiceUpdatePolicyHandler := connect.NewUnaryHandler(
+		ClusterBackupServiceUpdatePolicyProcedure,
+		svc.UpdatePolicy,
+		connect.WithSchema(clusterBackupServiceMethods.ByName("UpdatePolicy")),
+		connect.WithHandlerOptions(opts...),
+	)
+	clusterBackupServiceDeletePolicyHandler := connect.NewUnaryHandler(
+		ClusterBackupServiceDeletePolicyProcedure,
+		svc.DeletePolicy,
+		connect.WithSchema(clusterBackupServiceMethods.ByName("DeletePolicy")),
+		connect.WithHandlerOptions(opts...),
+	)
+	clusterBackupServiceListPoliciesHandler := connect.NewUnaryHandler(
+		ClusterBackupServiceListPoliciesProcedure,
+		svc.ListPolicies,
+		connect.WithSchema(clusterBackupServiceMethods.ByName("ListPolicies")),
+		connect.WithHandlerOptions(opts...),
+	)
+	clusterBackupServiceValidatePolicyHandler := connect.NewUnaryHandler(
+		ClusterBackupServiceValidatePolicyProcedure,
+		svc.ValidatePolicy,
+		connect.WithSchema(clusterBackupServiceMethods.ByName("ValidatePolicy")),
+		connect.WithHandlerOptions(opts...),
+	)
+	clusterBackupServiceStartRunHandler := connect.NewUnaryHandler(
+		ClusterBackupServiceStartRunProcedure,
+		svc.StartRun,
+		connect.WithSchema(clusterBackupServiceMethods.ByName("StartRun")),
+		connect.WithHandlerOptions(opts...),
+	)
+	clusterBackupServiceGetRunHandler := connect.NewUnaryHandler(
+		ClusterBackupServiceGetRunProcedure,
+		svc.GetRun,
+		connect.WithSchema(clusterBackupServiceMethods.ByName("GetRun")),
+		connect.WithHandlerOptions(opts...),
+	)
+	clusterBackupServiceListRunsHandler := connect.NewUnaryHandler(
+		ClusterBackupServiceListRunsProcedure,
+		svc.ListRuns,
+		connect.WithSchema(clusterBackupServiceMethods.ByName("ListRuns")),
+		connect.WithHandlerOptions(opts...),
+	)
+	clusterBackupServiceRetryFailedTasksHandler := connect.NewUnaryHandler(
+		ClusterBackupServiceRetryFailedTasksProcedure,
+		svc.RetryFailedTasks,
+		connect.WithSchema(clusterBackupServiceMethods.ByName("RetryFailedTasks")),
+		connect.WithHandlerOptions(opts...),
+	)
+	clusterBackupServiceGetDestinationHealthHandler := connect.NewUnaryHandler(
+		ClusterBackupServiceGetDestinationHealthProcedure,
+		svc.GetDestinationHealth,
+		connect.WithSchema(clusterBackupServiceMethods.ByName("GetDestinationHealth")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/procmesh.v1.ClusterBackupService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case ClusterBackupServiceCreatePolicyProcedure:
+			clusterBackupServiceCreatePolicyHandler.ServeHTTP(w, r)
+		case ClusterBackupServiceUpdatePolicyProcedure:
+			clusterBackupServiceUpdatePolicyHandler.ServeHTTP(w, r)
+		case ClusterBackupServiceDeletePolicyProcedure:
+			clusterBackupServiceDeletePolicyHandler.ServeHTTP(w, r)
+		case ClusterBackupServiceListPoliciesProcedure:
+			clusterBackupServiceListPoliciesHandler.ServeHTTP(w, r)
+		case ClusterBackupServiceValidatePolicyProcedure:
+			clusterBackupServiceValidatePolicyHandler.ServeHTTP(w, r)
+		case ClusterBackupServiceStartRunProcedure:
+			clusterBackupServiceStartRunHandler.ServeHTTP(w, r)
+		case ClusterBackupServiceGetRunProcedure:
+			clusterBackupServiceGetRunHandler.ServeHTTP(w, r)
+		case ClusterBackupServiceListRunsProcedure:
+			clusterBackupServiceListRunsHandler.ServeHTTP(w, r)
+		case ClusterBackupServiceRetryFailedTasksProcedure:
+			clusterBackupServiceRetryFailedTasksHandler.ServeHTTP(w, r)
+		case ClusterBackupServiceGetDestinationHealthProcedure:
+			clusterBackupServiceGetDestinationHealthHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedClusterBackupServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedClusterBackupServiceHandler struct{}
+
+func (UnimplementedClusterBackupServiceHandler) CreatePolicy(context.Context, *connect.Request[v1.CreateClusterBackupPolicyRequest]) (*connect.Response[v1.CreateClusterBackupPolicyResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterBackupService.CreatePolicy is not implemented"))
+}
+
+func (UnimplementedClusterBackupServiceHandler) UpdatePolicy(context.Context, *connect.Request[v1.UpdateClusterBackupPolicyRequest]) (*connect.Response[v1.UpdateClusterBackupPolicyResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterBackupService.UpdatePolicy is not implemented"))
+}
+
+func (UnimplementedClusterBackupServiceHandler) DeletePolicy(context.Context, *connect.Request[v1.DeleteClusterBackupPolicyRequest]) (*connect.Response[v1.DeleteClusterBackupPolicyResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterBackupService.DeletePolicy is not implemented"))
+}
+
+func (UnimplementedClusterBackupServiceHandler) ListPolicies(context.Context, *connect.Request[v1.ListClusterBackupPoliciesRequest]) (*connect.Response[v1.ListClusterBackupPoliciesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterBackupService.ListPolicies is not implemented"))
+}
+
+func (UnimplementedClusterBackupServiceHandler) ValidatePolicy(context.Context, *connect.Request[v1.ValidateClusterBackupPolicyRequest]) (*connect.Response[v1.ValidateClusterBackupPolicyResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterBackupService.ValidatePolicy is not implemented"))
+}
+
+func (UnimplementedClusterBackupServiceHandler) StartRun(context.Context, *connect.Request[v1.StartClusterBackupRunRequest]) (*connect.Response[v1.StartClusterBackupRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterBackupService.StartRun is not implemented"))
+}
+
+func (UnimplementedClusterBackupServiceHandler) GetRun(context.Context, *connect.Request[v1.GetClusterBackupRunRequest]) (*connect.Response[v1.GetClusterBackupRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterBackupService.GetRun is not implemented"))
+}
+
+func (UnimplementedClusterBackupServiceHandler) ListRuns(context.Context, *connect.Request[v1.ListClusterBackupRunsRequest]) (*connect.Response[v1.ListClusterBackupRunsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterBackupService.ListRuns is not implemented"))
+}
+
+func (UnimplementedClusterBackupServiceHandler) RetryFailedTasks(context.Context, *connect.Request[v1.RetryFailedClusterBackupTasksRequest]) (*connect.Response[v1.RetryFailedClusterBackupTasksResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterBackupService.RetryFailedTasks is not implemented"))
+}
+
+func (UnimplementedClusterBackupServiceHandler) GetDestinationHealth(context.Context, *connect.Request[v1.GetClusterBackupDestinationHealthRequest]) (*connect.Response[v1.GetClusterBackupDestinationHealthResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterBackupService.GetDestinationHealth is not implemented"))
 }

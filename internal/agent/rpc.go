@@ -224,6 +224,17 @@ func (r *rpcRuntime) localHandler() http.Handler {
 		LocalOnly: true, LocalID: r.nodeID,
 	}, opts...)
 	mux.Handle(bpkup, bkh)
+	cbp, cbh := procmeshv1connect.NewClusterBackupServiceHandler(&api.ClusterBackupAPI{
+		Auth: r.auth, ControlFn: r.control, LocalOnly: true, LocalID: r.nodeID,
+		ApplyFn: func(cmd control.Command, timeout time.Duration) error {
+			n := r.control()
+			if n == nil {
+				return fmt.Errorf("control plane unavailable")
+			}
+			return n.Apply(cmd, timeout)
+		},
+	}, opts...)
+	mux.Handle(cbp, cbh)
 	return mux
 }
 
@@ -292,13 +303,14 @@ func (f *agentForwarder) snapshot() (control.AgentCreds, string, func(string) bo
 }
 
 const (
-	processHopTimeout = rpc.MutationTimeout
-	configHopTimeout  = rpc.MutationTimeout
-	logHopTimeout     = time.Duration(0)
-	auditHopTimeout   = 2 * time.Second
-	metricsHopTimeout = rpc.UnaryTimeout
-	alertHopTimeout   = 2 * time.Second
-	backupHopTimeout  = rpc.MutationTimeout
+	processHopTimeout       = rpc.MutationTimeout
+	configHopTimeout        = rpc.MutationTimeout
+	logHopTimeout           = time.Duration(0)
+	auditHopTimeout         = 2 * time.Second
+	metricsHopTimeout       = rpc.UnaryTimeout
+	alertHopTimeout         = 2 * time.Second
+	backupHopTimeout        = rpc.MutationTimeout
+	clusterBackupHopTimeout = rpc.MutationTimeout
 )
 
 func (f *agentForwarder) dial(rt api.Route, timeout time.Duration) (*http.Client, string, error) {
@@ -367,4 +379,12 @@ func (f *agentForwarder) Backup(_ context.Context, rt api.Route) (procmeshv1conn
 		return nil, err
 	}
 	return rpc.NewBackupClient(hc, base), nil
+}
+
+func (f *agentForwarder) ClusterBackup(_ context.Context, rt api.Route) (procmeshv1connect.ClusterBackupServiceClient, error) {
+	hc, base, err := f.dial(rt, clusterBackupHopTimeout)
+	if err != nil {
+		return nil, err
+	}
+	return rpc.NewClusterBackupClient(hc, base), nil
 }
