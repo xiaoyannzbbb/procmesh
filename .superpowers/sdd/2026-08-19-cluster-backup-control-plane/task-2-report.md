@@ -97,3 +97,5 @@ go test ./internal/control -count=1
 Output: `ok github.com/qleelulu/procmesh/internal/control 12.451s`
 
 `go vet ./internal/control` and `git diff --check` also completed successfully.
+
+Review fix commit: `f9603b003512511988a8a31bbbf106b554553688` — `fix(backup): harden cluster run metadata`.
