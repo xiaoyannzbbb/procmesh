@@ -1045,7 +1045,14 @@ func (s *State) applyUpdateTask(b UpdateTaskBody) error {
 	if b.LeaderTerm == 0 || strings.TrimSpace(b.Task.RunID) == "" || strings.TrimSpace(b.Task.TaskID) == "" || strings.TrimSpace(b.Task.Status) == "" {
 		return errcode.E(errcode.INVALID, "run id, task id, status, and leader term required")
 	}
-	_, tasks := runMaps(s, b.Replication)
+	runs, tasks := runMaps(s, b.Replication)
+	terms := runTerms(s, b.Replication)
+	if term := terms[b.Task.RunID]; term > b.LeaderTerm {
+		return errcode.E(errcode.CONFLICT, "stale leader term")
+	}
+	if _, ok := runs[b.Task.RunID]; !ok {
+		return errcode.E(errcode.NOT_FOUND, "run not found")
+	}
 	key := taskMapKey(b.Task)
 	if current, ok := tasks[key]; ok {
 		if b.LeaderTerm < current.LeaderTerm {

@@ -348,6 +348,9 @@ func TestFSM_BackupRunRejectsStaleTermAndPreservesTerminalTask(t *testing.T) {
 	if err := s.CreateRun(control.CreateRunBody{OperationID: "op-run-1", LeaderTerm: 4, Run: run}); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.UpdateTask(control.UpdateTaskBody{OperationID: "op-task-stale-first", LeaderTerm: 3, Task: control.ClusterBackupTask{RunID: "run-1", TaskID: "task-stale", NodeID: "node-a", Status: "FAILED"}}); !errcode.Is(err, errcode.CONFLICT) {
+		t.Fatalf("stale first task update: %v", err)
+	}
 	success := control.ClusterBackupTask{RunID: "run-1", TaskID: "task-a", NodeID: "node-a", SnapshotID: "snap-1", SHA256: "sha-good", Status: "SUCCESS", Bytes: 42, LeaderTerm: 4, UpdatedUnix: now.Unix()}
 	if err := s.UpdateTask(control.UpdateTaskBody{OperationID: "op-task-1", LeaderTerm: 4, Task: success}); err != nil {
 		t.Fatal(err)
