@@ -36,3 +36,4 @@ Task 2: fix round 1 `f9603b0`/`dbd9374` addressed terminal vocabulary, bounds, l
 Task 2: fix round 2 `e71300b`/`afdc0f3` added explicit lease bounds, negative counter rejection, monotonic run-term fencing after newer task/finish updates, and regression coverage; focused/full control tests, vet, and diff checks pass.
 Task 2: complete (initial review findings addressed; remaining reviewer observations adjudicated as coordinator/API boundary or non-blocking compatibility details; no Critical/Important findings remain in the scoped fix diff).
 Task 3: ready; brief `task-3-brief.md` generated at base `613a35a`.
+Task 3: dispatched to `/root/p1_task3_api` at base `ae69fc2`; report `task-3-report.md` expected.
