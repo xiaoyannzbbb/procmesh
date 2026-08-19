@@ -316,6 +316,108 @@ func TestFSM_SnapshotRestore(t *testing.T) {
 	}
 }
 
+func TestFSM_FireLedgerIdempotencyAndLeaseTakeover(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := control.NewState()
+	first, created, err := s.ClaimFire(control.FireClaimBody{OperationID: "op-fire-1", FireKey: "bp-1:1700000000", PolicyID: "bp-1", LeaderTerm: 3}, now)
+	if err != nil || !created {
+		t.Fatal(err, created)
+	}
+	second, created, err := s.ClaimFire(control.FireClaimBody{OperationID: "op-fire-2", FireKey: "bp-1:1700000000", PolicyID: "bp-1", LeaderTerm: 4}, now.Add(time.Second))
+	if err != nil || created || second.RunID != first.RunID {
+		t.Fatalf("%+v created=%v err=%v", second, created, err)
+	}
+	other, created, err := s.ClaimFire(control.FireClaimBody{OperationID: "op-fire-3", FireKey: "bp-2:1700000000", PolicyID: "bp-2", LeaderTerm: 3}, now)
+	if err != nil || !created || other.RunID == first.RunID {
+		t.Fatalf("%+v created=%v err=%v", other, created, err)
+	}
+
+	first.Status = "RUNNING"
+	first.LeaseUntilUnix = now.Add(-time.Second).Unix()
+	s.BackupFireLedger[first.FireKey] = first
+	taken, created, err := s.ClaimFire(control.FireClaimBody{OperationID: "op-fire-4", FireKey: first.FireKey, PolicyID: first.PolicyID, LeaderTerm: 4}, now)
+	if err != nil || !created || taken.RunID != first.RunID || taken.LeaderTerm != 4 {
+		t.Fatalf("%+v created=%v err=%v", taken, created, err)
+	}
+}
+
+func TestFSM_BackupRunRejectsStaleTermAndPreservesTerminalTask(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := control.NewState()
+	run := control.ClusterBackupRun{RunID: "run-1", PolicyID: "bp-1", PolicyRevision: 2, TargetNodeIDs: []string{"node-a"}, Status: "RUNNING", CreatedUnix: now.Unix(), StartedUnix: now.Unix()}
+	if err := s.CreateRun(control.CreateRunBody{OperationID: "op-run-1", LeaderTerm: 4, Run: run}); err != nil {
+		t.Fatal(err)
+	}
+	success := control.ClusterBackupTask{RunID: "run-1", TaskID: "task-a", NodeID: "node-a", SnapshotID: "snap-1", SHA256: "sha-good", Status: "SUCCESS", Bytes: 42, LeaderTerm: 4, UpdatedUnix: now.Unix()}
+	if err := s.UpdateTask(control.UpdateTaskBody{OperationID: "op-task-1", LeaderTerm: 4, Task: success}); err != nil {
+		t.Fatal(err)
+	}
+	stale := success
+	stale.Status, stale.SHA256, stale.LeaderTerm = "FAILED", "sha-bad", 3
+	if err := s.UpdateTask(control.UpdateTaskBody{OperationID: "op-task-2", LeaderTerm: 3, Task: stale}); !errcode.Is(err, errcode.CONFLICT) {
+		t.Fatalf("stale update: %v", err)
+	}
+	repeated := success
+	repeated.SHA256 = "sha-overwrite"
+	if err := s.UpdateTask(control.UpdateTaskBody{OperationID: "op-task-3", LeaderTerm: 4, Task: repeated}); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.BackupTasks["run-1:task-a"]; got.Status != "SUCCESS" || got.SHA256 != "sha-good" {
+		t.Fatalf("terminal task changed: %+v", got)
+	}
+	if err := s.FinishRun(control.FinishRunBody{OperationID: "op-run-2", RunID: "run-1", LeaderTerm: 3, Status: "FAILED", FinishedUnix: now.Add(time.Minute).Unix()}); !errcode.Is(err, errcode.CONFLICT) {
+		t.Fatalf("stale finish: %v", err)
+	}
+}
+
+func TestFSM_RunMetadataPruningAndSnapshotSafety(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := control.NewState()
+	if err := s.CreateRun(control.CreateRunBody{OperationID: "op-backup", LeaderTerm: 1, Run: control.ClusterBackupRun{RunID: "backup-old", Status: "SUCCESS", FinishedUnix: now.Add(-time.Hour).Unix()}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateRun(control.CreateRunBody{OperationID: "op-replication", Replication: true, LeaderTerm: 1, Run: control.ClusterBackupRun{RunID: "replication-new", Status: "RUNNING", CreatedUnix: now.Unix()}}); err != nil {
+		t.Fatal(err)
+	}
+	s.PruneRunMetadata(now.Add(-time.Minute).Unix())
+	if _, ok := s.BackupRuns["backup-old"]; ok {
+		t.Fatal("old backup run retained")
+	}
+	if _, ok := s.ReplicationRuns["replication-new"]; !ok {
+		t.Fatal("replication run missing")
+	}
+	f := control.NewFSM()
+	mustFSMApply(t, f, control.CmdBackupRunCreate, control.CreateRunBody{OperationID: "op-snapshot", LeaderTerm: 1, Run: control.ClusterBackupRun{RunID: "run-snapshot", Status: "RUNNING"}}, now)
+	view := f.View()
+	view.BackupRuns = s.BackupRuns
+	view.BackupTasks = s.BackupTasks
+	view.ReplicationRuns = s.ReplicationRuns
+	view.ReplicationTasks = s.ReplicationTasks
+	raw, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"payload", "secret_key", "access_key", "backup_index"} {
+		if bytes.Contains(raw, []byte(forbidden)) {
+			t.Fatalf("snapshot metadata contains %q: %s", forbidden, raw)
+		}
+	}
+	snap, err := f.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &memSink{}
+	if err := snap.Persist(sink); err != nil {
+		t.Fatal(err)
+	}
+	snap.Release()
+	for _, forbidden := range []string{"payload", "secret_key", "access_key", "backup_index"} {
+		if bytes.Contains(sink.buf.Bytes(), []byte(forbidden)) {
+			t.Fatalf("raft snapshot contains %q: %s", forbidden, sink.buf.Bytes())
+		}
+	}
+}
+
 func TestLoadAdminBootstrap(t *testing.T) {
 	dir := t.TempDir()
 	_, _, err := control.LoadAdminBootstrap(dir)

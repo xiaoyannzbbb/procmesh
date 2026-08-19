@@ -1,9 +1,12 @@
 package control
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"io"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -130,6 +133,46 @@ type ReplicationPolicy struct {
 	Revision            int64              `json:"revision,omitempty"`
 }
 
+type FireRecord struct {
+	FireKey        string `json:"fire_key"`
+	PolicyID       string `json:"policy_id"`
+	RunID          string `json:"run_id"`
+	ScheduledUnix  int64  `json:"scheduled_unix"`
+	ClaimedUnix    int64  `json:"claimed_unix"`
+	LeaseUntilUnix int64  `json:"lease_until_unix"`
+	LeaderTerm     uint64 `json:"leader_term"`
+	Status         string `json:"status"`
+}
+
+type ClusterBackupRun struct {
+	RunID          string   `json:"run_id"`
+	PolicyID       string   `json:"policy_id"`
+	PolicyRevision int64    `json:"policy_revision"`
+	TargetNodeIDs  []string `json:"target_node_ids"`
+	Status         string   `json:"status"`
+	Success        int      `json:"success"`
+	Failed         int      `json:"failed"`
+	Unavailable    int      `json:"unavailable"`
+	Timeout        int      `json:"timeout"`
+	CreatedUnix    int64    `json:"created_unix"`
+	StartedUnix    int64    `json:"started_unix"`
+	FinishedUnix   int64    `json:"finished_unix"`
+}
+
+type ClusterBackupTask struct {
+	RunID        string `json:"run_id"`
+	TaskID       string `json:"task_id"`
+	NodeID       string `json:"node_id"`
+	SnapshotID   string `json:"snapshot_id"`
+	SHA256       string `json:"sha256"`
+	Status       string `json:"status"`
+	Bytes        int64  `json:"bytes"`
+	ErrorCode    string `json:"error_code"`
+	ErrorSummary string `json:"error_summary"`
+	LeaderTerm   uint64 `json:"leader_term"`
+	UpdatedUnix  int64  `json:"updated_unix"`
+}
+
 type Policy struct {
 	RBACCacheTTL time.Duration
 }
@@ -150,6 +193,13 @@ type State struct {
 	AlertPolicy         AlertPolicy                  `json:"alert_policy"`
 	BackupPolicies      map[string]BackupPolicy      `json:"backup_policies"`
 	ReplicationPolicies map[string]ReplicationPolicy `json:"replication_policies"`
+	BackupFireLedger    map[string]FireRecord        `json:"backup_fire_ledger"`
+	BackupRuns          map[string]ClusterBackupRun  `json:"backup_runs"`
+	BackupTasks         map[string]ClusterBackupTask `json:"backup_tasks"`
+	ReplicationRuns     map[string]ClusterBackupRun  `json:"replication_runs"`
+	ReplicationTasks    map[string]ClusterBackupTask `json:"replication_tasks"`
+	BackupRunTerms      map[string]uint64            `json:"backup_run_terms"`
+	ReplicationRunTerms map[string]uint64            `json:"replication_run_terms"`
 	Policy              Policy                       `json:"policy"`
 }
 
@@ -198,6 +248,27 @@ func (s *State) ensure() {
 	}
 	if s.ReplicationPolicies == nil {
 		s.ReplicationPolicies = map[string]ReplicationPolicy{}
+	}
+	if s.BackupFireLedger == nil {
+		s.BackupFireLedger = map[string]FireRecord{}
+	}
+	if s.BackupRuns == nil {
+		s.BackupRuns = map[string]ClusterBackupRun{}
+	}
+	if s.BackupTasks == nil {
+		s.BackupTasks = map[string]ClusterBackupTask{}
+	}
+	if s.ReplicationRuns == nil {
+		s.ReplicationRuns = map[string]ClusterBackupRun{}
+	}
+	if s.ReplicationTasks == nil {
+		s.ReplicationTasks = map[string]ClusterBackupTask{}
+	}
+	if s.BackupRunTerms == nil {
+		s.BackupRunTerms = map[string]uint64{}
+	}
+	if s.ReplicationRunTerms == nil {
+		s.ReplicationRunTerms = map[string]uint64{}
 	}
 	if s.AlertPolicy.DedupWindowSec == 0 {
 		s.AlertPolicy = DefaultAlertPolicy()
@@ -270,6 +341,17 @@ func (s *State) Apply(cmd Command, now time.Time) error {
 		return applyJSON(cmd.Body, s.applyReplicationPolicyPut)
 	case CmdReplicationPolicyDelete:
 		return applyJSON(cmd.Body, s.applyReplicationPolicyDelete)
+	case CmdBackupFireClaim:
+		_, _, err := s.ClaimFireBody(cmd.Body, now)
+		return err
+	case CmdBackupRunCreate:
+		return applyJSON(cmd.Body, s.applyCreateRun)
+	case CmdBackupTaskUpdate:
+		return applyJSON(cmd.Body, s.applyUpdateTask)
+	case CmdBackupRunFinish:
+		return applyJSON(cmd.Body, s.applyFinishRun)
+	case CmdRunMetadataPrune:
+		return applyJSON(cmd.Body, func(b PruneRunMetadataBody) error { return s.applyPruneRunMetadata(b) })
 	default:
 		return errcode.E(errcode.INVALID, "unknown command type")
 	}
@@ -843,6 +925,205 @@ func (s *State) applyBackupPolicyDelete(b BackupPolicyDeleteBody) error {
 		return errcode.E(errcode.NOT_FOUND, "backup policy not found")
 	}
 	delete(s.BackupPolicies, b.PolicyID)
+	return nil
+}
+
+const defaultFireLease = 2 * time.Minute
+
+func requireOperationID(operationID string) error {
+	if strings.TrimSpace(operationID) == "" {
+		return errcode.E(errcode.INVALID, "operation_id required")
+	}
+	return nil
+}
+
+func runIDForFire(fireKey string) string {
+	sum := sha256.Sum256([]byte(fireKey))
+	return "run-" + fmt.Sprintf("%x", sum[:12])
+}
+
+// ClaimFire creates exactly one durable run identifier per scheduled fire.
+// A live claim is returned unchanged; an expired lease may be taken by a newer term.
+func (s *State) ClaimFire(b FireClaimBody, now time.Time) (FireRecord, bool, error) {
+	s.ensure()
+	if err := requireOperationID(b.OperationID); err != nil {
+		return FireRecord{}, false, err
+	}
+	if strings.TrimSpace(b.FireKey) == "" || strings.TrimSpace(b.PolicyID) == "" || b.LeaderTerm == 0 {
+		return FireRecord{}, false, errcode.E(errcode.INVALID, "fire key, policy id, and leader term required")
+	}
+	if current, ok := s.BackupFireLedger[b.FireKey]; ok {
+		if current.PolicyID != b.PolicyID {
+			return FireRecord{}, false, errcode.E(errcode.CONFLICT, "fire key belongs to another policy")
+		}
+		if current.LeaseUntilUnix > now.Unix() || b.LeaderTerm <= current.LeaderTerm {
+			return current, false, nil
+		}
+		current.LeaderTerm = b.LeaderTerm
+		current.ClaimedUnix = now.Unix()
+		current.LeaseUntilUnix = b.LeaseUntilUnix
+		if current.LeaseUntilUnix == 0 {
+			current.LeaseUntilUnix = now.Add(defaultFireLease).Unix()
+		}
+		current.Status = "CLAIMED"
+		s.BackupFireLedger[b.FireKey] = current
+		return current, true, nil
+	}
+	leaseUntil := b.LeaseUntilUnix
+	if leaseUntil == 0 {
+		leaseUntil = now.Add(defaultFireLease).Unix()
+	}
+	scheduled := b.ScheduledUnix
+	if scheduled == 0 {
+		scheduled = now.Unix()
+	}
+	record := FireRecord{FireKey: b.FireKey, PolicyID: b.PolicyID, RunID: runIDForFire(b.FireKey), ScheduledUnix: scheduled, ClaimedUnix: now.Unix(), LeaseUntilUnix: leaseUntil, LeaderTerm: b.LeaderTerm, Status: "CLAIMED"}
+	s.BackupFireLedger[b.FireKey] = record
+	return record, true, nil
+}
+
+// ClaimFireBody supports the command dispatcher while direct callers receive the claim result.
+func (s *State) ClaimFireBody(raw json.RawMessage, now time.Time) (FireRecord, bool, error) {
+	var b FireClaimBody
+	if err := json.Unmarshal(raw, &b); err != nil {
+		return FireRecord{}, false, errcode.E(errcode.INVALID, "invalid command body")
+	}
+	return s.ClaimFire(b, now)
+}
+
+func runMaps(s *State, replication bool) (map[string]ClusterBackupRun, map[string]ClusterBackupTask) {
+	if replication {
+		return s.ReplicationRuns, s.ReplicationTasks
+	}
+	return s.BackupRuns, s.BackupTasks
+}
+
+func runTerms(s *State, replication bool) map[string]uint64 {
+	if replication {
+		return s.ReplicationRunTerms
+	}
+	return s.BackupRunTerms
+}
+
+func terminalStatus(status string) bool {
+	return status == "SUCCESS" || status == "FAILED" || status == "UNAVAILABLE" || status == "TIMEOUT" || status == "CANCELED"
+}
+
+func (s *State) CreateRun(b CreateRunBody) error { return s.applyCreateRun(b) }
+
+func (s *State) applyCreateRun(b CreateRunBody) error {
+	s.ensure()
+	if err := requireOperationID(b.OperationID); err != nil {
+		return err
+	}
+	if b.LeaderTerm == 0 || strings.TrimSpace(b.Run.RunID) == "" || strings.TrimSpace(b.Run.Status) == "" {
+		return errcode.E(errcode.INVALID, "run id, status, and leader term required")
+	}
+	runs, _ := runMaps(s, b.Replication)
+	terms := runTerms(s, b.Replication)
+	if current, ok := runs[b.Run.RunID]; ok {
+		if reflect.DeepEqual(current, b.Run) {
+			return nil
+		}
+		return errcode.E(errcode.CONFLICT, "run already exists")
+	}
+	b.Run.TargetNodeIDs = append([]string(nil), b.Run.TargetNodeIDs...)
+	runs[b.Run.RunID] = b.Run
+	terms[b.Run.RunID] = b.LeaderTerm
+	return nil
+}
+
+func taskMapKey(task ClusterBackupTask) string { return task.RunID + ":" + task.TaskID }
+
+func (s *State) UpdateTask(b UpdateTaskBody) error { return s.applyUpdateTask(b) }
+
+func (s *State) applyUpdateTask(b UpdateTaskBody) error {
+	s.ensure()
+	if err := requireOperationID(b.OperationID); err != nil {
+		return err
+	}
+	if b.LeaderTerm == 0 || strings.TrimSpace(b.Task.RunID) == "" || strings.TrimSpace(b.Task.TaskID) == "" || strings.TrimSpace(b.Task.Status) == "" {
+		return errcode.E(errcode.INVALID, "run id, task id, status, and leader term required")
+	}
+	_, tasks := runMaps(s, b.Replication)
+	key := taskMapKey(b.Task)
+	if current, ok := tasks[key]; ok {
+		if b.LeaderTerm < current.LeaderTerm {
+			return errcode.E(errcode.CONFLICT, "stale leader term")
+		}
+		if terminalStatus(current.Status) {
+			return nil
+		}
+	}
+	b.Task.LeaderTerm = b.LeaderTerm
+	tasks[key] = b.Task
+	return nil
+}
+
+func (s *State) FinishRun(b FinishRunBody) error { return s.applyFinishRun(b) }
+
+func (s *State) applyFinishRun(b FinishRunBody) error {
+	s.ensure()
+	if err := requireOperationID(b.OperationID); err != nil {
+		return err
+	}
+	if b.LeaderTerm == 0 || strings.TrimSpace(b.RunID) == "" || strings.TrimSpace(b.Status) == "" {
+		return errcode.E(errcode.INVALID, "run id, status, and leader term required")
+	}
+	runs, tasks := runMaps(s, b.Replication)
+	terms := runTerms(s, b.Replication)
+	run, ok := runs[b.RunID]
+	if !ok {
+		return errcode.E(errcode.NOT_FOUND, "run not found")
+	}
+	if term := terms[b.RunID]; term > b.LeaderTerm {
+		return errcode.E(errcode.CONFLICT, "stale leader term")
+	}
+	for _, task := range tasks {
+		if task.RunID == b.RunID && task.LeaderTerm > b.LeaderTerm {
+			return errcode.E(errcode.CONFLICT, "stale leader term")
+		}
+	}
+	if terminalStatus(run.Status) {
+		return nil
+	}
+	run.Status, run.Success, run.Failed, run.Unavailable, run.Timeout, run.FinishedUnix = b.Status, b.Success, b.Failed, b.Unavailable, b.Timeout, b.FinishedUnix
+	runs[b.RunID] = run
+	return nil
+}
+
+func (s *State) PruneRunMetadata(beforeUnix int64) {
+	s.ensure()
+	prune := func(runs map[string]ClusterBackupRun, tasks map[string]ClusterBackupTask, terms map[string]uint64) {
+		for id, run := range runs {
+			if terminalStatus(run.Status) && run.FinishedUnix < beforeUnix {
+				delete(runs, id)
+				delete(terms, id)
+				for key, task := range tasks {
+					if task.RunID == id {
+						delete(tasks, key)
+					}
+				}
+			}
+		}
+	}
+	prune(s.BackupRuns, s.BackupTasks, s.BackupRunTerms)
+	prune(s.ReplicationRuns, s.ReplicationTasks, s.ReplicationRunTerms)
+	for key, fire := range s.BackupFireLedger {
+		if fire.ScheduledUnix < beforeUnix {
+			delete(s.BackupFireLedger, key)
+		}
+	}
+}
+
+func (s *State) applyPruneRunMetadata(b PruneRunMetadataBody) error {
+	if err := requireOperationID(b.OperationID); err != nil {
+		return err
+	}
+	if b.BeforeUnix <= 0 {
+		return errcode.E(errcode.INVALID, "before unix required")
+	}
+	s.PruneRunMetadata(b.BeforeUnix)
 	return nil
 }
 

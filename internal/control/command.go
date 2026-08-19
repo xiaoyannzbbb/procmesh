@@ -31,6 +31,11 @@ const (
 	CmdBackupPolicyDelete      = "backup_policy_delete"
 	CmdReplicationPolicyPut    = "replication_policy_put"
 	CmdReplicationPolicyDelete = "replication_policy_delete"
+	CmdBackupFireClaim         = "backup_fire_claim"
+	CmdBackupRunCreate         = "backup_run_create"
+	CmdBackupTaskUpdate        = "backup_task_update"
+	CmdBackupRunFinish         = "backup_run_finish"
+	CmdRunMetadataPrune        = "run_metadata_prune"
 )
 
 // Command is a Raft log payload: type + JSON body.
@@ -248,6 +253,49 @@ type ReplicationPolicyPutBody struct {
 
 type ReplicationPolicyDeleteBody struct {
 	PolicyID string `json:"policy_id"`
+}
+
+// FireClaimBody records an idempotent scheduled-fire claim. LeaseUntilUnix is
+// optional; zero uses the control plane's short default lease.
+type FireClaimBody struct {
+	OperationID    string `json:"operation_id"`
+	FireKey        string `json:"fire_key"`
+	PolicyID       string `json:"policy_id"`
+	ScheduledUnix  int64  `json:"scheduled_unix"`
+	LeaseUntilUnix int64  `json:"lease_until_unix"`
+	LeaderTerm     uint64 `json:"leader_term"`
+}
+
+type CreateRunBody struct {
+	OperationID string           `json:"operation_id"`
+	Run         ClusterBackupRun `json:"run"`
+	LeaderTerm  uint64           `json:"leader_term"`
+	Replication bool             `json:"replication"`
+}
+
+type UpdateTaskBody struct {
+	OperationID string            `json:"operation_id"`
+	Task        ClusterBackupTask `json:"task"`
+	LeaderTerm  uint64            `json:"leader_term"`
+	Replication bool              `json:"replication"`
+}
+
+type FinishRunBody struct {
+	OperationID  string `json:"operation_id"`
+	RunID        string `json:"run_id"`
+	Status       string `json:"status"`
+	Success      int    `json:"success"`
+	Failed       int    `json:"failed"`
+	Unavailable  int    `json:"unavailable"`
+	Timeout      int    `json:"timeout"`
+	FinishedUnix int64  `json:"finished_unix"`
+	LeaderTerm   uint64 `json:"leader_term"`
+	Replication  bool   `json:"replication"`
+}
+
+type PruneRunMetadataBody struct {
+	OperationID string `json:"operation_id"`
+	BeforeUnix  int64  `json:"before_unix"`
 }
 
 // EncodeCommand marshals body as the Command payload.
