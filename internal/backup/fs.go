@@ -37,6 +37,10 @@ func (s *FSSink) pathFor(id string) string {
 	return filepath.Join(s.dir, id+".json")
 }
 
+func (s *FSSink) clusterPathFor(clusterID, nodeID, id string) string {
+	return filepath.Join(s.dir, clusterID, nodeID, id+".json")
+}
+
 // Put writes payload to {dir}/{id}.json via tmp+rename with mode 0600.
 func (s *FSSink) Put(ctx context.Context, id string, payload []byte) (string, error) {
 	if err := ctx.Err(); err != nil {
@@ -52,6 +56,37 @@ func (s *FSSink) Put(ctx context.Context, id string, payload []byte) (string, er
 	tmp := final + ".tmp"
 	if err := os.WriteFile(tmp, payload, 0o600); err != nil {
 		return "", fmt.Errorf("write backup tmp: %w", err)
+	}
+	if err := os.Rename(tmp, final); err != nil {
+		_ = os.Remove(tmp)
+		return "", fmt.Errorf("rename backup: %w", err)
+	}
+	if err := os.Chmod(final, 0o600); err != nil {
+		return "", fmt.Errorf("chmod backup: %w", err)
+	}
+	return final, nil
+}
+
+// PutCluster writes payload to {dir}/{clusterID}/{nodeID}/{id}.json via tmp+rename with mode 0600.
+func (s *FSSink) PutCluster(ctx context.Context, clusterID, policyID, nodeID, id string, payload []byte) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if err := s.validateID(id); err != nil {
+		return "", err
+	}
+	dir := filepath.Join(s.dir, clusterID, nodeID)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return "", fmt.Errorf("mkdir backup cluster fs: %w", err)
+	}
+	final := s.clusterPathFor(clusterID, nodeID, id)
+	tmp := final + ".tmp"
+	if err := os.WriteFile(tmp, payload, 0o600); err != nil {
+		return "", fmt.Errorf("write backup tmp: %w", err)
+	}
+	if f, err := os.OpenFile(tmp, os.O_RDWR, 0o600); err == nil {
+		_ = f.Sync()
+		_ = f.Close()
 	}
 	if err := os.Rename(tmp, final); err != nil {
 		_ = os.Remove(tmp)

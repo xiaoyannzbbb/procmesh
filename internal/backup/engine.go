@@ -57,6 +57,18 @@ type CreateOpts struct {
 	SnapshotID    string // optional stable id for idempotent cluster task execution
 }
 
+// ClusterCreateOpts configures a cluster backup snapshot with namespaced paths.
+type ClusterCreateOpts struct {
+	RunID              string
+	TaskID             string
+	PolicyID           string
+	ClusterID          string
+	NodeID             string
+	Sink               string
+	DestinationProfile string
+	ProcessIDs         []string
+}
+
 // Engine creates, reads, and deletes local process-spec snapshots.
 type Engine struct {
 	Store           *store.Store
@@ -159,6 +171,124 @@ func (e *Engine) Create(ctx context.Context, opt CreateOpts) (Meta, error) {
 	return e.indexSnapshot(ctx, snap, sha, opt.Sink, loc, "")
 }
 
+// CreateCluster snapshots local process specs with cluster namespace paths and idempotent task tracking.
+func (e *Engine) CreateCluster(ctx context.Context, opts ClusterCreateOpts) (Meta, error) {
+	if opts.RunID == "" || opts.TaskID == "" {
+		return Meta{}, errcode.E(errcode.INVALID, "run_id and task_id required")
+	}
+	if opts.ClusterID == "" || opts.NodeID == "" {
+		return Meta{}, errcode.E(errcode.INVALID, "cluster_id and node_id required")
+	}
+	if opts.Sink == "" {
+		return Meta{}, errcode.E(errcode.INVALID, "sink required")
+	}
+
+	// Check idempotency: if task already completed with same checksum, return existing
+	if e.Store != nil {
+		if existing, err := e.Store.GetBackupByTask(ctx, opts.RunID, opts.TaskID); err == nil {
+			// Task already executed, verify checksum matches
+			specs, err := e.collectSpecs(ctx, opts.ProcessIDs)
+			if err != nil {
+				return Meta{}, err
+			}
+			dumps := make([]ProcessDump, 0, len(specs))
+			for _, spec := range specs {
+				dump, err := e.dumpProcess(ctx, spec)
+				if err != nil {
+					return Meta{}, err
+				}
+				dumps = append(dumps, dump)
+			}
+			snap := Snapshot{
+				FormatVersion: 1,
+				SnapshotID:    existing.SnapshotID,
+				ClusterID:     opts.ClusterID,
+				NodeID:        opts.NodeID,
+				CreatedAt:     existing.CreatedAt,
+				Processes:     dumps,
+			}
+			_, sha, err := Encode(snap)
+			if err != nil {
+				return Meta{}, err
+			}
+			if sha == existing.SHA256 {
+				// Same task, same checksum - return existing
+				return Meta{
+					SnapshotID:     existing.SnapshotID,
+					ClusterID:      existing.ClusterID,
+					NodeID:         existing.NodeID,
+					CreatedAt:      existing.CreatedAt,
+					ProcessIDs:     existing.ProcessIDs,
+					RevisionRanges: decodeRevisionRanges(existing.RevisionRangesJSON),
+					SHA256:         existing.SHA256,
+					Sink:           existing.Sink,
+					Location:       existing.Location,
+					SourceNodeID:   existing.SourceNodeID,
+				}, nil
+			}
+			// Same task, different checksum - conflict
+			return Meta{}, errcode.E(errcode.CONFLICT, "task checksum mismatch")
+		} else if !errcode.Is(err, errcode.NOT_FOUND) {
+			return Meta{}, err
+		}
+	}
+
+	if e.diskPercent() >= 95 {
+		return Meta{}, errcode.E(errcode.DEGRADED, "disk usage at or above 95%")
+	}
+
+	specs, err := e.collectSpecs(ctx, opts.ProcessIDs)
+	if err != nil {
+		return Meta{}, err
+	}
+
+	id, err := e.newID()
+	if err != nil {
+		return Meta{}, err
+	}
+	created := e.now()
+
+	dumps := make([]ProcessDump, 0, len(specs))
+	for _, spec := range specs {
+		dump, err := e.dumpProcess(ctx, spec)
+		if err != nil {
+			return Meta{}, err
+		}
+		dumps = append(dumps, dump)
+	}
+
+	snap := Snapshot{
+		FormatVersion: 1,
+		SnapshotID:    id,
+		ClusterID:     opts.ClusterID,
+		NodeID:        opts.NodeID,
+		CreatedAt:     created,
+		Processes:     dumps,
+	}
+	payload, sha, err := Encode(snap)
+	if err != nil {
+		return Meta{}, err
+	}
+
+	sink, err := e.sink(opts.Sink)
+	if err != nil {
+		return Meta{}, err
+	}
+
+	// Use cluster-aware sink if available
+	var loc string
+	if cs, ok := sink.(ClusterSink); ok {
+		loc, err = cs.PutCluster(ctx, opts.ClusterID, opts.PolicyID, opts.NodeID, id, payload)
+	} else {
+		loc, err = sink.Put(ctx, id, payload)
+	}
+	if err != nil {
+		return Meta{}, err
+	}
+
+	return e.indexClusterSnapshot(ctx, snap, sha, opts.Sink, loc, opts.RunID, opts.TaskID, opts.PolicyID)
+}
+
 // CreatePeer is Create with Sink=peer.
 func (e *Engine) CreatePeer(ctx context.Context, processIDs, targetNodeIDs []string) (Meta, error) {
 	return e.Create(ctx, CreateOpts{
@@ -240,6 +370,37 @@ func (e *Engine) indexSnapshot(ctx context.Context, snap Snapshot, sha, sink, lo
 		Sink:               sink,
 		Location:           loc,
 		SourceNodeID:       sourceNodeID,
+	}
+	if err := e.Store.PutBackup(ctx, rec); err != nil {
+		return Meta{}, err
+	}
+	e.LastSuccessUnix.Store(snap.CreatedAt.Unix())
+	return meta, nil
+}
+
+func (e *Engine) indexClusterSnapshot(ctx context.Context, snap Snapshot, sha, sink, loc, runID, taskID, policyID string) (Meta, error) {
+	meta := MetaFromSnapshot(snap)
+	meta.SHA256 = sha
+	meta.Sink = sink
+	meta.Location = loc
+
+	rangesJSON, err := json.Marshal(meta.RevisionRanges)
+	if err != nil {
+		return Meta{}, fmt.Errorf("marshal revision ranges: %w", err)
+	}
+	rec := store.BackupRecord{
+		SnapshotID:         meta.SnapshotID,
+		ClusterID:          meta.ClusterID,
+		NodeID:             meta.NodeID,
+		CreatedAt:          meta.CreatedAt,
+		ProcessIDs:         meta.ProcessIDs,
+		RevisionRangesJSON: string(rangesJSON),
+		SHA256:             sha,
+		Sink:               sink,
+		Location:           loc,
+		RunID:              runID,
+		TaskID:             taskID,
+		PolicyID:           policyID,
 	}
 	if err := e.Store.PutBackup(ctx, rec); err != nil {
 		return Meta{}, err

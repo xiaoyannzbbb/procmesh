@@ -41,3 +41,10 @@ Task 3: initial review found 2 Critical and 3 Important findings — leader rout
 Task 3: fix rounds `f73b7ba`, `b97d2a4`, `00d3323`, `39156d9` added FSM mutation fencing, real retry command, leader-address routing, exact selector target freezing, multi-group expansion, public/Agent Raft-term propagation, and regression tests.
 Ruling: Keep `GetDestinationHealth` as metadata-only `UNKNOWN` until an Agent-local destination probe interface exists; the endpoint must not load or expose sink credentials, and adding an unowned probe here would violate the control-plane boundary.
 Task 3: complete (implementation and scoped review findings addressed; `go test ./internal/control ./internal/api -count=1`, compile-only Agent test, `go vet`, and `git diff --check` pass; full Agent package retains the documented baseline hanging/leaked-child test).
+Task 4: ready; brief `task-4-brief.md` generated.
+Task 4: dispatched to `/root/p1_task4_scheduler` at base `f6b3745`; report `task-4-report.md` expected.
+Task 4: review round 1 found Important findings — fire takeover was reported as newly created, and delayed minute ticks could skip the due fire.
+Task 4: fix round 1 `9dd09c7`/`c5fc52d` addressed both findings with durable created semantics, takeover regression coverage, previous-or-equal timezone scheduling, and delayed-tick tests.
+Task 4: final review found Important findings — local fallback activated on control read errors, and local dispatch omitted task identity/success updates; Minor findings — swallowed claim errors and unused Start helper.
+Task 4: fix round 2 `754bc84` addressed final review findings with atomic fire+run claims, durable frozen recovery, lease-aware dispatch, stable local task snapshots and success metadata, explicit destination-profile CONFIG_MISSING, fail-closed fallback, surfaced claim errors, and focused regressions.
+Task 4: complete (commits `f6b3745..754bc84`, scoped review clean; full Agent package retains the documented unrelated Playwright freshness baseline failure).

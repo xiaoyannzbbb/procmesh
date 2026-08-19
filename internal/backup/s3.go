@@ -82,8 +82,16 @@ func (s *S3Sink) objectKey(id string) string {
 	return path.Join(s.cfg.Prefix, s.cfg.ClusterID, s.cfg.NodeID, id+".json")
 }
 
+func (s *S3Sink) clusterObjectKey(clusterID, policyID, nodeID, id string) string {
+	return path.Join(s.cfg.Prefix, clusterID, policyID, nodeID, id+".json")
+}
+
 func (s *S3Sink) objectPath(id string) string {
 	return "/" + s.cfg.Bucket + "/" + s.objectKey(id)
+}
+
+func (s *S3Sink) clusterObjectPath(clusterID, policyID, nodeID, id string) string {
+	return "/" + s.cfg.Bucket + "/" + s.clusterObjectKey(clusterID, policyID, nodeID, id)
 }
 
 func (s *S3Sink) listPrefix() string {
@@ -98,6 +106,10 @@ func (s *S3Sink) location(id string) string {
 	return "s3://" + s.cfg.Bucket + "/" + s.objectKey(id)
 }
 
+func (s *S3Sink) clusterLocation(clusterID, policyID, nodeID, id string) string {
+	return "s3://" + s.cfg.Bucket + "/" + s.clusterObjectKey(clusterID, policyID, nodeID, id)
+}
+
 // Put writes payload to {prefix}/{cluster}/{node}/{id}.json.
 func (s *S3Sink) Put(ctx context.Context, id string, payload []byte) (string, error) {
 	if err := ctx.Err(); err != nil {
@@ -110,6 +122,20 @@ func (s *S3Sink) Put(ctx context.Context, id string, payload []byte) (string, er
 		return "", err
 	}
 	return s.location(id), nil
+}
+
+// PutCluster writes payload to {prefix}/{clusterID}/{policyID}/{nodeID}/{id}.json.
+func (s *S3Sink) PutCluster(ctx context.Context, clusterID, policyID, nodeID, id string, payload []byte) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if err := s.validateID(id); err != nil {
+		return "", err
+	}
+	if _, err := s.do(ctx, http.MethodPut, s.clusterObjectPath(clusterID, policyID, nodeID, id), nil, payload); err != nil {
+		return "", err
+	}
+	return s.clusterLocation(clusterID, policyID, nodeID, id), nil
 }
 
 // Get reads a snapshot payload by id.

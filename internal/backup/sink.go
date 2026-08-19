@@ -11,6 +11,12 @@ type Sink interface {
 	Delete(ctx context.Context, id string) error
 }
 
+// ClusterSink extends Sink with namespace-aware operations for cluster backups.
+type ClusterSink interface {
+	Sink
+	PutCluster(ctx context.Context, clusterID, policyID, nodeID, id string, payload []byte) (location string, err error)
+}
+
 // Listed is one snapshot entry returned by Sink.List.
 type Listed struct {
 	SnapshotID string
