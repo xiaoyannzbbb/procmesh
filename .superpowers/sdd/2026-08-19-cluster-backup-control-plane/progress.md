@@ -37,3 +37,7 @@ Task 2: fix round 2 `e71300b`/`afdc0f3` added explicit lease bounds, negative co
 Task 2: complete (initial review findings addressed; remaining reviewer observations adjudicated as coordinator/API boundary or non-blocking compatibility details; no Critical/Important findings remain in the scoped fix diff).
 Task 3: ready; brief `task-3-brief.md` generated at base `613a35a`.
 Task 3: dispatched to `/root/p1_task3_api` at base `ae69fc2`; report `task-3-report.md` expected.
+Task 3: initial review found 2 Critical and 3 Important findings — leader routing, retry no-op, FSM operation-id enforcement, target membership validation, and conservative destination health.
+Task 3: fix rounds `f73b7ba`, `b97d2a4`, `00d3323`, `39156d9` added FSM mutation fencing, real retry command, leader-address routing, exact selector target freezing, multi-group expansion, public/Agent Raft-term propagation, and regression tests.
+Ruling: Keep `GetDestinationHealth` as metadata-only `UNKNOWN` until an Agent-local destination probe interface exists; the endpoint must not load or expose sink credentials, and adding an unowned probe here would violate the control-plane boundary.
+Task 3: complete (implementation and scoped review findings addressed; `go test ./internal/control ./internal/api -count=1`, compile-only Agent test, `go vet`, and `git diff --check` pass; full Agent package retains the documented baseline hanging/leaked-child test).
