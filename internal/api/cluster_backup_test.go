@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
+	"github.com/qleelulu/procmesh/internal/version"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
@@ -88,6 +90,51 @@ func TestClusterBackupAPI_StartRunFreezesTargetsAndRevision(t *testing.T) {
 	run := resp.Msg.GetRun()
 	if run.GetPolicyRevision() != 7 || strings.Join(run.GetTargetNodeIds(), ",") != "node-a,node-b" {
 		t.Fatalf("run=%+v", run)
+	}
+}
+
+func TestClusterBackupAPI_StartRunRejectsSelectorTargetMismatch(t *testing.T) {
+	state := control.NewState()
+	state.Members["node-a"] = control.Member{NodeID: "node-a", Status: control.MemberAdmitted}
+	state.Members["node-b"] = control.Member{NodeID: "node-b", Status: control.MemberAdmitted}
+	state.BackupPolicies["all"] = control.BackupPolicy{PolicyID: "all", Revision: 1, TargetSelector: "ALL_ADMITTED"}
+	client := newClusterBackupClient(t, &ClusterBackupAPI{StateFn: func() control.State { return *state }, IsLeader: func() bool { return true }, ApplyFn: func(cmd control.Command, _ time.Duration) error { return state.Apply(cmd, time.Now()) }}, false)
+	_, err := client.StartRun(context.Background(), connect.NewRequest(&procmeshv1.StartClusterBackupRunRequest{Meta: &procmeshv1.MutationMeta{OperationId: "op-mismatch"}, PolicyId: "all", TargetNodeIds: []string{"node-a"}}))
+	if err == nil || !strings.Contains(err.Error(), "target nodes changed") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestClusterBackupAPI_LeaderRouteUsesRaftLeaderAddress(t *testing.T) {
+	state := control.NewState()
+	state.Members["node-b"] = control.Member{NodeID: "node-b", RaftAddr: "raft-b", Status: control.MemberAdmitted}
+	state.Members["node-c"] = control.Member{NodeID: "node-c", RaftAddr: "raft-c", Status: control.MemberAdmitted}
+	api := &ClusterBackupAPI{LocalID: "node-a", StateFn: func() control.State { return *state }, LeaderAddr: func() string { return "raft-c" }, Router: &Router{LocalID: "node-a", Members: func() []cluster.NodeSummary {
+		return []cluster.NodeSummary{{NodeID: "node-b", State: cluster.StateAlive, RPCAddress: "rpc-b", ProtocolVersion: version.Protocol}, {NodeID: "node-c", State: cluster.StateAlive, RPCAddress: "rpc-c", ProtocolVersion: version.Protocol}}
+	}}}
+	rt, ok := api.leaderRoute()
+	if !ok || rt.NodeID != "node-c" || rt.RPC != "rpc-c" {
+		t.Fatalf("route=%+v ok=%v", rt, ok)
+	}
+}
+
+func TestClusterBackupAPI_RetryFailedTasksMutatesRaftState(t *testing.T) {
+	state := control.NewState()
+	state.Members["node-a"] = control.Member{NodeID: "node-a", Status: control.MemberAdmitted}
+	state.BackupPolicies["bp"] = control.BackupPolicy{PolicyID: "bp", Revision: 1, TargetSelector: "EXPLICIT_NODES", TargetIDs: []string{"node-a"}}
+	if err := state.CreateRun(control.CreateRunBody{OperationID: "op-run", LeaderTerm: 1, Run: control.ClusterBackupRun{RunID: "run", PolicyID: "bp", PolicyRevision: 1, TargetNodeIDs: []string{"node-a"}, Status: "PARTIAL"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.UpdateTask(control.UpdateTaskBody{OperationID: "op-task", LeaderTerm: 1, Task: control.ClusterBackupTask{RunID: "run", TaskID: "task", NodeID: "node-a", Status: "FAILED", ErrorCode: "E"}}); err != nil {
+		t.Fatal(err)
+	}
+	client := newClusterBackupClient(t, &ClusterBackupAPI{StateFn: func() control.State { return *state }, IsLeader: func() bool { return true }, LeaderTerm: func() uint64 { return 2 }, Now: func() time.Time { return time.Unix(100, 0) }, ApplyFn: func(cmd control.Command, _ time.Duration) error { return state.Apply(cmd, time.Unix(100, 0)) }}, false)
+	_, err := client.RetryFailedTasks(context.Background(), connect.NewRequest(&procmeshv1.RetryFailedClusterBackupTasksRequest{Meta: &procmeshv1.MutationMeta{OperationId: "op-retry"}, RunId: "run"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := state.BackupTasks["run:task"]; got.Status != "PENDING" {
+		t.Fatalf("task=%+v", got)
 	}
 }
 

@@ -147,6 +147,13 @@ func NewServer(opts Options) (*Server, error) {
 		Auth: opts.Auth, ControlFn: opts.Cluster.ControlFn, Router: opts.Router,
 		Forward: opts.Forward, LocalOnly: opts.LocalOnly, LocalID: opts.LocalID,
 		IsLeader: func() bool { n := opts.Cluster.controlNode(); return n == nil || n.IsLeader() },
+		LeaderAddr: func() string {
+			n := opts.Cluster.controlNode()
+			if n == nil {
+				return ""
+			}
+			return n.LeaderAddr()
+		},
 		ApplyFn: func(cmd control.Command, timeout time.Duration) error {
 			n := opts.Cluster.controlNode()
 			if n == nil {

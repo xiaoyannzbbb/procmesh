@@ -34,6 +34,7 @@ const (
 	CmdBackupFireClaim         = "backup_fire_claim"
 	CmdBackupRunCreate         = "backup_run_create"
 	CmdBackupTaskUpdate        = "backup_task_update"
+	CmdBackupRetryFailedTasks  = "backup_retry_failed_tasks"
 	CmdBackupRunFinish         = "backup_run_finish"
 	CmdRunMetadataPrune        = "run_metadata_prune"
 )
@@ -256,7 +257,7 @@ type ReplicationPolicyPutBody struct {
 
 type ReplicationPolicyDeleteBody struct {
 	OperationID string `json:"operation_id,omitempty"`
-	PolicyID string `json:"policy_id"`
+	PolicyID    string `json:"policy_id"`
 }
 
 // FireClaimBody records an idempotent scheduled-fire claim. LeaseUntilUnix is
@@ -282,6 +283,14 @@ type UpdateTaskBody struct {
 	Task        ClusterBackupTask `json:"task"`
 	LeaderTerm  uint64            `json:"leader_term"`
 	Replication bool              `json:"replication"`
+}
+
+type RetryFailedTasksBody struct {
+	OperationID string `json:"operation_id"`
+	RunID       string `json:"run_id"`
+	LeaderTerm  uint64 `json:"leader_term"`
+	UpdatedUnix int64  `json:"updated_unix"`
+	Replication bool   `json:"replication"`
 }
 
 type FinishRunBody struct {

@@ -33,6 +33,7 @@ type ClusterBackupAPI struct {
 	ApplyFn     func(control.Command, time.Duration) error
 	IsLeader    func() bool
 	LeaderTerm  func() uint64
+	LeaderAddr  func() string
 	LeaderRoute func() (Route, bool)
 	Forward     any
 	Router      *Router
@@ -174,6 +175,9 @@ func (s *ClusterBackupAPI) StartRun(ctx context.Context, req *connect.Request[pr
 	if len(targets) == 0 {
 		return nil, ToConnect(errcode.E(errcode.INVALID, "target nodes required"))
 	}
+	if err := validateStartTargets(state, policy, targets); err != nil {
+		return nil, ToConnect(err)
+	}
 	now := s.now()
 	runID := newRunID(operationID, policy.PolicyID, now)
 	run := control.ClusterBackupRun{RunID: runID, PolicyID: policy.PolicyID, PolicyRevision: policy.Revision, TargetNodeIDs: targets, Status: "RUNNING", CreatedUnix: now.Unix(), StartedUnix: now.Unix()}
@@ -258,10 +262,25 @@ func (s *ClusterBackupAPI) RetryFailedTasks(ctx context.Context, req *connect.Re
 		}
 		return cli.RetryFailedTasks(ctx, req)
 	}
-	run, ok := s.state().BackupRuns[req.Msg.GetRunId()]
+	state := s.state()
+	run, ok := state.BackupRuns[req.Msg.GetRunId()]
 	if !ok {
 		return nil, ToConnect(errcode.E(errcode.NOT_FOUND, "backup run not found"))
 	}
+	operationID, _, err := metaOf(req.Msg.GetMeta())
+	if err != nil {
+		return nil, err
+	}
+	now := s.now()
+	cmd, err := control.EncodeCommand(control.CmdBackupRetryFailedTasks, control.RetryFailedTasksBody{OperationID: operationID, RunID: run.RunID, LeaderTerm: s.leaderTerm(), UpdatedUnix: now.Unix()})
+	if err != nil {
+		return nil, ToConnect(err)
+	}
+	if err := s.applyCommand(cmd); err != nil {
+		return nil, ToConnect(err)
+	}
+	state = s.state()
+	run = state.BackupRuns[run.RunID]
 	return connect.NewResponse(&procmeshv1.RetryFailedClusterBackupTasksResponse{Run: runToProto(run, nil)}), nil
 }
 
@@ -269,6 +288,9 @@ func (s *ClusterBackupAPI) GetDestinationHealth(ctx context.Context, req *connec
 	if err := s.requireRead(ctx); err != nil {
 		return nil, err
 	}
+	// Destination credentials and sink clients are Agent-local. Until a health
+	// probe is attached, UNKNOWN is the conservative result and never implies
+	// that a configured destination is reachable.
 	return connect.NewResponse(&procmeshv1.GetClusterBackupDestinationHealthResponse{Health: &procmeshv1.ClusterBackupDestinationHealth{Sink: req.Msg.GetSink(), DestinationProfile: req.Msg.GetDestinationProfile(), Status: "UNKNOWN", CheckedUnix: s.now().Unix()}}), nil
 }
 
@@ -359,10 +381,26 @@ func (s *ClusterBackupAPI) leaderRoute() (Route, bool) {
 		return s.LeaderRoute()
 	}
 	if s.Router != nil {
+		leaderAddr := ""
+		if s.LeaderAddr != nil {
+			leaderAddr = s.LeaderAddr()
+		} else if n := s.controlNode(); n != nil {
+			leaderAddr = n.LeaderAddr()
+		}
+		if leaderAddr == "" {
+			return Route{}, false
+		}
+		state := s.state()
 		for _, n := range s.Router.members() {
+			member, ok := state.Members[n.NodeID]
+			if !ok || member.RaftAddr != leaderAddr {
+				continue
+			}
 			if n.NodeID != s.LocalID {
 				rt, err := s.Router.routeForNode(n)
-				return rt, err == nil
+				if err == nil {
+					return rt, true
+				}
 			}
 		}
 	}
@@ -407,6 +445,69 @@ func resolveTargets(st control.State, p control.BackupPolicy) []string {
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+func validateStartTargets(st control.State, p control.BackupPolicy, targets []string) error {
+	seen := make(map[string]struct{}, len(targets))
+	for _, id := range targets {
+		if id == "" {
+			return errcode.E(errcode.INVALID, "target node id required")
+		}
+		if _, ok := seen[id]; ok {
+			return errcode.E(errcode.INVALID, "duplicate target node")
+		}
+		seen[id] = struct{}{}
+	}
+	switch p.TargetSelector {
+	case "EXPLICIT_NODES":
+		if !equalStringSlices(targets, p.TargetIDs) {
+			return errcode.E(errcode.CONFLICT, "target nodes changed")
+		}
+	case "ALL_ADMITTED":
+		admitted := make([]string, 0, len(st.Members))
+		for id, member := range st.Members {
+			if member.Status == control.MemberAdmitted {
+				admitted = append(admitted, id)
+			}
+		}
+		sort.Strings(admitted)
+		got := append([]string(nil), targets...)
+		sort.Strings(got)
+		if !equalStringSlices(got, admitted) {
+			return errcode.E(errcode.CONFLICT, "target nodes changed")
+		}
+	case "AGENT_GROUP":
+		allowed := map[string]struct{}{}
+		for _, groupID := range p.TargetIDs {
+			group, ok := st.AgentGroups[groupID]
+			if !ok {
+				return errcode.E(errcode.INVALID, "agent group not found")
+			}
+			for _, nodeID := range group.MemberIDs {
+				if member, ok := st.Members[nodeID]; ok && member.Status == control.MemberAdmitted {
+					allowed[nodeID] = struct{}{}
+				}
+			}
+		}
+		for _, id := range targets {
+			if _, ok := allowed[id]; !ok {
+				return errcode.E(errcode.INVALID, "target node not in agent group")
+			}
+		}
+	}
+	return nil
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 func newRunID(op, policy string, now time.Time) string {
 	sum := sha256.Sum256([]byte(op + "\x00" + policy + "\x00" + now.String()))

@@ -524,6 +524,51 @@ func TestFSM_CreateRunValidatesAndFreezesPolicy(t *testing.T) {
 	}
 }
 
+func TestFSM_CreateRunValidatesSelectorMembership(t *testing.T) {
+	s := control.NewState()
+	s.Members["a"] = control.Member{NodeID: "a", Status: control.MemberAdmitted}
+	s.Members["b"] = control.Member{NodeID: "b", Status: control.MemberAdmitted}
+	s.Members["gone"] = control.Member{NodeID: "gone", Status: control.MemberRevoked}
+	s.AgentGroups["g1"] = control.AgentGroup{GroupID: "g1", MemberIDs: []string{"a"}}
+	now := time.Unix(1_700_000_000, 0)
+	cases := []struct {
+		name    string
+		policy  control.BackupPolicy
+		targets []string
+		want    errcode.Code
+	}{
+		{"all admitted missing", control.BackupPolicy{PolicyID: "all", Revision: 1, TargetSelector: "ALL_ADMITTED"}, []string{"a"}, errcode.CONFLICT},
+		{"all admitted revoked", control.BackupPolicy{PolicyID: "all2", Revision: 1, TargetSelector: "ALL_ADMITTED"}, []string{"a", "gone"}, errcode.CONFLICT},
+		{"group outsider", control.BackupPolicy{PolicyID: "group", Revision: 1, TargetSelector: "AGENT_GROUP", TargetIDs: []string{"g1"}}, []string{"b"}, errcode.INVALID},
+	}
+	for _, tc := range cases {
+		s.BackupPolicies[tc.policy.PolicyID] = tc.policy
+		err := s.CreateRun(control.CreateRunBody{OperationID: "op-" + tc.name, LeaderTerm: 1, Run: control.ClusterBackupRun{RunID: "run-" + tc.name, PolicyID: tc.policy.PolicyID, PolicyRevision: 1, TargetNodeIDs: tc.targets, Status: "RUNNING", CreatedUnix: now.Unix()}})
+		if !errcode.Is(err, tc.want) {
+			t.Fatalf("%s: err=%v want %s", tc.name, err, tc.want)
+		}
+	}
+}
+
+func TestFSM_RetryFailedTasksResetsOnlyRetryableTasks(t *testing.T) {
+	s := control.NewState()
+	s.Members["a"] = control.Member{NodeID: "a", Status: control.MemberAdmitted}
+	s.BackupPolicies["bp"] = control.BackupPolicy{PolicyID: "bp", Revision: 1, TargetSelector: "EXPLICIT_NODES", TargetIDs: []string{"a"}}
+	if err := s.CreateRun(control.CreateRunBody{OperationID: "op-run-retry", LeaderTerm: 2, Run: control.ClusterBackupRun{RunID: "run-retry", PolicyID: "bp", PolicyRevision: 1, TargetNodeIDs: []string{"a"}, Status: "PARTIAL"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateTask(control.UpdateTaskBody{OperationID: "op-task-retry", LeaderTerm: 2, Task: control.ClusterBackupTask{RunID: "run-retry", TaskID: "task-a", NodeID: "a", Status: "FAILED", ErrorCode: "E_IO", ErrorSummary: "disk"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Apply(mustEncode(t, control.CmdBackupRetryFailedTasks, control.RetryFailedTasksBody{OperationID: "op-retry", RunID: "run-retry", LeaderTerm: 3, UpdatedUnix: 1_700_000_100}), time.Unix(1_700_000_100, 0)); err != nil {
+		t.Fatal(err)
+	}
+	got := s.BackupTasks["run-retry:task-a"]
+	if got.Status != "PENDING" || got.ErrorCode != "" || got.ErrorSummary != "" || got.LeaderTerm != 3 || got.UpdatedUnix != 1_700_000_100 {
+		t.Fatalf("task=%+v", got)
+	}
+}
+
 func TestFSM_MetadataFencesNewerTermsAndRejectsInvalidLeases(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	s := control.NewState()
@@ -1584,6 +1629,28 @@ func mustBootstrap(t *testing.T, now time.Time) *control.State {
 
 func mustEncode(t *testing.T, typ string, body any) control.Command {
 	t.Helper()
+	switch typ {
+	case control.CmdBackupPolicyPut:
+		if b, ok := body.(control.BackupPolicyPutBody); ok && b.OperationID == "" {
+			b.OperationID = "test-op"
+			body = b
+		}
+	case control.CmdBackupPolicyDelete:
+		if b, ok := body.(control.BackupPolicyDeleteBody); ok && b.OperationID == "" {
+			b.OperationID = "test-op"
+			body = b
+		}
+	case control.CmdReplicationPolicyPut:
+		if b, ok := body.(control.ReplicationPolicyPutBody); ok && b.OperationID == "" {
+			b.OperationID = "test-op"
+			body = b
+		}
+	case control.CmdReplicationPolicyDelete:
+		if b, ok := body.(control.ReplicationPolicyDeleteBody); ok && b.OperationID == "" {
+			b.OperationID = "test-op"
+			body = b
+		}
+	}
 	cmd, err := control.EncodeCommand(typ, body)
 	if err != nil {
 		t.Fatal(err)

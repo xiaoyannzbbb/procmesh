@@ -8,6 +8,7 @@ import (
 	"io"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -348,6 +349,8 @@ func (s *State) Apply(cmd Command, now time.Time) error {
 		return applyJSON(cmd.Body, s.applyCreateRun)
 	case CmdBackupTaskUpdate:
 		return applyJSON(cmd.Body, s.applyUpdateTask)
+	case CmdBackupRetryFailedTasks:
+		return applyJSON(cmd.Body, s.applyRetryFailedTasks)
 	case CmdBackupRunFinish:
 		return applyJSON(cmd.Body, s.applyFinishRun)
 	case CmdRunMetadataPrune:
@@ -1076,6 +1079,56 @@ func equalStrings(a, b []string) bool {
 	return true
 }
 
+func (s *State) validateRunTargets(selector string, selectorIDs, targets []string) error {
+	if err := validateTargetNodeIDs(targets); err != nil {
+		return err
+	}
+	switch selector {
+	case "EXPLICIT_NODES":
+		if !equalStrings(targets, selectorIDs) {
+			return errcode.E(errcode.CONFLICT, "target nodes changed")
+		}
+	case "ALL_ADMITTED":
+		admitted := make([]string, 0, len(s.Members))
+		for id, member := range s.Members {
+			if member.Status == MemberAdmitted {
+				admitted = append(admitted, id)
+			}
+		}
+		sort.Strings(admitted)
+		got := append([]string(nil), targets...)
+		sort.Strings(got)
+		if !equalStrings(got, admitted) {
+			return errcode.E(errcode.CONFLICT, "target nodes changed")
+		}
+	case "AGENT_GROUP":
+		allowed := map[string]struct{}{}
+		for _, groupID := range selectorIDs {
+			group, ok := s.AgentGroups[groupID]
+			if !ok {
+				return errcode.E(errcode.INVALID, "agent group not found")
+			}
+			for _, nodeID := range group.MemberIDs {
+				if s.isAdmittedMember(nodeID) {
+					allowed[nodeID] = struct{}{}
+				}
+			}
+		}
+		for _, nodeID := range targets {
+			if _, ok := allowed[nodeID]; !ok {
+				return errcode.E(errcode.INVALID, "target node not in agent group")
+			}
+		}
+	case "":
+		// Legacy hand-built test/state records may omit a selector; keep their
+		// metadata readable while policy-created runs use the strict selectors.
+		return nil
+	default:
+		return errcode.E(errcode.INVALID, "target selector")
+	}
+	return nil
+}
+
 func validateTaskMetadata(task ClusterBackupTask) error {
 	if !validMetadataString(task.RunID, maxMetadataIDLen) || !validMetadataString(task.TaskID, maxMetadataIDLen) || !validMetadataString(task.NodeID, maxMetadataIDLen) {
 		return errcode.E(errcode.INVALID, "invalid task id")
@@ -1109,8 +1162,10 @@ func (s *State) applyCreateRun(b CreateRunBody) error {
 			return errcode.E(errcode.NOT_FOUND, "replication policy not found")
 		}
 		policyRevision = policy.Revision
-		if policy.SourceSelector == "EXPLICIT_NODES" && !equalStrings(b.Run.TargetNodeIDs, policy.SourceIDs) {
-			return errcode.E(errcode.CONFLICT, "target nodes changed")
+		if policy.SourceSelector != "" {
+			if err := s.validateRunTargets(policy.SourceSelector, policy.SourceIDs, b.Run.TargetNodeIDs); err != nil {
+				return err
+			}
 		}
 	} else {
 		policy, ok := s.BackupPolicies[b.Run.PolicyID]
@@ -1118,8 +1173,10 @@ func (s *State) applyCreateRun(b CreateRunBody) error {
 			return errcode.E(errcode.NOT_FOUND, "backup policy not found")
 		}
 		policyRevision = policy.Revision
-		if policy.TargetSelector == "EXPLICIT_NODES" && !equalStrings(b.Run.TargetNodeIDs, policy.TargetIDs) {
-			return errcode.E(errcode.CONFLICT, "target nodes changed")
+		if policy.TargetSelector != "" {
+			if err := s.validateRunTargets(policy.TargetSelector, policy.TargetIDs, b.Run.TargetNodeIDs); err != nil {
+				return err
+			}
 		}
 	}
 	if b.Run.PolicyRevision != policyRevision {
@@ -1142,6 +1199,44 @@ func (s *State) applyCreateRun(b CreateRunBody) error {
 func taskMapKey(task ClusterBackupTask) string { return task.RunID + ":" + task.TaskID }
 
 func (s *State) UpdateTask(b UpdateTaskBody) error { return s.applyUpdateTask(b) }
+
+func (s *State) RetryFailedTasks(b RetryFailedTasksBody) error { return s.applyRetryFailedTasks(b) }
+
+func (s *State) applyRetryFailedTasks(b RetryFailedTasksBody) error {
+	s.ensure()
+	if err := requireOperationID(b.OperationID); err != nil {
+		return err
+	}
+	if b.LeaderTerm == 0 || !validMetadataString(b.RunID, maxMetadataIDLen) {
+		return errcode.E(errcode.INVALID, "run id and leader term required")
+	}
+	runs, tasks := runMaps(s, b.Replication)
+	terms := runTerms(s, b.Replication)
+	if _, ok := runs[b.RunID]; !ok {
+		return errcode.E(errcode.NOT_FOUND, "run not found")
+	}
+	if term := terms[b.RunID]; term > b.LeaderTerm {
+		return errcode.E(errcode.CONFLICT, "stale leader term")
+	}
+	for key, task := range tasks {
+		if task.RunID != b.RunID || task.Status != "FAILED" {
+			continue
+		}
+		task.Status = "PENDING"
+		task.SnapshotID = ""
+		task.SHA256 = ""
+		task.Bytes = 0
+		task.ErrorCode = ""
+		task.ErrorSummary = ""
+		task.LeaderTerm = b.LeaderTerm
+		task.UpdatedUnix = b.UpdatedUnix
+		tasks[key] = task
+	}
+	if b.LeaderTerm > terms[b.RunID] {
+		terms[b.RunID] = b.LeaderTerm
+	}
+	return nil
+}
 
 func (s *State) applyUpdateTask(b UpdateTaskBody) error {
 	s.ensure()
