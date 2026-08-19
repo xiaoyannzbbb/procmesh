@@ -1189,9 +1189,6 @@ func (s *State) applyFinishRun(b FinishRunBody) error {
 	if b.Success < 0 || b.Failed < 0 || b.Unavailable < 0 || b.Timeout < 0 {
 		return errcode.E(errcode.INVALID, "negative run counters")
 	}
-	if b.Success < 0 || b.Failed < 0 || b.Unavailable < 0 || b.Timeout < 0 {
-		return errcode.E(errcode.INVALID, "invalid run counters")
-	}
 	runs, tasks := runMaps(s, b.Replication)
 	terms := runTerms(s, b.Replication)
 	run, ok := runs[b.RunID]
