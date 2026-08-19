@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -344,6 +345,7 @@ func TestFSM_FireLedgerIdempotencyAndLeaseTakeover(t *testing.T) {
 func TestFSM_BackupRunRejectsStaleTermAndPreservesTerminalTask(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	s := control.NewState()
+	s.BackupPolicies["bp-1"] = control.BackupPolicy{PolicyID: "bp-1", Revision: 2, TargetSelector: "EXPLICIT_NODES", TargetIDs: []string{"node-a"}}
 	run := control.ClusterBackupRun{RunID: "run-1", PolicyID: "bp-1", PolicyRevision: 2, TargetNodeIDs: []string{"node-a"}, Status: "RUNNING", CreatedUnix: now.Unix(), StartedUnix: now.Unix()}
 	if err := s.CreateRun(control.CreateRunBody{OperationID: "op-run-1", LeaderTerm: 4, Run: run}); err != nil {
 		t.Fatal(err)
@@ -376,10 +378,12 @@ func TestFSM_BackupRunRejectsStaleTermAndPreservesTerminalTask(t *testing.T) {
 func TestFSM_RunMetadataPruningAndSnapshotSafety(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	s := control.NewState()
-	if err := s.CreateRun(control.CreateRunBody{OperationID: "op-backup", LeaderTerm: 1, Run: control.ClusterBackupRun{RunID: "backup-old", Status: "SUCCESS", FinishedUnix: now.Add(-time.Hour).Unix()}}); err != nil {
+	s.BackupPolicies["bp-old"] = control.BackupPolicy{PolicyID: "bp-old", Revision: 1}
+	s.ReplicationPolicies["rp-new"] = control.ReplicationPolicy{PolicyID: "rp-new", Revision: 1}
+	if err := s.CreateRun(control.CreateRunBody{OperationID: "op-backup", LeaderTerm: 1, Run: control.ClusterBackupRun{RunID: "backup-old", PolicyID: "bp-old", PolicyRevision: 1, Status: "SUCCESS", FinishedUnix: now.Add(-time.Hour).Unix()}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateRun(control.CreateRunBody{OperationID: "op-replication", Replication: true, LeaderTerm: 1, Run: control.ClusterBackupRun{RunID: "replication-new", Status: "RUNNING", CreatedUnix: now.Unix()}}); err != nil {
+	if err := s.CreateRun(control.CreateRunBody{OperationID: "op-replication", Replication: true, LeaderTerm: 1, Run: control.ClusterBackupRun{RunID: "replication-new", PolicyID: "rp-new", PolicyRevision: 1, Status: "RUNNING", CreatedUnix: now.Unix()}}); err != nil {
 		t.Fatal(err)
 	}
 	s.PruneRunMetadata(now.Add(-time.Minute).Unix())
@@ -390,7 +394,6 @@ func TestFSM_RunMetadataPruningAndSnapshotSafety(t *testing.T) {
 		t.Fatal("replication run missing")
 	}
 	f := control.NewFSM()
-	mustFSMApply(t, f, control.CmdBackupRunCreate, control.CreateRunBody{OperationID: "op-snapshot", LeaderTerm: 1, Run: control.ClusterBackupRun{RunID: "run-snapshot", Status: "RUNNING"}}, now)
 	view := f.View()
 	view.BackupRuns = s.BackupRuns
 	view.BackupTasks = s.BackupTasks
@@ -418,6 +421,108 @@ func TestFSM_RunMetadataPruningAndSnapshotSafety(t *testing.T) {
 		if bytes.Contains(sink.buf.Bytes(), []byte(forbidden)) {
 			t.Fatalf("raft snapshot contains %q: %s", forbidden, sink.buf.Bytes())
 		}
+	}
+}
+
+func TestFSM_MetadataUsesSpecTerminalStatuses(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := control.NewState()
+	s.BackupPolicies["bp-1"] = control.BackupPolicy{PolicyID: "bp-1", Revision: 2, TargetSelector: "EXPLICIT_NODES", TargetIDs: []string{"node-a"}}
+	run := control.ClusterBackupRun{RunID: "run-status", PolicyID: "bp-1", PolicyRevision: 2, TargetNodeIDs: []string{"node-a"}, Status: "RUNNING", CreatedUnix: now.Unix()}
+	if err := s.CreateRun(control.CreateRunBody{OperationID: "op-status-run", LeaderTerm: 1, Run: run}); err != nil {
+		t.Fatal(err)
+	}
+	task := control.ClusterBackupTask{RunID: run.RunID, TaskID: "task-status", NodeID: "node-a", Status: "SUCCEEDED", SHA256: "abc", UpdatedUnix: now.Unix()}
+	if err := s.UpdateTask(control.UpdateTaskBody{OperationID: "op-status-task", LeaderTerm: 1, Task: task}); err != nil {
+		t.Fatal(err)
+	}
+	task.Status, task.SHA256 = "FAILED", "changed"
+	if err := s.UpdateTask(control.UpdateTaskBody{OperationID: "op-status-task-2", LeaderTerm: 1, Task: task}); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.BackupTasks["run-status:task-status"]; got.Status != "SUCCEEDED" || got.SHA256 != "abc" {
+		t.Fatalf("terminal task changed: %+v", got)
+	}
+	if err := s.FinishRun(control.FinishRunBody{OperationID: "op-status-finish", RunID: run.RunID, LeaderTerm: 1, Status: "PARTIAL", FinishedUnix: now.Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.BackupRuns[run.RunID]; got.Status != "PARTIAL" {
+		t.Fatalf("run status=%q", got.Status)
+	}
+}
+
+func TestFSM_MetadataBoundsRejectOversizedInputs(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := control.NewState()
+	s.BackupPolicies["bp-1"] = control.BackupPolicy{PolicyID: "bp-1", Revision: 1, TargetSelector: "EXPLICIT_NODES", TargetIDs: []string{"node-a"}}
+	base := control.ClusterBackupTask{RunID: "run-bounds", TaskID: "task-1", NodeID: "node-a", Status: "RUNNING", LeaderTerm: 1}
+	if err := s.CreateRun(control.CreateRunBody{OperationID: "op-bounds-run", LeaderTerm: 1, Run: control.ClusterBackupRun{RunID: "run-bounds", PolicyID: "bp-1", PolicyRevision: 1, TargetNodeIDs: []string{"node-a"}, Status: "RUNNING"}}); err != nil {
+		t.Fatal(err)
+	}
+	cases := []control.ClusterBackupTask{
+		func() control.ClusterBackupTask { x := base; x.ErrorSummary = strings.Repeat("x", 2049); return x }(),
+		func() control.ClusterBackupTask { x := base; x.ErrorCode = strings.Repeat("x", 257); return x }(),
+		func() control.ClusterBackupTask { x := base; x.SnapshotID = strings.Repeat("x", 513); return x }(),
+		func() control.ClusterBackupTask { x := base; x.SHA256 = strings.Repeat("x", 129); return x }(),
+		func() control.ClusterBackupTask { x := base; x.TaskID = strings.Repeat("x", 257); return x }(),
+	}
+	for i, task := range cases {
+		if err := s.UpdateTask(control.UpdateTaskBody{OperationID: fmt.Sprintf("op-bounds-%d", i), LeaderTerm: 1, Task: task}); !errcode.Is(err, errcode.INVALID) {
+			t.Fatalf("case %d: %v", i, err)
+		}
+	}
+	tooMany := make([]string, 0, 1025)
+	for i := 0; i < 1025; i++ {
+		tooMany = append(tooMany, fmt.Sprintf("node-%d", i))
+	}
+	run := control.ClusterBackupRun{RunID: "run-too-many", PolicyID: "bp-1", PolicyRevision: 1, TargetNodeIDs: tooMany, Status: "RUNNING", CreatedUnix: now.Unix()}
+	if err := s.CreateRun(control.CreateRunBody{OperationID: "op-too-many", LeaderTerm: 1, Run: run}); !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("target count: %v", err)
+	}
+}
+
+func TestFSM_PruneRunMetadataRetainsLiveFireLease(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := control.NewState()
+	live, _, err := s.ClaimFire(control.FireClaimBody{OperationID: "op-live", FireKey: "bp-1:old-live", PolicyID: "bp-1", LeaderTerm: 1, ScheduledUnix: now.Add(-time.Hour).Unix(), LeaseUntilUnix: now.Add(time.Hour).Unix()}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, _, err := s.ClaimFire(control.FireClaimBody{OperationID: "op-old", FireKey: "bp-1:old-expired", PolicyID: "bp-1", LeaderTerm: 1, ScheduledUnix: now.Add(-time.Hour).Unix(), LeaseUntilUnix: now.Add(-time.Minute).Unix()}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.PruneRunMetadata(now.Add(-time.Minute).Unix())
+	if _, ok := s.BackupFireLedger[live.FireKey]; !ok {
+		t.Fatal("live lease pruned")
+	}
+	if _, ok := s.BackupFireLedger[old.FireKey]; ok {
+		t.Fatal("expired lease retained")
+	}
+}
+
+func TestFSM_CreateRunValidatesAndFreezesPolicy(t *testing.T) {
+	s := control.NewState()
+	s.BackupPolicies["bp-1"] = control.BackupPolicy{PolicyID: "bp-1", Revision: 4, TargetSelector: "EXPLICIT_NODES", TargetIDs: []string{"node-a", "node-b"}}
+	valid := control.ClusterBackupRun{RunID: "run-freeze", PolicyID: "bp-1", PolicyRevision: 4, TargetNodeIDs: []string{"node-a", "node-b"}, Status: "RUNNING"}
+	if err := s.CreateRun(control.CreateRunBody{OperationID: "op-freeze", LeaderTerm: 1, Run: valid}); err != nil {
+		t.Fatal(err)
+	}
+	valid.TargetNodeIDs[0] = "changed"
+	if got := s.BackupRuns[valid.RunID]; got.TargetNodeIDs[0] != "node-a" {
+		t.Fatalf("targets not frozen: %+v", got)
+	}
+	badRevision := valid
+	badRevision.RunID = "run-bad-rev"
+	badRevision.PolicyRevision = 3
+	if err := s.CreateRun(control.CreateRunBody{OperationID: "op-bad-rev", LeaderTerm: 1, Run: badRevision}); !errcode.Is(err, errcode.CONFLICT) {
+		t.Fatalf("revision: %v", err)
+	}
+	badTargets := valid
+	badTargets.RunID = "run-bad-target"
+	badTargets.TargetNodeIDs = []string{"node-a"}
+	if err := s.CreateRun(control.CreateRunBody{OperationID: "op-bad-target", LeaderTerm: 1, Run: badTargets}); !errcode.Is(err, errcode.CONFLICT) {
+		t.Fatalf("targets: %v", err)
 	}
 }
 

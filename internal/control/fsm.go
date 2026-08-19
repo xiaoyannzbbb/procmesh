@@ -930,6 +930,16 @@ func (s *State) applyBackupPolicyDelete(b BackupPolicyDeleteBody) error {
 
 const defaultFireLease = 2 * time.Minute
 
+const (
+	maxMetadataIDLen   = 128
+	maxFireKeyLen      = 256
+	maxErrorCodeLen    = 128
+	maxErrorSummaryLen = 2048
+	maxSnapshotIDLen   = 512
+	maxSHA256Len       = 128
+	maxTargetNodeIDs   = 1024
+)
+
 func requireOperationID(operationID string) error {
 	if strings.TrimSpace(operationID) == "" {
 		return errcode.E(errcode.INVALID, "operation_id required")
@@ -949,7 +959,7 @@ func (s *State) ClaimFire(b FireClaimBody, now time.Time) (FireRecord, bool, err
 	if err := requireOperationID(b.OperationID); err != nil {
 		return FireRecord{}, false, err
 	}
-	if strings.TrimSpace(b.FireKey) == "" || strings.TrimSpace(b.PolicyID) == "" || b.LeaderTerm == 0 {
+	if !validMetadataString(b.FireKey, maxFireKeyLen) || !validMetadataString(b.PolicyID, maxMetadataIDLen) || b.LeaderTerm == 0 {
 		return FireRecord{}, false, errcode.E(errcode.INVALID, "fire key, policy id, and leader term required")
 	}
 	if current, ok := s.BackupFireLedger[b.FireKey]; ok {
@@ -1005,8 +1015,66 @@ func runTerms(s *State, replication bool) map[string]uint64 {
 	return s.BackupRunTerms
 }
 
-func terminalStatus(status string) bool {
-	return status == "SUCCESS" || status == "FAILED" || status == "UNAVAILABLE" || status == "TIMEOUT" || status == "CANCELED"
+func terminalRunStatus(status string) bool {
+	return status == "SUCCEEDED" || status == "SUCCESS" || status == "PARTIAL" || status == "FAILED" || status == "CANCELED"
+}
+
+func terminalTaskStatus(status string) bool {
+	return status == "SUCCEEDED" || status == "SUCCESS" || status == "FAILED" || status == "TIMEOUT" || status == "UNAVAILABLE" || status == "CONFIG_MISSING" || status == "SKIPPED"
+}
+
+func validRunStatus(status string) bool {
+	return status == "PENDING" || status == "RUNNING" || terminalRunStatus(status)
+}
+
+func validTaskStatus(status string) bool {
+	return status == "PENDING" || status == "RUNNING" || terminalTaskStatus(status)
+}
+
+func validMetadataString(value string, max int) bool {
+	return strings.TrimSpace(value) != "" && len(value) <= max
+}
+
+func validateTargetNodeIDs(ids []string) error {
+	if len(ids) > maxTargetNodeIDs {
+		return errcode.E(errcode.INVALID, "too many target nodes")
+	}
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if !validMetadataString(id, maxMetadataIDLen) {
+			return errcode.E(errcode.INVALID, "invalid target node id")
+		}
+		if _, ok := seen[id]; ok {
+			return errcode.E(errcode.INVALID, "duplicate target node id")
+		}
+		seen[id] = struct{}{}
+	}
+	return nil
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func validateTaskMetadata(task ClusterBackupTask) error {
+	if !validMetadataString(task.RunID, maxMetadataIDLen) || !validMetadataString(task.TaskID, maxMetadataIDLen) || !validMetadataString(task.NodeID, maxMetadataIDLen) {
+		return errcode.E(errcode.INVALID, "invalid task id")
+	}
+	if len(task.SnapshotID) > maxSnapshotIDLen || len(task.SHA256) > maxSHA256Len || len(task.ErrorCode) > maxErrorCodeLen || len(task.ErrorSummary) > maxErrorSummaryLen {
+		return errcode.E(errcode.INVALID, "task metadata too long")
+	}
+	if !validTaskStatus(task.Status) {
+		return errcode.E(errcode.INVALID, "invalid task status")
+	}
+	return nil
 }
 
 func (s *State) CreateRun(b CreateRunBody) error { return s.applyCreateRun(b) }
@@ -1016,8 +1084,34 @@ func (s *State) applyCreateRun(b CreateRunBody) error {
 	if err := requireOperationID(b.OperationID); err != nil {
 		return err
 	}
-	if b.LeaderTerm == 0 || strings.TrimSpace(b.Run.RunID) == "" || strings.TrimSpace(b.Run.Status) == "" {
+	if b.LeaderTerm == 0 || !validMetadataString(b.Run.RunID, maxMetadataIDLen) || !validMetadataString(b.Run.PolicyID, maxMetadataIDLen) || !validRunStatus(b.Run.Status) {
 		return errcode.E(errcode.INVALID, "run id, status, and leader term required")
+	}
+	if err := validateTargetNodeIDs(b.Run.TargetNodeIDs); err != nil {
+		return err
+	}
+	var policyRevision int64
+	if b.Replication {
+		policy, ok := s.ReplicationPolicies[b.Run.PolicyID]
+		if !ok {
+			return errcode.E(errcode.NOT_FOUND, "replication policy not found")
+		}
+		policyRevision = policy.Revision
+		if policy.SourceSelector == "EXPLICIT_NODES" && !equalStrings(b.Run.TargetNodeIDs, policy.SourceIDs) {
+			return errcode.E(errcode.CONFLICT, "target nodes changed")
+		}
+	} else {
+		policy, ok := s.BackupPolicies[b.Run.PolicyID]
+		if !ok {
+			return errcode.E(errcode.NOT_FOUND, "backup policy not found")
+		}
+		policyRevision = policy.Revision
+		if policy.TargetSelector == "EXPLICIT_NODES" && !equalStrings(b.Run.TargetNodeIDs, policy.TargetIDs) {
+			return errcode.E(errcode.CONFLICT, "target nodes changed")
+		}
+	}
+	if b.Run.PolicyRevision != policyRevision {
+		return errcode.E(errcode.CONFLICT, "policy revision changed")
 	}
 	runs, _ := runMaps(s, b.Replication)
 	terms := runTerms(s, b.Replication)
@@ -1042,8 +1136,11 @@ func (s *State) applyUpdateTask(b UpdateTaskBody) error {
 	if err := requireOperationID(b.OperationID); err != nil {
 		return err
 	}
-	if b.LeaderTerm == 0 || strings.TrimSpace(b.Task.RunID) == "" || strings.TrimSpace(b.Task.TaskID) == "" || strings.TrimSpace(b.Task.Status) == "" {
+	if b.LeaderTerm == 0 {
 		return errcode.E(errcode.INVALID, "run id, task id, status, and leader term required")
+	}
+	if err := validateTaskMetadata(b.Task); err != nil {
+		return err
 	}
 	runs, tasks := runMaps(s, b.Replication)
 	terms := runTerms(s, b.Replication)
@@ -1058,7 +1155,7 @@ func (s *State) applyUpdateTask(b UpdateTaskBody) error {
 		if b.LeaderTerm < current.LeaderTerm {
 			return errcode.E(errcode.CONFLICT, "stale leader term")
 		}
-		if terminalStatus(current.Status) {
+		if terminalTaskStatus(current.Status) {
 			return nil
 		}
 	}
@@ -1074,8 +1171,11 @@ func (s *State) applyFinishRun(b FinishRunBody) error {
 	if err := requireOperationID(b.OperationID); err != nil {
 		return err
 	}
-	if b.LeaderTerm == 0 || strings.TrimSpace(b.RunID) == "" || strings.TrimSpace(b.Status) == "" {
+	if b.LeaderTerm == 0 || !validMetadataString(b.RunID, maxMetadataIDLen) || !validRunStatus(b.Status) {
 		return errcode.E(errcode.INVALID, "run id, status, and leader term required")
+	}
+	if b.Success < 0 || b.Failed < 0 || b.Unavailable < 0 || b.Timeout < 0 {
+		return errcode.E(errcode.INVALID, "invalid run counters")
 	}
 	runs, tasks := runMaps(s, b.Replication)
 	terms := runTerms(s, b.Replication)
@@ -1091,7 +1191,7 @@ func (s *State) applyFinishRun(b FinishRunBody) error {
 			return errcode.E(errcode.CONFLICT, "stale leader term")
 		}
 	}
-	if terminalStatus(run.Status) {
+	if terminalRunStatus(run.Status) {
 		return nil
 	}
 	run.Status, run.Success, run.Failed, run.Unavailable, run.Timeout, run.FinishedUnix = b.Status, b.Success, b.Failed, b.Unavailable, b.Timeout, b.FinishedUnix
@@ -1103,7 +1203,7 @@ func (s *State) PruneRunMetadata(beforeUnix int64) {
 	s.ensure()
 	prune := func(runs map[string]ClusterBackupRun, tasks map[string]ClusterBackupTask, terms map[string]uint64) {
 		for id, run := range runs {
-			if terminalStatus(run.Status) && run.FinishedUnix < beforeUnix {
+			if terminalRunStatus(run.Status) && run.FinishedUnix < beforeUnix {
 				delete(runs, id)
 				delete(terms, id)
 				for key, task := range tasks {
@@ -1117,7 +1217,7 @@ func (s *State) PruneRunMetadata(beforeUnix int64) {
 	prune(s.BackupRuns, s.BackupTasks, s.BackupRunTerms)
 	prune(s.ReplicationRuns, s.ReplicationTasks, s.ReplicationRunTerms)
 	for key, fire := range s.BackupFireLedger {
-		if fire.ScheduledUnix < beforeUnix {
+		if (fire.LeaseUntilUnix > 0 && fire.LeaseUntilUnix <= beforeUnix) || (terminalRunStatus(fire.Status) && fire.ScheduledUnix < beforeUnix) {
 			delete(s.BackupFireLedger, key)
 		}
 	}
