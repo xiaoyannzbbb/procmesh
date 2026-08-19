@@ -219,6 +219,14 @@ func (n *Node) LeaderAddr() string {
 	return string(n.raft.Leader())
 }
 
+// CurrentTerm returns the Raft term used to fence control-plane mutations.
+func (n *Node) CurrentTerm() uint64 {
+	if n == nil || n.raft == nil {
+		return 0
+	}
+	return n.raft.CurrentTerm()
+}
+
 func (n *Node) Advertise() string { return n.advertise }
 
 func (n *Node) View() State {

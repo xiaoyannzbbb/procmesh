@@ -1114,10 +1114,21 @@ func (s *State) validateRunTargets(selector string, selectorIDs, targets []strin
 				}
 			}
 		}
+		got := make([]string, 0, len(targets))
 		for _, nodeID := range targets {
 			if _, ok := allowed[nodeID]; !ok {
 				return errcode.E(errcode.INVALID, "target node not in agent group")
 			}
+			got = append(got, nodeID)
+		}
+		want := make([]string, 0, len(allowed))
+		for nodeID := range allowed {
+			want = append(want, nodeID)
+		}
+		sort.Strings(got)
+		sort.Strings(want)
+		if !equalStrings(got, want) {
+			return errcode.E(errcode.CONFLICT, "target nodes changed")
 		}
 	case "":
 		// Legacy hand-built test/state records may omit a selector; keep their

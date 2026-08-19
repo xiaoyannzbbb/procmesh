@@ -435,7 +435,20 @@ func resolveTargets(st control.State, p control.BackupPolicy) []string {
 		return append([]string(nil), p.TargetIDs...)
 	}
 	if p.TargetSelector == "AGENT_GROUP" && len(p.TargetIDs) > 0 {
-		return append([]string(nil), st.AgentGroups[p.TargetIDs[0]].MemberIDs...)
+		seen := map[string]struct{}{}
+		ids := make([]string, 0)
+		for _, groupID := range p.TargetIDs {
+			for _, nodeID := range st.AgentGroups[groupID].MemberIDs {
+				if member, ok := st.Members[nodeID]; ok && member.Status == control.MemberAdmitted {
+					if _, exists := seen[nodeID]; !exists {
+						seen[nodeID] = struct{}{}
+						ids = append(ids, nodeID)
+					}
+				}
+			}
+		}
+		sort.Strings(ids)
+		return ids
 	}
 	ids := make([]string, 0, len(st.Members))
 	for id, m := range st.Members {
@@ -489,10 +502,21 @@ func validateStartTargets(st control.State, p control.BackupPolicy, targets []st
 				}
 			}
 		}
+		got := make([]string, 0, len(targets))
 		for _, id := range targets {
 			if _, ok := allowed[id]; !ok {
 				return errcode.E(errcode.INVALID, "target node not in agent group")
 			}
+			got = append(got, id)
+		}
+		want := make([]string, 0, len(allowed))
+		for id := range allowed {
+			want = append(want, id)
+		}
+		sort.Strings(got)
+		sort.Strings(want)
+		if !equalStringSlices(got, want) {
+			return errcode.E(errcode.CONFLICT, "target nodes changed")
 		}
 	}
 	return nil

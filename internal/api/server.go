@@ -154,6 +154,13 @@ func NewServer(opts Options) (*Server, error) {
 			}
 			return n.LeaderAddr()
 		},
+		LeaderTerm: func() uint64 {
+			n := opts.Cluster.controlNode()
+			if n == nil {
+				return 0
+			}
+			return n.CurrentTerm()
+		},
 		ApplyFn: func(cmd control.Command, timeout time.Duration) error {
 			n := opts.Cluster.controlNode()
 			if n == nil {
