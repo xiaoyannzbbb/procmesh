@@ -235,6 +235,7 @@ type ReplicationRoute struct {
 }
 
 type ReplicationPolicyPutBody struct {
+	OperationID            string `json:"operation_id,omitempty"`
 	PolicyID, Name         string
 	Enabled                bool
 	SourceSelector         string
@@ -254,6 +255,7 @@ type ReplicationPolicyPutBody struct {
 }
 
 type ReplicationPolicyDeleteBody struct {
+	OperationID string `json:"operation_id,omitempty"`
 	PolicyID string `json:"policy_id"`
 }
 

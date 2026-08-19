@@ -871,6 +871,9 @@ func validUnavailablePolicy(policy string) bool {
 }
 
 func (s *State) applyBackupPolicyPut(b BackupPolicyPutBody) error {
+	if err := requireOperationID(b.OperationID); err != nil {
+		return err
+	}
 	name := strings.TrimSpace(b.Name)
 	if b.PolicyID == "" || name == "" {
 		return errcode.E(errcode.INVALID, "policy id and name required")
@@ -921,6 +924,9 @@ func (s *State) applyBackupPolicyPut(b BackupPolicyPutBody) error {
 }
 
 func (s *State) applyBackupPolicyDelete(b BackupPolicyDeleteBody) error {
+	if err := requireOperationID(b.OperationID); err != nil {
+		return err
+	}
 	if _, ok := s.BackupPolicies[b.PolicyID]; !ok {
 		return errcode.E(errcode.NOT_FOUND, "backup policy not found")
 	}
@@ -1250,6 +1256,9 @@ func (s *State) applyPruneRunMetadata(b PruneRunMetadataBody) error {
 }
 
 func (s *State) applyReplicationPolicyPut(b ReplicationPolicyPutBody) error {
+	if err := requireOperationID(b.OperationID); err != nil {
+		return err
+	}
 	name := strings.TrimSpace(b.Name)
 	if b.PolicyID == "" || name == "" {
 		return errcode.E(errcode.INVALID, "policy id and name required")
@@ -1389,6 +1398,9 @@ func mapsClone(in map[string]string) map[string]string {
 }
 
 func (s *State) applyReplicationPolicyDelete(b ReplicationPolicyDeleteBody) error {
+	if err := requireOperationID(b.OperationID); err != nil {
+		return err
+	}
 	if _, ok := s.ReplicationPolicies[b.PolicyID]; !ok {
 		return errcode.E(errcode.NOT_FOUND, "replication policy not found")
 	}
