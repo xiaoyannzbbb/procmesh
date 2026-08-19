@@ -171,6 +171,31 @@ func (n *Node) Apply(cmd Command, timeout time.Duration) error {
 	return nil
 }
 
+// ClaimBackupFire applies an idempotent scheduled-fire claim and returns the
+// durable run identity recorded by the FSM. The created flag is false when an
+// existing live claim is reused.
+func (n *Node) ClaimBackupFire(b FireClaimBody, now time.Time) (FireRecord, bool, error) {
+	if err := n.requireLeader(); err != nil {
+		return FireRecord{}, false, err
+	}
+	before := n.View().BackupFireLedger[b.FireKey]
+	cmd, err := EncodeCommand(CmdBackupFireClaim, b)
+	if err != nil {
+		return FireRecord{}, false, err
+	}
+	if err := n.Apply(cmd, 5*time.Second); err != nil {
+		return FireRecord{}, false, err
+	}
+	after, ok := n.View().BackupFireLedger[b.FireKey]
+	if !ok {
+		return FireRecord{}, false, errcode.E(errcode.UNAVAILABLE, "fire claim not committed")
+	}
+	// created reports only first insertion. Lease takeover changes the durable
+	// claim term but must not cause the coordinator to recreate the run.
+	created := before.RunID == ""
+	return after, created, nil
+}
+
 func (n *Node) HasQuorum() bool {
 	if n == nil || n.raft == nil {
 		return false

@@ -48,6 +48,7 @@ type rpcRuntime struct {
 	logger      *slog.Logger
 	metrics     *metrics.Collector
 	backup      *backup.Engine
+	backupCoord *backup.Coordinator
 }
 
 func (r *rpcRuntime) startRPC() error {

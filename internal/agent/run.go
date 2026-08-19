@@ -507,6 +507,19 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		metrics:     collector,
 	}
 	rt.backup = newBackupEngine(opt, mgr, st, collector, rt, fwd)
+	rt.backupCoord = backup.NewCoordinator(backup.CoordinatorConfig{
+		Control:    raftBackupControl{runtime: rt},
+		Dispatcher: localBackupDispatcher{runtime: rt},
+		RunCreator: raftBackupRunCreator{runtime: rt},
+		IsLeader:   func() bool { n := rt.control(); return n != nil && n.IsLeader() },
+		CurrentTerm: func() uint64 {
+			n := rt.control()
+			if n == nil {
+				return 0
+			}
+			return n.CurrentTerm()
+		},
+	})
 	if control.AlreadyInited(clusterDeps.Dir) {
 		if err := rt.startRaft(false); err != nil {
 			_ = ln.Close()
@@ -633,8 +646,19 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 						min := time.Now().Truncate(time.Minute)
 						if lastBackupMin.IsZero() || !min.Equal(lastBackupMin) {
 							lastBackupMin = min
-							if err := bak.TickSchedule(ctx); err != nil && ctx.Err() == nil {
-								opt.Logger.Warn("backup schedule tick failed", "error", err)
+							clusterEnabled := false
+							if rt.backupCoord != nil {
+								if err := rt.backupCoord.Tick(ctx); err != nil && ctx.Err() == nil {
+									opt.Logger.Warn("cluster backup schedule tick failed", "error", err)
+								}
+								if policies, err := (raftBackupControl{runtime: rt}).ListEnabledBackupPolicies(ctx); err == nil {
+									clusterEnabled = len(policies) > 0
+								}
+							}
+							if !clusterEnabled {
+								if err := bak.TickSchedule(ctx); err != nil && ctx.Err() == nil {
+									opt.Logger.Warn("backup schedule tick failed", "error", err)
+								}
 							}
 						}
 					}
