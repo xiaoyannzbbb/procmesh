@@ -1050,6 +1050,31 @@ func TestFSM_ReplicationPolicyPutRejectsUnsafeRoutes(t *testing.T) {
 			b.Trigger = "ON_DEMAND"
 			return b
 		}()},
+		{name: "manual malformed cron metadata", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-manual-cron"
+			b.Name = "manual-cron"
+			b.Trigger = "MANUAL"
+			b.ScheduleCron = "0 * *"
+			return b
+		}()},
+		{name: "manual malformed timezone metadata", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-manual-timezone"
+			b.Name = "manual-timezone"
+			b.Trigger = "MANUAL"
+			b.Timezone = "Moon/Base"
+			return b
+		}()},
+		{name: "after primary malformed cron metadata", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-primary-cron"
+			b.Name = "primary-cron"
+			b.Trigger = "AFTER_PRIMARY_BACKUP"
+			b.PrimaryPolicyIDs = []string{"bp-primary"}
+			b.ScheduleCron = "0 * *"
+			return b
+		}()},
 		{name: "scheduled trigger missing schedule", body: func() control.ReplicationPolicyPutBody {
 			b := valid
 			b.PolicyID = "rp-schedule-empty"

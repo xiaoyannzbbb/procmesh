@@ -184,3 +184,64 @@ exit 0
 ### Concerns
 
 - Replication route candidate-count/factor limits remain intentionally outside FSM persistence because selector-only policies cannot infer the current member set.
+
+## Fix Round 2
+
+### Covering Test
+
+- `internal/control/fsm_test.go`: `TestFSM_ReplicationPolicyPutRejectsUnsafeRoutes` now rejects malformed cron metadata and malformed timezone metadata for `MANUAL`, plus malformed cron metadata for `AFTER_PRIMARY_BACKUP`.
+
+### RED Evidence
+
+Exact command:
+
+```text
+go test ./internal/control -run 'TestFSM_ReplicationPolicyPutRejectsUnsafeRoutes' -count=1
+```
+
+Exact output:
+
+```text
+--- FAIL: TestFSM_ReplicationPolicyPutRejectsUnsafeRoutes (0.00s)
+    --- FAIL: TestFSM_ReplicationPolicyPutRejectsUnsafeRoutes/manual_malformed_cron_metadata (0.00s)
+        fsm_test.go:1253: got <nil>
+    --- FAIL: TestFSM_ReplicationPolicyPutRejectsUnsafeRoutes/manual_malformed_timezone_metadata (0.00s)
+        fsm_test.go:1253: got <nil>
+    --- FAIL: TestFSM_ReplicationPolicyPutRejectsUnsafeRoutes/after_primary_malformed_cron_metadata (0.00s)
+        fsm_test.go:1253: got <nil>
+FAIL
+FAIL github.com/qleelulu/procmesh/internal/control 0.331s
+FAIL
+```
+
+The non-scheduled paths accepted malformed optional metadata while still persisting it into Raft.
+
+### GREEN Verification
+
+```text
+go test ./internal/control -run 'TestFSM_BackupPolicy|TestFSM_ReplicationPolicy|TestFSM_PolicyPut' -count=1
+ok   github.com/qleelulu/procmesh/internal/control 0.475s
+
+go test ./internal/control -count=1
+ok   github.com/qleelulu/procmesh/internal/control 11.626s
+
+git diff --check
+exit 0
+```
+
+`internal/schedule` and `internal/backup` were not rerun because their behavior was unchanged; this fix only changes the control FSM's use of the existing shared validator.
+
+### Files Changed
+
+- `internal/control/fsm.go`
+- `internal/control/fsm_test.go`
+- `.superpowers/sdd/2026-08-19-cluster-backup-control-plane/task-1-report.md`
+
+### Self-Review
+
+- `SCHEDULE` still requires a nonempty cron and valid timezone.
+- `MANUAL` and `AFTER_PRIMARY_BACKUP` may omit schedule metadata, but any supplied cron/timezone now uses the same shared validation before persistence.
+
+### Concerns
+
+- None beyond the existing selector-only candidate-count limitation documented above.

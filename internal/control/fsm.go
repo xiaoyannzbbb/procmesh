@@ -881,6 +881,10 @@ func (s *State) applyReplicationPolicyPut(b ReplicationPolicyPutBody) error {
 		if err := validatePolicySchedule(b.ScheduleCron, b.Timezone); err != nil {
 			return err
 		}
+	} else if b.ScheduleCron != "" || b.Timezone != "" {
+		if err := validatePolicySchedule(b.ScheduleCron, b.Timezone); err != nil {
+			return err
+		}
 	}
 	if b.Trigger == "AFTER_PRIMARY_BACKUP" {
 		if err := s.validatePrimaryPolicies(b.PrimaryPolicyIDs); err != nil {
