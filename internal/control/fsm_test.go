@@ -866,6 +866,143 @@ func TestFSM_EnsureSyncsBuiltinAlertPerms(t *testing.T) {
 	}
 }
 
+func TestFSM_BackupPolicyPutStoresFSAndS3Policies(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := mustBootstrap(t, now)
+
+	fs := control.BackupPolicyPutBody{
+		PolicyID: "bp-fs", Name: "nightly", Enabled: true,
+		ScheduleCron: "0 2 * * *", Timezone: "Asia/Shanghai",
+		TargetSelector: "ALL_ADMITTED", Sink: "fs", RetentionKeepLast: 7,
+	}
+	if err := s.Apply(mustEncode(t, control.CmdBackupPolicyPut, fs), now); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.BackupPolicies["bp-fs"]; got.Name != "nightly" || got.Sink != "fs" || got.RetentionKeepLast != 7 {
+		t.Fatalf("fs policy=%+v", got)
+	}
+	if err := s.Apply(mustEncode(t, control.CmdMemberPut, control.MemberPutBody{NodeID: "node-a", Status: control.MemberAdmitted}), now); err != nil {
+		t.Fatal(err)
+	}
+
+	s3 := control.BackupPolicyPutBody{
+		PolicyID: "bp-s3", Name: "offsite", Enabled: true,
+		ScheduleCron: "15 3 * * *", Timezone: "UTC",
+		TargetSelector: "EXPLICIT_NODES", TargetIDs: []string{"node-a"},
+		Sink: "s3", DestinationProfile: "archive", RetentionKeepLast: 14,
+	}
+	if err := s.Apply(mustEncode(t, control.CmdBackupPolicyPut, s3), now); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.BackupPolicies["bp-s3"]; got.DestinationProfile != "archive" || got.TargetIDs[0] != "node-a" {
+		t.Fatalf("s3 policy=%+v", got)
+	}
+}
+
+func TestFSM_BackupPolicyPutRejectsInvalidFields(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := mustBootstrap(t, now)
+	valid := control.BackupPolicyPutBody{
+		PolicyID: "bp-1", Name: "nightly", ScheduleCron: "0 2 * * *", Timezone: "UTC",
+		TargetSelector: "ALL_ADMITTED", Sink: "fs", RetentionKeepLast: 1,
+	}
+	cases := []struct {
+		name string
+		body control.BackupPolicyPutBody
+	}{
+		{name: "empty name", body: func() control.BackupPolicyPutBody { b := valid; b.Name = ""; return b }()},
+		{name: "invalid cron", body: func() control.BackupPolicyPutBody { b := valid; b.ScheduleCron = "0 * *"; return b }()},
+		{name: "invalid timezone", body: func() control.BackupPolicyPutBody { b := valid; b.Timezone = "Moon/Base"; return b }()},
+		{name: "unknown selector", body: func() control.BackupPolicyPutBody { b := valid; b.TargetSelector = "NEARBY"; return b }()},
+		{name: "s3 missing profile", body: func() control.BackupPolicyPutBody { b := valid; b.Sink = "s3"; return b }()},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := s.Apply(mustEncode(t, control.CmdBackupPolicyPut, tc.body), now); !errcode.Is(err, errcode.INVALID) {
+				t.Fatalf("got %v", err)
+			}
+		})
+	}
+}
+
+func TestFSM_BackupPolicyDeleteRejectsMissingPolicy(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := mustBootstrap(t, now)
+	err := s.Apply(mustEncode(t, control.CmdBackupPolicyDelete, control.BackupPolicyDeleteBody{PolicyID: "missing"}), now)
+	if !errcode.Is(err, errcode.NOT_FOUND) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestFSM_ReplicationPolicyPutRejectsUnsafeRoutes(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := mustBootstrap(t, now)
+	valid := control.ReplicationPolicyPutBody{
+		PolicyID: "rp-1", Name: "dr", Enabled: true,
+		SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1,
+		Routes: []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}}},
+	}
+	if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, valid), now); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.ReplicationPolicies["rp-1"].Routes[0].TargetNodeIDs; len(got) != 1 || got[0] != "node-b" {
+		t.Fatalf("routes=%v", got)
+	}
+
+	cases := []struct {
+		name string
+		body control.ReplicationPolicyPutBody
+	}{
+		{name: "zero factor", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-zero"
+			b.Name = "zero"
+			b.ReplicaFactor = 0
+			return b
+		}()},
+		{name: "self replication", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-self"
+			b.Name = "self"
+			b.Routes = []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-a"}}}
+			return b
+		}()},
+		{name: "duplicate target", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-dup"
+			b.Name = "dup"
+			b.Routes = []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b", "node-b"}}}
+			return b
+		}()},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, tc.body), now); !errcode.Is(err, errcode.INVALID) {
+				t.Fatalf("got %v", err)
+			}
+		})
+	}
+}
+
+func TestFSM_ReplicationPolicyDeleteRejectsMissingPolicy(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := mustBootstrap(t, now)
+	err := s.Apply(mustEncode(t, control.CmdReplicationPolicyDelete, control.ReplicationPolicyDeleteBody{PolicyID: "missing"}), now)
+	if !errcode.Is(err, errcode.NOT_FOUND) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestFSM_EnsureInitializesPolicyMaps(t *testing.T) {
+	s := &control.State{}
+	s.EnsureForTest()
+	if s.BackupPolicies == nil || s.ReplicationPolicies == nil {
+		t.Fatalf("backup=%v replication=%v", s.BackupPolicies, s.ReplicationPolicies)
+	}
+	_ = s.BackupPolicies["missing"]
+	_ = s.ReplicationPolicies["missing"]
+}
+
 func hasPerm(perms []string, want string) bool {
 	for _, p := range perms {
 		if p == want {

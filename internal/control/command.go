@@ -3,30 +3,34 @@ package control
 import "encoding/json"
 
 const (
-	CmdBootstrap          = "bootstrap"
-	CmdUserPut            = "user_put"
-	CmdUserDisable        = "user_disable"
-	CmdLoginOK            = "login_ok"
-	CmdLoginFail          = "login_fail"
-	CmdSessionPut         = "session_put"
-	CmdSessionDel         = "session_del"
-	CmdTokenPut           = "token_put"
-	CmdTokenRevoke        = "token_revoke"
-	CmdRolePut            = "role_put"
-	CmdBindPut            = "bind_put"
-	CmdJoinTokenPut       = "join_token_put"
-	CmdJoinTokenConsume   = "join_token_consume"
-	CmdJoinTokenRevoke    = "join_token_revoke"
-	CmdMemberPut          = "member_put"
-	CmdMemberRemove       = "member_remove"
-	CmdCRLAdd             = "crl_add"
-	CmdGroupPut           = "group_put"
-	CmdGroupDelete        = "group_delete"
-	CmdGroupMemberAdd     = "group_member_add"
-	CmdGroupMemberRemove  = "group_member_remove"
-	CmdAlertChannelPut    = "alert_channel_put"
-	CmdAlertChannelDelete = "alert_channel_delete"
-	CmdAlertPolicyPut     = "alert_policy_put"
+	CmdBootstrap               = "bootstrap"
+	CmdUserPut                 = "user_put"
+	CmdUserDisable             = "user_disable"
+	CmdLoginOK                 = "login_ok"
+	CmdLoginFail               = "login_fail"
+	CmdSessionPut              = "session_put"
+	CmdSessionDel              = "session_del"
+	CmdTokenPut                = "token_put"
+	CmdTokenRevoke             = "token_revoke"
+	CmdRolePut                 = "role_put"
+	CmdBindPut                 = "bind_put"
+	CmdJoinTokenPut            = "join_token_put"
+	CmdJoinTokenConsume        = "join_token_consume"
+	CmdJoinTokenRevoke         = "join_token_revoke"
+	CmdMemberPut               = "member_put"
+	CmdMemberRemove            = "member_remove"
+	CmdCRLAdd                  = "crl_add"
+	CmdGroupPut                = "group_put"
+	CmdGroupDelete             = "group_delete"
+	CmdGroupMemberAdd          = "group_member_add"
+	CmdGroupMemberRemove       = "group_member_remove"
+	CmdAlertChannelPut         = "alert_channel_put"
+	CmdAlertChannelDelete      = "alert_channel_delete"
+	CmdAlertPolicyPut          = "alert_policy_put"
+	CmdBackupPolicyPut         = "backup_policy_put"
+	CmdBackupPolicyDelete      = "backup_policy_delete"
+	CmdReplicationPolicyPut    = "replication_policy_put"
+	CmdReplicationPolicyDelete = "replication_policy_delete"
 )
 
 // Command is a Raft log payload: type + JSON body.
@@ -197,6 +201,53 @@ type AlertPolicyPutBody struct {
 	CPUHighPercent, MemoryHighPercent, DiskHighPercent int
 	HighConsecutiveMins                                int
 	SuspectTooLongSec                                  int64
+}
+
+type BackupPolicyPutBody struct {
+	PolicyID, Name           string
+	Enabled                  bool
+	ScheduleCron, Timezone   string
+	TargetSelector           string
+	TargetIDs                []string
+	Sink, DestinationProfile string
+	RetentionKeepLast        int
+	RetentionKeepDays        int
+	RetentionMaxBytes        int64
+	TimeoutSeconds           int
+	MaxConcurrency           int
+	UnavailablePolicy        string
+}
+
+type BackupPolicyDeleteBody struct {
+	PolicyID string `json:"policy_id"`
+}
+
+type ReplicationRoute struct {
+	SourceNodeID  string   `json:"source_node_id"`
+	TargetNodeIDs []string `json:"target_node_ids"`
+}
+
+type ReplicationPolicyPutBody struct {
+	PolicyID, Name         string
+	Enabled                bool
+	SourceSelector         string
+	SourceIDs              []string
+	ReplicaFactor          int
+	Routes                 []ReplicationRoute
+	Trigger                string
+	PrimaryPolicyIDs       []string
+	ScheduleCron, Timezone string
+	RetentionKeepLast      int
+	RetentionKeepDays      int
+	RetentionMaxBytes      int64
+	MaxConcurrency         int
+	VerifyAfterCopy        bool
+	BandwidthLimit         int64
+	TopologyConstraints    map[string]string
+}
+
+type ReplicationPolicyDeleteBody struct {
+	PolicyID string `json:"policy_id"`
 }
 
 // EncodeCommand marshals body as the Command payload.

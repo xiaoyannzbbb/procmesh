@@ -11,6 +11,7 @@ import (
 
 	"github.com/hashicorp/raft"
 	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/schedule"
 )
 
 const (
@@ -88,25 +89,68 @@ type Member struct {
 	Status                       MemberStatus
 }
 
+type BackupPolicy struct {
+	PolicyID           string   `json:"policy_id,omitempty"`
+	Name               string   `json:"name,omitempty"`
+	Enabled            bool     `json:"enabled"`
+	ScheduleCron       string   `json:"schedule_cron,omitempty"`
+	Timezone           string   `json:"timezone,omitempty"`
+	TargetSelector     string   `json:"target_selector,omitempty"`
+	TargetIDs          []string `json:"target_ids,omitempty"`
+	Sink               string   `json:"sink,omitempty"`
+	DestinationProfile string   `json:"destination_profile,omitempty"`
+	RetentionKeepLast  int      `json:"retention_keep_last,omitempty"`
+	RetentionKeepDays  int      `json:"retention_keep_days,omitempty"`
+	RetentionMaxBytes  int64    `json:"retention_max_bytes,omitempty"`
+	TimeoutSeconds     int      `json:"timeout_seconds,omitempty"`
+	MaxConcurrency     int      `json:"max_concurrency,omitempty"`
+	UnavailablePolicy  string   `json:"unavailable_policy,omitempty"`
+	Revision           int64    `json:"revision,omitempty"`
+}
+
+type ReplicationPolicy struct {
+	PolicyID            string             `json:"policy_id,omitempty"`
+	Name                string             `json:"name,omitempty"`
+	Enabled             bool               `json:"enabled"`
+	SourceSelector      string             `json:"source_selector,omitempty"`
+	SourceIDs           []string           `json:"source_ids,omitempty"`
+	ReplicaFactor       int                `json:"replica_factor,omitempty"`
+	Routes              []ReplicationRoute `json:"routes,omitempty"`
+	Trigger             string             `json:"trigger,omitempty"`
+	PrimaryPolicyIDs    []string           `json:"primary_policy_ids,omitempty"`
+	ScheduleCron        string             `json:"schedule_cron,omitempty"`
+	Timezone            string             `json:"timezone,omitempty"`
+	RetentionKeepLast   int                `json:"retention_keep_last,omitempty"`
+	RetentionKeepDays   int                `json:"retention_keep_days,omitempty"`
+	RetentionMaxBytes   int64              `json:"retention_max_bytes,omitempty"`
+	MaxConcurrency      int                `json:"max_concurrency,omitempty"`
+	VerifyAfterCopy     bool               `json:"verify_after_copy"`
+	BandwidthLimit      int64              `json:"bandwidth_limit,omitempty"`
+	TopologyConstraints map[string]string  `json:"topology_constraints,omitempty"`
+	Revision            int64              `json:"revision,omitempty"`
+}
+
 type Policy struct {
 	RBACCacheTTL time.Duration
 }
 
 type State struct {
-	ClusterID     string                  `json:"cluster_id"`
-	Users         map[string]User         `json:"users"`       // by username
-	UsersByID     map[string]string       `json:"users_by_id"` // id → username
-	Roles         map[string]Role         `json:"roles"`
-	Bindings      []Binding               `json:"bindings"`
-	Sessions      map[string]Session      `json:"sessions"`
-	APITokens     map[string]APIToken     `json:"api_tokens"`
-	JoinTokens    map[string]JoinToken    `json:"join_tokens"`    // by id
-	Members       map[string]Member       `json:"members"`        // by node_id
-	CRL           map[string]struct{}     `json:"crl"`            // cert serial hex
-	AgentGroups   map[string]AgentGroup   `json:"agent_groups"`   // by group_id
-	AlertChannels map[string]AlertChannel `json:"alert_channels"` // by channel_id
-	AlertPolicy   AlertPolicy             `json:"alert_policy"`
-	Policy        Policy                  `json:"policy"`
+	ClusterID           string                       `json:"cluster_id"`
+	Users               map[string]User              `json:"users"`       // by username
+	UsersByID           map[string]string            `json:"users_by_id"` // id → username
+	Roles               map[string]Role              `json:"roles"`
+	Bindings            []Binding                    `json:"bindings"`
+	Sessions            map[string]Session           `json:"sessions"`
+	APITokens           map[string]APIToken          `json:"api_tokens"`
+	JoinTokens          map[string]JoinToken         `json:"join_tokens"`    // by id
+	Members             map[string]Member            `json:"members"`        // by node_id
+	CRL                 map[string]struct{}          `json:"crl"`            // cert serial hex
+	AgentGroups         map[string]AgentGroup        `json:"agent_groups"`   // by group_id
+	AlertChannels       map[string]AlertChannel      `json:"alert_channels"` // by channel_id
+	AlertPolicy         AlertPolicy                  `json:"alert_policy"`
+	BackupPolicies      map[string]BackupPolicy      `json:"backup_policies"`
+	ReplicationPolicies map[string]ReplicationPolicy `json:"replication_policies"`
+	Policy              Policy                       `json:"policy"`
 }
 
 func NewState() *State {
@@ -148,6 +192,12 @@ func (s *State) ensure() {
 	}
 	if s.AlertChannels == nil {
 		s.AlertChannels = map[string]AlertChannel{}
+	}
+	if s.BackupPolicies == nil {
+		s.BackupPolicies = map[string]BackupPolicy{}
+	}
+	if s.ReplicationPolicies == nil {
+		s.ReplicationPolicies = map[string]ReplicationPolicy{}
 	}
 	if s.AlertPolicy.DedupWindowSec == 0 {
 		s.AlertPolicy = DefaultAlertPolicy()
@@ -212,6 +262,14 @@ func (s *State) Apply(cmd Command, now time.Time) error {
 		return applyJSON(cmd.Body, s.applyAlertChannelDelete)
 	case CmdAlertPolicyPut:
 		return applyJSON(cmd.Body, s.applyAlertPolicyPut)
+	case CmdBackupPolicyPut:
+		return applyJSON(cmd.Body, s.applyBackupPolicyPut)
+	case CmdBackupPolicyDelete:
+		return applyJSON(cmd.Body, s.applyBackupPolicyDelete)
+	case CmdReplicationPolicyPut:
+		return applyJSON(cmd.Body, s.applyReplicationPolicyPut)
+	case CmdReplicationPolicyDelete:
+		return applyJSON(cmd.Body, s.applyReplicationPolicyDelete)
 	default:
 		return errcode.E(errcode.INVALID, "unknown command type")
 	}
@@ -659,6 +717,185 @@ func (s *State) applyAlertPolicyPut(b AlertPolicyPutBody) error {
 		HighConsecutiveMins: b.HighConsecutiveMins,
 		SuspectTooLongSec:   b.SuspectTooLongSec,
 	}
+	return nil
+}
+
+func validPolicySelector(selector string) bool {
+	switch selector {
+	case "ALL_ADMITTED", "AGENT_GROUP", "EXPLICIT_NODES":
+		return true
+	default:
+		return false
+	}
+}
+
+func validatePolicySchedule(cronExpr, timezone string) error {
+	if err := schedule.ValidateCron(cronExpr); err != nil {
+		return err
+	}
+	return schedule.ValidateTimezone(timezone)
+}
+
+func validateTargetIDs(selector string, ids []string) error {
+	if !validPolicySelector(selector) {
+		return errcode.E(errcode.INVALID, "target selector")
+	}
+	if selector == "AGENT_GROUP" || selector == "EXPLICIT_NODES" {
+		if len(ids) == 0 {
+			return errcode.E(errcode.INVALID, "target ids required")
+		}
+	}
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if strings.TrimSpace(id) == "" {
+			return errcode.E(errcode.INVALID, "target id")
+		}
+		if _, ok := seen[id]; ok {
+			return errcode.E(errcode.INVALID, "duplicate target")
+		}
+		seen[id] = struct{}{}
+	}
+	return nil
+}
+
+func (s *State) validateExplicitTargets(selector string, ids []string) error {
+	if selector != "EXPLICIT_NODES" {
+		return nil
+	}
+	for _, id := range ids {
+		member, ok := s.Members[id]
+		if !ok || member.Status != MemberAdmitted {
+			return errcode.E(errcode.INVALID, "target node not admitted")
+		}
+	}
+	return nil
+}
+
+func (s *State) applyBackupPolicyPut(b BackupPolicyPutBody) error {
+	name := strings.TrimSpace(b.Name)
+	if b.PolicyID == "" || name == "" {
+		return errcode.E(errcode.INVALID, "policy id and name required")
+	}
+	for id, policy := range s.BackupPolicies {
+		if id != b.PolicyID && policy.Name == name {
+			return errcode.E(errcode.CONFLICT, "backup policy name already exists")
+		}
+	}
+	if err := validatePolicySchedule(b.ScheduleCron, b.Timezone); err != nil {
+		return err
+	}
+	if err := validateTargetIDs(b.TargetSelector, b.TargetIDs); err != nil {
+		return err
+	}
+	if err := s.validateExplicitTargets(b.TargetSelector, b.TargetIDs); err != nil {
+		return err
+	}
+	if b.Sink != "fs" && b.Sink != "s3" {
+		return errcode.E(errcode.INVALID, "sink")
+	}
+	if b.Sink == "s3" && strings.TrimSpace(b.DestinationProfile) == "" {
+		return errcode.E(errcode.INVALID, "destination profile required")
+	}
+	if b.RetentionKeepLast < 0 || b.RetentionKeepDays < 0 || b.RetentionMaxBytes < 0 || b.TimeoutSeconds < 0 || b.MaxConcurrency < 0 {
+		return errcode.E(errcode.INVALID, "invalid retention or limits")
+	}
+	cur := s.BackupPolicies[b.PolicyID]
+	cur.PolicyID, cur.Name, cur.Enabled = b.PolicyID, name, b.Enabled
+	cur.ScheduleCron, cur.Timezone = strings.TrimSpace(b.ScheduleCron), strings.TrimSpace(b.Timezone)
+	cur.TargetSelector, cur.TargetIDs = b.TargetSelector, append([]string(nil), b.TargetIDs...)
+	cur.Sink, cur.DestinationProfile = b.Sink, strings.TrimSpace(b.DestinationProfile)
+	cur.RetentionKeepLast, cur.RetentionKeepDays, cur.RetentionMaxBytes = b.RetentionKeepLast, b.RetentionKeepDays, b.RetentionMaxBytes
+	cur.TimeoutSeconds, cur.MaxConcurrency, cur.UnavailablePolicy = b.TimeoutSeconds, b.MaxConcurrency, b.UnavailablePolicy
+	cur.Revision++
+	s.BackupPolicies[b.PolicyID] = cur
+	return nil
+}
+
+func (s *State) applyBackupPolicyDelete(b BackupPolicyDeleteBody) error {
+	if _, ok := s.BackupPolicies[b.PolicyID]; !ok {
+		return errcode.E(errcode.NOT_FOUND, "backup policy not found")
+	}
+	delete(s.BackupPolicies, b.PolicyID)
+	return nil
+}
+
+func (s *State) applyReplicationPolicyPut(b ReplicationPolicyPutBody) error {
+	name := strings.TrimSpace(b.Name)
+	if b.PolicyID == "" || name == "" {
+		return errcode.E(errcode.INVALID, "policy id and name required")
+	}
+	for id, policy := range s.ReplicationPolicies {
+		if id != b.PolicyID && policy.Name == name {
+			return errcode.E(errcode.CONFLICT, "replication policy name already exists")
+		}
+	}
+	if !validPolicySelector(b.SourceSelector) {
+		return errcode.E(errcode.INVALID, "source selector")
+	}
+	if (b.SourceSelector == "AGENT_GROUP" || b.SourceSelector == "EXPLICIT_NODES") && len(b.SourceIDs) == 0 {
+		return errcode.E(errcode.INVALID, "source ids required")
+	}
+	if b.ReplicaFactor <= 0 {
+		return errcode.E(errcode.INVALID, "replica factor")
+	}
+	if b.ScheduleCron != "" || b.Timezone != "" {
+		if err := validatePolicySchedule(b.ScheduleCron, b.Timezone); err != nil {
+			return err
+		}
+	}
+	seenSources := map[string]struct{}{}
+	for _, route := range b.Routes {
+		if strings.TrimSpace(route.SourceNodeID) == "" {
+			return errcode.E(errcode.INVALID, "route source")
+		}
+		if _, ok := seenSources[route.SourceNodeID]; ok {
+			return errcode.E(errcode.INVALID, "duplicate route source")
+		}
+		seenSources[route.SourceNodeID] = struct{}{}
+		seenTargets := map[string]struct{}{}
+		for _, target := range route.TargetNodeIDs {
+			if target == route.SourceNodeID {
+				return errcode.E(errcode.INVALID, "self replication")
+			}
+			if _, ok := seenTargets[target]; ok {
+				return errcode.E(errcode.INVALID, "duplicate target")
+			}
+			seenTargets[target] = struct{}{}
+		}
+	}
+	cur := s.ReplicationPolicies[b.PolicyID]
+	cur.PolicyID, cur.Name, cur.Enabled = b.PolicyID, name, b.Enabled
+	cur.SourceSelector, cur.SourceIDs, cur.ReplicaFactor = b.SourceSelector, append([]string(nil), b.SourceIDs...), b.ReplicaFactor
+	cur.Routes = append([]ReplicationRoute(nil), b.Routes...)
+	for i := range cur.Routes {
+		cur.Routes[i].TargetNodeIDs = append([]string(nil), cur.Routes[i].TargetNodeIDs...)
+	}
+	cur.Trigger, cur.PrimaryPolicyIDs = b.Trigger, append([]string(nil), b.PrimaryPolicyIDs...)
+	cur.ScheduleCron, cur.Timezone = b.ScheduleCron, b.Timezone
+	cur.RetentionKeepLast, cur.RetentionKeepDays, cur.RetentionMaxBytes = b.RetentionKeepLast, b.RetentionKeepDays, b.RetentionMaxBytes
+	cur.MaxConcurrency, cur.VerifyAfterCopy, cur.BandwidthLimit = b.MaxConcurrency, b.VerifyAfterCopy, b.BandwidthLimit
+	cur.TopologyConstraints = mapsClone(b.TopologyConstraints)
+	cur.Revision++
+	s.ReplicationPolicies[b.PolicyID] = cur
+	return nil
+}
+
+func mapsClone(in map[string]string) map[string]string {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func (s *State) applyReplicationPolicyDelete(b ReplicationPolicyDeleteBody) error {
+	if _, ok := s.ReplicationPolicies[b.PolicyID]; !ok {
+		return errcode.E(errcode.NOT_FOUND, "replication policy not found")
+	}
+	delete(s.ReplicationPolicies, b.PolicyID)
 	return nil
 }
 

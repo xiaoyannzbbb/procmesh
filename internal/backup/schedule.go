@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/schedule"
 )
 
 // Next returns the next fire time strictly after from for a 5-field cron
@@ -16,6 +17,9 @@ func Next(cronExpr string, from time.Time) (time.Time, error) {
 	cronExpr = strings.TrimSpace(cronExpr)
 	if cronExpr == "" {
 		return time.Time{}, nil
+	}
+	if err := schedule.ValidateCron(cronExpr); err != nil {
+		return time.Time{}, err
 	}
 	fields := strings.Fields(cronExpr)
 	if len(fields) != 5 {
