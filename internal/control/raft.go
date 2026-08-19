@@ -196,6 +196,33 @@ func (n *Node) ClaimBackupFire(b FireClaimBody, now time.Time) (FireRecord, bool
 	return after, created, nil
 }
 
+// ClaimScheduledBackupRun atomically claims a scheduled fire and writes its
+// frozen run. acquired is false while a live lease belongs to another leader.
+func (n *Node) ClaimScheduledBackupRun(b ScheduledRunClaimBody, now time.Time) (FireRecord, ClusterBackupRun, bool, error) {
+	if err := n.requireLeader(); err != nil {
+		return FireRecord{}, ClusterBackupRun{}, false, err
+	}
+	before, existed := n.View().BackupFireLedger[b.Fire.FireKey]
+	cmd, err := EncodeCommand(CmdBackupScheduledRunClaim, b)
+	if err != nil {
+		return FireRecord{}, ClusterBackupRun{}, false, err
+	}
+	if err := n.Apply(cmd, 5*time.Second); err != nil {
+		return FireRecord{}, ClusterBackupRun{}, false, err
+	}
+	state := n.View()
+	record, ok := state.BackupFireLedger[b.Fire.FireKey]
+	if !ok {
+		return FireRecord{}, ClusterBackupRun{}, false, errcode.E(errcode.UNAVAILABLE, "scheduled fire not committed")
+	}
+	run, ok := state.BackupRuns[record.RunID]
+	if !ok {
+		return FireRecord{}, ClusterBackupRun{}, false, errcode.E(errcode.UNAVAILABLE, "scheduled run not committed")
+	}
+	acquired := !existed || record.LeaderTerm != before.LeaderTerm || record.ClaimedUnix != before.ClaimedUnix
+	return record, run, acquired, nil
+}
+
 func (n *Node) HasQuorum() bool {
 	if n == nil || n.raft == nil {
 		return false

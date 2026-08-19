@@ -32,6 +32,7 @@ const (
 	CmdReplicationPolicyPut    = "replication_policy_put"
 	CmdReplicationPolicyDelete = "replication_policy_delete"
 	CmdBackupFireClaim         = "backup_fire_claim"
+	CmdBackupScheduledRunClaim = "backup_scheduled_run_claim"
 	CmdBackupRunCreate         = "backup_run_create"
 	CmdBackupTaskUpdate        = "backup_task_update"
 	CmdBackupRetryFailedTasks  = "backup_retry_failed_tasks"
@@ -269,6 +270,13 @@ type FireClaimBody struct {
 	ScheduledUnix  int64  `json:"scheduled_unix"`
 	LeaseUntilUnix int64  `json:"lease_until_unix"`
 	LeaderTerm     uint64 `json:"leader_term"`
+}
+
+// ScheduledRunClaimBody atomically records a scheduled fire and its frozen
+// run metadata in one Raft FSM mutation.
+type ScheduledRunClaimBody struct {
+	Fire FireClaimBody    `json:"fire"`
+	Run  ClusterBackupRun `json:"run"`
 }
 
 type CreateRunBody struct {

@@ -54,6 +54,7 @@ type CreateOpts struct {
 	ProcessIDs    []string
 	Sink          string
 	TargetNodeIDs []string
+	SnapshotID    string // optional stable id for idempotent cluster task execution
 }
 
 // Engine creates, reads, and deletes local process-spec snapshots.
@@ -75,6 +76,14 @@ type Engine struct {
 
 var _ Applier = (*process.Manager)(nil)
 
+func decodeRevisionRanges(raw string) []RevisionRange {
+	var ranges []RevisionRange
+	if raw == "" || json.Unmarshal([]byte(raw), &ranges) != nil {
+		return []RevisionRange{}
+	}
+	return ranges
+}
+
 // Create snapshots local process specs + full revision history.
 // ProcessIDs nil/empty means all local processes.
 // sink fs/s3 ignores TargetNodeIDs; sink peer requires them.
@@ -86,6 +95,15 @@ func (e *Engine) Create(ctx context.Context, opt CreateOpts) (Meta, error) {
 	} else if _, err := e.sink(opt.Sink); err != nil {
 		return Meta{}, err
 	}
+	if opt.SnapshotID != "" && e.Store != nil {
+		if rec, err := e.Store.GetBackup(ctx, opt.SnapshotID); err == nil {
+			if rec.Sink == opt.Sink {
+				return Meta{SnapshotID: rec.SnapshotID, ClusterID: rec.ClusterID, NodeID: rec.NodeID, CreatedAt: rec.CreatedAt, ProcessIDs: rec.ProcessIDs, RevisionRanges: decodeRevisionRanges(rec.RevisionRangesJSON), SHA256: rec.SHA256, Sink: rec.Sink, Location: rec.Location, SourceNodeID: rec.SourceNodeID}, nil
+			}
+		} else if !errcode.Is(err, errcode.NOT_FOUND) {
+			return Meta{}, err
+		}
+	}
 	if e.diskPercent() >= 95 {
 		return Meta{}, errcode.E(errcode.DEGRADED, "disk usage at or above 95%")
 	}
@@ -95,9 +113,12 @@ func (e *Engine) Create(ctx context.Context, opt CreateOpts) (Meta, error) {
 		return Meta{}, err
 	}
 
-	id, err := e.newID()
-	if err != nil {
-		return Meta{}, err
+	id := opt.SnapshotID
+	if id == "" {
+		id, err = e.newID()
+		if err != nil {
+			return Meta{}, err
+		}
 	}
 	created := e.now()
 

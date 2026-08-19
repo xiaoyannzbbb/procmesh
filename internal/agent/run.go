@@ -647,15 +647,17 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 						if lastBackupMin.IsZero() || !min.Equal(lastBackupMin) {
 							lastBackupMin = min
 							clusterEnabled := false
+							clusterPolicyReadOK := false
 							if rt.backupCoord != nil {
 								if err := rt.backupCoord.Tick(ctx); err != nil && ctx.Err() == nil {
 									opt.Logger.Warn("cluster backup schedule tick failed", "error", err)
 								}
 								if policies, err := (raftBackupControl{runtime: rt}).ListEnabledBackupPolicies(ctx); err == nil {
+									clusterPolicyReadOK = true
 									clusterEnabled = len(policies) > 0
 								}
 							}
-							if !clusterEnabled {
+							if clusterPolicyReadOK && !clusterEnabled {
 								if err := bak.TickSchedule(ctx); err != nil && ctx.Err() == nil {
 									opt.Logger.Warn("backup schedule tick failed", "error", err)
 								}

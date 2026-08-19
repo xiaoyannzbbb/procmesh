@@ -11,11 +11,12 @@ import (
 )
 
 type fakeControl struct {
-	mu      sync.Mutex
-	pol     []backup.PolicyView
-	claims  map[string]string
-	claimN  int
-	updates []backup.TaskUpdate
+	mu        sync.Mutex
+	pol       []backup.PolicyView
+	claims    map[string]string
+	claimN    int
+	reacquire bool
+	updates   []backup.TaskUpdate
 }
 
 func (f *fakeControl) ListEnabledBackupPolicies(context.Context) ([]backup.PolicyView, error) {
@@ -26,6 +27,10 @@ func (f *fakeControl) ClaimFire(_ context.Context, key, _ string, _ uint64, _ ti
 	defer f.mu.Unlock()
 	f.claimN++
 	if id := f.claims[key]; id != "" {
+		if f.reacquire {
+			f.reacquire = false
+			return id, true, nil
+		}
 		return id, false, nil
 	}
 	id := "run-" + key
@@ -43,6 +48,17 @@ type fakeDispatcher struct {
 	mu       sync.Mutex
 	tasks    []backup.BackupTaskRequest
 	errNodes map[string]bool
+}
+
+type atomicControl struct {
+	*fakeControl
+	run      backup.FrozenRun
+	acquired bool
+}
+
+func (f *atomicControl) ClaimScheduledRun(_ context.Context, _ string, _ backup.PolicyView, _ uint64, _ time.Time) (backup.FrozenRun, bool, error) {
+	f.claimN++
+	return f.run, f.acquired, nil
 }
 
 func (f *fakeDispatcher) DispatchBackupTask(_ context.Context, task backup.BackupTaskRequest) error {
@@ -89,6 +105,7 @@ func TestCoordinator_LeaderTermReusesRunAndTaskIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	term = 2
+	ctrl.reacquire = true
 	if err := c.Tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -116,6 +133,32 @@ func TestCoordinator_DelayedTickCatchesCurrentDueFire(t *testing.T) {
 	}
 }
 
+func TestCoordinator_AtomicClaimSkipsLiveLeaseAndUsesFrozenRun(t *testing.T) {
+	now := time.Date(2026, 8, 19, 2, 0, 20, 0, time.UTC)
+	view := backup.PolicyView{Policy: backup.Policy{PolicyID: "bp", Enabled: true, ScheduleCron: "0 * * * *", Timezone: "UTC", Sink: "changed", DestinationProfile: "changed", MaxConcurrency: 9}, Revision: 9, TargetNodeIDs: []string{"changed"}}
+	ctrl := &atomicControl{fakeControl: &fakeControl{pol: []backup.PolicyView{view}}, run: backup.FrozenRun{RunID: "run-frozen", PolicyID: "bp", PolicyRevision: 1, TargetNodeIDs: []string{"original"}, Sink: "fs", DestinationProfile: "archive", MaxConcurrency: 1}}
+	disp := &fakeDispatcher{}
+	c := backup.NewCoordinator(backup.CoordinatorConfig{Control: ctrl, Dispatcher: disp, IsLeader: func() bool { return true }, CurrentTerm: func() uint64 { return 2 }, Now: func() time.Time { return now }})
+	if err := c.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(disp.tasks) != 0 {
+		t.Fatalf("live lease redispatched: %+v", disp.tasks)
+	}
+	ctrl.acquired = true
+	c.CurrentTerm = func() uint64 { return 3 }
+	if err := c.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(disp.tasks) != 1 {
+		t.Fatalf("tasks=%+v", disp.tasks)
+	}
+	got := disp.tasks[0]
+	if got.RunID != "run-frozen" || got.NodeID != "original" || got.PolicyRevision != 1 || got.Sink != "fs" || got.DestinationProfile != "archive" {
+		t.Fatalf("did not use frozen run: %+v", got)
+	}
+}
+
 func TestCoordinator_ReusedFireSkipsRunCreateAndStillDispatches(t *testing.T) {
 	now := time.Date(2026, 8, 19, 2, 0, 20, 0, time.UTC)
 	ctrl := &fakeControl{claims: map[string]string{}, pol: []backup.PolicyView{{Policy: backup.Policy{PolicyID: "bp", Enabled: true, ScheduleCron: "0 * * * *", Timezone: "UTC", Sink: "fs"}, Revision: 1, TargetNodeIDs: []string{"a"}}}}
@@ -134,13 +177,13 @@ func TestCoordinator_ReusedFireSkipsRunCreateAndStillDispatches(t *testing.T) {
 	if created != 1 || len(disp.tasks) != 1 {
 		t.Fatalf("created=%d tasks=%d", created, len(disp.tasks))
 	}
-	// A new term reclaims the same durable fire and must dispatch its stable
-	// task identity without attempting to recreate the immutable run record.
+	// The legacy non-atomic surface only knows whether the fire was newly
+	// created; production recovery uses ScheduledRunClaimer instead.
 	c.CurrentTerm = func() uint64 { return 2 }
 	if err := c.Tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if created != 1 || len(disp.tasks) != 2 || disp.tasks[0].RunID != disp.tasks[1].RunID || disp.tasks[0].TaskID != disp.tasks[1].TaskID {
+	if created != 1 || len(disp.tasks) != 1 {
 		t.Fatalf("created=%d tasks=%+v", created, disp.tasks)
 	}
 }

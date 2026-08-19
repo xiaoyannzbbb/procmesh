@@ -342,6 +342,30 @@ func TestFSM_FireLedgerIdempotencyAndLeaseTakeover(t *testing.T) {
 	}
 }
 
+func TestFSM_ClaimScheduledRunIsAtomicAndFreezesRun(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := control.NewState()
+	s.BackupPolicies["bp"] = control.BackupPolicy{PolicyID: "bp", Revision: 1, TargetSelector: "EXPLICIT_NODES", TargetIDs: []string{"a"}}
+	bad := control.ScheduledRunClaimBody{Fire: control.FireClaimBody{OperationID: "op-bad", FireKey: "bp:1700000000", PolicyID: "bp", LeaderTerm: 1}, Run: control.ClusterBackupRun{RunID: "wrong", PolicyID: "bp", PolicyRevision: 1, TargetNodeIDs: []string{"a"}, Status: "RUNNING"}}
+	if _, _, _, err := s.ClaimScheduledRun(bad, now); !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("bad claim: %v", err)
+	}
+	if len(s.BackupFireLedger) != 0 || len(s.BackupRuns) != 0 {
+		t.Fatalf("orphan state fires=%v runs=%v", s.BackupFireLedger, s.BackupRuns)
+	}
+	key := "bp:1700000000"
+	sum := sha256.Sum256([]byte(key))
+	good := control.ScheduledRunClaimBody{Fire: control.FireClaimBody{OperationID: "op-good", FireKey: key, PolicyID: "bp", LeaderTerm: 1}, Run: control.ClusterBackupRun{RunID: "run-" + fmt.Sprintf("%x", sum[:12]), PolicyID: "bp", PolicyRevision: 1, TargetNodeIDs: []string{"a"}, Status: "RUNNING", Sink: "fs", DestinationProfile: "archive", MaxConcurrency: 2}}
+	record, run, acquired, err := s.ClaimScheduledRun(good, now)
+	if err != nil || !acquired || record.RunID != run.RunID || run.DestinationProfile != "archive" {
+		t.Fatalf("record=%+v run=%+v acquired=%v err=%v", record, run, acquired, err)
+	}
+	_, live, acquired, err := s.ClaimScheduledRun(good, now.Add(time.Second))
+	if err != nil || acquired || live.RunID != run.RunID {
+		t.Fatalf("live=%+v acquired=%v err=%v", live, acquired, err)
+	}
+}
+
 func TestFSM_BackupRunRejectsStaleTermAndPreservesTerminalTask(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	s := control.NewState()

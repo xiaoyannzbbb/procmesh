@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"sort"
 	"strings"
@@ -23,7 +24,7 @@ func (a raftBackupControl) node() *control.Node {
 func (a raftBackupControl) ListEnabledBackupPolicies(_ context.Context) ([]backup.PolicyView, error) {
 	n := a.node()
 	if n == nil {
-		return nil, nil
+		return nil, fmt.Errorf("control plane unavailable")
 	}
 	st := n.View()
 	ids := make([]string, 0, len(st.BackupPolicies))
@@ -57,6 +58,23 @@ func (a raftBackupControl) ClaimFire(ctx context.Context, key, policyID string, 
 		return "", false, err
 	}
 	return record.RunID, claimed, nil
+}
+
+func (a raftBackupControl) ClaimScheduledRun(_ context.Context, key string, view backup.PolicyView, term uint64, now time.Time) (backup.FrozenRun, bool, error) {
+	n := a.node()
+	if n == nil {
+		return backup.FrozenRun{}, false, fmt.Errorf("control plane unavailable")
+	}
+	targets := append([]string(nil), view.TargetNodeIDs...)
+	sort.Strings(targets)
+	record, run, acquired, err := n.ClaimScheduledBackupRun(control.ScheduledRunClaimBody{
+		Fire: control.FireClaimBody{OperationID: "scheduler-" + key, FireKey: key, PolicyID: view.Policy.PolicyID, ScheduledUnix: scheduledUnix(key), LeaderTerm: term},
+		Run:  control.ClusterBackupRun{RunID: "run-" + fireID(key), PolicyID: view.Policy.PolicyID, PolicyRevision: policyRevision(view), TargetNodeIDs: targets, Status: "RUNNING", CreatedUnix: now.Unix(), StartedUnix: now.Unix(), Sink: view.Policy.Sink, DestinationProfile: view.Policy.DestinationProfile, MaxConcurrency: view.Policy.MaxConcurrency},
+	}, now)
+	if err != nil {
+		return backup.FrozenRun{}, false, err
+	}
+	return backup.FrozenRun{RunID: record.RunID, PolicyID: run.PolicyID, PolicyRevision: run.PolicyRevision, TargetNodeIDs: append([]string(nil), run.TargetNodeIDs...), Sink: run.Sink, DestinationProfile: run.DestinationProfile, MaxConcurrency: run.MaxConcurrency}, acquired, nil
 }
 
 func (a raftBackupControl) UpdateTask(ctx context.Context, u backup.TaskUpdate) error {
@@ -95,8 +113,27 @@ func (d localBackupDispatcher) DispatchBackupTask(ctx context.Context, task back
 	if task.NodeID != d.runtime.nodeID {
 		return fmt.Errorf("remote agent dispatch unavailable")
 	}
-	_, err := d.runtime.backup.Create(ctx, backup.CreateOpts{Sink: task.Sink})
-	return err
+	if task.DestinationProfile != "" {
+		return d.persist(ctx, task, backup.TaskUpdate{RunID: task.RunID, TaskID: task.TaskID, NodeID: task.NodeID, Status: "CONFIG_MISSING", ErrorCode: "CONFIG_MISSING", ErrorSummary: "destination profiles are not configured for local execution"})
+	}
+	if n := d.runtime.control(); n != nil {
+		if existing, ok := n.View().BackupTasks[task.RunID+":"+task.TaskID]; ok && existing.Status == "SUCCEEDED" {
+			return nil
+		}
+	}
+	meta, err := d.runtime.backup.Create(ctx, backup.CreateOpts{Sink: task.Sink, SnapshotID: stableTaskSnapshotID(task.RunID, task.NodeID)})
+	if err != nil {
+		return err
+	}
+	_, payload, err := d.runtime.backup.Get(ctx, meta.SnapshotID, task.Sink)
+	if err != nil {
+		return err
+	}
+	return d.persist(ctx, task, backup.TaskUpdate{RunID: task.RunID, TaskID: task.TaskID, NodeID: task.NodeID, Status: "SUCCEEDED", SnapshotID: meta.SnapshotID, SHA256: meta.SHA256, Bytes: int64(len(payload))})
+}
+
+func (d localBackupDispatcher) persist(ctx context.Context, task backup.BackupTaskRequest, update backup.TaskUpdate) error {
+	return (raftBackupControl{runtime: d.runtime}).UpdateTask(ctx, update)
 }
 
 func resolveBackupTargets(st control.State, p control.BackupPolicy) []string {
@@ -134,4 +171,17 @@ func scheduledUnix(key string) int64 {
 	var n int64
 	_, _ = fmt.Sscanf(key[strings.LastIndex(key, ":")+1:], "%d", &n)
 	return n
+}
+
+func policyRevision(view backup.PolicyView) int64 {
+	if view.Revision != 0 {
+		return view.Revision
+	}
+	return view.Policy.Revision
+}
+func fireID(key string) string { sum := sha256.Sum256([]byte(key)); return fmt.Sprintf("%x", sum[:12]) }
+
+func stableTaskSnapshotID(runID, nodeID string) string {
+	sum := sha256.Sum256([]byte(runID + ":" + nodeID))
+	return "snap-" + fmt.Sprintf("%x", sum[:12])
 }

@@ -146,18 +146,21 @@ type FireRecord struct {
 }
 
 type ClusterBackupRun struct {
-	RunID          string   `json:"run_id"`
-	PolicyID       string   `json:"policy_id"`
-	PolicyRevision int64    `json:"policy_revision"`
-	TargetNodeIDs  []string `json:"target_node_ids"`
-	Status         string   `json:"status"`
-	Success        int      `json:"success"`
-	Failed         int      `json:"failed"`
-	Unavailable    int      `json:"unavailable"`
-	Timeout        int      `json:"timeout"`
-	CreatedUnix    int64    `json:"created_unix"`
-	StartedUnix    int64    `json:"started_unix"`
-	FinishedUnix   int64    `json:"finished_unix"`
+	RunID              string   `json:"run_id"`
+	PolicyID           string   `json:"policy_id"`
+	PolicyRevision     int64    `json:"policy_revision"`
+	TargetNodeIDs      []string `json:"target_node_ids"`
+	Status             string   `json:"status"`
+	Success            int      `json:"success"`
+	Failed             int      `json:"failed"`
+	Unavailable        int      `json:"unavailable"`
+	Timeout            int      `json:"timeout"`
+	CreatedUnix        int64    `json:"created_unix"`
+	StartedUnix        int64    `json:"started_unix"`
+	FinishedUnix       int64    `json:"finished_unix"`
+	Sink               string   `json:"sink,omitempty"`
+	DestinationProfile string   `json:"destination_profile,omitempty"`
+	MaxConcurrency     int      `json:"max_concurrency,omitempty"`
 }
 
 type ClusterBackupTask struct {
@@ -345,6 +348,11 @@ func (s *State) Apply(cmd Command, now time.Time) error {
 	case CmdBackupFireClaim:
 		_, _, err := s.ClaimFireBody(cmd.Body, now)
 		return err
+	case CmdBackupScheduledRunClaim:
+		return applyJSON(cmd.Body, func(b ScheduledRunClaimBody) error {
+			_, _, _, err := s.ClaimScheduledRun(b, now)
+			return err
+		})
 	case CmdBackupRunCreate:
 		return applyJSON(cmd.Body, s.applyCreateRun)
 	case CmdBackupTaskUpdate:
@@ -1014,6 +1022,49 @@ func (s *State) ClaimFireBody(raw json.RawMessage, now time.Time) (FireRecord, b
 		return FireRecord{}, false, errcode.E(errcode.INVALID, "invalid command body")
 	}
 	return s.ClaimFire(b, now)
+}
+
+// ClaimScheduledRun commits the fire ledger entry and the frozen run as one
+// FSM transition. acquired is true for a first claim or a lease takeover, and
+// false while another leader holds a live lease.
+func (s *State) ClaimScheduledRun(b ScheduledRunClaimBody, now time.Time) (FireRecord, ClusterBackupRun, bool, error) {
+	s.ensure()
+	current, exists := s.BackupFireLedger[b.Fire.FireKey]
+	if exists {
+		run, ok := s.BackupRuns[current.RunID]
+		if !ok {
+			return FireRecord{}, ClusterBackupRun{}, false, errcode.E(errcode.CONFLICT, "scheduled fire has no run")
+		}
+		if current.PolicyID != b.Fire.PolicyID {
+			return FireRecord{}, ClusterBackupRun{}, false, errcode.E(errcode.CONFLICT, "fire key belongs to another policy")
+		}
+		if current.LeaseUntilUnix > now.Unix() || b.Fire.LeaderTerm <= current.LeaderTerm {
+			return current, run, false, nil
+		}
+		record, acquired, err := s.ClaimFire(b.Fire, now)
+		return record, run, acquired, err
+	}
+	if b.Run.RunID != runIDForFire(b.Fire.FireKey) || b.Run.PolicyID != b.Fire.PolicyID {
+		return FireRecord{}, ClusterBackupRun{}, false, errcode.E(errcode.INVALID, "scheduled run does not match fire")
+	}
+	// Validate the run before creating the ledger record, so an invalid policy
+	// cannot leave an orphaned durable fire.
+	if err := s.validateCreateRun(b.Run, b.Fire.LeaderTerm, false); err != nil {
+		return FireRecord{}, ClusterBackupRun{}, false, err
+	}
+	record, acquired, err := s.ClaimFire(b.Fire, now)
+	if err != nil || !acquired {
+		return record, ClusterBackupRun{}, acquired, err
+	}
+	b.Run.TargetNodeIDs = append([]string(nil), b.Run.TargetNodeIDs...)
+	s.BackupRuns[b.Run.RunID] = b.Run
+	s.BackupRunTerms[b.Run.RunID] = b.Fire.LeaderTerm
+	return record, b.Run, true, nil
+}
+
+func (s *State) validateCreateRun(run ClusterBackupRun, term uint64, replication bool) error {
+	clone := cloneState(s)
+	return clone.applyCreateRun(CreateRunBody{OperationID: "scheduled-validate", LeaderTerm: term, Run: run, Replication: replication})
 }
 
 func runMaps(s *State, replication bool) (map[string]ClusterBackupRun, map[string]ClusterBackupTask) {

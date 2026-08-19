@@ -39,6 +39,21 @@ type AgentDispatcher interface {
 	DispatchBackupTask(context.Context, BackupTaskRequest) error
 }
 
+// FrozenRun is the durable, non-secret run configuration returned by an
+// atomic scheduler claim. It is the sole source for recovery dispatch.
+type FrozenRun struct {
+	RunID, PolicyID, Sink, DestinationProfile string
+	PolicyRevision                            int64
+	TargetNodeIDs                             []string
+	MaxConcurrency                            int
+}
+
+// ScheduledRunClaimer is an optional stronger control-plane capability. The
+// production Raft adapter implements it to atomically commit fire+run state.
+type ScheduledRunClaimer interface {
+	ClaimScheduledRun(context.Context, string, PolicyView, uint64, time.Time) (FrozenRun, bool, error)
+}
+
 // BackupRunRequest is optional coordinator wiring for adapters that need the
 // scheduler to persist a run record after ClaimFire.
 type BackupRunRequest struct {
@@ -126,8 +141,23 @@ func (c *Coordinator) Tick(ctx context.Context) error {
 		if c.wasDispatched(key, term) {
 			continue
 		}
+		if atomic, ok := c.Control.(ScheduledRunClaimer); ok {
+			run, acquired, err := atomic.ClaimScheduledRun(ctx, key, view, term, now)
+			if err != nil {
+				return err
+			}
+			if !acquired {
+				continue
+			}
+			c.markDispatched(key, term)
+			c.dispatchFrozenTargets(ctx, run)
+			continue
+		}
 		runID, claimed, err := c.Control.ClaimFire(ctx, key, view.Policy.PolicyID, term, now)
 		if err != nil {
+			return err
+		}
+		if !claimed {
 			continue
 		}
 		targets := append([]string(nil), view.TargetNodeIDs...)
@@ -141,7 +171,7 @@ func (c *Coordinator) Tick(ctx context.Context) error {
 			}
 		}
 		c.markDispatched(key, term)
-		c.dispatchTargets(ctx, view, runID, targets)
+		c.dispatchFrozenTargets(ctx, FrozenRun{RunID: runID, PolicyID: view.Policy.PolicyID, PolicyRevision: effectiveRevision(view), TargetNodeIDs: targets, Sink: view.Policy.Sink, DestinationProfile: view.Policy.DestinationProfile, MaxConcurrency: view.Policy.MaxConcurrency})
 	}
 	return nil
 }
@@ -170,14 +200,14 @@ func (c *Coordinator) markDispatched(key string, term uint64) {
 	c.dispatch[key] = term
 }
 
-func (c *Coordinator) dispatchTargets(ctx context.Context, view PolicyView, runID string, targets []string) {
-	limit := view.Policy.MaxConcurrency
+func (c *Coordinator) dispatchFrozenTargets(ctx context.Context, run FrozenRun) {
+	limit := run.MaxConcurrency
 	if limit <= 0 {
 		limit = 1
 	}
 	sem := make(chan struct{}, limit)
 	var wg sync.WaitGroup
-	for _, nodeID := range targets {
+	for _, nodeID := range run.TargetNodeIDs {
 		nodeID := nodeID
 		wg.Add(1)
 		go func() {
@@ -188,30 +218,11 @@ func (c *Coordinator) dispatchTargets(ctx context.Context, view PolicyView, runI
 				return
 			}
 			defer func() { <-sem }()
-			task := BackupTaskRequest{RunID: runID, TaskID: "task-" + nodeID, PolicyID: view.Policy.PolicyID, NodeID: nodeID, PolicyRevision: effectiveRevision(view), Sink: view.Policy.Sink, DestinationProfile: view.Policy.DestinationProfile}
+			task := BackupTaskRequest{RunID: run.RunID, TaskID: "task-" + nodeID, PolicyID: run.PolicyID, NodeID: nodeID, PolicyRevision: run.PolicyRevision, Sink: run.Sink, DestinationProfile: run.DestinationProfile}
 			if err := c.Dispatcher.DispatchBackupTask(ctx, task); err != nil {
-				_ = c.Control.UpdateTask(ctx, TaskUpdate{RunID: runID, TaskID: task.TaskID, NodeID: nodeID, Status: "UNAVAILABLE", ErrorCode: "UNAVAILABLE", ErrorSummary: err.Error()})
+				_ = c.Control.UpdateTask(ctx, TaskUpdate{RunID: run.RunID, TaskID: task.TaskID, NodeID: nodeID, Status: "UNAVAILABLE", ErrorCode: "UNAVAILABLE", ErrorSummary: err.Error()})
 			}
 		}()
 	}
 	wg.Wait()
-}
-
-// Start runs the coordinator on a minute cadence until ctx is cancelled.
-func (c *Coordinator) Start(ctx context.Context) {
-	if c == nil {
-		return
-	}
-	go func() {
-		ticker := time.NewTicker(time.Minute)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				_ = c.Tick(ctx)
-			}
-		}
-	}()
 }
