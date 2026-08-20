@@ -161,4 +161,3 @@ git commit -m "fix(backup): preserve local backup compatibility"
 ## P2 验收
 
 三 Agent 测试集群中，每个 Agent 只能写自己的 `{fs_dir}/{cluster_id}/{node_id}/`；S3 key 含 cluster/policy/node；一个不可达节点得到 `PARTIAL + UNAVAILABLE`；重复 Leader dispatch 不产生重复文件；保留策略不触碰其它 namespace。
-

@@ -928,3 +928,488 @@ service BackupService {
   rpc RestoreBackup(RestoreBackupRequest) returns (RestoreBackupResponse);
   rpc PutPeerSnapshot(PutPeerSnapshotRequest) returns (PutPeerSnapshotResponse);
 }
+
+// ClusterBackupService manages durable backup policy and run metadata. It
+// deliberately contains no snapshot payloads or destination credentials.
+message ClusterBackupPolicy {
+  string policy_id = 1;
+  string name = 2;
+  bool enabled = 3;
+  string schedule_cron = 4;
+  string timezone = 5;
+  string target_selector = 6;
+  repeated string target_node_ids = 7;
+  string sink = 8;
+  string destination_profile = 9;
+  int32 retention_keep_last = 10;
+  int32 retention_keep_days = 11;
+  int64 retention_max_bytes = 12;
+  int32 timeout_seconds = 13;
+  int32 max_concurrency = 14;
+  string unavailable_policy = 15;
+  int64 revision = 16;
+}
+
+message ClusterBackupTask {
+  string run_id = 1;
+  string task_id = 2;
+  string node_id = 3;
+  string snapshot_id = 4;
+  string sha256 = 5;
+  string status = 6;
+  int64 bytes = 7;
+  string error_code = 8;
+  string error_summary = 9;
+  uint64 leader_term = 10;
+  int64 updated_unix = 11;
+}
+
+message ClusterBackupRun {
+  string run_id = 1;
+  string policy_id = 2;
+  int64 policy_revision = 3;
+  repeated string target_node_ids = 4;
+  string status = 5;
+  int32 success = 6;
+  int32 failed = 7;
+  int32 unavailable = 8;
+  int32 timeout = 9;
+  int64 created_unix = 10;
+  int64 started_unix = 11;
+  int64 finished_unix = 12;
+  repeated ClusterBackupTask tasks = 13;
+}
+
+message ClusterBackupDestinationHealth {
+  string sink = 1;
+  string destination_profile = 2;
+  string status = 3;
+  string error_summary = 4;
+  int64 checked_unix = 5;
+}
+
+message CreateClusterBackupPolicyRequest {
+  MutationMeta meta = 1;
+  ClusterBackupPolicy policy = 2;
+}
+message CreateClusterBackupPolicyResponse { ClusterBackupPolicy policy = 1; }
+
+message UpdateClusterBackupPolicyRequest {
+  MutationMeta meta = 1;
+  ClusterBackupPolicy policy = 2;
+}
+message UpdateClusterBackupPolicyResponse { ClusterBackupPolicy policy = 1; }
+
+message DeleteClusterBackupPolicyRequest {
+  MutationMeta meta = 1;
+  string policy_id = 2;
+}
+message DeleteClusterBackupPolicyResponse {}
+
+message ListClusterBackupPoliciesRequest {}
+message ListClusterBackupPoliciesResponse { repeated ClusterBackupPolicy policies = 1; }
+
+message ValidateClusterBackupPolicyRequest { ClusterBackupPolicy policy = 1; }
+message ValidateClusterBackupPolicyResponse {
+  bool valid = 1;
+  repeated ErrorInfo errors = 2;
+}
+
+message StartClusterBackupRunRequest {
+  MutationMeta meta = 1;
+  string policy_id = 2;
+  repeated string target_node_ids = 3;
+}
+message StartClusterBackupRunResponse { ClusterBackupRun run = 1; }
+
+message GetClusterBackupRunRequest { string run_id = 1; }
+message GetClusterBackupRunResponse { ClusterBackupRun run = 1; }
+
+message ListClusterBackupRunsRequest {
+  string policy_id = 1;
+  int32 limit = 2;
+}
+message ListClusterBackupRunsResponse { repeated ClusterBackupRun runs = 1; }
+
+message RetryFailedClusterBackupTasksRequest {
+  MutationMeta meta = 1;
+  string run_id = 2;
+}
+message RetryFailedClusterBackupTasksResponse { ClusterBackupRun run = 1; }
+
+message GetClusterBackupDestinationHealthRequest {
+  string sink = 1;
+  string destination_profile = 2;
+}
+message GetClusterBackupDestinationHealthResponse { ClusterBackupDestinationHealth health = 1; }
+
+message RunClusterBackupTaskRequest {
+  string run_id = 1;
+  string task_id = 2;
+  string node_id = 3;
+  int64 policy_revision = 4;
+  string sink = 5;
+  string destination_profile = 6;
+}
+message RunClusterBackupTaskResponse {
+  ClusterBackupTask task = 1;
+}
+
+message GetClusterBackupTaskRequest {
+  string run_id = 1;
+  string task_id = 2;
+}
+message GetClusterBackupTaskResponse {
+  ClusterBackupTask task = 1;
+}
+
+service ClusterBackupService {
+  rpc CreatePolicy(CreateClusterBackupPolicyRequest) returns (CreateClusterBackupPolicyResponse);
+  rpc UpdatePolicy(UpdateClusterBackupPolicyRequest) returns (UpdateClusterBackupPolicyResponse);
+  rpc DeletePolicy(DeleteClusterBackupPolicyRequest) returns (DeleteClusterBackupPolicyResponse);
+  rpc ListPolicies(ListClusterBackupPoliciesRequest) returns (ListClusterBackupPoliciesResponse);
+  rpc ValidatePolicy(ValidateClusterBackupPolicyRequest) returns (ValidateClusterBackupPolicyResponse);
+  rpc StartRun(StartClusterBackupRunRequest) returns (StartClusterBackupRunResponse);
+  rpc GetRun(GetClusterBackupRunRequest) returns (GetClusterBackupRunResponse);
+  rpc ListRuns(ListClusterBackupRunsRequest) returns (ListClusterBackupRunsResponse);
+  rpc RetryFailedTasks(RetryFailedClusterBackupTasksRequest) returns (RetryFailedClusterBackupTasksResponse);
+  rpc GetDestinationHealth(GetClusterBackupDestinationHealthRequest) returns (GetClusterBackupDestinationHealthResponse);
+}
+
+service ClusterBackupAgentService {
+  rpc RunTask(RunClusterBackupTaskRequest) returns (RunClusterBackupTaskResponse);
+  rpc GetTask(GetClusterBackupTaskRequest) returns (GetClusterBackupTaskResponse);
+}
+
+// PeerReplicationService provides internal agent-to-agent snapshot replication.
+// Only accessible via Agent mTLS certificates, not Web sessions.
+service PeerReplicationService {
+  rpc PutSnapshot(PutSnapshotRequest) returns (PutSnapshotResponse);
+  rpc CheckSnapshot(CheckSnapshotRequest) returns (CheckSnapshotResponse);
+  rpc DeleteSnapshot(DeleteSnapshotRequest) returns (DeleteSnapshotResponse);
+  rpc GetReplicaMetadata(GetReplicaMetadataRequest) returns (GetReplicaMetadataResponse);
+}
+
+message PutSnapshotRequest {
+  string cluster_id = 1;
+  string snapshot_id = 2;
+  string sha256 = 3;
+  string run_id = 4;
+  string task_id = 5;
+  bytes payload = 6;
+}
+
+message PutSnapshotResponse {
+  string snapshot_id = 1;
+  string cluster_id = 2;
+  string sha256 = 3;
+  int32 process_count = 4;
+  repeated string process_ids = 5;
+}
+
+message CheckSnapshotRequest {
+  string source_node_id = 1;
+  string cluster_id = 2;
+  string snapshot_id = 3;
+  string sha256 = 4;
+}
+
+message CheckSnapshotResponse {
+  bool exists = 1;
+  bool checksum_matches = 2;
+}
+
+message DeleteSnapshotRequest {
+  string source_node_id = 1;
+  string cluster_id = 2;
+  string snapshot_id = 3;
+}
+
+message DeleteSnapshotResponse {
+  bool deleted = 1;
+}
+
+message GetReplicaMetadataRequest {
+  string source_node_id = 1;
+  string cluster_id = 2;
+  string snapshot_id = 3;
+}
+
+message GetReplicaMetadataResponse {
+  string snapshot_id = 1;
+  string cluster_id = 2;
+  string node_id = 3;
+  string sha256 = 4;
+  int64 created_at = 5;
+  int32 process_count = 6;
+  repeated string process_ids = 7;
+}
+
+// DisasterReplicationService provides disaster recovery replication management.
+// Accessible via Web UI with proper permissions (replication.read/manage).
+service DisasterReplicationService {
+  rpc GetTopology(GetTopologyRequest) returns (GetTopologyResponse);
+  rpc GeneratePolicyDraft(GeneratePolicyDraftRequest) returns (GeneratePolicyDraftResponse);
+  rpc ApplyPolicyDraft(ApplyPolicyDraftRequest) returns (ApplyPolicyDraftResponse);
+  rpc ListPolicies(ListPoliciesRequest) returns (ListPoliciesResponse);
+  rpc GetPolicy(GetPolicyRequest) returns (GetPolicyResponse);
+  rpc UpdatePolicy(UpdatePolicyRequest) returns (UpdatePolicyResponse);
+  rpc DeletePolicy(DeletePolicyRequest) returns (DeletePolicyResponse);
+  rpc StartRun(StartRunRequest) returns (StartRunResponse);
+  rpc GetRun(GetRunRequest) returns (GetRunResponse);
+  rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
+  rpc RetryFailedRoutes(RetryFailedRoutesRequest) returns (RetryFailedRoutesResponse);
+  rpc VerifyReplica(VerifyReplicaRequest) returns (VerifyReplicaResponse);
+  rpc ListRecoverableSnapshots(ListRecoverableSnapshotsRequest) returns (ListRecoverableSnapshotsResponse);
+}
+
+message AgentTopologyNode {
+  string node_id = 1;
+  string host = 2;
+  string rack = 3;
+  string zone = 4;
+  double capacity_weight = 5;
+  bool admitted = 6;
+  bool alive = 7;
+}
+
+message GetTopologyRequest {}
+
+message GetTopologyResponse {
+  repeated AgentTopologyNode nodes = 1;
+  string cluster_id = 2;
+}
+
+message ReplicationRoute {
+  string source_node_id = 1;
+  repeated string target_node_ids = 2;
+  repeated string warnings = 3;
+}
+
+message PolicyDraft {
+  string name = 1;
+  bool enabled = 2;
+  string source_selector = 3;
+  repeated string source_ids = 4;
+  int32 replica_factor = 5;
+  repeated ReplicationRoute routes = 6;
+  string trigger = 7;
+  repeated string primary_policy_ids = 8;
+  string schedule_cron = 9;
+  string timezone = 10;
+  int32 retention_keep_last = 11;
+  int32 retention_keep_days = 12;
+  int64 retention_max_bytes = 13;
+  int32 max_concurrency = 14;
+  bool verify_after_copy = 15;
+  int64 bandwidth_limit = 16;
+  map<string, string> topology_constraints = 17;
+  int64 draft_revision = 18;
+  string draft_hash = 19;
+  repeated string global_warnings = 20;
+  map<string, int32> inbound_load = 21;
+  string topology_health = 22;
+}
+
+message GeneratePolicyDraftRequest {
+  string name = 1;
+  bool enabled = 2;
+  string source_selector = 3;
+  repeated string source_ids = 4;
+  int32 replica_factor = 5;
+  string trigger = 6;
+  repeated string primary_policy_ids = 7;
+  string schedule_cron = 8;
+  string timezone = 9;
+  int32 retention_keep_last = 10;
+  int32 retention_keep_days = 11;
+  int64 retention_max_bytes = 12;
+  int32 max_concurrency = 13;
+  bool verify_after_copy = 14;
+  int64 bandwidth_limit = 15;
+  map<string, string> topology_constraints = 16;
+}
+
+message GeneratePolicyDraftResponse {
+  PolicyDraft draft = 1;
+}
+
+message ApplyPolicyDraftRequest {
+  string policy_id = 1;
+  PolicyDraft draft = 2;
+  int64 draft_revision = 3;
+  string draft_hash = 4;
+  int64 expected_revision = 5;
+  MutationMeta meta = 6;
+}
+
+message ApplyPolicyDraftResponse {
+  string policy_id = 1;
+  int64 revision = 2;
+}
+
+message ReplicationPolicy {
+  string policy_id = 1;
+  string name = 2;
+  bool enabled = 3;
+  string source_selector = 4;
+  repeated string source_ids = 5;
+  int32 replica_factor = 6;
+  repeated ReplicationRoute routes = 7;
+  string trigger = 8;
+  repeated string primary_policy_ids = 9;
+  string schedule_cron = 10;
+  string timezone = 11;
+  int32 retention_keep_last = 12;
+  int32 retention_keep_days = 13;
+  int64 retention_max_bytes = 14;
+  int32 max_concurrency = 15;
+  bool verify_after_copy = 16;
+  int64 bandwidth_limit = 17;
+  map<string, string> topology_constraints = 18;
+  int64 revision = 19;
+  int64 created_at = 20;
+  int64 updated_at = 21;
+}
+
+message ListPoliciesRequest {}
+
+message ListPoliciesResponse {
+  repeated ReplicationPolicy policies = 1;
+}
+
+message GetPolicyRequest {
+  string policy_id = 1;
+}
+
+message GetPolicyResponse {
+  ReplicationPolicy policy = 1;
+}
+
+message UpdatePolicyRequest {
+  string policy_id = 1;
+  string name = 2;
+  bool enabled = 3;
+  string source_selector = 4;
+  repeated string source_ids = 5;
+  int32 replica_factor = 6;
+  repeated ReplicationRoute routes = 7;
+  string trigger = 8;
+  repeated string primary_policy_ids = 9;
+  string schedule_cron = 10;
+  string timezone = 11;
+  int32 retention_keep_last = 12;
+  int32 retention_keep_days = 13;
+  int64 retention_max_bytes = 14;
+  int32 max_concurrency = 15;
+  bool verify_after_copy = 16;
+  int64 bandwidth_limit = 17;
+  map<string, string> topology_constraints = 18;
+  int64 expected_revision = 19;
+  MutationMeta meta = 20;
+}
+
+message UpdatePolicyResponse {
+  string policy_id = 1;
+  int64 revision = 2;
+}
+
+message DeletePolicyRequest {
+  string policy_id = 1;
+  MutationMeta meta = 2;
+}
+
+message DeletePolicyResponse {
+  bool deleted = 1;
+}
+
+message StartRunRequest {
+  string policy_id = 1;
+  MutationMeta meta = 2;
+}
+
+message StartRunResponse {
+  string run_id = 1;
+  string policy_id = 2;
+  int64 policy_revision = 3;
+  int64 started_at = 4;
+}
+
+message ReplicationTask {
+  string task_id = 1;
+  string run_id = 2;
+  string source_node_id = 3;
+  repeated string target_node_ids = 4;
+  string status = 5;
+  string snapshot_id = 6;
+  string sha256 = 7;
+  int64 bytes = 8;
+  string error_code = 9;
+  string error_summary = 10;
+  int64 started_at = 11;
+  int64 finished_at = 12;
+}
+
+message ReplicationRun {
+  string run_id = 1;
+  string policy_id = 2;
+  int64 policy_revision = 3;
+  string status = 4;
+  repeated ReplicationTask tasks = 5;
+  int64 started_at = 6;
+  int64 finished_at = 7;
+}
+
+message GetRunRequest {
+  string run_id = 1;
+}
+
+message GetRunResponse {
+  ReplicationRun run = 1;
+}
+
+message ListRunsRequest {
+  string policy_id = 1;
+}
+
+message ListRunsResponse {
+  repeated ReplicationRun runs = 1;
+}
+
+message RetryFailedRoutesRequest {
+  string run_id = 1;
+  MutationMeta meta = 2;
+}
+
+message RetryFailedRoutesResponse {
+  int32 retried_count = 1;
+}
+
+message ReplicaSnapshot {
+  string snapshot_id = 1;
+  string cluster_id = 2;
+  string source_node_id = 3;
+  string sha256 = 4;
+  int64 created_at = 5;
+  int32 process_count = 6;
+  repeated string process_ids = 7;
+}
+
+message VerifyReplicaRequest {
+  string source_node_id = 1;
+  string snapshot_id = 2;
+}
+
+message VerifyReplicaResponse {
+  bool valid = 1;
+  string sha256 = 2;
+  int32 process_count = 3;
+  repeated string process_ids = 4;
+  repeated string errors = 5;
+}
+
+message ListRecoverableSnapshotsRequest {}
+
+message ListRecoverableSnapshotsResponse {
+  repeated ReplicaSnapshot snapshots = 1;
+}

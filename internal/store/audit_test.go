@@ -274,6 +274,48 @@ func TestListAuditAll_CapsLimit(t *testing.T) {
 	}
 }
 
+func TestListAuditAll_ResourceFilter(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	if err := s.AppendAudit(ctx, store.AuditEvent{
+		AuditID:  "rf-1",
+		Resource: "process",
+		Action:   "process.start",
+		Result:   "SUCCESS",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendAudit(ctx, store.AuditEvent{
+		AuditID:  "rf-2",
+		Resource: "user",
+		Action:   "user.create",
+		Result:   "SUCCESS",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendAudit(ctx, store.AuditEvent{
+		AuditID:  "rf-3",
+		Resource: "process",
+		Action:   "process.stop",
+		Result:   "SUCCESS",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	evs, err := s.ListAuditAll(ctx, "process", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 2 {
+		t.Fatalf("len=%d want 2: %+v", len(evs), evs)
+	}
+	for _, ev := range evs {
+		if ev.Resource != "process" {
+			t.Fatalf("resource=%q want process", ev.Resource)
+		}
+	}
+}
+
 func TestAudit_ErrorAfterClose(t *testing.T) {
 	ctx := context.Background()
 	s := openStore(t)

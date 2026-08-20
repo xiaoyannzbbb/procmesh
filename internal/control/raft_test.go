@@ -70,6 +70,28 @@ func TestRaft_BootstrapApplyVisible(t *testing.T) {
 	}
 }
 
+func TestRaft_ClaimBackupFireExistingIsNotCreated(t *testing.T) {
+	_, trans := raft.NewInmemTransport("")
+	n, err := control.StartInmem("solo-fire", control.NewFSM(), trans)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = n.Shutdown() })
+	if err := n.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	waitLeader(t, []*control.Node{n}, 10*time.Second)
+	now := time.Now().Truncate(time.Second)
+	first, created, err := n.ClaimBackupFire(control.FireClaimBody{OperationID: "op-fire-first", FireKey: "bp:1700000000", PolicyID: "bp", LeaderTerm: 1, ScheduledUnix: now.Unix(), LeaseUntilUnix: now.Add(30 * time.Second).Unix()}, now)
+	if err != nil || !created {
+		t.Fatalf("first=%+v created=%v err=%v", first, created, err)
+	}
+	existing, created, err := n.ClaimBackupFire(control.FireClaimBody{OperationID: "op-fire-existing", FireKey: first.FireKey, PolicyID: first.PolicyID, LeaderTerm: 1, ScheduledUnix: first.ScheduledUnix}, now)
+	if err != nil || created || existing.RunID != first.RunID || existing.LeaderTerm != 1 {
+		t.Fatalf("existing=%+v created=%v err=%v", existing, created, err)
+	}
+}
+
 func TestRaft_ThreeNodeLoseQuorumRejectsWrite(t *testing.T) {
 	nodes := startInmemVoters(t, 3)
 	leader := waitLeader(t, nodes, 10*time.Second)

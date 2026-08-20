@@ -1075,6 +1075,98 @@ func TestJoin_RevokedWhileStillInGossip(t *testing.T) {
 	}
 }
 
+func TestJoin_ForwardsToLeader(t *testing.T) {
+	ctx := context.Background()
+	raftA, err := control.Start(control.RaftConfig{Dir: t.TempDir(), Bind: "127.0.0.1:0", NodeID: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raftA.Shutdown() })
+	if err := raftA.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for !raftA.IsLeader() || !raftA.HasQuorum() {
+		if time.Now().After(deadline) {
+			t.Fatal("raftA never became leader")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	raftB, err := control.Start(control.RaftConfig{Dir: t.TempDir(), Bind: "127.0.0.1:0", NodeID: "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = raftB.Shutdown() })
+	if err := raftA.AddVoter("b", raftB.Advertise()); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(10 * time.Second)
+	for raftB.LeaderAddr() == "" {
+		if time.Now().After(deadline) {
+			t.Fatal("raftB never learned leader")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if raftB.IsLeader() {
+		t.Fatal("raftB should not be leader")
+	}
+
+	envA := newClusterEnvFull(t, clusterEnvCfg{control: raftA})
+	inited := envA.init(t)
+
+	envB := newClusterEnvFull(t, clusterEnvCfg{
+		control:   raftB,
+		leaderAPI: func() string { return envA.url },
+	})
+	if err := control.SaveMeta(envB.dir, control.Meta{
+		ClusterID:     inited.GetClusterId(),
+		NodeID:        envB.nodeID,
+		ControlMember: false,
+		CreatedAt:     envB.now.UTC().Format(time.RFC3339),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	adm := control.Admission{Node: raftA}
+	plain, _, err := adm.CreateToken(time.Hour, 1, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const joinerID = "forward-joiner"
+	csr, _, err := control.NewCSR("join", joinerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined, err := envB.cluster.Join(ctx, connect.NewRequest(&procmeshv1.JoinClusterRequest{
+		Meta:            &procmeshv1.MutationMeta{OperationId: "op-join-fwd", Operator: "t"},
+		Token:           plain,
+		NodeId:          joinerID,
+		Hostname:        "joiner-host",
+		BootId:          "boot-fwd",
+		ProtocolVersion: int32(version.Protocol),
+		ApiAddress:      "127.0.0.1:9101",
+		CsrPem:          csr,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if joined.Msg.GetClusterId() != inited.GetClusterId() {
+		t.Fatalf("cluster_id=%q want %q", joined.Msg.GetClusterId(), inited.GetClusterId())
+	}
+	if joined.Msg.GetRaftLeader() != raftA.Advertise() {
+		t.Fatalf("raft_leader=%q want %q", joined.Msg.GetRaftLeader(), raftA.Advertise())
+	}
+	if err := control.VerifyAgent(joined.Msg.GetCaPem(), joined.Msg.GetCertPem(), inited.GetClusterId(), joinerID, envB.now); err != nil {
+		t.Fatal(err)
+	}
+	m, ok := raftA.View().Members[joinerID]
+	if !ok || m.Status != control.MemberAdmitted {
+		t.Fatalf("member=%+v ok=%v", m, ok)
+	}
+}
+
 func TestInit_NotConfigured(t *testing.T) {
 	m, st, _ := newTestManager(t)
 	srv, err := NewServer(Options{Mgr: m, Store: st})

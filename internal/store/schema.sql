@@ -136,6 +136,10 @@ CREATE TABLE IF NOT EXISTS backup_index (
     sha256 TEXT NOT NULL,
     sink TEXT NOT NULL,
     location TEXT NOT NULL,
-    source_node_id TEXT NOT NULL DEFAULT ''
+    source_node_id TEXT NOT NULL DEFAULT '',
+    run_id TEXT NOT NULL DEFAULT '',
+    task_id TEXT NOT NULL DEFAULT '',
+    policy_id TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS backup_index_created ON backup_index(created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS backup_index_task ON backup_index(run_id, task_id) WHERE run_id != '' AND task_id != '';

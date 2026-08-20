@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
@@ -10,6 +11,23 @@ import (
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/errcode"
 )
+
+type tlsStateKey struct{}
+
+// TLSStateFromContext extracts the TLS connection state from the context.
+// Returns an error if no TLS state is present.
+func TLSStateFromContext(ctx context.Context) (tls.ConnectionState, error) {
+	state, ok := ctx.Value(tlsStateKey{}).(tls.ConnectionState)
+	if !ok {
+		return tls.ConnectionState{}, errcode.E(errcode.DENIED, "no tls connection state")
+	}
+	return state, nil
+}
+
+// WithTLSState attaches a TLS connection state to the context.
+func WithTLSState(ctx context.Context, state tls.ConnectionState) context.Context {
+	return context.WithValue(ctx, tlsStateKey{}, state)
+}
 
 // ServerTLS builds a server-side mTLS config.
 // ClientAuth requires a cert signed by the cluster CA; VerifyPeerCertificate

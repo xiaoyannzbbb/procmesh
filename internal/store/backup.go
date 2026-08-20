@@ -23,10 +23,13 @@ type BackupRecord struct {
 	Sink               string
 	Location           string
 	SourceNodeID       string
+	RunID              string
+	TaskID             string
+	PolicyID           string
 }
 
 const backupCols = `snapshot_id, cluster_id, node_id, created_at, process_ids_json,
-	revision_range_json, sha256, sink, location, source_node_id`
+	revision_range_json, sha256, sink, location, source_node_id, run_id, task_id, policy_id`
 
 // PutBackup inserts or replaces a backup_index row by snapshot_id.
 func (s *Store) PutBackup(ctx context.Context, rec BackupRecord) error {
@@ -44,8 +47,8 @@ func (s *Store) PutBackup(ctx context.Context, rec BackupRecord) error {
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO backup_index(
 			snapshot_id, cluster_id, node_id, created_at, process_ids_json,
-			revision_range_json, sha256, sink, location, source_node_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			revision_range_json, sha256, sink, location, source_node_id, run_id, task_id, policy_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(snapshot_id) DO UPDATE SET
 			cluster_id = excluded.cluster_id,
 			node_id = excluded.node_id,
@@ -55,9 +58,13 @@ func (s *Store) PutBackup(ctx context.Context, rec BackupRecord) error {
 			sha256 = excluded.sha256,
 			sink = excluded.sink,
 			location = excluded.location,
-			source_node_id = excluded.source_node_id
+			source_node_id = excluded.source_node_id,
+			run_id = excluded.run_id,
+			task_id = excluded.task_id,
+			policy_id = excluded.policy_id
 	`, rec.SnapshotID, rec.ClusterID, rec.NodeID, rec.CreatedAt.UTC().Format(time.RFC3339Nano),
-		string(pids), rec.RevisionRangesJSON, rec.SHA256, rec.Sink, rec.Location, rec.SourceNodeID)
+		string(pids), rec.RevisionRangesJSON, rec.SHA256, rec.Sink, rec.Location, rec.SourceNodeID,
+		rec.RunID, rec.TaskID, rec.PolicyID)
 	if err != nil {
 		return fmt.Errorf("put backup: %w", err)
 	}
@@ -69,6 +76,16 @@ func (s *Store) GetBackup(ctx context.Context, snapshotID string) (BackupRecord,
 	return scanBackup(s.db.QueryRowContext(ctx, `
 		SELECT `+backupCols+` FROM backup_index WHERE snapshot_id = ?
 	`, snapshotID))
+}
+
+// GetBackupByTask returns a backup_index row by run_id and task_id. Missing returns NOT_FOUND.
+func (s *Store) GetBackupByTask(ctx context.Context, runID, taskID string) (BackupRecord, error) {
+	if runID == "" || taskID == "" {
+		return BackupRecord{}, errcode.E(errcode.INVALID, "run_id and task_id required")
+	}
+	return scanBackup(s.db.QueryRowContext(ctx, `
+		SELECT `+backupCols+` FROM backup_index WHERE run_id = ? AND task_id = ?
+	`, runID, taskID))
 }
 
 // ListBackups returns all backup_index rows ordered by created_at DESC.
@@ -123,6 +140,7 @@ func scanBackup(row *sql.Row) (BackupRecord, error) {
 	err := row.Scan(
 		&rec.SnapshotID, &rec.ClusterID, &rec.NodeID, &createdAt, &processIDsJSON,
 		&rec.RevisionRangesJSON, &rec.SHA256, &rec.Sink, &rec.Location, &rec.SourceNodeID,
+		&rec.RunID, &rec.TaskID, &rec.PolicyID,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return BackupRecord{}, errcode.E(errcode.NOT_FOUND, "backup")
@@ -142,6 +160,7 @@ func scanBackupRow(rows *sql.Rows) (BackupRecord, error) {
 	err := rows.Scan(
 		&rec.SnapshotID, &rec.ClusterID, &rec.NodeID, &createdAt, &processIDsJSON,
 		&rec.RevisionRangesJSON, &rec.SHA256, &rec.Sink, &rec.Location, &rec.SourceNodeID,
+		&rec.RunID, &rec.TaskID, &rec.PolicyID,
 	)
 	if err != nil {
 		return BackupRecord{}, fmt.Errorf("scan backup: %w", err)

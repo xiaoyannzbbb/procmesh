@@ -171,6 +171,58 @@ func (n *Node) Apply(cmd Command, timeout time.Duration) error {
 	return nil
 }
 
+// ClaimBackupFire applies an idempotent scheduled-fire claim and returns the
+// durable run identity recorded by the FSM. The created flag is false when an
+// existing live claim is reused.
+func (n *Node) ClaimBackupFire(b FireClaimBody, now time.Time) (FireRecord, bool, error) {
+	if err := n.requireLeader(); err != nil {
+		return FireRecord{}, false, err
+	}
+	before := n.View().BackupFireLedger[b.FireKey]
+	cmd, err := EncodeCommand(CmdBackupFireClaim, b)
+	if err != nil {
+		return FireRecord{}, false, err
+	}
+	if err := n.Apply(cmd, 5*time.Second); err != nil {
+		return FireRecord{}, false, err
+	}
+	after, ok := n.View().BackupFireLedger[b.FireKey]
+	if !ok {
+		return FireRecord{}, false, errcode.E(errcode.UNAVAILABLE, "fire claim not committed")
+	}
+	// created reports only first insertion. Lease takeover changes the durable
+	// claim term but must not cause the coordinator to recreate the run.
+	created := before.RunID == ""
+	return after, created, nil
+}
+
+// ClaimScheduledBackupRun atomically claims a scheduled fire and writes its
+// frozen run. acquired is false while a live lease belongs to another leader.
+func (n *Node) ClaimScheduledBackupRun(b ScheduledRunClaimBody, now time.Time) (FireRecord, ClusterBackupRun, bool, error) {
+	if err := n.requireLeader(); err != nil {
+		return FireRecord{}, ClusterBackupRun{}, false, err
+	}
+	before, existed := n.View().BackupFireLedger[b.Fire.FireKey]
+	cmd, err := EncodeCommand(CmdBackupScheduledRunClaim, b)
+	if err != nil {
+		return FireRecord{}, ClusterBackupRun{}, false, err
+	}
+	if err := n.Apply(cmd, 5*time.Second); err != nil {
+		return FireRecord{}, ClusterBackupRun{}, false, err
+	}
+	state := n.View()
+	record, ok := state.BackupFireLedger[b.Fire.FireKey]
+	if !ok {
+		return FireRecord{}, ClusterBackupRun{}, false, errcode.E(errcode.UNAVAILABLE, "scheduled fire not committed")
+	}
+	run, ok := state.BackupRuns[record.RunID]
+	if !ok {
+		return FireRecord{}, ClusterBackupRun{}, false, errcode.E(errcode.UNAVAILABLE, "scheduled run not committed")
+	}
+	acquired := !existed || record.LeaderTerm != before.LeaderTerm || record.ClaimedUnix != before.ClaimedUnix
+	return record, run, acquired, nil
+}
+
 func (n *Node) HasQuorum() bool {
 	if n == nil || n.raft == nil {
 		return false
@@ -217,6 +269,14 @@ func (n *Node) LeaderAddr() string {
 		return ""
 	}
 	return string(n.raft.Leader())
+}
+
+// CurrentTerm returns the Raft term used to fence control-plane mutations.
+func (n *Node) CurrentTerm() uint64 {
+	if n == nil || n.raft == nil {
+		return 0
+	}
+	return n.raft.CurrentTerm()
 }
 
 func (n *Node) Advertise() string { return n.advertise }

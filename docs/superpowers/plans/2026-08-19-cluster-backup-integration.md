@@ -153,4 +153,3 @@ cd web && npm test -- --run
 ```
 
 验收结果必须同时证明：集群 FS 只提供逻辑覆盖而不宣称主机灾备；S3/Peer 可跨主机保存；Leader 变化不重复逻辑运行；Peer 永不直接 apply；Web 能显示 partial/stale/unavailable 并提供逐失败项重试。
-

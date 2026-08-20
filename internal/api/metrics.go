@@ -68,6 +68,15 @@ func (f *countingForwarder) Backup(ctx context.Context, rt Route) (procmeshv1con
 	return f.inner.Backup(ctx, rt)
 }
 
+func (f *countingForwarder) ClusterBackup(ctx context.Context, rt Route) (procmeshv1connect.ClusterBackupServiceClient, error) {
+	f.n.Add(1)
+	cf, ok := f.inner.(ClusterBackupForwarder)
+	if !ok {
+		return nil, unavailableOwner()
+	}
+	return cf.ClusterBackup(ctx, rt)
+}
+
 func wrapForwarder(f Forwarder, n *atomic.Uint64) Forwarder {
 	if f == nil || n == nil {
 		return f

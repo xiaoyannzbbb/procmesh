@@ -3,30 +3,41 @@ package control
 import "encoding/json"
 
 const (
-	CmdBootstrap          = "bootstrap"
-	CmdUserPut            = "user_put"
-	CmdUserDisable        = "user_disable"
-	CmdLoginOK            = "login_ok"
-	CmdLoginFail          = "login_fail"
-	CmdSessionPut         = "session_put"
-	CmdSessionDel         = "session_del"
-	CmdTokenPut           = "token_put"
-	CmdTokenRevoke        = "token_revoke"
-	CmdRolePut            = "role_put"
-	CmdBindPut            = "bind_put"
-	CmdJoinTokenPut       = "join_token_put"
-	CmdJoinTokenConsume   = "join_token_consume"
-	CmdJoinTokenRevoke    = "join_token_revoke"
-	CmdMemberPut          = "member_put"
-	CmdMemberRemove       = "member_remove"
-	CmdCRLAdd             = "crl_add"
-	CmdGroupPut           = "group_put"
-	CmdGroupDelete        = "group_delete"
-	CmdGroupMemberAdd     = "group_member_add"
-	CmdGroupMemberRemove  = "group_member_remove"
-	CmdAlertChannelPut    = "alert_channel_put"
-	CmdAlertChannelDelete = "alert_channel_delete"
-	CmdAlertPolicyPut     = "alert_policy_put"
+	CmdBootstrap               = "bootstrap"
+	CmdUserPut                 = "user_put"
+	CmdUserDisable             = "user_disable"
+	CmdLoginOK                 = "login_ok"
+	CmdLoginFail               = "login_fail"
+	CmdSessionPut              = "session_put"
+	CmdSessionDel              = "session_del"
+	CmdTokenPut                = "token_put"
+	CmdTokenRevoke             = "token_revoke"
+	CmdRolePut                 = "role_put"
+	CmdBindPut                 = "bind_put"
+	CmdJoinTokenPut            = "join_token_put"
+	CmdJoinTokenConsume        = "join_token_consume"
+	CmdJoinTokenRevoke         = "join_token_revoke"
+	CmdMemberPut               = "member_put"
+	CmdMemberRemove            = "member_remove"
+	CmdCRLAdd                  = "crl_add"
+	CmdGroupPut                = "group_put"
+	CmdGroupDelete             = "group_delete"
+	CmdGroupMemberAdd          = "group_member_add"
+	CmdGroupMemberRemove       = "group_member_remove"
+	CmdAlertChannelPut         = "alert_channel_put"
+	CmdAlertChannelDelete      = "alert_channel_delete"
+	CmdAlertPolicyPut          = "alert_policy_put"
+	CmdBackupPolicyPut         = "backup_policy_put"
+	CmdBackupPolicyDelete      = "backup_policy_delete"
+	CmdReplicationPolicyPut    = "replication_policy_put"
+	CmdReplicationPolicyDelete = "replication_policy_delete"
+	CmdBackupFireClaim         = "backup_fire_claim"
+	CmdBackupScheduledRunClaim = "backup_scheduled_run_claim"
+	CmdBackupRunCreate         = "backup_run_create"
+	CmdBackupTaskUpdate        = "backup_task_update"
+	CmdBackupRetryFailedTasks  = "backup_retry_failed_tasks"
+	CmdBackupRunFinish         = "backup_run_finish"
+	CmdRunMetadataPrune        = "run_metadata_prune"
 )
 
 // Command is a Raft log payload: type + JSON body.
@@ -197,6 +208,116 @@ type AlertPolicyPutBody struct {
 	CPUHighPercent, MemoryHighPercent, DiskHighPercent int
 	HighConsecutiveMins                                int
 	SuspectTooLongSec                                  int64
+}
+
+type BackupPolicyPutBody struct {
+	OperationID              string `json:"operation_id,omitempty"`
+	PolicyID, Name           string
+	Enabled                  bool
+	ScheduleCron, Timezone   string
+	TargetSelector           string
+	TargetIDs                []string
+	Sink, DestinationProfile string
+	RetentionKeepLast        int
+	RetentionKeepDays        int
+	RetentionMaxBytes        int64
+	TimeoutSeconds           int
+	MaxConcurrency           int
+	UnavailablePolicy        string
+}
+
+type BackupPolicyDeleteBody struct {
+	OperationID string `json:"operation_id,omitempty"`
+	PolicyID    string `json:"policy_id"`
+}
+
+type ReplicationRoute struct {
+	SourceNodeID  string   `json:"source_node_id"`
+	TargetNodeIDs []string `json:"target_node_ids"`
+}
+
+type ReplicationPolicyPutBody struct {
+	OperationID            string `json:"operation_id,omitempty"`
+	PolicyID, Name         string
+	Enabled                bool
+	SourceSelector         string
+	SourceIDs              []string
+	ReplicaFactor          int
+	Routes                 []ReplicationRoute
+	Trigger                string
+	PrimaryPolicyIDs       []string
+	ScheduleCron, Timezone string
+	RetentionKeepLast      int
+	RetentionKeepDays      int
+	RetentionMaxBytes      int64
+	MaxConcurrency         int
+	VerifyAfterCopy        bool
+	BandwidthLimit         int64
+	TopologyConstraints    map[string]string
+	ExpectedRevision       int64 `json:"expected_revision,omitempty"`
+}
+
+type ReplicationPolicyDeleteBody struct {
+	OperationID string `json:"operation_id,omitempty"`
+	PolicyID    string `json:"policy_id"`
+}
+
+// FireClaimBody records an idempotent scheduled-fire claim. LeaseUntilUnix is
+// optional; zero uses the control plane's short default lease.
+type FireClaimBody struct {
+	OperationID    string `json:"operation_id"`
+	FireKey        string `json:"fire_key"`
+	PolicyID       string `json:"policy_id"`
+	ScheduledUnix  int64  `json:"scheduled_unix"`
+	LeaseUntilUnix int64  `json:"lease_until_unix"`
+	LeaderTerm     uint64 `json:"leader_term"`
+}
+
+// ScheduledRunClaimBody atomically records a scheduled fire and its frozen
+// run metadata in one Raft FSM mutation.
+type ScheduledRunClaimBody struct {
+	Fire FireClaimBody    `json:"fire"`
+	Run  ClusterBackupRun `json:"run"`
+}
+
+type CreateRunBody struct {
+	OperationID string           `json:"operation_id"`
+	Run         ClusterBackupRun `json:"run"`
+	LeaderTerm  uint64           `json:"leader_term"`
+	Replication bool             `json:"replication"`
+}
+
+type UpdateTaskBody struct {
+	OperationID string            `json:"operation_id"`
+	Task        ClusterBackupTask `json:"task"`
+	LeaderTerm  uint64            `json:"leader_term"`
+	Replication bool              `json:"replication"`
+}
+
+type RetryFailedTasksBody struct {
+	OperationID string `json:"operation_id"`
+	RunID       string `json:"run_id"`
+	LeaderTerm  uint64 `json:"leader_term"`
+	UpdatedUnix int64  `json:"updated_unix"`
+	Replication bool   `json:"replication"`
+}
+
+type FinishRunBody struct {
+	OperationID  string `json:"operation_id"`
+	RunID        string `json:"run_id"`
+	Status       string `json:"status"`
+	Success      int    `json:"success"`
+	Failed       int    `json:"failed"`
+	Unavailable  int    `json:"unavailable"`
+	Timeout      int    `json:"timeout"`
+	FinishedUnix int64  `json:"finished_unix"`
+	LeaderTerm   uint64 `json:"leader_term"`
+	Replication  bool   `json:"replication"`
+}
+
+type PruneRunMetadataBody struct {
+	OperationID string `json:"operation_id"`
+	BeforeUnix  int64  `json:"before_unix"`
 }
 
 // EncodeCommand marshals body as the Command payload.

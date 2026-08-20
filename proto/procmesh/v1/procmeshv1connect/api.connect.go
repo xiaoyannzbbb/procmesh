@@ -49,6 +49,16 @@ const (
 	AlertServiceName = "procmesh.v1.AlertService"
 	// BackupServiceName is the fully-qualified name of the BackupService service.
 	BackupServiceName = "procmesh.v1.BackupService"
+	// ClusterBackupServiceName is the fully-qualified name of the ClusterBackupService service.
+	ClusterBackupServiceName = "procmesh.v1.ClusterBackupService"
+	// ClusterBackupAgentServiceName is the fully-qualified name of the ClusterBackupAgentService
+	// service.
+	ClusterBackupAgentServiceName = "procmesh.v1.ClusterBackupAgentService"
+	// PeerReplicationServiceName is the fully-qualified name of the PeerReplicationService service.
+	PeerReplicationServiceName = "procmesh.v1.PeerReplicationService"
+	// DisasterReplicationServiceName is the fully-qualified name of the DisasterReplicationService
+	// service.
+	DisasterReplicationServiceName = "procmesh.v1.DisasterReplicationService"
 )
 
 // These constants are the fully-qualified names of the RPCs defined in this package. They're
@@ -238,6 +248,93 @@ const (
 	// BackupServicePutPeerSnapshotProcedure is the fully-qualified name of the BackupService's
 	// PutPeerSnapshot RPC.
 	BackupServicePutPeerSnapshotProcedure = "/procmesh.v1.BackupService/PutPeerSnapshot"
+	// ClusterBackupServiceCreatePolicyProcedure is the fully-qualified name of the
+	// ClusterBackupService's CreatePolicy RPC.
+	ClusterBackupServiceCreatePolicyProcedure = "/procmesh.v1.ClusterBackupService/CreatePolicy"
+	// ClusterBackupServiceUpdatePolicyProcedure is the fully-qualified name of the
+	// ClusterBackupService's UpdatePolicy RPC.
+	ClusterBackupServiceUpdatePolicyProcedure = "/procmesh.v1.ClusterBackupService/UpdatePolicy"
+	// ClusterBackupServiceDeletePolicyProcedure is the fully-qualified name of the
+	// ClusterBackupService's DeletePolicy RPC.
+	ClusterBackupServiceDeletePolicyProcedure = "/procmesh.v1.ClusterBackupService/DeletePolicy"
+	// ClusterBackupServiceListPoliciesProcedure is the fully-qualified name of the
+	// ClusterBackupService's ListPolicies RPC.
+	ClusterBackupServiceListPoliciesProcedure = "/procmesh.v1.ClusterBackupService/ListPolicies"
+	// ClusterBackupServiceValidatePolicyProcedure is the fully-qualified name of the
+	// ClusterBackupService's ValidatePolicy RPC.
+	ClusterBackupServiceValidatePolicyProcedure = "/procmesh.v1.ClusterBackupService/ValidatePolicy"
+	// ClusterBackupServiceStartRunProcedure is the fully-qualified name of the ClusterBackupService's
+	// StartRun RPC.
+	ClusterBackupServiceStartRunProcedure = "/procmesh.v1.ClusterBackupService/StartRun"
+	// ClusterBackupServiceGetRunProcedure is the fully-qualified name of the ClusterBackupService's
+	// GetRun RPC.
+	ClusterBackupServiceGetRunProcedure = "/procmesh.v1.ClusterBackupService/GetRun"
+	// ClusterBackupServiceListRunsProcedure is the fully-qualified name of the ClusterBackupService's
+	// ListRuns RPC.
+	ClusterBackupServiceListRunsProcedure = "/procmesh.v1.ClusterBackupService/ListRuns"
+	// ClusterBackupServiceRetryFailedTasksProcedure is the fully-qualified name of the
+	// ClusterBackupService's RetryFailedTasks RPC.
+	ClusterBackupServiceRetryFailedTasksProcedure = "/procmesh.v1.ClusterBackupService/RetryFailedTasks"
+	// ClusterBackupServiceGetDestinationHealthProcedure is the fully-qualified name of the
+	// ClusterBackupService's GetDestinationHealth RPC.
+	ClusterBackupServiceGetDestinationHealthProcedure = "/procmesh.v1.ClusterBackupService/GetDestinationHealth"
+	// ClusterBackupAgentServiceRunTaskProcedure is the fully-qualified name of the
+	// ClusterBackupAgentService's RunTask RPC.
+	ClusterBackupAgentServiceRunTaskProcedure = "/procmesh.v1.ClusterBackupAgentService/RunTask"
+	// ClusterBackupAgentServiceGetTaskProcedure is the fully-qualified name of the
+	// ClusterBackupAgentService's GetTask RPC.
+	ClusterBackupAgentServiceGetTaskProcedure = "/procmesh.v1.ClusterBackupAgentService/GetTask"
+	// PeerReplicationServicePutSnapshotProcedure is the fully-qualified name of the
+	// PeerReplicationService's PutSnapshot RPC.
+	PeerReplicationServicePutSnapshotProcedure = "/procmesh.v1.PeerReplicationService/PutSnapshot"
+	// PeerReplicationServiceCheckSnapshotProcedure is the fully-qualified name of the
+	// PeerReplicationService's CheckSnapshot RPC.
+	PeerReplicationServiceCheckSnapshotProcedure = "/procmesh.v1.PeerReplicationService/CheckSnapshot"
+	// PeerReplicationServiceDeleteSnapshotProcedure is the fully-qualified name of the
+	// PeerReplicationService's DeleteSnapshot RPC.
+	PeerReplicationServiceDeleteSnapshotProcedure = "/procmesh.v1.PeerReplicationService/DeleteSnapshot"
+	// PeerReplicationServiceGetReplicaMetadataProcedure is the fully-qualified name of the
+	// PeerReplicationService's GetReplicaMetadata RPC.
+	PeerReplicationServiceGetReplicaMetadataProcedure = "/procmesh.v1.PeerReplicationService/GetReplicaMetadata"
+	// DisasterReplicationServiceGetTopologyProcedure is the fully-qualified name of the
+	// DisasterReplicationService's GetTopology RPC.
+	DisasterReplicationServiceGetTopologyProcedure = "/procmesh.v1.DisasterReplicationService/GetTopology"
+	// DisasterReplicationServiceGeneratePolicyDraftProcedure is the fully-qualified name of the
+	// DisasterReplicationService's GeneratePolicyDraft RPC.
+	DisasterReplicationServiceGeneratePolicyDraftProcedure = "/procmesh.v1.DisasterReplicationService/GeneratePolicyDraft"
+	// DisasterReplicationServiceApplyPolicyDraftProcedure is the fully-qualified name of the
+	// DisasterReplicationService's ApplyPolicyDraft RPC.
+	DisasterReplicationServiceApplyPolicyDraftProcedure = "/procmesh.v1.DisasterReplicationService/ApplyPolicyDraft"
+	// DisasterReplicationServiceListPoliciesProcedure is the fully-qualified name of the
+	// DisasterReplicationService's ListPolicies RPC.
+	DisasterReplicationServiceListPoliciesProcedure = "/procmesh.v1.DisasterReplicationService/ListPolicies"
+	// DisasterReplicationServiceGetPolicyProcedure is the fully-qualified name of the
+	// DisasterReplicationService's GetPolicy RPC.
+	DisasterReplicationServiceGetPolicyProcedure = "/procmesh.v1.DisasterReplicationService/GetPolicy"
+	// DisasterReplicationServiceUpdatePolicyProcedure is the fully-qualified name of the
+	// DisasterReplicationService's UpdatePolicy RPC.
+	DisasterReplicationServiceUpdatePolicyProcedure = "/procmesh.v1.DisasterReplicationService/UpdatePolicy"
+	// DisasterReplicationServiceDeletePolicyProcedure is the fully-qualified name of the
+	// DisasterReplicationService's DeletePolicy RPC.
+	DisasterReplicationServiceDeletePolicyProcedure = "/procmesh.v1.DisasterReplicationService/DeletePolicy"
+	// DisasterReplicationServiceStartRunProcedure is the fully-qualified name of the
+	// DisasterReplicationService's StartRun RPC.
+	DisasterReplicationServiceStartRunProcedure = "/procmesh.v1.DisasterReplicationService/StartRun"
+	// DisasterReplicationServiceGetRunProcedure is the fully-qualified name of the
+	// DisasterReplicationService's GetRun RPC.
+	DisasterReplicationServiceGetRunProcedure = "/procmesh.v1.DisasterReplicationService/GetRun"
+	// DisasterReplicationServiceListRunsProcedure is the fully-qualified name of the
+	// DisasterReplicationService's ListRuns RPC.
+	DisasterReplicationServiceListRunsProcedure = "/procmesh.v1.DisasterReplicationService/ListRuns"
+	// DisasterReplicationServiceRetryFailedRoutesProcedure is the fully-qualified name of the
+	// DisasterReplicationService's RetryFailedRoutes RPC.
+	DisasterReplicationServiceRetryFailedRoutesProcedure = "/procmesh.v1.DisasterReplicationService/RetryFailedRoutes"
+	// DisasterReplicationServiceVerifyReplicaProcedure is the fully-qualified name of the
+	// DisasterReplicationService's VerifyReplica RPC.
+	DisasterReplicationServiceVerifyReplicaProcedure = "/procmesh.v1.DisasterReplicationService/VerifyReplica"
+	// DisasterReplicationServiceListRecoverableSnapshotsProcedure is the fully-qualified name of the
+	// DisasterReplicationService's ListRecoverableSnapshots RPC.
+	DisasterReplicationServiceListRecoverableSnapshotsProcedure = "/procmesh.v1.DisasterReplicationService/ListRecoverableSnapshots"
 )
 
 // ProcessServiceClient is a client for the procmesh.v1.ProcessService service.
@@ -2648,4 +2745,939 @@ func (UnimplementedBackupServiceHandler) RestoreBackup(context.Context, *connect
 
 func (UnimplementedBackupServiceHandler) PutPeerSnapshot(context.Context, *connect.Request[v1.PutPeerSnapshotRequest]) (*connect.Response[v1.PutPeerSnapshotResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.BackupService.PutPeerSnapshot is not implemented"))
+}
+
+// ClusterBackupServiceClient is a client for the procmesh.v1.ClusterBackupService service.
+type ClusterBackupServiceClient interface {
+	CreatePolicy(context.Context, *connect.Request[v1.CreateClusterBackupPolicyRequest]) (*connect.Response[v1.CreateClusterBackupPolicyResponse], error)
+	UpdatePolicy(context.Context, *connect.Request[v1.UpdateClusterBackupPolicyRequest]) (*connect.Response[v1.UpdateClusterBackupPolicyResponse], error)
+	DeletePolicy(context.Context, *connect.Request[v1.DeleteClusterBackupPolicyRequest]) (*connect.Response[v1.DeleteClusterBackupPolicyResponse], error)
+	ListPolicies(context.Context, *connect.Request[v1.ListClusterBackupPoliciesRequest]) (*connect.Response[v1.ListClusterBackupPoliciesResponse], error)
+	ValidatePolicy(context.Context, *connect.Request[v1.ValidateClusterBackupPolicyRequest]) (*connect.Response[v1.ValidateClusterBackupPolicyResponse], error)
+	StartRun(context.Context, *connect.Request[v1.StartClusterBackupRunRequest]) (*connect.Response[v1.StartClusterBackupRunResponse], error)
+	GetRun(context.Context, *connect.Request[v1.GetClusterBackupRunRequest]) (*connect.Response[v1.GetClusterBackupRunResponse], error)
+	ListRuns(context.Context, *connect.Request[v1.ListClusterBackupRunsRequest]) (*connect.Response[v1.ListClusterBackupRunsResponse], error)
+	RetryFailedTasks(context.Context, *connect.Request[v1.RetryFailedClusterBackupTasksRequest]) (*connect.Response[v1.RetryFailedClusterBackupTasksResponse], error)
+	GetDestinationHealth(context.Context, *connect.Request[v1.GetClusterBackupDestinationHealthRequest]) (*connect.Response[v1.GetClusterBackupDestinationHealthResponse], error)
+}
+
+// NewClusterBackupServiceClient constructs a client for the procmesh.v1.ClusterBackupService
+// service. By default, it uses the Connect protocol with the binary Protobuf Codec, asks for
+// gzipped responses, and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply
+// the connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewClusterBackupServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) ClusterBackupServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	clusterBackupServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("ClusterBackupService").Methods()
+	return &clusterBackupServiceClient{
+		createPolicy: connect.NewClient[v1.CreateClusterBackupPolicyRequest, v1.CreateClusterBackupPolicyResponse](
+			httpClient,
+			baseURL+ClusterBackupServiceCreatePolicyProcedure,
+			connect.WithSchema(clusterBackupServiceMethods.ByName("CreatePolicy")),
+			connect.WithClientOptions(opts...),
+		),
+		updatePolicy: connect.NewClient[v1.UpdateClusterBackupPolicyRequest, v1.UpdateClusterBackupPolicyResponse](
+			httpClient,
+			baseURL+ClusterBackupServiceUpdatePolicyProcedure,
+			connect.WithSchema(clusterBackupServiceMethods.ByName("UpdatePolicy")),
+			connect.WithClientOptions(opts...),
+		),
+		deletePolicy: connect.NewClient[v1.DeleteClusterBackupPolicyRequest, v1.DeleteClusterBackupPolicyResponse](
+			httpClient,
+			baseURL+ClusterBackupServiceDeletePolicyProcedure,
+			connect.WithSchema(clusterBackupServiceMethods.ByName("DeletePolicy")),
+			connect.WithClientOptions(opts...),
+		),
+		listPolicies: connect.NewClient[v1.ListClusterBackupPoliciesRequest, v1.ListClusterBackupPoliciesResponse](
+			httpClient,
+			baseURL+ClusterBackupServiceListPoliciesProcedure,
+			connect.WithSchema(clusterBackupServiceMethods.ByName("ListPolicies")),
+			connect.WithClientOptions(opts...),
+		),
+		validatePolicy: connect.NewClient[v1.ValidateClusterBackupPolicyRequest, v1.ValidateClusterBackupPolicyResponse](
+			httpClient,
+			baseURL+ClusterBackupServiceValidatePolicyProcedure,
+			connect.WithSchema(clusterBackupServiceMethods.ByName("ValidatePolicy")),
+			connect.WithClientOptions(opts...),
+		),
+		startRun: connect.NewClient[v1.StartClusterBackupRunRequest, v1.StartClusterBackupRunResponse](
+			httpClient,
+			baseURL+ClusterBackupServiceStartRunProcedure,
+			connect.WithSchema(clusterBackupServiceMethods.ByName("StartRun")),
+			connect.WithClientOptions(opts...),
+		),
+		getRun: connect.NewClient[v1.GetClusterBackupRunRequest, v1.GetClusterBackupRunResponse](
+			httpClient,
+			baseURL+ClusterBackupServiceGetRunProcedure,
+			connect.WithSchema(clusterBackupServiceMethods.ByName("GetRun")),
+			connect.WithClientOptions(opts...),
+		),
+		listRuns: connect.NewClient[v1.ListClusterBackupRunsRequest, v1.ListClusterBackupRunsResponse](
+			httpClient,
+			baseURL+ClusterBackupServiceListRunsProcedure,
+			connect.WithSchema(clusterBackupServiceMethods.ByName("ListRuns")),
+			connect.WithClientOptions(opts...),
+		),
+		retryFailedTasks: connect.NewClient[v1.RetryFailedClusterBackupTasksRequest, v1.RetryFailedClusterBackupTasksResponse](
+			httpClient,
+			baseURL+ClusterBackupServiceRetryFailedTasksProcedure,
+			connect.WithSchema(clusterBackupServiceMethods.ByName("RetryFailedTasks")),
+			connect.WithClientOptions(opts...),
+		),
+		getDestinationHealth: connect.NewClient[v1.GetClusterBackupDestinationHealthRequest, v1.GetClusterBackupDestinationHealthResponse](
+			httpClient,
+			baseURL+ClusterBackupServiceGetDestinationHealthProcedure,
+			connect.WithSchema(clusterBackupServiceMethods.ByName("GetDestinationHealth")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// clusterBackupServiceClient implements ClusterBackupServiceClient.
+type clusterBackupServiceClient struct {
+	createPolicy         *connect.Client[v1.CreateClusterBackupPolicyRequest, v1.CreateClusterBackupPolicyResponse]
+	updatePolicy         *connect.Client[v1.UpdateClusterBackupPolicyRequest, v1.UpdateClusterBackupPolicyResponse]
+	deletePolicy         *connect.Client[v1.DeleteClusterBackupPolicyRequest, v1.DeleteClusterBackupPolicyResponse]
+	listPolicies         *connect.Client[v1.ListClusterBackupPoliciesRequest, v1.ListClusterBackupPoliciesResponse]
+	validatePolicy       *connect.Client[v1.ValidateClusterBackupPolicyRequest, v1.ValidateClusterBackupPolicyResponse]
+	startRun             *connect.Client[v1.StartClusterBackupRunRequest, v1.StartClusterBackupRunResponse]
+	getRun               *connect.Client[v1.GetClusterBackupRunRequest, v1.GetClusterBackupRunResponse]
+	listRuns             *connect.Client[v1.ListClusterBackupRunsRequest, v1.ListClusterBackupRunsResponse]
+	retryFailedTasks     *connect.Client[v1.RetryFailedClusterBackupTasksRequest, v1.RetryFailedClusterBackupTasksResponse]
+	getDestinationHealth *connect.Client[v1.GetClusterBackupDestinationHealthRequest, v1.GetClusterBackupDestinationHealthResponse]
+}
+
+// CreatePolicy calls procmesh.v1.ClusterBackupService.CreatePolicy.
+func (c *clusterBackupServiceClient) CreatePolicy(ctx context.Context, req *connect.Request[v1.CreateClusterBackupPolicyRequest]) (*connect.Response[v1.CreateClusterBackupPolicyResponse], error) {
+	return c.createPolicy.CallUnary(ctx, req)
+}
+
+// UpdatePolicy calls procmesh.v1.ClusterBackupService.UpdatePolicy.
+func (c *clusterBackupServiceClient) UpdatePolicy(ctx context.Context, req *connect.Request[v1.UpdateClusterBackupPolicyRequest]) (*connect.Response[v1.UpdateClusterBackupPolicyResponse], error) {
+	return c.updatePolicy.CallUnary(ctx, req)
+}
+
+// DeletePolicy calls procmesh.v1.ClusterBackupService.DeletePolicy.
+func (c *clusterBackupServiceClient) DeletePolicy(ctx context.Context, req *connect.Request[v1.DeleteClusterBackupPolicyRequest]) (*connect.Response[v1.DeleteClusterBackupPolicyResponse], error) {
+	return c.deletePolicy.CallUnary(ctx, req)
+}
+
+// ListPolicies calls procmesh.v1.ClusterBackupService.ListPolicies.
+func (c *clusterBackupServiceClient) ListPolicies(ctx context.Context, req *connect.Request[v1.ListClusterBackupPoliciesRequest]) (*connect.Response[v1.ListClusterBackupPoliciesResponse], error) {
+	return c.listPolicies.CallUnary(ctx, req)
+}
+
+// ValidatePolicy calls procmesh.v1.ClusterBackupService.ValidatePolicy.
+func (c *clusterBackupServiceClient) ValidatePolicy(ctx context.Context, req *connect.Request[v1.ValidateClusterBackupPolicyRequest]) (*connect.Response[v1.ValidateClusterBackupPolicyResponse], error) {
+	return c.validatePolicy.CallUnary(ctx, req)
+}
+
+// StartRun calls procmesh.v1.ClusterBackupService.StartRun.
+func (c *clusterBackupServiceClient) StartRun(ctx context.Context, req *connect.Request[v1.StartClusterBackupRunRequest]) (*connect.Response[v1.StartClusterBackupRunResponse], error) {
+	return c.startRun.CallUnary(ctx, req)
+}
+
+// GetRun calls procmesh.v1.ClusterBackupService.GetRun.
+func (c *clusterBackupServiceClient) GetRun(ctx context.Context, req *connect.Request[v1.GetClusterBackupRunRequest]) (*connect.Response[v1.GetClusterBackupRunResponse], error) {
+	return c.getRun.CallUnary(ctx, req)
+}
+
+// ListRuns calls procmesh.v1.ClusterBackupService.ListRuns.
+func (c *clusterBackupServiceClient) ListRuns(ctx context.Context, req *connect.Request[v1.ListClusterBackupRunsRequest]) (*connect.Response[v1.ListClusterBackupRunsResponse], error) {
+	return c.listRuns.CallUnary(ctx, req)
+}
+
+// RetryFailedTasks calls procmesh.v1.ClusterBackupService.RetryFailedTasks.
+func (c *clusterBackupServiceClient) RetryFailedTasks(ctx context.Context, req *connect.Request[v1.RetryFailedClusterBackupTasksRequest]) (*connect.Response[v1.RetryFailedClusterBackupTasksResponse], error) {
+	return c.retryFailedTasks.CallUnary(ctx, req)
+}
+
+// GetDestinationHealth calls procmesh.v1.ClusterBackupService.GetDestinationHealth.
+func (c *clusterBackupServiceClient) GetDestinationHealth(ctx context.Context, req *connect.Request[v1.GetClusterBackupDestinationHealthRequest]) (*connect.Response[v1.GetClusterBackupDestinationHealthResponse], error) {
+	return c.getDestinationHealth.CallUnary(ctx, req)
+}
+
+// ClusterBackupServiceHandler is an implementation of the procmesh.v1.ClusterBackupService service.
+type ClusterBackupServiceHandler interface {
+	CreatePolicy(context.Context, *connect.Request[v1.CreateClusterBackupPolicyRequest]) (*connect.Response[v1.CreateClusterBackupPolicyResponse], error)
+	UpdatePolicy(context.Context, *connect.Request[v1.UpdateClusterBackupPolicyRequest]) (*connect.Response[v1.UpdateClusterBackupPolicyResponse], error)
+	DeletePolicy(context.Context, *connect.Request[v1.DeleteClusterBackupPolicyRequest]) (*connect.Response[v1.DeleteClusterBackupPolicyResponse], error)
+	ListPolicies(context.Context, *connect.Request[v1.ListClusterBackupPoliciesRequest]) (*connect.Response[v1.ListClusterBackupPoliciesResponse], error)
+	ValidatePolicy(context.Context, *connect.Request[v1.ValidateClusterBackupPolicyRequest]) (*connect.Response[v1.ValidateClusterBackupPolicyResponse], error)
+	StartRun(context.Context, *connect.Request[v1.StartClusterBackupRunRequest]) (*connect.Response[v1.StartClusterBackupRunResponse], error)
+	GetRun(context.Context, *connect.Request[v1.GetClusterBackupRunRequest]) (*connect.Response[v1.GetClusterBackupRunResponse], error)
+	ListRuns(context.Context, *connect.Request[v1.ListClusterBackupRunsRequest]) (*connect.Response[v1.ListClusterBackupRunsResponse], error)
+	RetryFailedTasks(context.Context, *connect.Request[v1.RetryFailedClusterBackupTasksRequest]) (*connect.Response[v1.RetryFailedClusterBackupTasksResponse], error)
+	GetDestinationHealth(context.Context, *connect.Request[v1.GetClusterBackupDestinationHealthRequest]) (*connect.Response[v1.GetClusterBackupDestinationHealthResponse], error)
+}
+
+// NewClusterBackupServiceHandler builds an HTTP handler from the service implementation. It returns
+// the path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewClusterBackupServiceHandler(svc ClusterBackupServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	clusterBackupServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("ClusterBackupService").Methods()
+	clusterBackupServiceCreatePolicyHandler := connect.NewUnaryHandler(
+		ClusterBackupServiceCreatePolicyProcedure,
+		svc.CreatePolicy,
+		connect.WithSchema(clusterBackupServiceMethods.ByName("CreatePolicy")),
+		connect.WithHandlerOptions(opts...),
+	)
+	clusterBackupServiceUpdatePolicyHandler := connect.NewUnaryHandler(
+		ClusterBackupServiceUpdatePolicyProcedure,
+		svc.UpdatePolicy,
+		connect.WithSchema(clusterBackupServiceMethods.ByName("UpdatePolicy")),
+		connect.WithHandlerOptions(opts...),
+	)
+	clusterBackupServiceDeletePolicyHandler := connect.NewUnaryHandler(
+		ClusterBackupServiceDeletePolicyProcedure,
+		svc.DeletePolicy,
+		connect.WithSchema(clusterBackupServiceMethods.ByName("DeletePolicy")),
+		connect.WithHandlerOptions(opts...),
+	)
+	clusterBackupServiceListPoliciesHandler := connect.NewUnaryHandler(
+		ClusterBackupServiceListPoliciesProcedure,
+		svc.ListPolicies,
+		connect.WithSchema(clusterBackupServiceMethods.ByName("ListPolicies")),
+		connect.WithHandlerOptions(opts...),
+	)
+	clusterBackupServiceValidatePolicyHandler := connect.NewUnaryHandler(
+		ClusterBackupServiceValidatePolicyProcedure,
+		svc.ValidatePolicy,
+		connect.WithSchema(clusterBackupServiceMethods.ByName("ValidatePolicy")),
+		connect.WithHandlerOptions(opts...),
+	)
+	clusterBackupServiceStartRunHandler := connect.NewUnaryHandler(
+		ClusterBackupServiceStartRunProcedure,
+		svc.StartRun,
+		connect.WithSchema(clusterBackupServiceMethods.ByName("StartRun")),
+		connect.WithHandlerOptions(opts...),
+	)
+	clusterBackupServiceGetRunHandler := connect.NewUnaryHandler(
+		ClusterBackupServiceGetRunProcedure,
+		svc.GetRun,
+		connect.WithSchema(clusterBackupServiceMethods.ByName("GetRun")),
+		connect.WithHandlerOptions(opts...),
+	)
+	clusterBackupServiceListRunsHandler := connect.NewUnaryHandler(
+		ClusterBackupServiceListRunsProcedure,
+		svc.ListRuns,
+		connect.WithSchema(clusterBackupServiceMethods.ByName("ListRuns")),
+		connect.WithHandlerOptions(opts...),
+	)
+	clusterBackupServiceRetryFailedTasksHandler := connect.NewUnaryHandler(
+		ClusterBackupServiceRetryFailedTasksProcedure,
+		svc.RetryFailedTasks,
+		connect.WithSchema(clusterBackupServiceMethods.ByName("RetryFailedTasks")),
+		connect.WithHandlerOptions(opts...),
+	)
+	clusterBackupServiceGetDestinationHealthHandler := connect.NewUnaryHandler(
+		ClusterBackupServiceGetDestinationHealthProcedure,
+		svc.GetDestinationHealth,
+		connect.WithSchema(clusterBackupServiceMethods.ByName("GetDestinationHealth")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/procmesh.v1.ClusterBackupService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case ClusterBackupServiceCreatePolicyProcedure:
+			clusterBackupServiceCreatePolicyHandler.ServeHTTP(w, r)
+		case ClusterBackupServiceUpdatePolicyProcedure:
+			clusterBackupServiceUpdatePolicyHandler.ServeHTTP(w, r)
+		case ClusterBackupServiceDeletePolicyProcedure:
+			clusterBackupServiceDeletePolicyHandler.ServeHTTP(w, r)
+		case ClusterBackupServiceListPoliciesProcedure:
+			clusterBackupServiceListPoliciesHandler.ServeHTTP(w, r)
+		case ClusterBackupServiceValidatePolicyProcedure:
+			clusterBackupServiceValidatePolicyHandler.ServeHTTP(w, r)
+		case ClusterBackupServiceStartRunProcedure:
+			clusterBackupServiceStartRunHandler.ServeHTTP(w, r)
+		case ClusterBackupServiceGetRunProcedure:
+			clusterBackupServiceGetRunHandler.ServeHTTP(w, r)
+		case ClusterBackupServiceListRunsProcedure:
+			clusterBackupServiceListRunsHandler.ServeHTTP(w, r)
+		case ClusterBackupServiceRetryFailedTasksProcedure:
+			clusterBackupServiceRetryFailedTasksHandler.ServeHTTP(w, r)
+		case ClusterBackupServiceGetDestinationHealthProcedure:
+			clusterBackupServiceGetDestinationHealthHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedClusterBackupServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedClusterBackupServiceHandler struct{}
+
+func (UnimplementedClusterBackupServiceHandler) CreatePolicy(context.Context, *connect.Request[v1.CreateClusterBackupPolicyRequest]) (*connect.Response[v1.CreateClusterBackupPolicyResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterBackupService.CreatePolicy is not implemented"))
+}
+
+func (UnimplementedClusterBackupServiceHandler) UpdatePolicy(context.Context, *connect.Request[v1.UpdateClusterBackupPolicyRequest]) (*connect.Response[v1.UpdateClusterBackupPolicyResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterBackupService.UpdatePolicy is not implemented"))
+}
+
+func (UnimplementedClusterBackupServiceHandler) DeletePolicy(context.Context, *connect.Request[v1.DeleteClusterBackupPolicyRequest]) (*connect.Response[v1.DeleteClusterBackupPolicyResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterBackupService.DeletePolicy is not implemented"))
+}
+
+func (UnimplementedClusterBackupServiceHandler) ListPolicies(context.Context, *connect.Request[v1.ListClusterBackupPoliciesRequest]) (*connect.Response[v1.ListClusterBackupPoliciesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterBackupService.ListPolicies is not implemented"))
+}
+
+func (UnimplementedClusterBackupServiceHandler) ValidatePolicy(context.Context, *connect.Request[v1.ValidateClusterBackupPolicyRequest]) (*connect.Response[v1.ValidateClusterBackupPolicyResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterBackupService.ValidatePolicy is not implemented"))
+}
+
+func (UnimplementedClusterBackupServiceHandler) StartRun(context.Context, *connect.Request[v1.StartClusterBackupRunRequest]) (*connect.Response[v1.StartClusterBackupRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterBackupService.StartRun is not implemented"))
+}
+
+func (UnimplementedClusterBackupServiceHandler) GetRun(context.Context, *connect.Request[v1.GetClusterBackupRunRequest]) (*connect.Response[v1.GetClusterBackupRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterBackupService.GetRun is not implemented"))
+}
+
+func (UnimplementedClusterBackupServiceHandler) ListRuns(context.Context, *connect.Request[v1.ListClusterBackupRunsRequest]) (*connect.Response[v1.ListClusterBackupRunsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterBackupService.ListRuns is not implemented"))
+}
+
+func (UnimplementedClusterBackupServiceHandler) RetryFailedTasks(context.Context, *connect.Request[v1.RetryFailedClusterBackupTasksRequest]) (*connect.Response[v1.RetryFailedClusterBackupTasksResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterBackupService.RetryFailedTasks is not implemented"))
+}
+
+func (UnimplementedClusterBackupServiceHandler) GetDestinationHealth(context.Context, *connect.Request[v1.GetClusterBackupDestinationHealthRequest]) (*connect.Response[v1.GetClusterBackupDestinationHealthResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterBackupService.GetDestinationHealth is not implemented"))
+}
+
+// ClusterBackupAgentServiceClient is a client for the procmesh.v1.ClusterBackupAgentService
+// service.
+type ClusterBackupAgentServiceClient interface {
+	RunTask(context.Context, *connect.Request[v1.RunClusterBackupTaskRequest]) (*connect.Response[v1.RunClusterBackupTaskResponse], error)
+	GetTask(context.Context, *connect.Request[v1.GetClusterBackupTaskRequest]) (*connect.Response[v1.GetClusterBackupTaskResponse], error)
+}
+
+// NewClusterBackupAgentServiceClient constructs a client for the
+// procmesh.v1.ClusterBackupAgentService service. By default, it uses the Connect protocol with the
+// binary Protobuf Codec, asks for gzipped responses, and sends uncompressed requests. To use the
+// gRPC or gRPC-Web protocols, supply the connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewClusterBackupAgentServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) ClusterBackupAgentServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	clusterBackupAgentServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("ClusterBackupAgentService").Methods()
+	return &clusterBackupAgentServiceClient{
+		runTask: connect.NewClient[v1.RunClusterBackupTaskRequest, v1.RunClusterBackupTaskResponse](
+			httpClient,
+			baseURL+ClusterBackupAgentServiceRunTaskProcedure,
+			connect.WithSchema(clusterBackupAgentServiceMethods.ByName("RunTask")),
+			connect.WithClientOptions(opts...),
+		),
+		getTask: connect.NewClient[v1.GetClusterBackupTaskRequest, v1.GetClusterBackupTaskResponse](
+			httpClient,
+			baseURL+ClusterBackupAgentServiceGetTaskProcedure,
+			connect.WithSchema(clusterBackupAgentServiceMethods.ByName("GetTask")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// clusterBackupAgentServiceClient implements ClusterBackupAgentServiceClient.
+type clusterBackupAgentServiceClient struct {
+	runTask *connect.Client[v1.RunClusterBackupTaskRequest, v1.RunClusterBackupTaskResponse]
+	getTask *connect.Client[v1.GetClusterBackupTaskRequest, v1.GetClusterBackupTaskResponse]
+}
+
+// RunTask calls procmesh.v1.ClusterBackupAgentService.RunTask.
+func (c *clusterBackupAgentServiceClient) RunTask(ctx context.Context, req *connect.Request[v1.RunClusterBackupTaskRequest]) (*connect.Response[v1.RunClusterBackupTaskResponse], error) {
+	return c.runTask.CallUnary(ctx, req)
+}
+
+// GetTask calls procmesh.v1.ClusterBackupAgentService.GetTask.
+func (c *clusterBackupAgentServiceClient) GetTask(ctx context.Context, req *connect.Request[v1.GetClusterBackupTaskRequest]) (*connect.Response[v1.GetClusterBackupTaskResponse], error) {
+	return c.getTask.CallUnary(ctx, req)
+}
+
+// ClusterBackupAgentServiceHandler is an implementation of the
+// procmesh.v1.ClusterBackupAgentService service.
+type ClusterBackupAgentServiceHandler interface {
+	RunTask(context.Context, *connect.Request[v1.RunClusterBackupTaskRequest]) (*connect.Response[v1.RunClusterBackupTaskResponse], error)
+	GetTask(context.Context, *connect.Request[v1.GetClusterBackupTaskRequest]) (*connect.Response[v1.GetClusterBackupTaskResponse], error)
+}
+
+// NewClusterBackupAgentServiceHandler builds an HTTP handler from the service implementation. It
+// returns the path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewClusterBackupAgentServiceHandler(svc ClusterBackupAgentServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	clusterBackupAgentServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("ClusterBackupAgentService").Methods()
+	clusterBackupAgentServiceRunTaskHandler := connect.NewUnaryHandler(
+		ClusterBackupAgentServiceRunTaskProcedure,
+		svc.RunTask,
+		connect.WithSchema(clusterBackupAgentServiceMethods.ByName("RunTask")),
+		connect.WithHandlerOptions(opts...),
+	)
+	clusterBackupAgentServiceGetTaskHandler := connect.NewUnaryHandler(
+		ClusterBackupAgentServiceGetTaskProcedure,
+		svc.GetTask,
+		connect.WithSchema(clusterBackupAgentServiceMethods.ByName("GetTask")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/procmesh.v1.ClusterBackupAgentService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case ClusterBackupAgentServiceRunTaskProcedure:
+			clusterBackupAgentServiceRunTaskHandler.ServeHTTP(w, r)
+		case ClusterBackupAgentServiceGetTaskProcedure:
+			clusterBackupAgentServiceGetTaskHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedClusterBackupAgentServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedClusterBackupAgentServiceHandler struct{}
+
+func (UnimplementedClusterBackupAgentServiceHandler) RunTask(context.Context, *connect.Request[v1.RunClusterBackupTaskRequest]) (*connect.Response[v1.RunClusterBackupTaskResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterBackupAgentService.RunTask is not implemented"))
+}
+
+func (UnimplementedClusterBackupAgentServiceHandler) GetTask(context.Context, *connect.Request[v1.GetClusterBackupTaskRequest]) (*connect.Response[v1.GetClusterBackupTaskResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterBackupAgentService.GetTask is not implemented"))
+}
+
+// PeerReplicationServiceClient is a client for the procmesh.v1.PeerReplicationService service.
+type PeerReplicationServiceClient interface {
+	PutSnapshot(context.Context, *connect.Request[v1.PutSnapshotRequest]) (*connect.Response[v1.PutSnapshotResponse], error)
+	CheckSnapshot(context.Context, *connect.Request[v1.CheckSnapshotRequest]) (*connect.Response[v1.CheckSnapshotResponse], error)
+	DeleteSnapshot(context.Context, *connect.Request[v1.DeleteSnapshotRequest]) (*connect.Response[v1.DeleteSnapshotResponse], error)
+	GetReplicaMetadata(context.Context, *connect.Request[v1.GetReplicaMetadataRequest]) (*connect.Response[v1.GetReplicaMetadataResponse], error)
+}
+
+// NewPeerReplicationServiceClient constructs a client for the procmesh.v1.PeerReplicationService
+// service. By default, it uses the Connect protocol with the binary Protobuf Codec, asks for
+// gzipped responses, and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply
+// the connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewPeerReplicationServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) PeerReplicationServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	peerReplicationServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("PeerReplicationService").Methods()
+	return &peerReplicationServiceClient{
+		putSnapshot: connect.NewClient[v1.PutSnapshotRequest, v1.PutSnapshotResponse](
+			httpClient,
+			baseURL+PeerReplicationServicePutSnapshotProcedure,
+			connect.WithSchema(peerReplicationServiceMethods.ByName("PutSnapshot")),
+			connect.WithClientOptions(opts...),
+		),
+		checkSnapshot: connect.NewClient[v1.CheckSnapshotRequest, v1.CheckSnapshotResponse](
+			httpClient,
+			baseURL+PeerReplicationServiceCheckSnapshotProcedure,
+			connect.WithSchema(peerReplicationServiceMethods.ByName("CheckSnapshot")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteSnapshot: connect.NewClient[v1.DeleteSnapshotRequest, v1.DeleteSnapshotResponse](
+			httpClient,
+			baseURL+PeerReplicationServiceDeleteSnapshotProcedure,
+			connect.WithSchema(peerReplicationServiceMethods.ByName("DeleteSnapshot")),
+			connect.WithClientOptions(opts...),
+		),
+		getReplicaMetadata: connect.NewClient[v1.GetReplicaMetadataRequest, v1.GetReplicaMetadataResponse](
+			httpClient,
+			baseURL+PeerReplicationServiceGetReplicaMetadataProcedure,
+			connect.WithSchema(peerReplicationServiceMethods.ByName("GetReplicaMetadata")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// peerReplicationServiceClient implements PeerReplicationServiceClient.
+type peerReplicationServiceClient struct {
+	putSnapshot        *connect.Client[v1.PutSnapshotRequest, v1.PutSnapshotResponse]
+	checkSnapshot      *connect.Client[v1.CheckSnapshotRequest, v1.CheckSnapshotResponse]
+	deleteSnapshot     *connect.Client[v1.DeleteSnapshotRequest, v1.DeleteSnapshotResponse]
+	getReplicaMetadata *connect.Client[v1.GetReplicaMetadataRequest, v1.GetReplicaMetadataResponse]
+}
+
+// PutSnapshot calls procmesh.v1.PeerReplicationService.PutSnapshot.
+func (c *peerReplicationServiceClient) PutSnapshot(ctx context.Context, req *connect.Request[v1.PutSnapshotRequest]) (*connect.Response[v1.PutSnapshotResponse], error) {
+	return c.putSnapshot.CallUnary(ctx, req)
+}
+
+// CheckSnapshot calls procmesh.v1.PeerReplicationService.CheckSnapshot.
+func (c *peerReplicationServiceClient) CheckSnapshot(ctx context.Context, req *connect.Request[v1.CheckSnapshotRequest]) (*connect.Response[v1.CheckSnapshotResponse], error) {
+	return c.checkSnapshot.CallUnary(ctx, req)
+}
+
+// DeleteSnapshot calls procmesh.v1.PeerReplicationService.DeleteSnapshot.
+func (c *peerReplicationServiceClient) DeleteSnapshot(ctx context.Context, req *connect.Request[v1.DeleteSnapshotRequest]) (*connect.Response[v1.DeleteSnapshotResponse], error) {
+	return c.deleteSnapshot.CallUnary(ctx, req)
+}
+
+// GetReplicaMetadata calls procmesh.v1.PeerReplicationService.GetReplicaMetadata.
+func (c *peerReplicationServiceClient) GetReplicaMetadata(ctx context.Context, req *connect.Request[v1.GetReplicaMetadataRequest]) (*connect.Response[v1.GetReplicaMetadataResponse], error) {
+	return c.getReplicaMetadata.CallUnary(ctx, req)
+}
+
+// PeerReplicationServiceHandler is an implementation of the procmesh.v1.PeerReplicationService
+// service.
+type PeerReplicationServiceHandler interface {
+	PutSnapshot(context.Context, *connect.Request[v1.PutSnapshotRequest]) (*connect.Response[v1.PutSnapshotResponse], error)
+	CheckSnapshot(context.Context, *connect.Request[v1.CheckSnapshotRequest]) (*connect.Response[v1.CheckSnapshotResponse], error)
+	DeleteSnapshot(context.Context, *connect.Request[v1.DeleteSnapshotRequest]) (*connect.Response[v1.DeleteSnapshotResponse], error)
+	GetReplicaMetadata(context.Context, *connect.Request[v1.GetReplicaMetadataRequest]) (*connect.Response[v1.GetReplicaMetadataResponse], error)
+}
+
+// NewPeerReplicationServiceHandler builds an HTTP handler from the service implementation. It
+// returns the path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewPeerReplicationServiceHandler(svc PeerReplicationServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	peerReplicationServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("PeerReplicationService").Methods()
+	peerReplicationServicePutSnapshotHandler := connect.NewUnaryHandler(
+		PeerReplicationServicePutSnapshotProcedure,
+		svc.PutSnapshot,
+		connect.WithSchema(peerReplicationServiceMethods.ByName("PutSnapshot")),
+		connect.WithHandlerOptions(opts...),
+	)
+	peerReplicationServiceCheckSnapshotHandler := connect.NewUnaryHandler(
+		PeerReplicationServiceCheckSnapshotProcedure,
+		svc.CheckSnapshot,
+		connect.WithSchema(peerReplicationServiceMethods.ByName("CheckSnapshot")),
+		connect.WithHandlerOptions(opts...),
+	)
+	peerReplicationServiceDeleteSnapshotHandler := connect.NewUnaryHandler(
+		PeerReplicationServiceDeleteSnapshotProcedure,
+		svc.DeleteSnapshot,
+		connect.WithSchema(peerReplicationServiceMethods.ByName("DeleteSnapshot")),
+		connect.WithHandlerOptions(opts...),
+	)
+	peerReplicationServiceGetReplicaMetadataHandler := connect.NewUnaryHandler(
+		PeerReplicationServiceGetReplicaMetadataProcedure,
+		svc.GetReplicaMetadata,
+		connect.WithSchema(peerReplicationServiceMethods.ByName("GetReplicaMetadata")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/procmesh.v1.PeerReplicationService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case PeerReplicationServicePutSnapshotProcedure:
+			peerReplicationServicePutSnapshotHandler.ServeHTTP(w, r)
+		case PeerReplicationServiceCheckSnapshotProcedure:
+			peerReplicationServiceCheckSnapshotHandler.ServeHTTP(w, r)
+		case PeerReplicationServiceDeleteSnapshotProcedure:
+			peerReplicationServiceDeleteSnapshotHandler.ServeHTTP(w, r)
+		case PeerReplicationServiceGetReplicaMetadataProcedure:
+			peerReplicationServiceGetReplicaMetadataHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedPeerReplicationServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedPeerReplicationServiceHandler struct{}
+
+func (UnimplementedPeerReplicationServiceHandler) PutSnapshot(context.Context, *connect.Request[v1.PutSnapshotRequest]) (*connect.Response[v1.PutSnapshotResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.PeerReplicationService.PutSnapshot is not implemented"))
+}
+
+func (UnimplementedPeerReplicationServiceHandler) CheckSnapshot(context.Context, *connect.Request[v1.CheckSnapshotRequest]) (*connect.Response[v1.CheckSnapshotResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.PeerReplicationService.CheckSnapshot is not implemented"))
+}
+
+func (UnimplementedPeerReplicationServiceHandler) DeleteSnapshot(context.Context, *connect.Request[v1.DeleteSnapshotRequest]) (*connect.Response[v1.DeleteSnapshotResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.PeerReplicationService.DeleteSnapshot is not implemented"))
+}
+
+func (UnimplementedPeerReplicationServiceHandler) GetReplicaMetadata(context.Context, *connect.Request[v1.GetReplicaMetadataRequest]) (*connect.Response[v1.GetReplicaMetadataResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.PeerReplicationService.GetReplicaMetadata is not implemented"))
+}
+
+// DisasterReplicationServiceClient is a client for the procmesh.v1.DisasterReplicationService
+// service.
+type DisasterReplicationServiceClient interface {
+	GetTopology(context.Context, *connect.Request[v1.GetTopologyRequest]) (*connect.Response[v1.GetTopologyResponse], error)
+	GeneratePolicyDraft(context.Context, *connect.Request[v1.GeneratePolicyDraftRequest]) (*connect.Response[v1.GeneratePolicyDraftResponse], error)
+	ApplyPolicyDraft(context.Context, *connect.Request[v1.ApplyPolicyDraftRequest]) (*connect.Response[v1.ApplyPolicyDraftResponse], error)
+	ListPolicies(context.Context, *connect.Request[v1.ListPoliciesRequest]) (*connect.Response[v1.ListPoliciesResponse], error)
+	GetPolicy(context.Context, *connect.Request[v1.GetPolicyRequest]) (*connect.Response[v1.GetPolicyResponse], error)
+	UpdatePolicy(context.Context, *connect.Request[v1.UpdatePolicyRequest]) (*connect.Response[v1.UpdatePolicyResponse], error)
+	DeletePolicy(context.Context, *connect.Request[v1.DeletePolicyRequest]) (*connect.Response[v1.DeletePolicyResponse], error)
+	StartRun(context.Context, *connect.Request[v1.StartRunRequest]) (*connect.Response[v1.StartRunResponse], error)
+	GetRun(context.Context, *connect.Request[v1.GetRunRequest]) (*connect.Response[v1.GetRunResponse], error)
+	ListRuns(context.Context, *connect.Request[v1.ListRunsRequest]) (*connect.Response[v1.ListRunsResponse], error)
+	RetryFailedRoutes(context.Context, *connect.Request[v1.RetryFailedRoutesRequest]) (*connect.Response[v1.RetryFailedRoutesResponse], error)
+	VerifyReplica(context.Context, *connect.Request[v1.VerifyReplicaRequest]) (*connect.Response[v1.VerifyReplicaResponse], error)
+	ListRecoverableSnapshots(context.Context, *connect.Request[v1.ListRecoverableSnapshotsRequest]) (*connect.Response[v1.ListRecoverableSnapshotsResponse], error)
+}
+
+// NewDisasterReplicationServiceClient constructs a client for the
+// procmesh.v1.DisasterReplicationService service. By default, it uses the Connect protocol with the
+// binary Protobuf Codec, asks for gzipped responses, and sends uncompressed requests. To use the
+// gRPC or gRPC-Web protocols, supply the connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewDisasterReplicationServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) DisasterReplicationServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	disasterReplicationServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("DisasterReplicationService").Methods()
+	return &disasterReplicationServiceClient{
+		getTopology: connect.NewClient[v1.GetTopologyRequest, v1.GetTopologyResponse](
+			httpClient,
+			baseURL+DisasterReplicationServiceGetTopologyProcedure,
+			connect.WithSchema(disasterReplicationServiceMethods.ByName("GetTopology")),
+			connect.WithClientOptions(opts...),
+		),
+		generatePolicyDraft: connect.NewClient[v1.GeneratePolicyDraftRequest, v1.GeneratePolicyDraftResponse](
+			httpClient,
+			baseURL+DisasterReplicationServiceGeneratePolicyDraftProcedure,
+			connect.WithSchema(disasterReplicationServiceMethods.ByName("GeneratePolicyDraft")),
+			connect.WithClientOptions(opts...),
+		),
+		applyPolicyDraft: connect.NewClient[v1.ApplyPolicyDraftRequest, v1.ApplyPolicyDraftResponse](
+			httpClient,
+			baseURL+DisasterReplicationServiceApplyPolicyDraftProcedure,
+			connect.WithSchema(disasterReplicationServiceMethods.ByName("ApplyPolicyDraft")),
+			connect.WithClientOptions(opts...),
+		),
+		listPolicies: connect.NewClient[v1.ListPoliciesRequest, v1.ListPoliciesResponse](
+			httpClient,
+			baseURL+DisasterReplicationServiceListPoliciesProcedure,
+			connect.WithSchema(disasterReplicationServiceMethods.ByName("ListPolicies")),
+			connect.WithClientOptions(opts...),
+		),
+		getPolicy: connect.NewClient[v1.GetPolicyRequest, v1.GetPolicyResponse](
+			httpClient,
+			baseURL+DisasterReplicationServiceGetPolicyProcedure,
+			connect.WithSchema(disasterReplicationServiceMethods.ByName("GetPolicy")),
+			connect.WithClientOptions(opts...),
+		),
+		updatePolicy: connect.NewClient[v1.UpdatePolicyRequest, v1.UpdatePolicyResponse](
+			httpClient,
+			baseURL+DisasterReplicationServiceUpdatePolicyProcedure,
+			connect.WithSchema(disasterReplicationServiceMethods.ByName("UpdatePolicy")),
+			connect.WithClientOptions(opts...),
+		),
+		deletePolicy: connect.NewClient[v1.DeletePolicyRequest, v1.DeletePolicyResponse](
+			httpClient,
+			baseURL+DisasterReplicationServiceDeletePolicyProcedure,
+			connect.WithSchema(disasterReplicationServiceMethods.ByName("DeletePolicy")),
+			connect.WithClientOptions(opts...),
+		),
+		startRun: connect.NewClient[v1.StartRunRequest, v1.StartRunResponse](
+			httpClient,
+			baseURL+DisasterReplicationServiceStartRunProcedure,
+			connect.WithSchema(disasterReplicationServiceMethods.ByName("StartRun")),
+			connect.WithClientOptions(opts...),
+		),
+		getRun: connect.NewClient[v1.GetRunRequest, v1.GetRunResponse](
+			httpClient,
+			baseURL+DisasterReplicationServiceGetRunProcedure,
+			connect.WithSchema(disasterReplicationServiceMethods.ByName("GetRun")),
+			connect.WithClientOptions(opts...),
+		),
+		listRuns: connect.NewClient[v1.ListRunsRequest, v1.ListRunsResponse](
+			httpClient,
+			baseURL+DisasterReplicationServiceListRunsProcedure,
+			connect.WithSchema(disasterReplicationServiceMethods.ByName("ListRuns")),
+			connect.WithClientOptions(opts...),
+		),
+		retryFailedRoutes: connect.NewClient[v1.RetryFailedRoutesRequest, v1.RetryFailedRoutesResponse](
+			httpClient,
+			baseURL+DisasterReplicationServiceRetryFailedRoutesProcedure,
+			connect.WithSchema(disasterReplicationServiceMethods.ByName("RetryFailedRoutes")),
+			connect.WithClientOptions(opts...),
+		),
+		verifyReplica: connect.NewClient[v1.VerifyReplicaRequest, v1.VerifyReplicaResponse](
+			httpClient,
+			baseURL+DisasterReplicationServiceVerifyReplicaProcedure,
+			connect.WithSchema(disasterReplicationServiceMethods.ByName("VerifyReplica")),
+			connect.WithClientOptions(opts...),
+		),
+		listRecoverableSnapshots: connect.NewClient[v1.ListRecoverableSnapshotsRequest, v1.ListRecoverableSnapshotsResponse](
+			httpClient,
+			baseURL+DisasterReplicationServiceListRecoverableSnapshotsProcedure,
+			connect.WithSchema(disasterReplicationServiceMethods.ByName("ListRecoverableSnapshots")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// disasterReplicationServiceClient implements DisasterReplicationServiceClient.
+type disasterReplicationServiceClient struct {
+	getTopology              *connect.Client[v1.GetTopologyRequest, v1.GetTopologyResponse]
+	generatePolicyDraft      *connect.Client[v1.GeneratePolicyDraftRequest, v1.GeneratePolicyDraftResponse]
+	applyPolicyDraft         *connect.Client[v1.ApplyPolicyDraftRequest, v1.ApplyPolicyDraftResponse]
+	listPolicies             *connect.Client[v1.ListPoliciesRequest, v1.ListPoliciesResponse]
+	getPolicy                *connect.Client[v1.GetPolicyRequest, v1.GetPolicyResponse]
+	updatePolicy             *connect.Client[v1.UpdatePolicyRequest, v1.UpdatePolicyResponse]
+	deletePolicy             *connect.Client[v1.DeletePolicyRequest, v1.DeletePolicyResponse]
+	startRun                 *connect.Client[v1.StartRunRequest, v1.StartRunResponse]
+	getRun                   *connect.Client[v1.GetRunRequest, v1.GetRunResponse]
+	listRuns                 *connect.Client[v1.ListRunsRequest, v1.ListRunsResponse]
+	retryFailedRoutes        *connect.Client[v1.RetryFailedRoutesRequest, v1.RetryFailedRoutesResponse]
+	verifyReplica            *connect.Client[v1.VerifyReplicaRequest, v1.VerifyReplicaResponse]
+	listRecoverableSnapshots *connect.Client[v1.ListRecoverableSnapshotsRequest, v1.ListRecoverableSnapshotsResponse]
+}
+
+// GetTopology calls procmesh.v1.DisasterReplicationService.GetTopology.
+func (c *disasterReplicationServiceClient) GetTopology(ctx context.Context, req *connect.Request[v1.GetTopologyRequest]) (*connect.Response[v1.GetTopologyResponse], error) {
+	return c.getTopology.CallUnary(ctx, req)
+}
+
+// GeneratePolicyDraft calls procmesh.v1.DisasterReplicationService.GeneratePolicyDraft.
+func (c *disasterReplicationServiceClient) GeneratePolicyDraft(ctx context.Context, req *connect.Request[v1.GeneratePolicyDraftRequest]) (*connect.Response[v1.GeneratePolicyDraftResponse], error) {
+	return c.generatePolicyDraft.CallUnary(ctx, req)
+}
+
+// ApplyPolicyDraft calls procmesh.v1.DisasterReplicationService.ApplyPolicyDraft.
+func (c *disasterReplicationServiceClient) ApplyPolicyDraft(ctx context.Context, req *connect.Request[v1.ApplyPolicyDraftRequest]) (*connect.Response[v1.ApplyPolicyDraftResponse], error) {
+	return c.applyPolicyDraft.CallUnary(ctx, req)
+}
+
+// ListPolicies calls procmesh.v1.DisasterReplicationService.ListPolicies.
+func (c *disasterReplicationServiceClient) ListPolicies(ctx context.Context, req *connect.Request[v1.ListPoliciesRequest]) (*connect.Response[v1.ListPoliciesResponse], error) {
+	return c.listPolicies.CallUnary(ctx, req)
+}
+
+// GetPolicy calls procmesh.v1.DisasterReplicationService.GetPolicy.
+func (c *disasterReplicationServiceClient) GetPolicy(ctx context.Context, req *connect.Request[v1.GetPolicyRequest]) (*connect.Response[v1.GetPolicyResponse], error) {
+	return c.getPolicy.CallUnary(ctx, req)
+}
+
+// UpdatePolicy calls procmesh.v1.DisasterReplicationService.UpdatePolicy.
+func (c *disasterReplicationServiceClient) UpdatePolicy(ctx context.Context, req *connect.Request[v1.UpdatePolicyRequest]) (*connect.Response[v1.UpdatePolicyResponse], error) {
+	return c.updatePolicy.CallUnary(ctx, req)
+}
+
+// DeletePolicy calls procmesh.v1.DisasterReplicationService.DeletePolicy.
+func (c *disasterReplicationServiceClient) DeletePolicy(ctx context.Context, req *connect.Request[v1.DeletePolicyRequest]) (*connect.Response[v1.DeletePolicyResponse], error) {
+	return c.deletePolicy.CallUnary(ctx, req)
+}
+
+// StartRun calls procmesh.v1.DisasterReplicationService.StartRun.
+func (c *disasterReplicationServiceClient) StartRun(ctx context.Context, req *connect.Request[v1.StartRunRequest]) (*connect.Response[v1.StartRunResponse], error) {
+	return c.startRun.CallUnary(ctx, req)
+}
+
+// GetRun calls procmesh.v1.DisasterReplicationService.GetRun.
+func (c *disasterReplicationServiceClient) GetRun(ctx context.Context, req *connect.Request[v1.GetRunRequest]) (*connect.Response[v1.GetRunResponse], error) {
+	return c.getRun.CallUnary(ctx, req)
+}
+
+// ListRuns calls procmesh.v1.DisasterReplicationService.ListRuns.
+func (c *disasterReplicationServiceClient) ListRuns(ctx context.Context, req *connect.Request[v1.ListRunsRequest]) (*connect.Response[v1.ListRunsResponse], error) {
+	return c.listRuns.CallUnary(ctx, req)
+}
+
+// RetryFailedRoutes calls procmesh.v1.DisasterReplicationService.RetryFailedRoutes.
+func (c *disasterReplicationServiceClient) RetryFailedRoutes(ctx context.Context, req *connect.Request[v1.RetryFailedRoutesRequest]) (*connect.Response[v1.RetryFailedRoutesResponse], error) {
+	return c.retryFailedRoutes.CallUnary(ctx, req)
+}
+
+// VerifyReplica calls procmesh.v1.DisasterReplicationService.VerifyReplica.
+func (c *disasterReplicationServiceClient) VerifyReplica(ctx context.Context, req *connect.Request[v1.VerifyReplicaRequest]) (*connect.Response[v1.VerifyReplicaResponse], error) {
+	return c.verifyReplica.CallUnary(ctx, req)
+}
+
+// ListRecoverableSnapshots calls procmesh.v1.DisasterReplicationService.ListRecoverableSnapshots.
+func (c *disasterReplicationServiceClient) ListRecoverableSnapshots(ctx context.Context, req *connect.Request[v1.ListRecoverableSnapshotsRequest]) (*connect.Response[v1.ListRecoverableSnapshotsResponse], error) {
+	return c.listRecoverableSnapshots.CallUnary(ctx, req)
+}
+
+// DisasterReplicationServiceHandler is an implementation of the
+// procmesh.v1.DisasterReplicationService service.
+type DisasterReplicationServiceHandler interface {
+	GetTopology(context.Context, *connect.Request[v1.GetTopologyRequest]) (*connect.Response[v1.GetTopologyResponse], error)
+	GeneratePolicyDraft(context.Context, *connect.Request[v1.GeneratePolicyDraftRequest]) (*connect.Response[v1.GeneratePolicyDraftResponse], error)
+	ApplyPolicyDraft(context.Context, *connect.Request[v1.ApplyPolicyDraftRequest]) (*connect.Response[v1.ApplyPolicyDraftResponse], error)
+	ListPolicies(context.Context, *connect.Request[v1.ListPoliciesRequest]) (*connect.Response[v1.ListPoliciesResponse], error)
+	GetPolicy(context.Context, *connect.Request[v1.GetPolicyRequest]) (*connect.Response[v1.GetPolicyResponse], error)
+	UpdatePolicy(context.Context, *connect.Request[v1.UpdatePolicyRequest]) (*connect.Response[v1.UpdatePolicyResponse], error)
+	DeletePolicy(context.Context, *connect.Request[v1.DeletePolicyRequest]) (*connect.Response[v1.DeletePolicyResponse], error)
+	StartRun(context.Context, *connect.Request[v1.StartRunRequest]) (*connect.Response[v1.StartRunResponse], error)
+	GetRun(context.Context, *connect.Request[v1.GetRunRequest]) (*connect.Response[v1.GetRunResponse], error)
+	ListRuns(context.Context, *connect.Request[v1.ListRunsRequest]) (*connect.Response[v1.ListRunsResponse], error)
+	RetryFailedRoutes(context.Context, *connect.Request[v1.RetryFailedRoutesRequest]) (*connect.Response[v1.RetryFailedRoutesResponse], error)
+	VerifyReplica(context.Context, *connect.Request[v1.VerifyReplicaRequest]) (*connect.Response[v1.VerifyReplicaResponse], error)
+	ListRecoverableSnapshots(context.Context, *connect.Request[v1.ListRecoverableSnapshotsRequest]) (*connect.Response[v1.ListRecoverableSnapshotsResponse], error)
+}
+
+// NewDisasterReplicationServiceHandler builds an HTTP handler from the service implementation. It
+// returns the path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewDisasterReplicationServiceHandler(svc DisasterReplicationServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	disasterReplicationServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("DisasterReplicationService").Methods()
+	disasterReplicationServiceGetTopologyHandler := connect.NewUnaryHandler(
+		DisasterReplicationServiceGetTopologyProcedure,
+		svc.GetTopology,
+		connect.WithSchema(disasterReplicationServiceMethods.ByName("GetTopology")),
+		connect.WithHandlerOptions(opts...),
+	)
+	disasterReplicationServiceGeneratePolicyDraftHandler := connect.NewUnaryHandler(
+		DisasterReplicationServiceGeneratePolicyDraftProcedure,
+		svc.GeneratePolicyDraft,
+		connect.WithSchema(disasterReplicationServiceMethods.ByName("GeneratePolicyDraft")),
+		connect.WithHandlerOptions(opts...),
+	)
+	disasterReplicationServiceApplyPolicyDraftHandler := connect.NewUnaryHandler(
+		DisasterReplicationServiceApplyPolicyDraftProcedure,
+		svc.ApplyPolicyDraft,
+		connect.WithSchema(disasterReplicationServiceMethods.ByName("ApplyPolicyDraft")),
+		connect.WithHandlerOptions(opts...),
+	)
+	disasterReplicationServiceListPoliciesHandler := connect.NewUnaryHandler(
+		DisasterReplicationServiceListPoliciesProcedure,
+		svc.ListPolicies,
+		connect.WithSchema(disasterReplicationServiceMethods.ByName("ListPolicies")),
+		connect.WithHandlerOptions(opts...),
+	)
+	disasterReplicationServiceGetPolicyHandler := connect.NewUnaryHandler(
+		DisasterReplicationServiceGetPolicyProcedure,
+		svc.GetPolicy,
+		connect.WithSchema(disasterReplicationServiceMethods.ByName("GetPolicy")),
+		connect.WithHandlerOptions(opts...),
+	)
+	disasterReplicationServiceUpdatePolicyHandler := connect.NewUnaryHandler(
+		DisasterReplicationServiceUpdatePolicyProcedure,
+		svc.UpdatePolicy,
+		connect.WithSchema(disasterReplicationServiceMethods.ByName("UpdatePolicy")),
+		connect.WithHandlerOptions(opts...),
+	)
+	disasterReplicationServiceDeletePolicyHandler := connect.NewUnaryHandler(
+		DisasterReplicationServiceDeletePolicyProcedure,
+		svc.DeletePolicy,
+		connect.WithSchema(disasterReplicationServiceMethods.ByName("DeletePolicy")),
+		connect.WithHandlerOptions(opts...),
+	)
+	disasterReplicationServiceStartRunHandler := connect.NewUnaryHandler(
+		DisasterReplicationServiceStartRunProcedure,
+		svc.StartRun,
+		connect.WithSchema(disasterReplicationServiceMethods.ByName("StartRun")),
+		connect.WithHandlerOptions(opts...),
+	)
+	disasterReplicationServiceGetRunHandler := connect.NewUnaryHandler(
+		DisasterReplicationServiceGetRunProcedure,
+		svc.GetRun,
+		connect.WithSchema(disasterReplicationServiceMethods.ByName("GetRun")),
+		connect.WithHandlerOptions(opts...),
+	)
+	disasterReplicationServiceListRunsHandler := connect.NewUnaryHandler(
+		DisasterReplicationServiceListRunsProcedure,
+		svc.ListRuns,
+		connect.WithSchema(disasterReplicationServiceMethods.ByName("ListRuns")),
+		connect.WithHandlerOptions(opts...),
+	)
+	disasterReplicationServiceRetryFailedRoutesHandler := connect.NewUnaryHandler(
+		DisasterReplicationServiceRetryFailedRoutesProcedure,
+		svc.RetryFailedRoutes,
+		connect.WithSchema(disasterReplicationServiceMethods.ByName("RetryFailedRoutes")),
+		connect.WithHandlerOptions(opts...),
+	)
+	disasterReplicationServiceVerifyReplicaHandler := connect.NewUnaryHandler(
+		DisasterReplicationServiceVerifyReplicaProcedure,
+		svc.VerifyReplica,
+		connect.WithSchema(disasterReplicationServiceMethods.ByName("VerifyReplica")),
+		connect.WithHandlerOptions(opts...),
+	)
+	disasterReplicationServiceListRecoverableSnapshotsHandler := connect.NewUnaryHandler(
+		DisasterReplicationServiceListRecoverableSnapshotsProcedure,
+		svc.ListRecoverableSnapshots,
+		connect.WithSchema(disasterReplicationServiceMethods.ByName("ListRecoverableSnapshots")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/procmesh.v1.DisasterReplicationService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case DisasterReplicationServiceGetTopologyProcedure:
+			disasterReplicationServiceGetTopologyHandler.ServeHTTP(w, r)
+		case DisasterReplicationServiceGeneratePolicyDraftProcedure:
+			disasterReplicationServiceGeneratePolicyDraftHandler.ServeHTTP(w, r)
+		case DisasterReplicationServiceApplyPolicyDraftProcedure:
+			disasterReplicationServiceApplyPolicyDraftHandler.ServeHTTP(w, r)
+		case DisasterReplicationServiceListPoliciesProcedure:
+			disasterReplicationServiceListPoliciesHandler.ServeHTTP(w, r)
+		case DisasterReplicationServiceGetPolicyProcedure:
+			disasterReplicationServiceGetPolicyHandler.ServeHTTP(w, r)
+		case DisasterReplicationServiceUpdatePolicyProcedure:
+			disasterReplicationServiceUpdatePolicyHandler.ServeHTTP(w, r)
+		case DisasterReplicationServiceDeletePolicyProcedure:
+			disasterReplicationServiceDeletePolicyHandler.ServeHTTP(w, r)
+		case DisasterReplicationServiceStartRunProcedure:
+			disasterReplicationServiceStartRunHandler.ServeHTTP(w, r)
+		case DisasterReplicationServiceGetRunProcedure:
+			disasterReplicationServiceGetRunHandler.ServeHTTP(w, r)
+		case DisasterReplicationServiceListRunsProcedure:
+			disasterReplicationServiceListRunsHandler.ServeHTTP(w, r)
+		case DisasterReplicationServiceRetryFailedRoutesProcedure:
+			disasterReplicationServiceRetryFailedRoutesHandler.ServeHTTP(w, r)
+		case DisasterReplicationServiceVerifyReplicaProcedure:
+			disasterReplicationServiceVerifyReplicaHandler.ServeHTTP(w, r)
+		case DisasterReplicationServiceListRecoverableSnapshotsProcedure:
+			disasterReplicationServiceListRecoverableSnapshotsHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedDisasterReplicationServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedDisasterReplicationServiceHandler struct{}
+
+func (UnimplementedDisasterReplicationServiceHandler) GetTopology(context.Context, *connect.Request[v1.GetTopologyRequest]) (*connect.Response[v1.GetTopologyResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.DisasterReplicationService.GetTopology is not implemented"))
+}
+
+func (UnimplementedDisasterReplicationServiceHandler) GeneratePolicyDraft(context.Context, *connect.Request[v1.GeneratePolicyDraftRequest]) (*connect.Response[v1.GeneratePolicyDraftResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.DisasterReplicationService.GeneratePolicyDraft is not implemented"))
+}
+
+func (UnimplementedDisasterReplicationServiceHandler) ApplyPolicyDraft(context.Context, *connect.Request[v1.ApplyPolicyDraftRequest]) (*connect.Response[v1.ApplyPolicyDraftResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.DisasterReplicationService.ApplyPolicyDraft is not implemented"))
+}
+
+func (UnimplementedDisasterReplicationServiceHandler) ListPolicies(context.Context, *connect.Request[v1.ListPoliciesRequest]) (*connect.Response[v1.ListPoliciesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.DisasterReplicationService.ListPolicies is not implemented"))
+}
+
+func (UnimplementedDisasterReplicationServiceHandler) GetPolicy(context.Context, *connect.Request[v1.GetPolicyRequest]) (*connect.Response[v1.GetPolicyResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.DisasterReplicationService.GetPolicy is not implemented"))
+}
+
+func (UnimplementedDisasterReplicationServiceHandler) UpdatePolicy(context.Context, *connect.Request[v1.UpdatePolicyRequest]) (*connect.Response[v1.UpdatePolicyResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.DisasterReplicationService.UpdatePolicy is not implemented"))
+}
+
+func (UnimplementedDisasterReplicationServiceHandler) DeletePolicy(context.Context, *connect.Request[v1.DeletePolicyRequest]) (*connect.Response[v1.DeletePolicyResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.DisasterReplicationService.DeletePolicy is not implemented"))
+}
+
+func (UnimplementedDisasterReplicationServiceHandler) StartRun(context.Context, *connect.Request[v1.StartRunRequest]) (*connect.Response[v1.StartRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.DisasterReplicationService.StartRun is not implemented"))
+}
+
+func (UnimplementedDisasterReplicationServiceHandler) GetRun(context.Context, *connect.Request[v1.GetRunRequest]) (*connect.Response[v1.GetRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.DisasterReplicationService.GetRun is not implemented"))
+}
+
+func (UnimplementedDisasterReplicationServiceHandler) ListRuns(context.Context, *connect.Request[v1.ListRunsRequest]) (*connect.Response[v1.ListRunsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.DisasterReplicationService.ListRuns is not implemented"))
+}
+
+func (UnimplementedDisasterReplicationServiceHandler) RetryFailedRoutes(context.Context, *connect.Request[v1.RetryFailedRoutesRequest]) (*connect.Response[v1.RetryFailedRoutesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.DisasterReplicationService.RetryFailedRoutes is not implemented"))
+}
+
+func (UnimplementedDisasterReplicationServiceHandler) VerifyReplica(context.Context, *connect.Request[v1.VerifyReplicaRequest]) (*connect.Response[v1.VerifyReplicaResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.DisasterReplicationService.VerifyReplica is not implemented"))
+}
+
+func (UnimplementedDisasterReplicationServiceHandler) ListRecoverableSnapshots(context.Context, *connect.Request[v1.ListRecoverableSnapshotsRequest]) (*connect.Response[v1.ListRecoverableSnapshotsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.DisasterReplicationService.ListRecoverableSnapshots is not implemented"))
 }
