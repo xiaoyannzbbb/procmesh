@@ -214,11 +214,11 @@ git commit -m "fix(replication): secure internal peer request paths"
 - Produces: replica factor and route validation use the number of available targets per source (`admitted_count - 1`), including the explicit N=1 warning case.
 - Produces: every Peer operation validates request cluster ID, mTLS same-cluster source identity, current admission, and operation-specific run/task or retention authorization before touching replica data.
 
-- [ ] **Step 1: Write failing tests for stale/forged draft apply, offline admitted candidates, N=1/N=2/factor route validation, cluster mismatch, and unauthorized Put/Check/Delete/metadata access.**
-- [ ] **Step 2: Run RED:** `go test ./internal/backup ./internal/control ./internal/api -run 'Test.*Topology|Test.*Draft|Test.*ReplicaFactor|TestPeerReplication.*Authoriz|TestPeerReplication.*Cluster' -count=1`
-- [ ] **Step 3: Bind draft apply to current server topology, correct topology/factor validation, and inject a control-state authorizer into the Peer API.**
-- [ ] **Step 4: Run:** `go test ./internal/backup ./internal/control ./internal/api ./internal/rpc ./internal/agent -count=1`
-- [ ] **Step 5: Commit:** `git commit -m "fix(replication): authorize topology-bound peer operations"`
+- [x] **Step 1: Write failing tests for stale/forged draft apply, offline admitted candidates, N=1/N=2/factor route validation, cluster mismatch, and unauthorized Put/Check/Delete/metadata access.**
+- [x] **Step 2: Run RED:** `go test ./internal/backup ./internal/control ./internal/api -run 'Test.*Topology|Test.*Draft|Test.*ReplicaFactor|TestPeerReplication.*Authoriz|TestPeerReplication.*Cluster' -count=1`
+- [x] **Step 3: Bind draft apply to current server topology, correct topology/factor validation, and inject a control-state authorizer into the Peer API.**
+- [x] **Step 4: Run:** `go test ./internal/backup ./internal/control ./internal/api ./internal/rpc ./internal/agent -count=1`
+- [x] **Step 5: Commit:** `git commit -m "fix(replication): authorize topology-bound peer operations"`
 
 ### Task 8: RBAC, audit, metrics, and secret redaction
 

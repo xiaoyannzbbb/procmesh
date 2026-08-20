@@ -1810,9 +1810,14 @@ func (s *State) applyReplicationPolicyPut(b ReplicationPolicyPutBody) error {
 		}
 	}
 	if len(b.Routes) > 0 {
-		candidateCount := s.computeCandidateCount(b.SourceSelector, b.SourceIDs)
-		if b.ReplicaFactor > candidateCount {
+		availableTargets := s.admittedMemberCount() - 1
+		if availableTargets < 0 || b.ReplicaFactor > availableTargets {
 			return errcode.E(errcode.INVALID, "replica factor exceeds candidate count")
+		}
+		for _, route := range b.Routes {
+			if len(route.TargetNodeIDs) != b.ReplicaFactor {
+				return errcode.E(errcode.INVALID, "route target count does not match replica factor")
+			}
 		}
 	}
 	cur.PolicyID, cur.Name, cur.Enabled = b.PolicyID, name, b.Enabled
@@ -1895,6 +1900,16 @@ func (s *State) computeCandidateCount(selector string, selectorIDs []string) int
 	default:
 		return 0
 	}
+}
+
+func (s *State) admittedMemberCount() int {
+	count := 0
+	for _, member := range s.Members {
+		if member.Status == MemberAdmitted {
+			count++
+		}
+	}
+	return count
 }
 
 func mapsClone(in map[string]string) map[string]string {

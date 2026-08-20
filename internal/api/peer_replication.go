@@ -20,6 +20,11 @@ type PeerReplicationAPI struct {
 		ReplicateSnapshot(context.Context, backup.ReplicationTaskRequest) (int64, error)
 	}
 	AuthorizeReplication func(string, *procmeshv1.ReplicateSnapshotRequest) error
+	AuthorizeOperation   func(string, PeerOperation) error
+}
+
+type PeerOperation struct {
+	Kind, ClusterID, SourceNodeID, TargetNodeID, SnapshotID, SHA256, RunID, TaskID string
 }
 
 // PutSnapshot receives a snapshot from another agent.
@@ -28,17 +33,9 @@ func (p *PeerReplicationAPI) PutSnapshot(ctx context.Context, req *connect.Reque
 		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "peer store unavailable"))
 	}
 
-	// Extract peer node ID from mTLS client certificate
-	tlsState, err := rpc.TLSStateFromContext(ctx)
+	peerNodeID, err := p.authorizeOperation(ctx, req.Msg.ClusterId, PeerOperation{Kind: "PUT", ClusterID: req.Msg.ClusterId, SourceNodeID: "", TargetNodeID: p.NodeID, SnapshotID: req.Msg.SnapshotId, SHA256: req.Msg.Sha256, RunID: req.Msg.RunId, TaskID: req.Msg.TaskId})
 	if err != nil {
 		return nil, ToConnect(err)
-	}
-	peerClusterID, peerNodeID, err := rpc.PeerIdentity(tlsState)
-	if err != nil {
-		return nil, ToConnect(err)
-	}
-	if peerClusterID != p.ClusterID {
-		return nil, ToConnect(errcode.E(errcode.DENIED, "peer cluster mismatch"))
 	}
 
 	params := backup.ReceiveParams{
@@ -98,6 +95,9 @@ func (p *PeerReplicationAPI) CheckSnapshot(ctx context.Context, req *connect.Req
 	if p.PeerStore == nil {
 		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "peer store unavailable"))
 	}
+	if _, err := p.authorizeOperation(ctx, req.Msg.ClusterId, PeerOperation{Kind: "CHECK", ClusterID: req.Msg.ClusterId, SourceNodeID: req.Msg.SourceNodeId, TargetNodeID: p.NodeID, SnapshotID: req.Msg.SnapshotId, SHA256: req.Msg.Sha256}); err != nil {
+		return nil, ToConnect(err)
+	}
 
 	exists, matches, err := p.PeerStore.CheckSnapshot(ctx, req.Msg.SourceNodeId, req.Msg.ClusterId, req.Msg.SnapshotId, req.Msg.Sha256)
 	if err != nil {
@@ -117,6 +117,9 @@ func (p *PeerReplicationAPI) DeleteSnapshot(ctx context.Context, req *connect.Re
 	if p.PeerStore == nil {
 		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "peer store unavailable"))
 	}
+	if _, err := p.authorizeOperation(ctx, req.Msg.ClusterId, PeerOperation{Kind: "DELETE", ClusterID: req.Msg.ClusterId, SourceNodeID: req.Msg.SourceNodeId, TargetNodeID: p.NodeID, SnapshotID: req.Msg.SnapshotId}); err != nil {
+		return nil, ToConnect(err)
+	}
 
 	err := p.PeerStore.DeleteSnapshot(ctx, req.Msg.SourceNodeId, req.Msg.ClusterId, req.Msg.SnapshotId)
 	if err != nil {
@@ -135,6 +138,9 @@ func (p *PeerReplicationAPI) GetReplicaMetadata(ctx context.Context, req *connec
 	if p.PeerStore == nil {
 		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "peer store unavailable"))
 	}
+	if _, err := p.authorizeOperation(ctx, req.Msg.ClusterId, PeerOperation{Kind: "METADATA", ClusterID: req.Msg.ClusterId, SourceNodeID: req.Msg.SourceNodeId, TargetNodeID: p.NodeID, SnapshotID: req.Msg.SnapshotId}); err != nil {
+		return nil, ToConnect(err)
+	}
 
 	meta, err := p.PeerStore.GetReplicaMetadata(ctx, req.Msg.SourceNodeId, req.Msg.ClusterId, req.Msg.SnapshotId)
 	if err != nil {
@@ -152,4 +158,26 @@ func (p *PeerReplicationAPI) GetReplicaMetadata(ctx context.Context, req *connec
 	}
 
 	return connect.NewResponse(resp), nil
+}
+
+func (p *PeerReplicationAPI) authorizeOperation(ctx context.Context, requestClusterID string, operation PeerOperation) (string, error) {
+	tlsState, err := rpc.TLSStateFromContext(ctx)
+	if err != nil {
+		return "", errcode.E(errcode.DENIED, "mTLS required")
+	}
+	peerClusterID, peerNodeID, err := rpc.PeerIdentity(tlsState)
+	if err != nil || peerClusterID != p.ClusterID || requestClusterID != p.ClusterID {
+		return "", errcode.E(errcode.DENIED, "peer cluster mismatch")
+	}
+	if operation.SourceNodeID == "" {
+		operation.SourceNodeID = peerNodeID
+	} else if operation.SourceNodeID != peerNodeID {
+		return "", errcode.E(errcode.DENIED, "peer source mismatch")
+	}
+	if p.AuthorizeOperation != nil {
+		if err := p.AuthorizeOperation(peerNodeID, operation); err != nil {
+			return "", err
+		}
+	}
+	return peerNodeID, nil
 }

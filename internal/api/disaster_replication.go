@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -61,26 +62,18 @@ func (d *DisasterReplicationAPI) GetTopology(ctx context.Context, req *connect.R
 		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "cluster membership unavailable"))
 	}
 
-	st := d.StateFn()
-	nodes := d.Members()
+	nodes := d.replicationTopology()
 	topologyNodes := make([]*procmeshv1.AgentTopologyNode, 0, len(nodes))
 
 	for _, n := range nodes {
-		admitted := false
-		if member, ok := st.Members[n.NodeID]; ok {
-			admitted = member.Status == control.MemberAdmitted
-		}
-
-		alive := n.State == cluster.StateAlive
-
 		topologyNodes = append(topologyNodes, &procmeshv1.AgentTopologyNode{
 			NodeId:         n.NodeID,
-			Host:           n.Labels["host"],
-			Rack:           n.Labels["rack"],
-			Zone:           n.Labels["zone"],
-			CapacityWeight: 1.0, // Default weight
-			Admitted:       admitted,
-			Alive:          alive,
+			Host:           n.Host,
+			Rack:           n.Rack,
+			Zone:           n.Zone,
+			CapacityWeight: n.CapacityWeight,
+			Admitted:       n.Admitted,
+			Alive:          n.Alive,
 		})
 	}
 
@@ -101,27 +94,8 @@ func (d *DisasterReplicationAPI) GeneratePolicyDraft(ctx context.Context, req *c
 		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "cluster membership unavailable"))
 	}
 
-	// Build topology from membership
-	st := d.StateFn()
-	nodes := d.Members()
-	topologyNodes := make([]backup.AgentTopology, 0, len(nodes))
-	for _, n := range nodes {
-		admitted := false
-		if member, ok := st.Members[n.NodeID]; ok {
-			admitted = member.Status == control.MemberAdmitted
-		}
-		alive := n.State == cluster.StateAlive
-
-		topologyNodes = append(topologyNodes, backup.AgentTopology{
-			NodeID:         n.NodeID,
-			Host:           n.Labels["host"],
-			Rack:           n.Labels["rack"],
-			Zone:           n.Labels["zone"],
-			CapacityWeight: 1.0,
-			Admitted:       admitted,
-			Alive:          alive,
-		})
-	}
+	topologyNodes := d.replicationTopology()
+	draftRevision := topologyDraftRevision(topologyNodes)
 
 	// Generate routes
 	result, err := backup.GenerateRoutes(topologyNodes, int(req.Msg.ReplicaFactor), backup.TopologyConstraints{})
@@ -150,7 +124,7 @@ func (d *DisasterReplicationAPI) GeneratePolicyDraft(ctx context.Context, req *c
 	}
 
 	// Compute draft hash
-	draftHash := computeDraftHash(req.Msg, routes)
+	draftHash := computeDraftHashForTopology(req.Msg, routes, draftRevision)
 
 	draft := &procmeshv1.PolicyDraft{
 		Name:                req.Msg.Name,
@@ -170,7 +144,7 @@ func (d *DisasterReplicationAPI) GeneratePolicyDraft(ctx context.Context, req *c
 		VerifyAfterCopy:     req.Msg.VerifyAfterCopy,
 		BandwidthLimit:      req.Msg.BandwidthLimit,
 		TopologyConstraints: req.Msg.TopologyConstraints,
-		DraftRevision:       1,
+		DraftRevision:       draftRevision,
 		DraftHash:           draftHash,
 		GlobalWarnings:      result.Warnings,
 		InboundLoad:         inboundLoad,
@@ -205,8 +179,23 @@ func (d *DisasterReplicationAPI) ApplyPolicyDraft(ctx context.Context, req *conn
 		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "control plane unavailable"))
 	}
 
-	// Verify draft hash matches
-	expectedHash := computeDraftHash(&procmeshv1.GeneratePolicyDraftRequest{
+	if req.Msg.DraftRevision == 0 || req.Msg.DraftRevision != req.Msg.Draft.DraftRevision || req.Msg.DraftHash == "" || req.Msg.DraftHash != req.Msg.Draft.DraftHash {
+		return nil, ToConnect(errcode.E(errcode.CONFLICT, "draft revision or hash mismatch"))
+	}
+	topologyNodes := d.replicationTopology()
+	currentRevision := topologyDraftRevision(topologyNodes)
+	if req.Msg.DraftRevision != currentRevision {
+		return nil, ToConnect(errcode.E(errcode.CONFLICT, "topology changed since preview"))
+	}
+	generated, err := backup.GenerateRoutes(topologyNodes, int(req.Msg.Draft.ReplicaFactor), backup.TopologyConstraints{})
+	if err != nil {
+		return nil, ToConnect(err)
+	}
+	serverRoutes := make([]*procmeshv1.ReplicationRoute, 0, len(generated.Routes))
+	for _, route := range generated.Routes {
+		serverRoutes = append(serverRoutes, &procmeshv1.ReplicationRoute{SourceNodeId: route.SourceNodeID, TargetNodeIds: route.TargetNodeIDs, Warnings: route.Warnings})
+	}
+	draftRequest := &procmeshv1.GeneratePolicyDraftRequest{
 		Name:                req.Msg.Draft.Name,
 		Enabled:             req.Msg.Draft.Enabled,
 		SourceSelector:      req.Msg.Draft.SourceSelector,
@@ -223,9 +212,11 @@ func (d *DisasterReplicationAPI) ApplyPolicyDraft(ctx context.Context, req *conn
 		VerifyAfterCopy:     req.Msg.Draft.VerifyAfterCopy,
 		BandwidthLimit:      req.Msg.Draft.BandwidthLimit,
 		TopologyConstraints: req.Msg.Draft.TopologyConstraints,
-	}, req.Msg.Draft.Routes)
+	}
+	expectedHash := computeDraftHashForTopology(draftRequest, serverRoutes, currentRevision)
+	submittedHash := computeDraftHashForTopology(draftRequest, req.Msg.Draft.Routes, currentRevision)
 
-	if expectedHash != req.Msg.DraftHash {
+	if expectedHash != req.Msg.DraftHash || submittedHash != req.Msg.DraftHash {
 		return nil, ToConnect(errcode.E(errcode.CONFLICT, "draft hash mismatch"))
 	}
 
@@ -1027,6 +1018,10 @@ func replicationPolicyToProto(p control.ReplicationPolicy) *procmeshv1.Replicati
 }
 
 func computeDraftHash(req *procmeshv1.GeneratePolicyDraftRequest, routes []*procmeshv1.ReplicationRoute) string {
+	return computeDraftHashForTopology(req, routes, 0)
+}
+
+func computeDraftHashForTopology(req *procmeshv1.GeneratePolicyDraftRequest, routes []*procmeshv1.ReplicationRoute, topologyRevision int64) string {
 	// Sort routes for deterministic hash
 	sortedRoutes := make([]*procmeshv1.ReplicationRoute, len(routes))
 	copy(sortedRoutes, routes)
@@ -1036,16 +1031,57 @@ func computeDraftHash(req *procmeshv1.GeneratePolicyDraftRequest, routes []*proc
 
 	// Create a canonical representation
 	data := map[string]interface{}{
-		"name":            req.Name,
-		"enabled":         req.Enabled,
-		"source_selector": req.SourceSelector,
-		"source_ids":      req.SourceIds,
-		"replica_factor":  req.ReplicaFactor,
-		"routes":          sortedRoutes,
-		"trigger":         req.Trigger,
+		"name":                 req.Name,
+		"enabled":              req.Enabled,
+		"source_selector":      req.SourceSelector,
+		"source_ids":           req.SourceIds,
+		"replica_factor":       req.ReplicaFactor,
+		"routes":               sortedRoutes,
+		"trigger":              req.Trigger,
+		"primary_policy_ids":   req.PrimaryPolicyIds,
+		"schedule_cron":        req.ScheduleCron,
+		"timezone":             req.Timezone,
+		"retention_keep_last":  req.RetentionKeepLast,
+		"retention_keep_days":  req.RetentionKeepDays,
+		"retention_max_bytes":  req.RetentionMaxBytes,
+		"max_concurrency":      req.MaxConcurrency,
+		"verify_after_copy":    req.VerifyAfterCopy,
+		"bandwidth_limit":      req.BandwidthLimit,
+		"topology_constraints": req.TopologyConstraints,
+		"topology_revision":    topologyRevision,
 	}
 
 	jsonData, _ := json.Marshal(data)
 	hash := sha256.Sum256(jsonData)
 	return hex.EncodeToString(hash[:])
+}
+
+func (d *DisasterReplicationAPI) replicationTopology() []backup.AgentTopology {
+	state := d.state()
+	summaries := map[string]cluster.NodeSummary{}
+	if d.Members != nil {
+		for _, node := range d.Members() {
+			summaries[node.NodeID] = node
+		}
+	}
+	nodes := make([]backup.AgentTopology, 0, len(state.Members))
+	for nodeID, member := range state.Members {
+		if member.Status != control.MemberAdmitted {
+			continue
+		}
+		summary := summaries[nodeID]
+		nodes = append(nodes, backup.AgentTopology{NodeID: nodeID, Host: summary.Labels["host"], Rack: summary.Labels["rack"], Zone: summary.Labels["zone"], CapacityWeight: 1, Admitted: true, Alive: summary.State == cluster.StateAlive})
+	}
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].NodeID < nodes[j].NodeID })
+	return nodes
+}
+
+func topologyDraftRevision(nodes []backup.AgentTopology) int64 {
+	encoded, _ := json.Marshal(nodes)
+	sum := sha256.Sum256(encoded)
+	revision := int64(binary.BigEndian.Uint64(sum[:8]) & 0x7fffffffffffffff)
+	if revision == 0 {
+		return 1
+	}
+	return revision
 }

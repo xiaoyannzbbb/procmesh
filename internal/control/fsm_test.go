@@ -1777,7 +1777,7 @@ func TestFSM_ReplicationPolicyDeleteRejectsMissingPolicy(t *testing.T) {
 func TestFSM_ReplicationPolicyPutExpectedRevision(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	s := mustBootstrap(t, now)
-	for _, nodeID := range []string{"node-a", "node-b"} {
+	for _, nodeID := range []string{"node-a", "node-b", "node-c"} {
 		if err := s.Apply(mustEncode(t, control.CmdMemberPut, control.MemberPutBody{NodeID: nodeID, Status: control.MemberAdmitted}), now); err != nil {
 			t.Fatal(err)
 		}
@@ -1803,6 +1803,7 @@ func TestFSM_ReplicationPolicyPutExpectedRevision(t *testing.T) {
 	body.OperationID = "op-3"
 	body.ExpectedRevision = 1
 	body.ReplicaFactor = 2
+	body.Routes = []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b", "node-c"}}}
 	if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), now); err != nil {
 		t.Fatal(err)
 	}
@@ -1892,6 +1893,29 @@ func TestFSM_ReplicationPolicyPutReplicaFactorVsCandidates(t *testing.T) {
 	err = s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), now)
 	if !errcode.Is(err, errcode.INVALID) {
 		t.Fatalf("non-existent group should have 0 candidates, got %v", err)
+	}
+}
+
+func TestFSM_ReplicationPolicyPutReplicaFactorUsesAvailableTargetsPerSource(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := mustBootstrap(t, now)
+	for _, nodeID := range []string{"node-a", "node-b", "node-c"} {
+		if err := s.Apply(mustEncode(t, control.CmdMemberPut, control.MemberPutBody{NodeID: nodeID, Status: control.MemberAdmitted}), now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	body := control.ReplicationPolicyPutBody{
+		OperationID: "op-factor", PolicyID: "rp-factor", Name: "factor", Enabled: true,
+		SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"node-a"}, ReplicaFactor: 2, Trigger: "MANUAL",
+		Routes: []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b", "node-c"}}}, ExpectedRevision: -1,
+	}
+	if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), now); err != nil {
+		t.Fatalf("one source still has two admitted targets: %v", err)
+	}
+	body.OperationID, body.PolicyID, body.Name = "op-short", "rp-short", "short"
+	body.Routes = []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}}}
+	if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), now); !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("route shorter than factor must reject, got %v", err)
 	}
 }
 

@@ -269,11 +269,36 @@ func TestDisasterReplicationAPI_GeneratePolicyDraft(t *testing.T) {
 	if draft.DraftHash == "" {
 		t.Error("expected draft hash to be set")
 	}
-	if draft.DraftRevision != 1 {
-		t.Errorf("draft revision: got %d, want 1", draft.DraftRevision)
+	if draft.DraftRevision <= 0 {
+		t.Errorf("draft revision: got %d, want server topology revision", draft.DraftRevision)
 	}
 	if draft.TopologyHealth == "" {
 		t.Error("expected topology health to be set")
+	}
+}
+
+func TestDisasterReplicationAPI_GeneratePolicyDraftKeepsOfflineAdmittedMember(t *testing.T) {
+	api, state, authSvc := setupMinimalAPI(t)
+	state.Members["node-offline"] = control.Member{NodeID: "node-offline", Status: control.MemberAdmitted}
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := api.GeneratePolicyDraft(context.Background(), bearerReq(sid, &procmeshv1.GeneratePolicyDraftRequest{Name: "offline", SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1, Trigger: "MANUAL"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Msg.Draft.Routes) != 4 {
+		t.Fatalf("routes=%+v, want offline admitted source retained", resp.Msg.Draft.Routes)
+	}
+	found := false
+	for _, warning := range resp.Msg.Draft.GlobalWarnings {
+		if warning == "admitted-node-offline:node-offline" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("warnings=%v, want offline warning", resp.Msg.Draft.GlobalWarnings)
 	}
 }
 
@@ -382,6 +407,60 @@ func TestDisasterReplicationAPI_ApplyPolicyDraft_HashMismatch(t *testing.T) {
 	_, err = api.ApplyPolicyDraft(context.Background(), applyReq)
 	if err == nil {
 		t.Fatal("expected error for hash mismatch")
+	}
+}
+
+func TestDisasterReplicationAPI_ApplyPolicyDraftRejectsStaleTopology(t *testing.T) {
+	api, state, authSvc := setupMinimalAPI(t)
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated, err := api.GeneratePolicyDraft(context.Background(), bearerReq(sid, &procmeshv1.GeneratePolicyDraftRequest{Name: "stale", SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1, Trigger: "MANUAL"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.Members["node-4"] = control.Member{NodeID: "node-4", Status: control.MemberAdmitted}
+	_, err = api.ApplyPolicyDraft(context.Background(), bearerReq(sid, &procmeshv1.ApplyPolicyDraftRequest{PolicyId: "rp-stale", Draft: generated.Msg.Draft, DraftRevision: generated.Msg.Draft.DraftRevision, DraftHash: generated.Msg.Draft.DraftHash, ExpectedRevision: -1, Meta: &procmeshv1.MutationMeta{OperationId: "op-stale"}}))
+	if err == nil || connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("stale topology should conflict, got %v", err)
+	}
+}
+
+func TestDisasterReplicationAPI_ApplyPolicyDraftRejectsClientRehashedRoutes(t *testing.T) {
+	api, _, authSvc := setupMinimalAPI(t)
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := &procmeshv1.GeneratePolicyDraftRequest{Name: "forged", SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1, Trigger: "MANUAL"}
+	generated, err := api.GeneratePolicyDraft(context.Background(), bearerReq(sid, request))
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated.Msg.Draft.Routes[0].TargetNodeIds = []string{"node-3"}
+	forgedHash := computeDraftHashForTopology(request, generated.Msg.Draft.Routes, generated.Msg.Draft.DraftRevision)
+	generated.Msg.Draft.DraftHash = forgedHash
+	_, err = api.ApplyPolicyDraft(context.Background(), bearerReq(sid, &procmeshv1.ApplyPolicyDraftRequest{PolicyId: "rp-forged", Draft: generated.Msg.Draft, DraftRevision: generated.Msg.Draft.DraftRevision, DraftHash: forgedHash, ExpectedRevision: -1, Meta: &procmeshv1.MutationMeta{OperationId: "op-forged"}}))
+	if err == nil || connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("client-rehashed routes should conflict with server preview, got %v", err)
+	}
+}
+
+func TestDisasterReplicationAPI_ApplyPolicyDraftRejectsChangedRoutesWithOriginalHash(t *testing.T) {
+	api, _, authSvc := setupMinimalAPI(t)
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated, err := api.GeneratePolicyDraft(context.Background(), bearerReq(sid, &procmeshv1.GeneratePolicyDraftRequest{Name: "changed", SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1, Trigger: "MANUAL"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated.Msg.Draft.Routes[0].TargetNodeIds = []string{"node-3"}
+	_, err = api.ApplyPolicyDraft(context.Background(), bearerReq(sid, &procmeshv1.ApplyPolicyDraftRequest{PolicyId: "rp-changed", Draft: generated.Msg.Draft, DraftRevision: generated.Msg.Draft.DraftRevision, DraftHash: generated.Msg.Draft.DraftHash, ExpectedRevision: -1, Meta: &procmeshv1.MutationMeta{OperationId: "op-changed"}}))
+	if err == nil || connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("changed routes with original hash should conflict, got %v", err)
 	}
 }
 

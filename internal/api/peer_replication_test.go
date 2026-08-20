@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -83,6 +84,19 @@ func TestPeerReplicationAPI_RequiresAgentMTLS(t *testing.T) {
 	}
 }
 
+func TestPeerReplicationAPI_RejectsRequestClusterAndSourceMismatch(t *testing.T) {
+	creds := genAgentCreds(t, "cluster-1", "node-2")
+	client := newPeerReplicationClient(t, &PeerReplicationAPI{PeerStore: &backup.PeerStore{Root: t.TempDir()}, ClusterID: "cluster-1", NodeID: "node-1"}, &tls.ConnectionState{PeerCertificates: []*x509.Certificate{creds.Cert}})
+	_, err := client.CheckSnapshot(context.Background(), connect.NewRequest(&procmeshv1.CheckSnapshotRequest{SourceNodeId: "node-2", ClusterId: "cluster-other", SnapshotId: "snap", Sha256: strings.Repeat("a", 64)}))
+	if err == nil || connect.CodeOf(err) != connect.CodePermissionDenied {
+		t.Fatalf("request cluster mismatch should deny, got %v", err)
+	}
+	_, err = client.GetReplicaMetadata(context.Background(), connect.NewRequest(&procmeshv1.GetReplicaMetadataRequest{SourceNodeId: "node-3", ClusterId: "cluster-1", SnapshotId: "snap"}))
+	if err == nil || connect.CodeOf(err) != connect.CodePermissionDenied {
+		t.Fatalf("source identity mismatch should deny, got %v", err)
+	}
+}
+
 // CRITICAL #1: Test that SourceNodeID is extracted from mTLS certificate
 func TestPeerReplicationAPI_PutSnapshot(t *testing.T) {
 	dir := t.TempDir()
@@ -90,10 +104,15 @@ func TestPeerReplicationAPI_PutSnapshot(t *testing.T) {
 
 	creds := genAgentCreds(t, "cluster-1", "node-2")
 
+	var authorized PeerOperation
 	api := &PeerReplicationAPI{
 		PeerStore: peerStore,
 		ClusterID: "cluster-1",
 		NodeID:    "node-1",
+		AuthorizeOperation: func(_ string, operation PeerOperation) error {
+			authorized = operation
+			return nil
+		},
 	}
 
 	tlsState := &tls.ConnectionState{
@@ -128,6 +147,11 @@ func TestPeerReplicationAPI_PutSnapshot(t *testing.T) {
 	require.Equal(t, "snap-1", resp.Msg.SnapshotId)
 	require.Equal(t, "cluster-1", resp.Msg.ClusterId)
 	require.Equal(t, int32(2), resp.Msg.ProcessCount)
+	require.Equal(t, "PUT", authorized.Kind)
+	require.Equal(t, "node-2", authorized.SourceNodeID)
+	require.Equal(t, "node-1", authorized.TargetNodeID)
+	require.Equal(t, "run-1", authorized.RunID)
+	require.Equal(t, "task-1", authorized.TaskID)
 
 	// CRITICAL #1: Verify file is stored under peer node ID from mTLS cert (node-2), not API's NodeID (node-1)
 	expectedPath := filepath.Join(dir, "backup", "peer", "node-2", "cluster-1", "snap-1.json")

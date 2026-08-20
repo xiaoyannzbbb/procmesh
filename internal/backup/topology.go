@@ -30,10 +30,10 @@ type RouteDraftResult struct {
 }
 
 func GenerateRoutes(nodes []AgentTopology, replicaFactor int, constraints TopologyConstraints) (RouteDraftResult, error) {
-	// Filter eligible nodes (admitted and alive)
+	// Admission defines the durable topology; liveness only affects warnings.
 	eligible := make([]AgentTopology, 0, len(nodes))
 	for _, n := range nodes {
-		if n.Admitted && n.Alive {
+		if n.Admitted {
 			eligible = append(eligible, n)
 		}
 	}
@@ -46,6 +46,11 @@ func GenerateRoutes(nodes []AgentTopology, replicaFactor int, constraints Topolo
 	result := RouteDraftResult{
 		Routes:   make([]RouteDraft, 0, len(eligible)),
 		Warnings: []string{},
+	}
+	for _, node := range eligible {
+		if !node.Alive {
+			result.Warnings = append(result.Warnings, "admitted-node-offline:"+node.NodeID)
+		}
 	}
 
 	// N=1: single node, no replication possible

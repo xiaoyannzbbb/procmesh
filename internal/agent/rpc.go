@@ -331,6 +331,7 @@ func (r *rpcRuntime) localHandler() http.Handler {
 		NodeID:               r.nodeID,
 		Replicator:           r.backup,
 		AuthorizeReplication: r.authorizeReplicationTask,
+		AuthorizeOperation:   r.authorizePeerOperation,
 	})
 	mux.Handle(prp, prh)
 

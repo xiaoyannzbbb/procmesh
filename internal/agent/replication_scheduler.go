@@ -365,4 +365,38 @@ func (r *rpcRuntime) authorizeReplicationTask(leaderNodeID string, msg *procmesh
 	return nil
 }
 
+func (r *rpcRuntime) authorizePeerOperation(peerNodeID string, operation api.PeerOperation) error {
+	if r == nil || operation.ClusterID != r.clusterID || operation.TargetNodeID != r.nodeID {
+		return errcode.E(errcode.DENIED, "peer operation identity mismatch")
+	}
+	n := r.control()
+	if n == nil {
+		return errcode.E(errcode.DENIED, "peer operation control unavailable")
+	}
+	state := n.View()
+	member, admitted := state.Members[peerNodeID]
+	if !admitted || member.Status != control.MemberAdmitted || operation.SourceNodeID != peerNodeID {
+		return errcode.E(errcode.DENIED, "peer source not admitted")
+	}
+	if operation.Kind == "DELETE" {
+		return errcode.E(errcode.DENIED, "peer delete requires local retention authorization")
+	}
+	for _, task := range state.ReplicationTasks {
+		if task.SourceNodeID != peerNodeID || task.NodeID != r.nodeID || task.SnapshotID != operation.SnapshotID {
+			continue
+		}
+		if operation.SHA256 != "" && task.SHA256 != operation.SHA256 {
+			continue
+		}
+		if operation.Kind == "PUT" {
+			run, ok := state.ReplicationRuns[operation.RunID]
+			if !ok || task.RunID != operation.RunID || task.TaskID != operation.TaskID || run.Status != "RUNNING" || run.LeaseUntilUnix <= time.Now().Unix() || state.ReplicationRunTerms[run.RunID] != n.CurrentTerm() || (task.Status != "PENDING" && task.Status != "RUNNING") {
+				continue
+			}
+		}
+		return nil
+	}
+	return errcode.E(errcode.DENIED, "peer operation not authorized")
+}
+
 var _ peerReplicationForwarder = (*agentForwarder)(nil)

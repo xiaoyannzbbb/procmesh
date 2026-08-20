@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -65,8 +66,8 @@ func TestRPCRuntime_StartRPCLockedWiresClusterIDIntoPeerReplicationHandler(t *te
 	_, err = rpc.NewPeerReplicationClient(client, base).PutSnapshot(context.Background(), connect.NewRequest(&procmeshv1.PutSnapshotRequest{
 		ClusterId: clusterID, SnapshotId: "snapshot-runtime", Sha256: sha, RunId: "run-runtime", TaskId: "task-runtime", Payload: payload,
 	}))
-	if err != nil {
-		t.Fatalf("peer snapshot upload rejected valid mTLS cluster: %v", err)
+	if err == nil || connect.CodeOf(err) != connect.CodePermissionDenied || !strings.Contains(err.Error(), "control unavailable") {
+		t.Fatalf("valid mTLS cluster should reach control-state authorization, got %v", err)
 	}
 }
 

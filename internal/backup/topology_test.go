@@ -57,6 +57,29 @@ func TestGenerateRoutes_TwoNodes(t *testing.T) {
 	}
 }
 
+func TestGenerateRoutes_OfflineAdmittedNodeRemainsCandidate(t *testing.T) {
+	nodes := []backup.AgentTopology{
+		{NodeID: "node-a", Admitted: true, Alive: true},
+		{NodeID: "node-b", Admitted: true, Alive: false},
+	}
+	result, err := backup.GenerateRoutes(nodes, 1, backup.TopologyConstraints{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Routes) != 2 {
+		t.Fatalf("routes=%+v, want both admitted nodes", result.Routes)
+	}
+	foundOfflineWarning := false
+	for _, warning := range result.Warnings {
+		if warning == "admitted-node-offline:node-b" {
+			foundOfflineWarning = true
+		}
+	}
+	if !foundOfflineWarning {
+		t.Fatalf("warnings=%v, want offline admitted warning", result.Warnings)
+	}
+}
+
 func TestGenerateRoutes_ThreeNodeRing(t *testing.T) {
 	nodes := []backup.AgentTopology{
 		{NodeID: "node-a", Admitted: true, Alive: true},
