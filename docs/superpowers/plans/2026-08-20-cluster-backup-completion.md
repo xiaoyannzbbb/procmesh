@@ -93,11 +93,11 @@ git commit -m "fix(replication): secure internal peer request paths"
 - Produces: local resolver returns sink configuration without exposing secrets.
 - Produces: policy validation/health reports `CONFIG_MISSING` per frozen target.
 
-- [ ] **Step 1: Write failing config, redaction, and health tests**
-- [ ] **Step 2: Run RED:** `go test ./internal/agentcfg ./internal/agent ./internal/api -run 'Test.*S3Profile|Test.*DestinationHealth' -count=1`
-- [ ] **Step 3: Parse named profiles, inject the resolver into task execution, and return only profile name, endpoint host, and status from APIs.**
-- [ ] **Step 4: Run:** `go test ./internal/agentcfg ./internal/agent ./internal/api ./internal/backup -count=1`
-- [ ] **Step 5: Commit:** `git commit -m "feat(backup): resolve named s3 destination profiles"`
+- [x] **Step 1: Write failing config, redaction, and health tests**
+- [x] **Step 2: Run RED:** `go test ./internal/agentcfg ./internal/agent ./internal/api -run 'Test.*S3Profile|Test.*DestinationHealth' -count=1`
+- [x] **Step 3: Parse named profiles, inject the resolver into task execution, and return only profile name, endpoint host, and status from APIs.**
+- [x] **Step 4: Run:** `go test ./internal/agentcfg ./internal/agent ./internal/api ./internal/backup -count=1`
+- [x] **Step 5: Commit:** `git commit -m "feat(backup): resolve named s3 destination profiles"`
 
 ### Task 3: Remote backup task RPC and manual-run dispatch
 

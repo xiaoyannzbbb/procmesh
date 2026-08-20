@@ -986,6 +986,8 @@ message ClusterBackupDestinationHealth {
   string status = 3;
   string error_summary = 4;
   int64 checked_unix = 5;
+  string endpoint_host = 6;
+  string node_id = 7;
 }
 
 message CreateClusterBackupPolicyRequest {

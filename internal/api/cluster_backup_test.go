@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/version"
@@ -170,6 +171,40 @@ func TestClusterBackupAPI_PolicyResponseDoesNotExposeSecret(t *testing.T) {
 	}
 	if strings.Contains(resp.Msg.String(), "secret_key") || strings.Contains(resp.Msg.String(), "access_key") {
 		t.Fatalf("secret leaked: %s", resp.Msg.String())
+	}
+}
+
+func TestClusterBackupDestinationHealthSchemaExposesEndpointHost(t *testing.T) {
+	fields := (&procmeshv1.ClusterBackupDestinationHealth{}).ProtoReflect().Descriptor().Fields()
+	if fields.ByName("endpoint_host") == nil {
+		t.Fatal("ClusterBackupDestinationHealth.endpoint_host is required")
+	}
+}
+
+func TestClusterBackupAPI_GetDestinationHealthUsesLocalChecker(t *testing.T) {
+	now := time.Unix(123, 0)
+	client := newClusterBackupClient(t, &ClusterBackupAPI{
+		LocalID: "node-a", Now: func() time.Time { return now },
+		DestinationHealth: func(_ context.Context, sink, profile string) backup.DestinationHealth {
+			if sink != "s3" || profile != "archive" {
+				t.Fatalf("checker input sink=%q profile=%q", sink, profile)
+			}
+			return backup.DestinationHealth{Sink: sink, DestinationProfile: profile, EndpointHost: "s3.example.com", Status: "AVAILABLE"}
+		},
+	}, false)
+
+	resp, err := client.GetDestinationHealth(context.Background(), connect.NewRequest(&procmeshv1.GetClusterBackupDestinationHealthRequest{
+		Sink: "s3", DestinationProfile: "archive",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	health := resp.Msg.GetHealth()
+	if health.GetStatus() != "AVAILABLE" || health.GetEndpointHost() != "s3.example.com" || health.GetNodeId() != "node-a" || health.GetCheckedUnix() != now.Unix() {
+		t.Fatalf("health = %+v", health)
+	}
+	if strings.Contains(health.String(), "access_key") || strings.Contains(health.String(), "secret_key") {
+		t.Fatalf("credentials leaked: %s", health.String())
 	}
 }
 

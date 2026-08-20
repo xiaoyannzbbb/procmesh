@@ -332,6 +332,7 @@ func newBackupEngine(opt Options, mgr *process.Manager, st *store.Store, collect
 		fsDir = layout.BackupFSDir()
 	}
 	sinks := map[string]backup.Sink{"fs": backup.NewFSSink(fsDir)}
+	destinations := make(map[string]backup.Sink, len(opt.Backup.S3Profiles))
 	clusterID, _ := st.GetClusterID(context.Background())
 	if opt.Backup.S3.Bucket != "" {
 		s3, err := backup.NewS3Sink(backup.S3Config{
@@ -351,12 +352,37 @@ func newBackupEngine(opt Options, mgr *process.Manager, st *store.Store, collect
 			sinks["s3"] = s3
 		}
 	}
+	for name, profile := range opt.Backup.S3Profiles {
+		s3, err := backup.NewS3Sink(backup.S3Config{
+			Endpoint:  profile.Endpoint,
+			Bucket:    profile.Bucket,
+			Prefix:    profile.Prefix,
+			Region:    profile.Region,
+			AccessKey: profile.AccessKey,
+			SecretKey: profile.SecretKey,
+			Insecure:  profile.Insecure,
+			ClusterID: clusterID,
+			NodeID:    rt.nodeID,
+		})
+		if err != nil {
+			opt.Logger.Warn("s3 backup profile disabled", "profile", name, "error", err)
+			continue
+		}
+		destinations[name] = s3
+	}
 	return &backup.Engine{
 		Store:     st,
 		NodeID:    rt.nodeID,
 		ClusterID: clusterID,
 		Apply:     mgr,
 		Sinks:     sinks,
+		ResolveDestination: func(profile string) (backup.Sink, error) {
+			sink, ok := destinations[profile]
+			if !ok {
+				return nil, errcode.E(errcode.INVALID, "destination profile not configured")
+			}
+			return sink, nil
+		},
 		PeerStore: &backup.PeerStore{Root: opt.DataDir},
 		PeerPush: backup.PeerPushFunc(func(ctx context.Context, nodeID, sourceNodeID string, payload []byte) error {
 			return pushPeerSnapshot(ctx, fwd, rt, nodeID, sourceNodeID, payload)

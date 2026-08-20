@@ -10418,6 +10418,8 @@ type ClusterBackupDestinationHealth struct {
 	Status             string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
 	ErrorSummary       string                 `protobuf:"bytes,4,opt,name=error_summary,json=errorSummary,proto3" json:"error_summary,omitempty"`
 	CheckedUnix        int64                  `protobuf:"varint,5,opt,name=checked_unix,json=checkedUnix,proto3" json:"checked_unix,omitempty"`
+	EndpointHost       string                 `protobuf:"bytes,6,opt,name=endpoint_host,json=endpointHost,proto3" json:"endpoint_host,omitempty"`
+	NodeId             string                 `protobuf:"bytes,7,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -10485,6 +10487,20 @@ func (x *ClusterBackupDestinationHealth) GetCheckedUnix() int64 {
 		return x.CheckedUnix
 	}
 	return 0
+}
+
+func (x *ClusterBackupDestinationHealth) GetEndpointHost() string {
+	if x != nil {
+		return x.EndpointHost
+	}
+	return ""
+}
+
+func (x *ClusterBackupDestinationHealth) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
 }
 
 type CreateClusterBackupPolicyRequest struct {
@@ -15451,13 +15467,15 @@ const file_proto_procmesh_v1_api_proto_rawDesc = "" +
 	" \x01(\x03R\vcreatedUnix\x12!\n" +
 	"\fstarted_unix\x18\v \x01(\x03R\vstartedUnix\x12#\n" +
 	"\rfinished_unix\x18\f \x01(\x03R\ffinishedUnix\x124\n" +
-	"\x05tasks\x18\r \x03(\v2\x1e.procmesh.v1.ClusterBackupTaskR\x05tasks\"\xc5\x01\n" +
+	"\x05tasks\x18\r \x03(\v2\x1e.procmesh.v1.ClusterBackupTaskR\x05tasks\"\x83\x02\n" +
 	"\x1eClusterBackupDestinationHealth\x12\x12\n" +
 	"\x04sink\x18\x01 \x01(\tR\x04sink\x12/\n" +
 	"\x13destination_profile\x18\x02 \x01(\tR\x12destinationProfile\x12\x16\n" +
 	"\x06status\x18\x03 \x01(\tR\x06status\x12#\n" +
 	"\rerror_summary\x18\x04 \x01(\tR\ferrorSummary\x12!\n" +
-	"\fchecked_unix\x18\x05 \x01(\x03R\vcheckedUnix\"\x8b\x01\n" +
+	"\fchecked_unix\x18\x05 \x01(\x03R\vcheckedUnix\x12#\n" +
+	"\rendpoint_host\x18\x06 \x01(\tR\fendpointHost\x12\x17\n" +
+	"\anode_id\x18\a \x01(\tR\x06nodeId\"\x8b\x01\n" +
 	" CreateClusterBackupPolicyRequest\x12-\n" +
 	"\x04meta\x18\x01 \x01(\v2\x19.procmesh.v1.MutationMetaR\x04meta\x128\n" +
 	"\x06policy\x18\x02 \x01(\v2 .procmesh.v1.ClusterBackupPolicyR\x06policy\"]\n" +

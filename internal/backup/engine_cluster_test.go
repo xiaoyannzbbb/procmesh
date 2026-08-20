@@ -2,6 +2,7 @@ package backup_test
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -223,5 +224,96 @@ func TestEngine_Create_LegacyPathUnchanged(t *testing.T) {
 	expectedPath := filepath.Join(fsRoot, "snap-legacy.json")
 	if meta.Location != expectedPath {
 		t.Errorf("location = %q, want %q", meta.Location, expectedPath)
+	}
+}
+
+func TestEngine_RunClusterTaskUsesDestinationProfile(t *testing.T) {
+	ctx := context.Background()
+	st, _ := seedProcess(t)
+	profileRoot := filepath.Join(t.TempDir(), "archive")
+	var resolved string
+	e := &backup.Engine{
+		Store:     st,
+		NodeID:    "node-1",
+		ClusterID: "cluster-1",
+		ResolveDestination: func(profile string) (backup.Sink, error) {
+			resolved = profile
+			if profile != "archive" {
+				return nil, errcode.E(errcode.INVALID, "destination profile not configured")
+			}
+			return backup.NewFSSink(profileRoot), nil
+		},
+		NewID: func() (string, error) { return "snap-profile", nil },
+	}
+
+	result, err := e.RunClusterTask(ctx, backup.ClusterTaskRequest{
+		RunID: "run-profile", TaskID: "task-profile", NodeID: "node-1",
+		Sink: "s3", DestinationProfile: "archive",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved != "archive" {
+		t.Fatalf("resolved profile = %q", resolved)
+	}
+	if result.Status != "SUCCESS" || result.SnapshotID != "snap-profile" {
+		t.Fatalf("result = %+v", result)
+	}
+	want := filepath.Join(profileRoot, "cluster-1", "node-1", "snap-profile.json")
+	if _, err := filepath.Glob(want); err != nil {
+		t.Fatalf("profile sink path %q: %v", want, err)
+	}
+	if _, err := os.Stat(want); err != nil {
+		t.Fatalf("profile sink path %q: %v", want, err)
+	}
+}
+
+func TestEngine_RunClusterTaskReportsMissingDestinationProfile(t *testing.T) {
+	st, _ := seedProcess(t)
+	e := &backup.Engine{
+		Store: st, NodeID: "node-1", ClusterID: "cluster-1",
+		ResolveDestination: func(string) (backup.Sink, error) {
+			return nil, errcode.E(errcode.INVALID, "destination profile not configured")
+		},
+	}
+
+	result, err := e.RunClusterTask(context.Background(), backup.ClusterTaskRequest{
+		RunID: "run-missing", TaskID: "task-missing", NodeID: "node-1",
+		Sink: "s3", DestinationProfile: "missing",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "CONFIG_MISSING" || result.ErrorCode != "CONFIG_MISSING" {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestEngine_CheckDestinationReportsAvailabilityWithoutSecrets(t *testing.T) {
+	fake := newFakeS3(t)
+	s3, err := backup.NewS3Sink(backup.S3Config{
+		Endpoint: fake.URL, Bucket: "archive", Prefix: "p", Region: "us-east-1",
+		AccessKey: "sensitive-ak", SecretKey: "sensitive-sk", Insecure: true, HTTP: fake.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := &backup.Engine{ResolveDestination: func(profile string) (backup.Sink, error) {
+		if profile != "archive" {
+			return nil, errcode.E(errcode.INVALID, "destination profile not configured")
+		}
+		return s3, nil
+	}}
+
+	health := e.CheckDestination(context.Background(), "s3", "archive")
+	if health.Status != "AVAILABLE" || health.EndpointHost == "" || health.ErrorSummary != "" {
+		t.Fatalf("health = %+v", health)
+	}
+	if strings.Contains(health.EndpointHost+health.ErrorSummary, "sensitive-ak") || strings.Contains(health.EndpointHost+health.ErrorSummary, "sensitive-sk") {
+		t.Fatalf("credentials leaked: %+v", health)
+	}
+	missing := e.CheckDestination(context.Background(), "s3", "missing")
+	if missing.Status != "CONFIG_MISSING" || missing.ErrorSummary == "" {
+		t.Fatalf("missing health = %+v", missing)
 	}
 }

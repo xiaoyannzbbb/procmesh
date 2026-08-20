@@ -186,3 +186,42 @@ func TestLoadAll_BackupS3AndDefaultSchedule(t *testing.T) {
 		t.Fatalf("env override %+v %v", cfg.Backup.S3, err)
 	}
 }
+
+func TestLoadAll_BackupNamedS3Profiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	body := `backup:
+  s3_profiles:
+    archive:
+      endpoint: https://archive.example.com
+      bucket: archive-snaps
+      prefix: procmesh
+      region: eu-west-1
+      access_key: archive-ak
+      secret_key: archive-sk
+    local-test:
+      endpoint: http://127.0.0.1:9000
+      bucket: local-snaps
+      insecure: true
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := agentcfg.LoadAll(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive, ok := cfg.Backup.S3Profiles["archive"]
+	if !ok {
+		t.Fatalf("archive profile missing: %+v", cfg.Backup.S3Profiles)
+	}
+	if archive.Endpoint != "https://archive.example.com" || archive.Bucket != "archive-snaps" || archive.Prefix != "procmesh" || archive.Region != "eu-west-1" {
+		t.Fatalf("archive profile = %+v", archive)
+	}
+	if archive.AccessKey != "archive-ak" || archive.SecretKey != "archive-sk" {
+		t.Fatalf("archive credentials not parsed: %+v", archive)
+	}
+	if local := cfg.Backup.S3Profiles["local-test"]; !local.Insecure || local.Bucket != "local-snaps" {
+		t.Fatalf("local profile = %+v", local)
+	}
+}

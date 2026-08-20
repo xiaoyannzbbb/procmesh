@@ -70,21 +70,30 @@ type ClusterCreateOpts struct {
 	ProcessIDs         []string
 }
 
+type DestinationHealth struct {
+	Sink               string
+	DestinationProfile string
+	EndpointHost       string
+	Status             string
+	ErrorSummary       string
+}
+
 // Engine creates, reads, and deletes local process-spec snapshots.
 type Engine struct {
-	Store           *store.Store
-	NodeID          string
-	ClusterID       string
-	Apply           Applier
-	Sinks           map[string]Sink // "fs"|"s3"
-	PeerStore       *PeerStore
-	PeerPush        PeerPusher
-	Admitted        func(nodeID string) bool
-	DiskPercent     func() float64 // nil = 0
-	Now             func() time.Time
-	NewID           func() (string, error) // 测试注入；默认 UUID
-	LastSuccessUnix atomic.Int64
-	Schedule        string // 空 = 关；五字段 cron
+	Store              *store.Store
+	NodeID             string
+	ClusterID          string
+	Apply              Applier
+	Sinks              map[string]Sink // "fs"|"s3"
+	ResolveDestination func(profile string) (Sink, error)
+	PeerStore          *PeerStore
+	PeerPush           PeerPusher
+	Admitted           func(nodeID string) bool
+	DiskPercent        func() float64 // nil = 0
+	Now                func() time.Time
+	NewID              func() (string, error) // 测试注入；默认 UUID
+	LastSuccessUnix    atomic.Int64
+	Schedule           string // 空 = 关；五字段 cron
 }
 
 var _ Applier = (*process.Manager)(nil)
@@ -271,7 +280,7 @@ func (e *Engine) CreateCluster(ctx context.Context, opts ClusterCreateOpts) (Met
 		return Meta{}, err
 	}
 
-	sink, err := e.sink(opts.Sink)
+	sink, err := e.clusterSink(opts.Sink, opts.DestinationProfile)
 	if err != nil {
 		return Meta{}, err
 	}
@@ -648,6 +657,68 @@ func (e *Engine) sink(name string) (Sink, error) {
 	return nil, errcode.E(errcode.INVALID, "unknown sink")
 }
 
+type destinationProfileError struct {
+	profile string
+	err     error
+}
+
+func (e *destinationProfileError) Error() string {
+	return "destination profile not configured"
+}
+
+func (e *destinationProfileError) Unwrap() error { return e.err }
+
+func (e *Engine) clusterSink(name, profile string) (Sink, error) {
+	if name != "s3" || e.ResolveDestination == nil {
+		return e.sink(name)
+	}
+	if profile == "" {
+		return nil, &destinationProfileError{profile: profile, err: errcode.E(errcode.INVALID, "destination profile required")}
+	}
+	sink, err := e.ResolveDestination(profile)
+	if err != nil || sink == nil {
+		if err == nil {
+			err = errcode.E(errcode.INVALID, "destination profile not configured")
+		}
+		return nil, &destinationProfileError{profile: profile, err: err}
+	}
+	return sink, nil
+}
+
+type destinationChecker interface {
+	CheckDestination(context.Context) error
+	EndpointHost() string
+}
+
+func (e *Engine) CheckDestination(ctx context.Context, sinkName, profile string) DestinationHealth {
+	health := DestinationHealth{Sink: sinkName, DestinationProfile: profile}
+	sink, err := e.clusterSink(sinkName, profile)
+	if err != nil {
+		var profileErr *destinationProfileError
+		if errors.As(err, &profileErr) {
+			health.Status = "CONFIG_MISSING"
+			health.ErrorSummary = profileErr.Error()
+			return health
+		}
+		health.Status = "CONFIG_MISSING"
+		health.ErrorSummary = err.Error()
+		return health
+	}
+	checker, ok := sink.(destinationChecker)
+	if !ok {
+		health.Status = "AVAILABLE"
+		return health
+	}
+	health.EndpointHost = checker.EndpointHost()
+	if err := checker.CheckDestination(ctx); err != nil {
+		health.Status = "UNAVAILABLE"
+		health.ErrorSummary = err.Error()
+		return health
+	}
+	health.Status = "AVAILABLE"
+	return health
+}
+
 func (e *Engine) diskPercent() float64 {
 	if e.DiskPercent == nil {
 		return 0
@@ -790,6 +861,13 @@ func (e *Engine) RunClusterTask(ctx context.Context, req ClusterTaskRequest) (*T
 	}
 
 	if err != nil {
+		var profileErr *destinationProfileError
+		if errors.As(err, &profileErr) {
+			result.Status = "CONFIG_MISSING"
+			result.ErrorCode = "CONFIG_MISSING"
+			result.ErrorSummary = profileErr.Error()
+			return result, nil
+		}
 		result.Status = "FAILED"
 		// Extract error code
 		var e *errcode.Error
@@ -844,4 +922,3 @@ func (e *Engine) GetClusterTask(ctx context.Context, runID, taskID string) (*Tas
 
 	return result, nil
 }
-

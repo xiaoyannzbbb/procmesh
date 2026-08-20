@@ -168,6 +168,12 @@ func NewServer(opts Options) (*Server, error) {
 			}
 			return n.Apply(cmd, timeout)
 		},
+		DestinationHealth: func(ctx context.Context, sink, profile string) backup.DestinationHealth {
+			if opts.Backup == nil {
+				return backup.DestinationHealth{Sink: sink, DestinationProfile: profile, Status: "UNKNOWN", ErrorSummary: "backup engine unavailable"}
+			}
+			return opts.Backup.CheckDestination(ctx, sink, profile)
+		},
 	}, intercept)
 	mountConnect(engine, cbp, cbh)
 	var histStore *store.Store

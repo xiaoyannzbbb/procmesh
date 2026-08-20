@@ -227,6 +227,12 @@ func (r *rpcRuntime) localHandler() http.Handler {
 	mux.Handle(bpkup, bkh)
 	cbp, cbh := procmeshv1connect.NewClusterBackupServiceHandler(&api.ClusterBackupAPI{
 		Auth: r.auth, ControlFn: r.control, LocalOnly: true, LocalID: r.nodeID,
+		DestinationHealth: func(ctx context.Context, sink, profile string) backup.DestinationHealth {
+			if r.backup == nil {
+				return backup.DestinationHealth{Sink: sink, DestinationProfile: profile, Status: "UNKNOWN", ErrorSummary: "backup engine unavailable"}
+			}
+			return r.backup.CheckDestination(ctx, sink, profile)
+		},
 		LeaderTerm: func() uint64 {
 			n := r.control()
 			if n == nil {

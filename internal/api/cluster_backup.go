@@ -10,6 +10,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/auth"
+	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/rpc"
@@ -26,21 +27,22 @@ type ClusterBackupForwarder interface {
 }
 
 type ClusterBackupAPI struct {
-	Auth        *auth.Service
-	Control     *control.Node
-	ControlFn   func() *control.Node
-	StateFn     func() control.State
-	ApplyFn     func(control.Command, time.Duration) error
-	IsLeader    func() bool
-	LeaderTerm  func() uint64
-	LeaderAddr  func() string
-	LeaderRoute func() (Route, bool)
-	Forward     any
-	Router      *Router
-	Members     func() []string
-	LocalOnly   bool
-	LocalID     string
-	Now         func() time.Time
+	Auth              *auth.Service
+	Control           *control.Node
+	ControlFn         func() *control.Node
+	StateFn           func() control.State
+	ApplyFn           func(control.Command, time.Duration) error
+	IsLeader          func() bool
+	LeaderTerm        func() uint64
+	LeaderAddr        func() string
+	LeaderRoute       func() (Route, bool)
+	Forward           any
+	Router            *Router
+	Members           func() []string
+	LocalOnly         bool
+	LocalID           string
+	Now               func() time.Time
+	DestinationHealth func(context.Context, string, string) backup.DestinationHealth
 }
 
 func (s *ClusterBackupAPI) CreatePolicy(ctx context.Context, req *connect.Request[procmeshv1.CreateClusterBackupPolicyRequest]) (*connect.Response[procmeshv1.CreateClusterBackupPolicyResponse], error) {
@@ -288,10 +290,14 @@ func (s *ClusterBackupAPI) GetDestinationHealth(ctx context.Context, req *connec
 	if err := s.requireRead(ctx); err != nil {
 		return nil, err
 	}
-	// Destination credentials and sink clients are Agent-local. Until a health
-	// probe is attached, UNKNOWN is the conservative result and never implies
-	// that a configured destination is reachable.
-	return connect.NewResponse(&procmeshv1.GetClusterBackupDestinationHealthResponse{Health: &procmeshv1.ClusterBackupDestinationHealth{Sink: req.Msg.GetSink(), DestinationProfile: req.Msg.GetDestinationProfile(), Status: "UNKNOWN", CheckedUnix: s.now().Unix()}}), nil
+	health := backup.DestinationHealth{Sink: req.Msg.GetSink(), DestinationProfile: req.Msg.GetDestinationProfile(), Status: "UNKNOWN"}
+	if s.DestinationHealth != nil {
+		health = s.DestinationHealth(ctx, req.Msg.GetSink(), req.Msg.GetDestinationProfile())
+	}
+	return connect.NewResponse(&procmeshv1.GetClusterBackupDestinationHealthResponse{Health: &procmeshv1.ClusterBackupDestinationHealth{
+		Sink: health.Sink, DestinationProfile: health.DestinationProfile, EndpointHost: health.EndpointHost,
+		Status: health.Status, ErrorSummary: health.ErrorSummary, CheckedUnix: s.now().Unix(), NodeId: s.LocalID,
+	}}), nil
 }
 
 func (s *ClusterBackupAPI) requireWrite(ctx context.Context) error {

@@ -21,9 +21,10 @@ type Config struct {
 }
 
 type Backup struct {
-	FSDir    string
-	Schedule string
-	S3       S3
+	FSDir      string
+	Schedule   string
+	S3         S3
+	S3Profiles map[string]S3
 }
 
 type S3 struct {
@@ -94,9 +95,10 @@ type batchFile struct {
 }
 
 type backupFile struct {
-	FSDir    string  `yaml:"fs_dir"`
-	Schedule string  `yaml:"schedule"`
-	S3       *s3File `yaml:"s3"`
+	FSDir      string            `yaml:"fs_dir"`
+	Schedule   string            `yaml:"schedule"`
+	S3         *s3File           `yaml:"s3"`
+	S3Profiles map[string]s3File `yaml:"s3_profiles"`
 }
 
 type s3File struct {
@@ -232,6 +234,20 @@ func LoadAll(path string, required bool) (Config, error) {
 				AccessKey: s3.AccessKey,
 				SecretKey: s3.SecretKey,
 				Insecure:  s3.Insecure,
+			}
+		}
+		if len(bf.S3Profiles) > 0 {
+			cfg.Backup.S3Profiles = make(map[string]S3, len(bf.S3Profiles))
+			for name, profile := range bf.S3Profiles {
+				cfg.Backup.S3Profiles[name] = S3{
+					Endpoint:  profile.Endpoint,
+					Bucket:    profile.Bucket,
+					Prefix:    profile.Prefix,
+					Region:    profile.Region,
+					AccessKey: profile.AccessKey,
+					SecretKey: profile.SecretKey,
+					Insecure:  profile.Insecure,
+				}
 			}
 		}
 	}

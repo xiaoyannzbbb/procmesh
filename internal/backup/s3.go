@@ -71,6 +71,19 @@ func NewS3Sink(cfg S3Config) (*S3Sink, error) {
 // Name returns the sink identifier "s3".
 func (s *S3Sink) Name() string { return "s3" }
 
+func (s *S3Sink) EndpointHost() string {
+	u, err := url.Parse(s.cfg.Endpoint)
+	if err != nil {
+		return ""
+	}
+	return u.Host
+}
+
+func (s *S3Sink) CheckDestination(ctx context.Context) error {
+	_, err := s.List(ctx)
+	return err
+}
+
 func (s *S3Sink) validateID(id string) error {
 	if !snapshotIDRe.MatchString(id) {
 		return errcode.E(errcode.INVALID, "invalid snapshot id")
@@ -214,7 +227,6 @@ func (s *S3Sink) ListCluster(ctx context.Context, clusterID, policyID string) ([
 	}
 	return out, nil
 }
-
 
 // Delete removes a snapshot object by id.
 func (s *S3Sink) Delete(ctx context.Context, id string) error {
