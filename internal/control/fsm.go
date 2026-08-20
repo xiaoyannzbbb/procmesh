@@ -1886,6 +1886,7 @@ var allPermissions = []string{
 	"role.read", "role.manage",
 	"audit.read",
 	"batch.execute", "alert.read", "alert.manage", "backup.read", "backup.manage",
+	"replication.read", "replication.manage",
 	"command.execute", "command.execute.batch",
 }
 

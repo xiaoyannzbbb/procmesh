@@ -198,11 +198,24 @@ func setupAPIWithViewerUser(t *testing.T) (*DisasterReplicationAPI, *control.Sta
 	t.Helper()
 	api, state, authSvc := setupMinimalAPI(t)
 
-	// Create a viewer user without replication permissions
+	// Create a viewer user
 	cmd, err := control.EncodeCommand(control.CmdUserPut, control.UserPutBody{
 		ID:           "user-viewer",
 		Username:     "viewer",
 		PasswordHash: testAdminHash(t),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := authSvc.Store().Apply(cmd, time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	// Bind viewer role (has cluster.read, process.read, etc., but NOT replication.read)
+	cmd, err = control.EncodeCommand(control.CmdBindPut, control.BindPutBody{
+		UserID: "user-viewer",
+		RoleID: "viewer",
+		Scope:  control.ScopeCluster,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -843,6 +856,21 @@ func TestDisasterReplicationAPI_ListRuns(t *testing.T) {
 	}
 }
 
+func TestDisasterReplicationAPI_ListRuns_Unauthorized(t *testing.T) {
+	api, _, _, viewerSid := setupAPIWithViewerUser(t)
+	client := newDisasterReplicationClient(t, api)
+
+	req := bearerReq(viewerSid, &procmeshv1.ListRunsRequest{})
+
+	_, err := client.ListRuns(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error for viewer user without replication.read permission")
+	}
+	if !strings.Contains(err.Error(), "denied") && !strings.Contains(err.Error(), "DENIED") {
+		t.Errorf("expected DENIED error, got: %v", err)
+	}
+}
+
 func TestDisasterReplicationAPI_RetryFailedRoutes(t *testing.T) {
 	api, _, authSvc := setupMinimalAPI(t)
 	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
@@ -1111,6 +1139,21 @@ func TestDisasterReplicationAPI_ListRecoverableSnapshots_Empty(t *testing.T) {
 	// Should return empty list (stub implementation)
 	if len(resp.Msg.Snapshots) != 0 {
 		t.Errorf("expected empty snapshots list, got %d items", len(resp.Msg.Snapshots))
+	}
+}
+
+func TestDisasterReplicationAPI_ListRecoverableSnapshots_Unauthorized(t *testing.T) {
+	api, _, _, viewerSid := setupAPIWithViewerUser(t)
+	client := newDisasterReplicationClient(t, api)
+
+	req := bearerReq(viewerSid, &procmeshv1.ListRecoverableSnapshotsRequest{})
+
+	_, err := client.ListRecoverableSnapshots(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error for viewer user without replication.read permission")
+	}
+	if !strings.Contains(err.Error(), "denied") && !strings.Contains(err.Error(), "DENIED") {
+		t.Errorf("expected DENIED error, got: %v", err)
 	}
 }
 
