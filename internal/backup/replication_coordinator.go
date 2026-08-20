@@ -52,6 +52,7 @@ type ReplicationTaskUpdate struct {
 
 type ReplicationControlPlane interface {
 	ClaimReplicationRuns(context.Context, uint64, time.Time) ([]FrozenReplicationRun, error)
+	BeginReplicationTask(context.Context, ReplicationTaskUpdate) error
 	UpdateReplicationTask(context.Context, ReplicationTaskUpdate) error
 }
 
@@ -164,6 +165,9 @@ func (c *ReplicationCoordinator) DispatchRun(ctx context.Context, run FrozenRepl
 			defer wg.Done()
 			defer func() { <-sem }()
 			req := ReplicationTaskRequest{RunID: run.RunID, TaskID: task.TaskID, PolicyID: run.PolicyID, PolicyRevision: run.PolicyRevision, SourceNodeID: task.SourceNodeID, TargetNodeID: task.TargetNodeID, SnapshotID: task.SnapshotID, SHA256: task.SHA256, LeaderTerm: run.LeaderTerm, LeaseExpiresUnix: run.LeaseExpiresUnix}
+			if err := c.Control.BeginReplicationTask(leaseCtx, ReplicationTaskUpdate{RunID: req.RunID, TaskID: req.TaskID, SourceNodeID: req.SourceNodeID, TargetNodeID: req.TargetNodeID, SnapshotID: req.SnapshotID, SHA256: req.SHA256, Status: "RUNNING", LeaderTerm: req.LeaderTerm}); err != nil {
+				return
+			}
 			if err := c.Dispatcher.DispatchReplicationTask(leaseCtx, req); err != nil {
 				status, code, summary := classifyReplicationFailure(err, leaseCtx.Err())
 				_ = c.Control.UpdateReplicationTask(ctx, ReplicationTaskUpdate{RunID: req.RunID, TaskID: req.TaskID, SourceNodeID: req.SourceNodeID, TargetNodeID: req.TargetNodeID, SnapshotID: req.SnapshotID, SHA256: req.SHA256, Status: status, ErrorCode: code, ErrorSummary: summary, LeaderTerm: req.LeaderTerm})

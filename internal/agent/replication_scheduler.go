@@ -291,6 +291,22 @@ func replicationRetryable(status string) bool {
 	return status == "PENDING" || status == "FAILED" || status == "TIMEOUT" || status == "UNAVAILABLE" || status == "CONFIG_MISSING" || status == "SKIPPED" || status == "RETENTION_FAILED"
 }
 
+func applyBeginReplicationTask(n replicationCommandApplier, update backup.ReplicationTaskUpdate, now time.Time) error {
+	cmd, err := control.EncodeCommand(control.CmdBackupTaskUpdate, control.UpdateTaskBody{OperationID: "replication-begin-" + update.RunID + ":" + update.TaskID, LeaderTerm: update.LeaderTerm, Replication: true, Task: control.ClusterBackupTask{RunID: update.RunID, TaskID: update.TaskID, SourceNodeID: update.SourceNodeID, NodeID: update.TargetNodeID, SnapshotID: update.SnapshotID, SHA256: update.SHA256, Status: "RUNNING", UpdatedUnix: now.Unix()}})
+	if err != nil {
+		return err
+	}
+	return n.Apply(cmd, 5*time.Second)
+}
+
+func (a raftReplicationControl) BeginReplicationTask(_ context.Context, update backup.ReplicationTaskUpdate) error {
+	n := a.runtime.control()
+	if n == nil {
+		return fmt.Errorf("control plane unavailable")
+	}
+	return applyBeginReplicationTask(n, update, time.Now())
+}
+
 func (a raftReplicationControl) UpdateReplicationTask(_ context.Context, update backup.ReplicationTaskUpdate) error {
 	n := a.runtime.control()
 	if n == nil {
@@ -359,10 +375,16 @@ func (r *rpcRuntime) authorizeReplicationTask(leaderNodeID string, msg *procmesh
 		return errcode.E(errcode.CONFLICT, "replication run changed")
 	}
 	task, ok := state.ReplicationTasks[msg.GetRunId()+":"+msg.GetTaskId()]
-	if !ok || task.SourceNodeID != r.nodeID || task.NodeID != msg.GetTargetNodeId() || task.SnapshotID != msg.GetSnapshotId() || task.SHA256 != msg.GetSha256() || !replicationRetryable(task.Status) {
+	if !ok || !replicationTaskMatchesDispatch(task, msg, r.nodeID) {
 		return errcode.E(errcode.CONFLICT, "replication task changed")
 	}
 	return nil
+}
+
+func replicationTaskMatchesDispatch(task control.ClusterBackupTask, msg *procmeshv1.ReplicateSnapshotRequest, sourceNodeID string) bool {
+	return msg != nil && task.Status == "RUNNING" && task.RunID == msg.GetRunId() && task.TaskID == msg.GetTaskId() &&
+		task.SourceNodeID == sourceNodeID && task.SourceNodeID == msg.GetSourceNodeId() && task.NodeID == msg.GetTargetNodeId() &&
+		task.SnapshotID == msg.GetSnapshotId() && task.SHA256 == msg.GetSha256()
 }
 
 func (r *rpcRuntime) authorizePeerOperation(peerNodeID string, operation api.PeerOperation) error {

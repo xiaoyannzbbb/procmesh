@@ -1473,6 +1473,9 @@ func (s *State) applyUpdateTask(b UpdateTaskBody) error {
 	}
 	runs, tasks := runMaps(s, b.Replication)
 	terms := runTerms(s, b.Replication)
+	if b.Replication && b.Task.Status == "RUNNING" {
+		return applyBeginReplicationTask(b, runs, tasks, terms)
+	}
 	if term := terms[b.Task.RunID]; term > b.LeaderTerm {
 		return errcode.E(errcode.CONFLICT, "stale leader term")
 	}
@@ -1499,6 +1502,29 @@ func (s *State) applyUpdateTask(b UpdateTaskBody) error {
 			s.syncBackupFire(run.RunID, b.LeaderTerm, 0, 0, run.Status)
 		}
 	}
+	return nil
+}
+
+func applyBeginReplicationTask(b UpdateTaskBody, runs map[string]ClusterBackupRun, tasks map[string]ClusterBackupTask, terms map[string]uint64) error {
+	run, ok := runs[b.Task.RunID]
+	if !ok {
+		return errcode.E(errcode.NOT_FOUND, "run not found")
+	}
+	if terms[b.Task.RunID] != b.LeaderTerm || run.Status != "RUNNING" || b.Task.UpdatedUnix <= 0 || run.LeaseUntilUnix <= b.Task.UpdatedUnix {
+		return errcode.E(errcode.CONFLICT, "replication run changed")
+	}
+	key := taskMapKey(b.Task)
+	current, ok := tasks[key]
+	if !ok || current.RunID != b.Task.RunID || current.TaskID != b.Task.TaskID || current.SourceNodeID != b.Task.SourceNodeID || current.NodeID != b.Task.NodeID || current.SnapshotID != b.Task.SnapshotID || current.SHA256 != b.Task.SHA256 || (current.Status != "PENDING" && !retryableTaskStatus(current.Status)) {
+		return errcode.E(errcode.CONFLICT, "replication task changed")
+	}
+	current.Status = "RUNNING"
+	current.Bytes = 0
+	current.ErrorCode = ""
+	current.ErrorSummary = ""
+	current.LeaderTerm = b.LeaderTerm
+	current.UpdatedUnix = b.Task.UpdatedUnix
+	tasks[key] = current
 	return nil
 }
 

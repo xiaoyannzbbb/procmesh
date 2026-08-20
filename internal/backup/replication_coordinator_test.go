@@ -2,21 +2,152 @@ package backup_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/hashicorp/raft"
 	"github.com/qleelulu/procmesh/internal/backup"
+	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/errcode"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 )
 
 type replicationControlFake struct {
-	mu      sync.Mutex
-	runs    []backup.FrozenReplicationRun
-	updates []backup.ReplicationTaskUpdate
+	mu       sync.Mutex
+	runs     []backup.FrozenReplicationRun
+	updates  []backup.ReplicationTaskUpdate
+	beginErr error
+}
+
+type replicationFSMControl struct {
+	fsm *control.FSM
+	now time.Time
+}
+
+func (c *replicationFSMControl) ClaimReplicationRuns(context.Context, uint64, time.Time) ([]backup.FrozenReplicationRun, error) {
+	return nil, nil
+}
+
+func (c *replicationFSMControl) BeginReplicationTask(_ context.Context, update backup.ReplicationTaskUpdate) error {
+	update.Status = "RUNNING"
+	return c.apply(update)
+}
+
+func (c *replicationFSMControl) UpdateReplicationTask(_ context.Context, update backup.ReplicationTaskUpdate) error {
+	return c.apply(update)
+}
+
+func (c *replicationFSMControl) apply(update backup.ReplicationTaskUpdate) error {
+	cmd, err := control.EncodeCommand(control.CmdBackupTaskUpdate, control.UpdateTaskBody{
+		OperationID: "test-replication-" + update.RunID + ":" + update.TaskID,
+		LeaderTerm:  update.LeaderTerm,
+		Replication: true,
+		Task: control.ClusterBackupTask{
+			RunID: update.RunID, TaskID: update.TaskID, SourceNodeID: update.SourceNodeID, NodeID: update.TargetNodeID,
+			SnapshotID: update.SnapshotID, SHA256: update.SHA256, Status: update.Status, Bytes: update.Bytes,
+			ErrorCode: update.ErrorCode, ErrorSummary: update.ErrorSummary, UpdatedUnix: c.now.Unix(),
+		},
+	})
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(cmd)
+	if err != nil {
+		return err
+	}
+	if result := c.fsm.Apply(&raft.Log{Data: raw, AppendedAt: c.now}); result != nil {
+		if applyErr, ok := result.(error); ok {
+			return applyErr
+		}
+		return fmt.Errorf("unexpected raft apply result")
+	}
+	return nil
+}
+
+func applyReplicationFSMCommand(t *testing.T, fsm *control.FSM, now time.Time, typ string, body any) {
+	t.Helper()
+	cmd, err := control.EncodeCommand(typ, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result := fsm.Apply(&raft.Log{Data: raw, AppendedAt: now}); result != nil {
+		t.Fatalf("apply %s: %v", typ, result)
+	}
+}
+
+func TestReplicationCoordinator_BeginsRetryBeforeDispatch(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	fsm := control.NewFSM()
+	for _, nodeID := range []string{"source", "target", "other-target"} {
+		applyReplicationFSMCommand(t, fsm, now, control.CmdMemberPut, control.MemberPutBody{NodeID: nodeID, Status: control.MemberAdmitted})
+	}
+	applyReplicationFSMCommand(t, fsm, now, control.CmdReplicationPolicyPut, control.ReplicationPolicyPutBody{
+		OperationID: "policy", PolicyID: "policy", Name: "policy", Enabled: true,
+		SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"source"}, ReplicaFactor: 2,
+		Routes:  []control.ReplicationRoute{{SourceNodeID: "source", TargetNodeIDs: []string{"target", "other-target"}}},
+		Trigger: "MANUAL", ExpectedRevision: -1,
+	})
+	run := control.ClusterBackupRun{
+		RunID: "run", PolicyID: "policy", PolicyRevision: 1, TargetNodeIDs: []string{"source"}, Status: "RUNNING",
+		CreatedUnix: now.Unix(), StartedUnix: now.Unix(), LeaseUntilUnix: now.Add(time.Minute).Unix(),
+	}
+	retryTask := control.ClusterBackupTask{RunID: run.RunID, TaskID: "retry", SourceNodeID: "source", NodeID: "target", SnapshotID: "snapshot", SHA256: sha, Status: "PENDING"}
+	otherTask := control.ClusterBackupTask{RunID: run.RunID, TaskID: "other", SourceNodeID: "source", NodeID: "other-target", SnapshotID: "other-snapshot", SHA256: sha, Status: "PENDING"}
+	applyReplicationFSMCommand(t, fsm, now, control.CmdBackupRunCreate, control.CreateRunBody{OperationID: "create", Run: run, Tasks: []control.ClusterBackupTask{retryTask, otherTask}, LeaderTerm: 7, Replication: true})
+	retryTask.Status, retryTask.ErrorCode, retryTask.ErrorSummary = "UNAVAILABLE", "UNAVAILABLE", "safe summary"
+	applyReplicationFSMCommand(t, fsm, now, control.CmdBackupTaskUpdate, control.UpdateTaskBody{OperationID: "fail", Task: retryTask, LeaderTerm: 7, Replication: true})
+
+	controlPlane := &replicationFSMControl{fsm: fsm, now: now}
+	dispatches := 0
+	dispatcher := replicationDispatcherFunc(func(_ context.Context, request backup.ReplicationTaskRequest) error {
+		dispatches++
+		got := fsm.View().ReplicationTasks[request.RunID+":"+request.TaskID]
+		if got.Status != "RUNNING" {
+			return errcode.E(errcode.CONFLICT, "task was not begun")
+		}
+		return controlPlane.UpdateReplicationTask(context.Background(), backup.ReplicationTaskUpdate{
+			RunID: request.RunID, TaskID: request.TaskID, SourceNodeID: request.SourceNodeID, TargetNodeID: request.TargetNodeID,
+			SnapshotID: request.SnapshotID, SHA256: request.SHA256, Status: "SUCCEEDED", LeaderTerm: request.LeaderTerm,
+		})
+	})
+	coordinator := backup.NewReplicationCoordinator(backup.ReplicationCoordinatorConfig{Control: controlPlane, Dispatcher: dispatcher, Now: func() time.Time { return now }})
+	coordinator.DispatchRun(context.Background(), backup.FrozenReplicationRun{
+		RunID: run.RunID, PolicyID: run.PolicyID, PolicyRevision: run.PolicyRevision, LeaderTerm: 7,
+		LeaseExpiresUnix: run.LeaseUntilUnix,
+		Tasks:            []backup.FrozenReplicationTask{{TaskID: retryTask.TaskID, SourceNodeID: retryTask.SourceNodeID, TargetNodeID: retryTask.NodeID, SnapshotID: retryTask.SnapshotID, SHA256: retryTask.SHA256, Status: retryTask.Status}},
+	})
+
+	got := fsm.View().ReplicationTasks[run.RunID+":"+retryTask.TaskID]
+	if dispatches != 1 || got.Status != "SUCCEEDED" {
+		t.Fatalf("dispatches=%d task=%+v", dispatches, got)
+	}
+	if got.RunID != "run" || got.TaskID != "retry" || got.SourceNodeID != "source" || got.NodeID != "target" || got.SnapshotID != "snapshot" || got.SHA256 != sha {
+		t.Fatalf("immutable retry identity changed: %+v", got)
+	}
+}
+
+func TestReplicationCoordinator_BeginRejectionPreventsDispatch(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	controlPlane := &replicationControlFake{beginErr: errcode.E(errcode.CONFLICT, "stale retry")}
+	dispatcher := &replicationDispatcherFake{}
+	coordinator := backup.NewReplicationCoordinator(backup.ReplicationCoordinatorConfig{Control: controlPlane, Dispatcher: dispatcher, Now: func() time.Time { return now }})
+	coordinator.DispatchRun(context.Background(), backup.FrozenReplicationRun{
+		RunID: "run", PolicyID: "policy", LeaderTerm: 7, LeaseExpiresUnix: now.Add(time.Minute).Unix(),
+		Tasks: []backup.FrozenReplicationTask{{TaskID: "task", SourceNodeID: "source", TargetNodeID: "target", SnapshotID: "snapshot", SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Status: "UNAVAILABLE"}},
+	})
+	if len(dispatcher.dispatch) != 0 {
+		t.Fatalf("dispatch after rejected begin: %+v", dispatcher.dispatch)
+	}
 }
 
 func TestReplicationCoordinator_ChecksumConflictIsTerminalFailed(t *testing.T) {
@@ -59,6 +190,10 @@ func (f replicationDispatcherFunc) DispatchReplicationTask(ctx context.Context, 
 
 func (f *replicationControlFake) ClaimReplicationRuns(context.Context, uint64, time.Time) ([]backup.FrozenReplicationRun, error) {
 	return append([]backup.FrozenReplicationRun(nil), f.runs...), nil
+}
+
+func (f *replicationControlFake) BeginReplicationTask(context.Context, backup.ReplicationTaskUpdate) error {
+	return f.beginErr
 }
 
 func (f *replicationControlFake) UpdateReplicationTask(_ context.Context, update backup.ReplicationTaskUpdate) error {

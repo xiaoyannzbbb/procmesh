@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/control"
+	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 )
 
 const replicationTestSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -214,6 +216,57 @@ func TestReconcileMissingReplicationTasksDoesNotDependOnMutablePolicy(t *testing
 type recordingReplicationApplier struct {
 	commands []control.Command
 	err      error
+}
+
+func TestReplicationRetryBeginCommandContainsOnlySafeFrozenMetadata(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	applier := &recordingReplicationApplier{}
+	update := backup.ReplicationTaskUpdate{
+		RunID: "run", TaskID: "task", SourceNodeID: "source", TargetNodeID: "target",
+		SnapshotID: "snapshot", SHA256: replicationTestSHA, Bytes: 42,
+		ErrorCode: "UNAVAILABLE", ErrorSummary: "safe summary", LeaderTerm: 7,
+	}
+	if err := applyBeginReplicationTask(applier, update, now); err != nil {
+		t.Fatal(err)
+	}
+	if len(applier.commands) != 1 || applier.commands[0].Type != control.CmdBackupTaskUpdate {
+		t.Fatalf("commands=%+v", applier.commands)
+	}
+	var body control.UpdateTaskBody
+	if err := json.Unmarshal(applier.commands[0].Body, &body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.Replication || body.LeaderTerm != 7 || body.Task.Status != "RUNNING" || body.Task.UpdatedUnix != now.Unix() {
+		t.Fatalf("begin body=%+v", body)
+	}
+	if body.Task.RunID != "run" || body.Task.TaskID != "task" || body.Task.SourceNodeID != "source" || body.Task.NodeID != "target" || body.Task.SnapshotID != "snapshot" || body.Task.SHA256 != replicationTestSHA {
+		t.Fatalf("frozen identity changed: %+v", body.Task)
+	}
+	if body.Task.Bytes != 0 || body.Task.ErrorCode != "" || body.Task.ErrorSummary != "" {
+		t.Fatalf("prior result metadata retained: %+v", body.Task)
+	}
+}
+
+func TestReplicationRetryAuthorizationRequiresRunningTask(t *testing.T) {
+	task := control.ClusterBackupTask{
+		RunID: "run", TaskID: "task", SourceNodeID: "source", NodeID: "target",
+		SnapshotID: "snapshot", SHA256: replicationTestSHA, Status: "UNAVAILABLE",
+	}
+	request := &procmeshv1.ReplicateSnapshotRequest{
+		RunId: "run", TaskId: "task", SourceNodeId: "source", TargetNodeId: "target",
+		SnapshotId: "snapshot", Sha256: replicationTestSHA,
+	}
+	if replicationTaskMatchesDispatch(task, request, "source") {
+		t.Fatal("failure-state task authorized before durable begin")
+	}
+	task.Status = "RUNNING"
+	if !replicationTaskMatchesDispatch(task, request, "source") {
+		t.Fatal("running task rejected after durable begin")
+	}
+	request.SnapshotId = "changed"
+	if replicationTaskMatchesDispatch(task, request, "source") {
+		t.Fatal("changed frozen identity authorized")
+	}
 }
 
 func (a *recordingReplicationApplier) Apply(command control.Command, _ time.Duration) error {

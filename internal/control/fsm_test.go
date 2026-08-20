@@ -470,6 +470,77 @@ func TestFSM_ReplicationRetryPreservesFrozenSnapshotBinding(t *testing.T) {
 	}
 }
 
+func TestFSM_BeginReplicationTask(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	newState := func() *control.State {
+		state := control.NewState()
+		state.ReplicationRuns["run"] = control.ClusterBackupRun{RunID: "run", PolicyID: "policy", PolicyRevision: 3, Status: "RUNNING", LeaseUntilUnix: now.Add(time.Minute).Unix()}
+		state.ReplicationRunTerms["run"] = 7
+		state.ReplicationTasks["run:task"] = control.ClusterBackupTask{
+			RunID: "run", TaskID: "task", SourceNodeID: "source", NodeID: "target", SnapshotID: "snapshot", SHA256: sha,
+			Status: "UNAVAILABLE", Bytes: 42, ErrorCode: "UNAVAILABLE", ErrorSummary: "safe summary", LeaderTerm: 7, UpdatedUnix: now.Add(-time.Minute).Unix(),
+		}
+		return state
+	}
+	begin := func(state *control.State, term uint64, task control.ClusterBackupTask) error {
+		task.Status = "RUNNING"
+		task.UpdatedUnix = now.Unix()
+		return state.UpdateTask(control.UpdateTaskBody{OperationID: "begin", Task: task, LeaderTerm: term, Replication: true})
+	}
+
+	t.Run("moves retryable task to running without changing identity", func(t *testing.T) {
+		state := newState()
+		if err := begin(state, 7, state.ReplicationTasks["run:task"]); err != nil {
+			t.Fatal(err)
+		}
+		got := state.ReplicationTasks["run:task"]
+		if got.Status != "RUNNING" || got.Bytes != 0 || got.ErrorCode != "" || got.ErrorSummary != "" {
+			t.Fatalf("begun task=%+v", got)
+		}
+		if got.RunID != "run" || got.TaskID != "task" || got.SourceNodeID != "source" || got.NodeID != "target" || got.SnapshotID != "snapshot" || got.SHA256 != sha {
+			t.Fatalf("immutable identity changed: %+v", got)
+		}
+	})
+
+	for _, tc := range []struct {
+		name   string
+		mutate func(*control.State, *control.ClusterBackupTask)
+	}{
+		{name: "stale term", mutate: func(_ *control.State, task *control.ClusterBackupTask) { task.LeaderTerm = 6 }},
+		{name: "expired lease", mutate: func(state *control.State, _ *control.ClusterBackupTask) {
+			run := state.ReplicationRuns["run"]
+			run.LeaseUntilUnix = now.Unix()
+			state.ReplicationRuns["run"] = run
+		}},
+		{name: "changed identity", mutate: func(_ *control.State, task *control.ClusterBackupTask) { task.SnapshotID = "changed" }},
+		{name: "succeeded task", mutate: func(state *control.State, task *control.ClusterBackupTask) {
+			task.Status = "SUCCEEDED"
+			state.ReplicationTasks["run:task"] = *task
+		}},
+	} {
+		t.Run("rejects "+tc.name, func(t *testing.T) {
+			state := newState()
+			task := state.ReplicationTasks["run:task"]
+			tc.mutate(state, &task)
+			term := uint64(7)
+			if tc.name == "stale term" {
+				term = 6
+			}
+			if err := begin(state, term, task); !errcode.Is(err, errcode.CONFLICT) {
+				t.Fatalf("begin error=%v, want CONFLICT", err)
+			}
+			got := state.ReplicationTasks["run:task"]
+			if tc.name != "succeeded task" && got.Status != "UNAVAILABLE" {
+				t.Fatalf("task changed after rejected begin: %+v", got)
+			}
+			if tc.name == "succeeded task" && got.Status != "SUCCEEDED" {
+				t.Fatalf("succeeded task changed after rejected begin: %+v", got)
+			}
+		})
+	}
+}
+
 func TestFSM_ReplicationAggregatesRoutesSharingTarget(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	for name, statuses := range map[string][]string{"succeeded": {"SUCCEEDED", "SUCCEEDED"}, "partial": {"SUCCEEDED", "FAILED"}, "failed": {"FAILED", "FAILED"}} {
