@@ -11447,6 +11447,10 @@ type RunClusterBackupTaskRequest struct {
 	PolicyRevision     int64                  `protobuf:"varint,4,opt,name=policy_revision,json=policyRevision,proto3" json:"policy_revision,omitempty"`
 	Sink               string                 `protobuf:"bytes,5,opt,name=sink,proto3" json:"sink,omitempty"`
 	DestinationProfile string                 `protobuf:"bytes,6,opt,name=destination_profile,json=destinationProfile,proto3" json:"destination_profile,omitempty"`
+	PolicyId           string                 `protobuf:"bytes,7,opt,name=policy_id,json=policyId,proto3" json:"policy_id,omitempty"`
+	LeaderTerm         uint64                 `protobuf:"varint,8,opt,name=leader_term,json=leaderTerm,proto3" json:"leader_term,omitempty"`
+	LeaseExpiresUnix   int64                  `protobuf:"varint,9,opt,name=lease_expires_unix,json=leaseExpiresUnix,proto3" json:"lease_expires_unix,omitempty"`
+	ProcessIds         []string               `protobuf:"bytes,10,rep,name=process_ids,json=processIds,proto3" json:"process_ids,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -11521,6 +11525,34 @@ func (x *RunClusterBackupTaskRequest) GetDestinationProfile() string {
 		return x.DestinationProfile
 	}
 	return ""
+}
+
+func (x *RunClusterBackupTaskRequest) GetPolicyId() string {
+	if x != nil {
+		return x.PolicyId
+	}
+	return ""
+}
+
+func (x *RunClusterBackupTaskRequest) GetLeaderTerm() uint64 {
+	if x != nil {
+		return x.LeaderTerm
+	}
+	return 0
+}
+
+func (x *RunClusterBackupTaskRequest) GetLeaseExpiresUnix() int64 {
+	if x != nil {
+		return x.LeaseExpiresUnix
+	}
+	return 0
+}
+
+func (x *RunClusterBackupTaskRequest) GetProcessIds() []string {
+	if x != nil {
+		return x.ProcessIds
+	}
+	return nil
 }
 
 type RunClusterBackupTaskResponse struct {
@@ -15522,14 +15554,21 @@ const file_proto_procmesh_v1_api_proto_rawDesc = "" +
 	"\x04sink\x18\x01 \x01(\tR\x04sink\x12/\n" +
 	"\x13destination_profile\x18\x02 \x01(\tR\x12destinationProfile\"p\n" +
 	")GetClusterBackupDestinationHealthResponse\x12C\n" +
-	"\x06health\x18\x01 \x01(\v2+.procmesh.v1.ClusterBackupDestinationHealthR\x06health\"\xd4\x01\n" +
+	"\x06health\x18\x01 \x01(\v2+.procmesh.v1.ClusterBackupDestinationHealthR\x06health\"\xe1\x02\n" +
 	"\x1bRunClusterBackupTaskRequest\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x17\n" +
 	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12\x17\n" +
 	"\anode_id\x18\x03 \x01(\tR\x06nodeId\x12'\n" +
 	"\x0fpolicy_revision\x18\x04 \x01(\x03R\x0epolicyRevision\x12\x12\n" +
 	"\x04sink\x18\x05 \x01(\tR\x04sink\x12/\n" +
-	"\x13destination_profile\x18\x06 \x01(\tR\x12destinationProfile\"R\n" +
+	"\x13destination_profile\x18\x06 \x01(\tR\x12destinationProfile\x12\x1b\n" +
+	"\tpolicy_id\x18\a \x01(\tR\bpolicyId\x12\x1f\n" +
+	"\vleader_term\x18\b \x01(\x04R\n" +
+	"leaderTerm\x12,\n" +
+	"\x12lease_expires_unix\x18\t \x01(\x03R\x10leaseExpiresUnix\x12\x1f\n" +
+	"\vprocess_ids\x18\n" +
+	" \x03(\tR\n" +
+	"processIds\"R\n" +
 	"\x1cRunClusterBackupTaskResponse\x122\n" +
 	"\x04task\x18\x01 \x01(\v2\x1e.procmesh.v1.ClusterBackupTaskR\x04task\"M\n" +
 	"\x1bGetClusterBackupTaskRequest\x12\x15\n" +

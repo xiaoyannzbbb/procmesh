@@ -21,12 +21,15 @@ type BackupTaskRequest struct {
 	RunID, TaskID, PolicyID, NodeID string
 	PolicyRevision                  int64
 	Sink, DestinationProfile        string
+	LeaderTerm                      uint64
+	LeaseExpiresUnix                int64
 }
 
 type TaskUpdate struct {
 	RunID, TaskID, NodeID, Status, SnapshotID, SHA256 string
 	Bytes                                             int64
 	ErrorCode, ErrorSummary                           string
+	LeaderTerm                                        uint64
 }
 
 type ControlPlane interface {
@@ -46,6 +49,8 @@ type FrozenRun struct {
 	PolicyRevision                            int64
 	TargetNodeIDs                             []string
 	MaxConcurrency                            int
+	LeaderTerm                                uint64
+	LeaseExpiresUnix                          int64
 }
 
 // ScheduledRunClaimer is an optional stronger control-plane capability. The
@@ -150,7 +155,7 @@ func (c *Coordinator) Tick(ctx context.Context) error {
 				continue
 			}
 			c.markDispatched(key, term)
-			c.dispatchFrozenTargets(ctx, run)
+			c.DispatchRun(ctx, run)
 			continue
 		}
 		runID, claimed, err := c.Control.ClaimFire(ctx, key, view.Policy.PolicyID, term, now)
@@ -171,7 +176,7 @@ func (c *Coordinator) Tick(ctx context.Context) error {
 			}
 		}
 		c.markDispatched(key, term)
-		c.dispatchFrozenTargets(ctx, FrozenRun{RunID: runID, PolicyID: view.Policy.PolicyID, PolicyRevision: effectiveRevision(view), TargetNodeIDs: targets, Sink: view.Policy.Sink, DestinationProfile: view.Policy.DestinationProfile, MaxConcurrency: view.Policy.MaxConcurrency})
+		c.DispatchRun(ctx, FrozenRun{RunID: runID, PolicyID: view.Policy.PolicyID, PolicyRevision: effectiveRevision(view), TargetNodeIDs: targets, Sink: view.Policy.Sink, DestinationProfile: view.Policy.DestinationProfile, MaxConcurrency: view.Policy.MaxConcurrency, LeaderTerm: term})
 	}
 	return nil
 }
@@ -218,11 +223,21 @@ func (c *Coordinator) dispatchFrozenTargets(ctx context.Context, run FrozenRun) 
 				return
 			}
 			defer func() { <-sem }()
-			task := BackupTaskRequest{RunID: run.RunID, TaskID: "task-" + nodeID, PolicyID: run.PolicyID, NodeID: nodeID, PolicyRevision: run.PolicyRevision, Sink: run.Sink, DestinationProfile: run.DestinationProfile}
+			task := BackupTaskRequest{RunID: run.RunID, TaskID: "task-" + nodeID, PolicyID: run.PolicyID, NodeID: nodeID, PolicyRevision: run.PolicyRevision, Sink: run.Sink, DestinationProfile: run.DestinationProfile, LeaderTerm: run.LeaderTerm, LeaseExpiresUnix: run.LeaseExpiresUnix}
 			if err := c.Dispatcher.DispatchBackupTask(ctx, task); err != nil {
-				_ = c.Control.UpdateTask(ctx, TaskUpdate{RunID: run.RunID, TaskID: task.TaskID, NodeID: nodeID, Status: "UNAVAILABLE", ErrorCode: "UNAVAILABLE", ErrorSummary: err.Error()})
+				_ = c.Control.UpdateTask(ctx, TaskUpdate{RunID: run.RunID, TaskID: task.TaskID, NodeID: nodeID, Status: "UNAVAILABLE", ErrorCode: "UNAVAILABLE", ErrorSummary: err.Error(), LeaderTerm: run.LeaderTerm})
 			}
 		}()
 	}
 	wg.Wait()
+}
+
+func (c *Coordinator) DispatchRun(ctx context.Context, run FrozenRun) {
+	if run.LeaderTerm == 0 {
+		run.LeaderTerm = c.term()
+	}
+	if run.LeaseExpiresUnix == 0 {
+		run.LeaseExpiresUnix = c.now().Add(30 * time.Second).Unix()
+	}
+	c.dispatchFrozenTargets(ctx, run)
 }

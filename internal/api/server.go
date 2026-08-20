@@ -41,29 +41,30 @@ type Server struct {
 }
 
 type Options struct {
-	Addr          string
-	Logger        *slog.Logger
-	Mgr           *process.Manager
-	Logs          *logmgr.Manager
-	Store         RevisionStore // 可为 *store.Store；nil 时 Config.Diff 不可用
-	Cluster       ClusterDeps   // 零值 = 未接线；Init/Join → UNAVAILABLE
-	Auth          *auth.Service // nil = 不鉴权（单测）
-	Degraded      bool
-	Ready         func() error
-	Started       time.Time
-	LocalOnly     bool
-	LocalID       string
-	Router        *Router
-	Forward       Forwarder
-	HasQuorum     func() bool
-	RPCHealthy    func() bool
-	GossipHealthy func() bool
-	CertExpires   func() int64
-	CAExpires     func() int64
-	Members       func() []cluster.NodeSummary
-	Metrics       *metrics.Collector
-	Batch         *batch.Engine
-	Backup        *backup.Engine
+	Addr              string
+	Logger            *slog.Logger
+	Mgr               *process.Manager
+	Logs              *logmgr.Manager
+	Store             RevisionStore // 可为 *store.Store；nil 时 Config.Diff 不可用
+	Cluster           ClusterDeps   // 零值 = 未接线；Init/Join → UNAVAILABLE
+	Auth              *auth.Service // nil = 不鉴权（单测）
+	Degraded          bool
+	Ready             func() error
+	Started           time.Time
+	LocalOnly         bool
+	LocalID           string
+	Router            *Router
+	Forward           Forwarder
+	HasQuorum         func() bool
+	RPCHealthy        func() bool
+	GossipHealthy     func() bool
+	CertExpires       func() int64
+	CAExpires         func() int64
+	Members           func() []cluster.NodeSummary
+	Metrics           *metrics.Collector
+	Batch             *batch.Engine
+	Backup         *backup.Engine
+	BackupDispatch func(backup.FrozenRun)
 }
 
 func NewServer(opts Options) (*Server, error) {
@@ -174,6 +175,7 @@ func NewServer(opts Options) (*Server, error) {
 			}
 			return opts.Backup.CheckDestination(ctx, sink, profile)
 		},
+		DispatchRun: opts.BackupDispatch,
 	}, intercept)
 	mountConnect(engine, cbp, cbh)
 	var histStore *store.Store

@@ -120,7 +120,7 @@ func (e *Engine) Create(ctx context.Context, opt CreateOpts) (Meta, error) {
 	if opt.SnapshotID != "" && e.Store != nil {
 		if rec, err := e.Store.GetBackup(ctx, opt.SnapshotID); err == nil {
 			if rec.Sink == opt.Sink {
-				return Meta{SnapshotID: rec.SnapshotID, ClusterID: rec.ClusterID, NodeID: rec.NodeID, CreatedAt: rec.CreatedAt, ProcessIDs: rec.ProcessIDs, RevisionRanges: decodeRevisionRanges(rec.RevisionRangesJSON), SHA256: rec.SHA256, Sink: rec.Sink, Location: rec.Location, SourceNodeID: rec.SourceNodeID}, nil
+				return Meta{SnapshotID: rec.SnapshotID, ClusterID: rec.ClusterID, NodeID: rec.NodeID, CreatedAt: rec.CreatedAt, ProcessIDs: rec.ProcessIDs, RevisionRanges: decodeRevisionRanges(rec.RevisionRangesJSON), SHA256: rec.SHA256, Bytes: rec.Bytes, Sink: rec.Sink, Location: rec.Location, SourceNodeID: rec.SourceNodeID}, nil
 			}
 		} else if !errcode.Is(err, errcode.NOT_FOUND) {
 			return Meta{}, err
@@ -178,7 +178,7 @@ func (e *Engine) Create(ctx context.Context, opt CreateOpts) (Meta, error) {
 	if err != nil {
 		return Meta{}, err
 	}
-	return e.indexSnapshot(ctx, snap, sha, opt.Sink, loc, "")
+	return e.indexSnapshot(ctx, snap, sha, int64(len(payload)), opt.Sink, loc, "")
 }
 
 // CreateCluster snapshots local process specs with cluster namespace paths and idempotent task tracking.
@@ -231,6 +231,7 @@ func (e *Engine) CreateCluster(ctx context.Context, opts ClusterCreateOpts) (Met
 					ProcessIDs:     existing.ProcessIDs,
 					RevisionRanges: decodeRevisionRanges(existing.RevisionRangesJSON),
 					SHA256:         existing.SHA256,
+					Bytes:          existing.Bytes,
 					Sink:           existing.Sink,
 					Location:       existing.Location,
 					SourceNodeID:   existing.SourceNodeID,
@@ -296,7 +297,7 @@ func (e *Engine) CreateCluster(ctx context.Context, opts ClusterCreateOpts) (Met
 		return Meta{}, err
 	}
 
-	return e.indexClusterSnapshot(ctx, snap, sha, opts.Sink, loc, opts.RunID, opts.TaskID, opts.PolicyID)
+	return e.indexClusterSnapshot(ctx, snap, sha, int64(len(payload)), opts.Sink, loc, opts.RunID, opts.TaskID, opts.PolicyID)
 }
 
 // CreatePeer is Create with Sink=peer.
@@ -348,7 +349,7 @@ func (e *Engine) createPeer(ctx context.Context, snap Snapshot, payload []byte, 
 	if _, err := e.PeerStore.Receive(ctx, e.NodeID, payload); err != nil {
 		return Meta{}, err
 	}
-	meta, err := e.indexSnapshot(ctx, snap, sha, "peer", strings.Join(locs, ","), e.NodeID)
+	meta, err := e.indexSnapshot(ctx, snap, sha, int64(len(payload)), "peer", strings.Join(locs, ","), e.NodeID)
 	if err != nil {
 		return Meta{}, err
 	}
@@ -358,9 +359,10 @@ func (e *Engine) createPeer(ctx context.Context, snap Snapshot, payload []byte, 
 	return meta, nil
 }
 
-func (e *Engine) indexSnapshot(ctx context.Context, snap Snapshot, sha, sink, loc, sourceNodeID string) (Meta, error) {
+func (e *Engine) indexSnapshot(ctx context.Context, snap Snapshot, sha string, bytes int64, sink, loc, sourceNodeID string) (Meta, error) {
 	meta := MetaFromSnapshot(snap)
 	meta.SHA256 = sha
+	meta.Bytes = bytes
 	meta.Sink = sink
 	meta.Location = loc
 	meta.SourceNodeID = sourceNodeID
@@ -377,6 +379,7 @@ func (e *Engine) indexSnapshot(ctx context.Context, snap Snapshot, sha, sink, lo
 		ProcessIDs:         meta.ProcessIDs,
 		RevisionRangesJSON: string(rangesJSON),
 		SHA256:             sha,
+		Bytes:              bytes,
 		Sink:               sink,
 		Location:           loc,
 		SourceNodeID:       sourceNodeID,
@@ -388,9 +391,10 @@ func (e *Engine) indexSnapshot(ctx context.Context, snap Snapshot, sha, sink, lo
 	return meta, nil
 }
 
-func (e *Engine) indexClusterSnapshot(ctx context.Context, snap Snapshot, sha, sink, loc, runID, taskID, policyID string) (Meta, error) {
+func (e *Engine) indexClusterSnapshot(ctx context.Context, snap Snapshot, sha string, bytes int64, sink, loc, runID, taskID, policyID string) (Meta, error) {
 	meta := MetaFromSnapshot(snap)
 	meta.SHA256 = sha
+	meta.Bytes = bytes
 	meta.Sink = sink
 	meta.Location = loc
 
@@ -406,6 +410,7 @@ func (e *Engine) indexClusterSnapshot(ctx context.Context, snap Snapshot, sha, s
 		ProcessIDs:         meta.ProcessIDs,
 		RevisionRangesJSON: string(rangesJSON),
 		SHA256:             sha,
+		Bytes:              bytes,
 		Sink:               sink,
 		Location:           loc,
 		RunID:              runID,
@@ -440,6 +445,7 @@ func (e *Engine) ReceivePeer(ctx context.Context, sourceNodeID string, payload [
 		ProcessIDs:         meta.ProcessIDs,
 		RevisionRangesJSON: string(rangesJSON),
 		SHA256:             meta.SHA256,
+		Bytes:              meta.Bytes,
 		Sink:               "peer",
 		Location:           meta.Location,
 		SourceNodeID:       sourceNodeID,
@@ -799,6 +805,7 @@ func metaFromRecord(rec store.BackupRecord) (Meta, error) {
 		CreatedAt:    rec.CreatedAt,
 		ProcessIDs:   rec.ProcessIDs,
 		SHA256:       rec.SHA256,
+		Bytes:        rec.Bytes,
 		Sink:         rec.Sink,
 		Location:     rec.Location,
 		SourceNodeID: rec.SourceNodeID,
@@ -846,6 +853,7 @@ func (e *Engine) RunClusterTask(ctx context.Context, req ClusterTaskRequest) (*T
 	meta, err := e.CreateCluster(ctx, ClusterCreateOpts{
 		RunID:              req.RunID,
 		TaskID:             req.TaskID,
+		PolicyID:           req.PolicyID,
 		ClusterID:          e.ClusterID,
 		NodeID:             e.NodeID,
 		Sink:               req.Sink,
@@ -857,6 +865,7 @@ func (e *Engine) RunClusterTask(ctx context.Context, req ClusterTaskRequest) (*T
 		RunID:       req.RunID,
 		TaskID:      req.TaskID,
 		NodeID:      e.NodeID,
+		LeaderTerm:  req.LeaderTerm,
 		UpdatedUnix: e.now().Unix(),
 	}
 
@@ -883,7 +892,7 @@ func (e *Engine) RunClusterTask(ctx context.Context, req ClusterTaskRequest) (*T
 	result.Status = "SUCCESS"
 	result.SnapshotID = meta.SnapshotID
 	result.SHA256 = meta.SHA256
-	result.Bytes = int64(len(meta.ProcessIDs)) // Simplified; real implementation would track actual bytes
+	result.Bytes = meta.Bytes
 	return result, nil
 }
 

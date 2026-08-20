@@ -122,6 +122,7 @@ func (p *PeerStore) ReceiveWithMetadata(ctx context.Context, params ReceiveParam
 		// Same checksum - idempotent, return existing meta
 		meta := MetaFromSnapshot(snap)
 		meta.SHA256 = params.SHA256
+		meta.Bytes = int64(len(existing))
 		meta.Sink = "peer"
 		meta.Location = final
 		meta.SourceNodeID = params.SourceNodeID
@@ -150,6 +151,7 @@ func (p *PeerStore) ReceiveWithMetadata(ctx context.Context, params ReceiveParam
 
 	meta := MetaFromSnapshot(snap)
 	meta.SHA256 = params.SHA256
+	meta.Bytes = int64(len(params.Payload))
 	meta.Sink = "peer"
 	meta.Location = final
 	meta.SourceNodeID = params.SourceNodeID
@@ -192,6 +194,7 @@ func (p *PeerStore) Receive(ctx context.Context, sourceNodeID string, payload []
 	meta := MetaFromSnapshot(snap)
 	sum := sha256.Sum256(payload)
 	meta.SHA256 = hex.EncodeToString(sum[:])
+	meta.Bytes = int64(len(payload))
 	meta.Sink = "peer"
 	meta.Location = final
 	meta.SourceNodeID = sourceNodeID
@@ -230,6 +233,7 @@ func (p *PeerStore) GetReplicaMetadata(ctx context.Context, sourceNodeID, cluste
 	meta := MetaFromSnapshot(snap)
 	sum := sha256.Sum256(data)
 	meta.SHA256 = hex.EncodeToString(sum[:])
+	meta.Bytes = int64(len(data))
 	meta.Sink = "peer"
 	meta.Location = path
 	meta.SourceNodeID = sourceNodeID

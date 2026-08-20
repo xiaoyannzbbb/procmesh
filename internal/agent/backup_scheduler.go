@@ -8,8 +8,14 @@ import (
 	"strings"
 	"time"
 
+	"connectrpc.com/connect"
+	"github.com/qleelulu/procmesh/internal/api"
 	"github.com/qleelulu/procmesh/internal/backup"
+	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
+	"github.com/qleelulu/procmesh/internal/errcode"
+	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
+	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
 
 type raftBackupControl struct{ runtime *rpcRuntime }
@@ -74,7 +80,7 @@ func (a raftBackupControl) ClaimScheduledRun(_ context.Context, key string, view
 	if err != nil {
 		return backup.FrozenRun{}, false, err
 	}
-	return backup.FrozenRun{RunID: record.RunID, PolicyID: run.PolicyID, PolicyRevision: run.PolicyRevision, TargetNodeIDs: append([]string(nil), run.TargetNodeIDs...), Sink: run.Sink, DestinationProfile: run.DestinationProfile, MaxConcurrency: run.MaxConcurrency}, acquired, nil
+	return backup.FrozenRun{RunID: record.RunID, PolicyID: run.PolicyID, PolicyRevision: run.PolicyRevision, TargetNodeIDs: append([]string(nil), run.TargetNodeIDs...), Sink: run.Sink, DestinationProfile: run.DestinationProfile, MaxConcurrency: run.MaxConcurrency, LeaderTerm: record.LeaderTerm, LeaseExpiresUnix: record.LeaseUntilUnix}, acquired, nil
 }
 
 func (a raftBackupControl) UpdateTask(ctx context.Context, u backup.TaskUpdate) error {
@@ -82,7 +88,10 @@ func (a raftBackupControl) UpdateTask(ctx context.Context, u backup.TaskUpdate) 
 	if n == nil {
 		return fmt.Errorf("control plane unavailable")
 	}
-	term := n.CurrentTerm()
+	term := u.LeaderTerm
+	if term == 0 {
+		term = n.CurrentTerm()
+	}
 	cmd, err := control.EncodeCommand(control.CmdBackupTaskUpdate, control.UpdateTaskBody{OperationID: "scheduler-" + u.RunID + ":" + u.TaskID, LeaderTerm: term, Task: control.ClusterBackupTask{RunID: u.RunID, TaskID: u.TaskID, NodeID: u.NodeID, Status: u.Status, SnapshotID: u.SnapshotID, SHA256: u.SHA256, Bytes: u.Bytes, ErrorCode: u.ErrorCode, ErrorSummary: u.ErrorSummary, UpdatedUnix: time.Now().Unix()}})
 	if err != nil {
 		return err
@@ -104,36 +113,101 @@ func (a raftBackupRunCreator) CreateBackupRun(_ context.Context, r backup.Backup
 	return n.Apply(cmd, 5*time.Second)
 }
 
-type localBackupDispatcher struct{ runtime *rpcRuntime }
+type clusterBackupAgentForwarder interface {
+	ClusterBackupAgent(context.Context, api.Route) (procmeshv1connect.ClusterBackupAgentServiceClient, error)
+}
+
+type localBackupDispatcher struct {
+	runtime *rpcRuntime
+	local   backup.AgentTaskExecutor
+	forward clusterBackupAgentForwarder
+	members func() []cluster.NodeSummary
+	update  func(context.Context, backup.TaskUpdate) error
+}
 
 func (d localBackupDispatcher) DispatchBackupTask(ctx context.Context, task backup.BackupTaskRequest) error {
-	if d.runtime == nil || d.runtime.backup == nil {
-		return fmt.Errorf("backup engine unavailable")
-	}
-	if task.NodeID != d.runtime.nodeID {
-		return fmt.Errorf("remote agent dispatch unavailable")
-	}
-	if task.DestinationProfile != "" {
-		return d.persist(ctx, task, backup.TaskUpdate{RunID: task.RunID, TaskID: task.TaskID, NodeID: task.NodeID, Status: "CONFIG_MISSING", ErrorCode: "CONFIG_MISSING", ErrorSummary: "destination profiles are not configured for local execution"})
+	if d.runtime == nil {
+		return fmt.Errorf("backup runtime unavailable")
 	}
 	if n := d.runtime.control(); n != nil {
 		if existing, ok := n.View().BackupTasks[task.RunID+":"+task.TaskID]; ok && existing.Status == "SUCCEEDED" {
 			return nil
 		}
 	}
-	meta, err := d.runtime.backup.Create(ctx, backup.CreateOpts{Sink: task.Sink, SnapshotID: stableTaskSnapshotID(task.RunID, task.NodeID)})
+	if task.NodeID == d.runtime.nodeID {
+		executor := d.local
+		if executor == nil {
+			executor = d.runtime.backup
+		}
+		if executor == nil {
+			return fmt.Errorf("backup engine unavailable")
+		}
+		result, err := executor.RunClusterTask(ctx, backup.ClusterTaskRequest{
+			RunID: task.RunID, TaskID: task.TaskID, PolicyID: task.PolicyID, NodeID: task.NodeID,
+			PolicyRevision: task.PolicyRevision, Sink: task.Sink, DestinationProfile: task.DestinationProfile,
+			LeaderTerm: task.LeaderTerm, LeaseExpiresUnix: task.LeaseExpiresUnix,
+		})
+		if err != nil {
+			return err
+		}
+		return d.persist(ctx, task, taskResultUpdate(result, task))
+	}
+
+	addr := ""
+	members := d.members
+	if members == nil {
+		members = d.runtime.memberList
+	}
+	for _, member := range members() {
+		if member.NodeID == task.NodeID {
+			addr = member.RPCAddress
+			break
+		}
+	}
+	if addr == "" {
+		return fmt.Errorf("target agent rpc unavailable")
+	}
+	forward := d.forward
+	if forward == nil {
+		forward = d.runtime.fwd
+	}
+	if forward == nil {
+		return fmt.Errorf("agent forwarder unavailable")
+	}
+	client, err := forward.ClusterBackupAgent(ctx, api.Route{NodeID: task.NodeID, RPC: addr})
 	if err != nil {
 		return err
 	}
-	_, payload, err := d.runtime.backup.Get(ctx, meta.SnapshotID, task.Sink)
+	resp, err := client.RunTask(ctx, connect.NewRequest(&procmeshv1.RunClusterBackupTaskRequest{
+		RunId: task.RunID, TaskId: task.TaskID, PolicyId: task.PolicyID, NodeId: task.NodeID,
+		PolicyRevision: task.PolicyRevision, Sink: task.Sink, DestinationProfile: task.DestinationProfile,
+		LeaderTerm: task.LeaderTerm, LeaseExpiresUnix: task.LeaseExpiresUnix,
+	}))
 	if err != nil {
 		return err
 	}
-	return d.persist(ctx, task, backup.TaskUpdate{RunID: task.RunID, TaskID: task.TaskID, NodeID: task.NodeID, Status: "SUCCEEDED", SnapshotID: meta.SnapshotID, SHA256: meta.SHA256, Bytes: int64(len(payload))})
+	return d.persist(ctx, task, taskResultUpdateFromProto(resp.Msg.GetTask(), task))
 }
 
 func (d localBackupDispatcher) persist(ctx context.Context, task backup.BackupTaskRequest, update backup.TaskUpdate) error {
+	if d.update != nil {
+		return d.update(ctx, update)
+	}
 	return (raftBackupControl{runtime: d.runtime}).UpdateTask(ctx, update)
+}
+
+func taskResultUpdate(result *backup.TaskResult, task backup.BackupTaskRequest) backup.TaskUpdate {
+	if result == nil {
+		return backup.TaskUpdate{RunID: task.RunID, TaskID: task.TaskID, NodeID: task.NodeID, Status: "FAILED", ErrorCode: "UNKNOWN", ErrorSummary: "empty task result", LeaderTerm: task.LeaderTerm}
+	}
+	return backup.TaskUpdate{RunID: result.RunID, TaskID: result.TaskID, NodeID: result.NodeID, Status: result.Status, SnapshotID: result.SnapshotID, SHA256: result.SHA256, Bytes: result.Bytes, ErrorCode: result.ErrorCode, ErrorSummary: result.ErrorSummary, LeaderTerm: result.LeaderTerm}
+}
+
+func taskResultUpdateFromProto(result *procmeshv1.ClusterBackupTask, task backup.BackupTaskRequest) backup.TaskUpdate {
+	if result == nil {
+		return taskResultUpdate(nil, task)
+	}
+	return backup.TaskUpdate{RunID: result.GetRunId(), TaskID: result.GetTaskId(), NodeID: result.GetNodeId(), Status: result.GetStatus(), SnapshotID: result.GetSnapshotId(), SHA256: result.GetSha256(), Bytes: result.GetBytes(), ErrorCode: result.GetErrorCode(), ErrorSummary: result.GetErrorSummary(), LeaderTerm: result.GetLeaderTerm()}
 }
 
 func resolveBackupTargets(st control.State, p control.BackupPolicy) []string {
@@ -184,4 +258,38 @@ func fireID(key string) string { sum := sha256.Sum256([]byte(key)); return fmt.S
 func stableTaskSnapshotID(runID, nodeID string) string {
 	sum := sha256.Sum256([]byte(runID + ":" + nodeID))
 	return "snap-" + fmt.Sprintf("%x", sum[:12])
+}
+
+func (r *rpcRuntime) authorizeClusterBackupTask(sourceNodeID string, msg *procmeshv1.RunClusterBackupTaskRequest) error {
+	if r == nil || msg == nil {
+		return errcode.E(errcode.UNAVAILABLE, "backup runtime unavailable")
+	}
+	n := r.control()
+	if n == nil {
+		return errcode.E(errcode.UNAVAILABLE, "control plane unavailable")
+	}
+	if msg.GetLeaderTerm() == 0 || msg.GetLeaderTerm() != n.CurrentTerm() {
+		return errcode.E(errcode.CONFLICT, "stale leader term")
+	}
+	if msg.GetLeaseExpiresUnix() <= time.Now().Unix() {
+		return errcode.E(errcode.TIMEOUT, "task lease expired")
+	}
+	state := n.View()
+	source, ok := state.Members[sourceNodeID]
+	if !ok || source.Status != control.MemberAdmitted || source.RaftAddr == "" || source.RaftAddr != n.LeaderAddr() {
+		return errcode.E(errcode.DENIED, "task source is not current leader")
+	}
+	target, ok := state.Members[r.nodeID]
+	if !ok || target.Status != control.MemberAdmitted || msg.GetNodeId() != r.nodeID {
+		return errcode.E(errcode.DENIED, "target agent not admitted")
+	}
+	policy, ok := state.BackupPolicies[msg.GetPolicyId()]
+	if !ok || policy.Revision != msg.GetPolicyRevision() {
+		return errcode.E(errcode.CONFLICT, "backup policy revision changed")
+	}
+	run, ok := state.BackupRuns[msg.GetRunId()]
+	if !ok || run.PolicyID != policy.PolicyID || run.PolicyRevision != policy.Revision {
+		return errcode.E(errcode.NOT_FOUND, "backup run not found")
+	}
+	return nil
 }

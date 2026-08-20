@@ -114,11 +114,11 @@ git commit -m "fix(replication): secure internal peer request paths"
 - Produces: `ClusterBackupAPI.StartRun` freezes targets, creates tasks, and dispatches both local and remote targets.
 - Produces: duplicate dispatch returns the existing successful snapshot metadata.
 
-- [ ] **Step 1: Write failing tests for remote dispatch, manual dispatch, unavailable targets, and idempotent replay.**
-- [ ] **Step 2: Run RED:** `go test ./internal/api ./internal/agent ./internal/rpc -run 'Test.*ClusterBackup.*Dispatch|TestStartRun.*Task' -count=1`
-- [ ] **Step 3: Add/regenerate the internal RPC, use the mTLS Agent client for remote nodes, and invoke the same dispatcher from scheduled and manual runs.**
-- [ ] **Step 4: Run:** `go test ./internal/api ./internal/agent ./internal/rpc ./internal/backup -count=1`
-- [ ] **Step 5: Commit:** `git commit -m "feat(backup): dispatch cluster tasks to target agents"`
+- [x] **Step 1: Write failing tests for remote dispatch, manual dispatch, unavailable targets, and idempotent replay.**
+- [x] **Step 2: Run RED:** `go test ./internal/api ./internal/agent ./internal/rpc -run 'Test.*ClusterBackup.*Dispatch|TestStartRun.*Task' -count=1`
+- [x] **Step 3: Add/regenerate the internal RPC, use the mTLS Agent client for remote nodes, and invoke the same dispatcher from scheduled and manual runs.**
+- [x] **Step 4: Run:** `go test ./internal/api ./internal/agent ./internal/rpc ./internal/backup -count=1`
+- [x] **Step 5: Commit:** `git commit -m "feat(backup): dispatch cluster tasks to target agents"`
 
 ### Task 4: Coordinator recovery, aggregation, timeout, retry, and fail-fast
 

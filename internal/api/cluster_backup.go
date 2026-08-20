@@ -43,6 +43,7 @@ type ClusterBackupAPI struct {
 	LocalID           string
 	Now               func() time.Time
 	DestinationHealth func(context.Context, string, string) backup.DestinationHealth
+	DispatchRun       func(backup.FrozenRun)
 }
 
 func (s *ClusterBackupAPI) CreatePolicy(ctx context.Context, req *connect.Request[procmeshv1.CreateClusterBackupPolicyRequest]) (*connect.Response[procmeshv1.CreateClusterBackupPolicyResponse], error) {
@@ -182,7 +183,7 @@ func (s *ClusterBackupAPI) StartRun(ctx context.Context, req *connect.Request[pr
 	}
 	now := s.now()
 	runID := newRunID(operationID, policy.PolicyID, now)
-	run := control.ClusterBackupRun{RunID: runID, PolicyID: policy.PolicyID, PolicyRevision: policy.Revision, TargetNodeIDs: targets, Status: "RUNNING", CreatedUnix: now.Unix(), StartedUnix: now.Unix()}
+	run := control.ClusterBackupRun{RunID: runID, PolicyID: policy.PolicyID, PolicyRevision: policy.Revision, TargetNodeIDs: targets, Status: "RUNNING", CreatedUnix: now.Unix(), StartedUnix: now.Unix(), Sink: policy.Sink, DestinationProfile: policy.DestinationProfile, MaxConcurrency: policy.MaxConcurrency}
 	term := s.leaderTerm()
 	cmd, err := control.EncodeCommand(control.CmdBackupRunCreate, control.CreateRunBody{OperationID: operationID, LeaderTerm: term, Run: run})
 	if err != nil {
@@ -190,6 +191,18 @@ func (s *ClusterBackupAPI) StartRun(ctx context.Context, req *connect.Request[pr
 	}
 	if err := s.applyCommand(cmd); err != nil {
 		return nil, ToConnect(err)
+	}
+	if s.DispatchRun != nil {
+		timeout := policy.TimeoutSeconds
+		if timeout <= 0 {
+			timeout = 30
+		}
+		s.DispatchRun(backup.FrozenRun{
+			RunID: runID, PolicyID: policy.PolicyID, PolicyRevision: policy.Revision,
+			TargetNodeIDs: append([]string(nil), targets...), Sink: policy.Sink,
+			DestinationProfile: policy.DestinationProfile, MaxConcurrency: policy.MaxConcurrency,
+			LeaderTerm: term, LeaseExpiresUnix: now.Add(time.Duration(timeout) * time.Second).Unix(),
+		})
 	}
 	return connect.NewResponse(&procmeshv1.StartClusterBackupRunResponse{Run: runToProto(run, nil)}), nil
 }

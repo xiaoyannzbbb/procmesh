@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/store"
@@ -50,6 +51,41 @@ func TestOpen_CreatesFileAndStableNodeID(t *testing.T) {
 	}
 	if boot1 == boot2 {
 		t.Fatal("boot_id must change every rotate")
+	}
+}
+
+func TestOpen_MigratesBackupIndexBytes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE backup_index (
+		snapshot_id TEXT PRIMARY KEY, cluster_id TEXT NOT NULL, node_id TEXT NOT NULL,
+		created_at TEXT NOT NULL, process_ids_json TEXT NOT NULL, revision_range_json TEXT NOT NULL,
+		sha256 TEXT NOT NULL, sink TEXT NOT NULL, location TEXT NOT NULL,
+		source_node_id TEXT NOT NULL DEFAULT '', run_id TEXT NOT NULL DEFAULT '',
+		task_id TEXT NOT NULL DEFAULT '', policy_id TEXT NOT NULL DEFAULT ''
+	)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	record := store.BackupRecord{SnapshotID: "snap", ClusterID: "cluster", NodeID: "node", CreatedAt: time.Unix(1, 0), SHA256: "abc", Bytes: 1234, Sink: "fs", Location: "/tmp/snap"}
+	if err := st.PutBackup(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetBackup(context.Background(), "snap")
+	if err != nil || got.Bytes != 1234 {
+		t.Fatalf("record=%+v err=%v", got, err)
 	}
 }
 

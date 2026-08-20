@@ -134,6 +134,7 @@ CREATE TABLE IF NOT EXISTS backup_index (
     process_ids_json TEXT NOT NULL,
     revision_range_json TEXT NOT NULL,
     sha256 TEXT NOT NULL,
+    bytes INTEGER NOT NULL DEFAULT 0,
     sink TEXT NOT NULL,
     location TEXT NOT NULL,
     source_node_id TEXT NOT NULL DEFAULT '',

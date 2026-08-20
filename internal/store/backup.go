@@ -20,6 +20,7 @@ type BackupRecord struct {
 	ProcessIDs         []string
 	RevisionRangesJSON string
 	SHA256             string
+	Bytes              int64
 	Sink               string
 	Location           string
 	SourceNodeID       string
@@ -29,7 +30,7 @@ type BackupRecord struct {
 }
 
 const backupCols = `snapshot_id, cluster_id, node_id, created_at, process_ids_json,
-	revision_range_json, sha256, sink, location, source_node_id, run_id, task_id, policy_id`
+		revision_range_json, sha256, bytes, sink, location, source_node_id, run_id, task_id, policy_id`
 
 // PutBackup inserts or replaces a backup_index row by snapshot_id.
 func (s *Store) PutBackup(ctx context.Context, rec BackupRecord) error {
@@ -47,23 +48,24 @@ func (s *Store) PutBackup(ctx context.Context, rec BackupRecord) error {
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO backup_index(
 			snapshot_id, cluster_id, node_id, created_at, process_ids_json,
-			revision_range_json, sha256, sink, location, source_node_id, run_id, task_id, policy_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				revision_range_json, sha256, bytes, sink, location, source_node_id, run_id, task_id, policy_id
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(snapshot_id) DO UPDATE SET
 			cluster_id = excluded.cluster_id,
 			node_id = excluded.node_id,
 			created_at = excluded.created_at,
 			process_ids_json = excluded.process_ids_json,
 			revision_range_json = excluded.revision_range_json,
-			sha256 = excluded.sha256,
+				sha256 = excluded.sha256,
+				bytes = excluded.bytes,
 			sink = excluded.sink,
 			location = excluded.location,
 			source_node_id = excluded.source_node_id,
 			run_id = excluded.run_id,
 			task_id = excluded.task_id,
 			policy_id = excluded.policy_id
-	`, rec.SnapshotID, rec.ClusterID, rec.NodeID, rec.CreatedAt.UTC().Format(time.RFC3339Nano),
-		string(pids), rec.RevisionRangesJSON, rec.SHA256, rec.Sink, rec.Location, rec.SourceNodeID,
+		`, rec.SnapshotID, rec.ClusterID, rec.NodeID, rec.CreatedAt.UTC().Format(time.RFC3339Nano),
+		string(pids), rec.RevisionRangesJSON, rec.SHA256, rec.Bytes, rec.Sink, rec.Location, rec.SourceNodeID,
 		rec.RunID, rec.TaskID, rec.PolicyID)
 	if err != nil {
 		return fmt.Errorf("put backup: %w", err)
@@ -139,7 +141,7 @@ func scanBackup(row *sql.Row) (BackupRecord, error) {
 	var createdAt, processIDsJSON string
 	err := row.Scan(
 		&rec.SnapshotID, &rec.ClusterID, &rec.NodeID, &createdAt, &processIDsJSON,
-		&rec.RevisionRangesJSON, &rec.SHA256, &rec.Sink, &rec.Location, &rec.SourceNodeID,
+		&rec.RevisionRangesJSON, &rec.SHA256, &rec.Bytes, &rec.Sink, &rec.Location, &rec.SourceNodeID,
 		&rec.RunID, &rec.TaskID, &rec.PolicyID,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -159,7 +161,7 @@ func scanBackupRow(rows *sql.Rows) (BackupRecord, error) {
 	var createdAt, processIDsJSON string
 	err := rows.Scan(
 		&rec.SnapshotID, &rec.ClusterID, &rec.NodeID, &createdAt, &processIDsJSON,
-		&rec.RevisionRangesJSON, &rec.SHA256, &rec.Sink, &rec.Location, &rec.SourceNodeID,
+		&rec.RevisionRangesJSON, &rec.SHA256, &rec.Bytes, &rec.Sink, &rec.Location, &rec.SourceNodeID,
 		&rec.RunID, &rec.TaskID, &rec.PolicyID,
 	)
 	if err != nil {

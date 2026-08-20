@@ -48,11 +48,49 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := ensureBackupIndexBytes(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	if err := ensureSchemaVersion(db); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	return &Store{db: db}, nil
+}
+
+func ensureBackupIndexBytes(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(backup_index)`)
+	if err != nil {
+		return fmt.Errorf("inspect backup_index: %w", err)
+	}
+	found := false
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, typ string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan backup_index schema: %w", err)
+		}
+		if name == "bytes" {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("inspect backup_index rows: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close backup_index schema: %w", err)
+	}
+	if found {
+		return nil
+	}
+	if _, err := db.Exec(`ALTER TABLE backup_index ADD COLUMN bytes INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("migrate backup_index bytes: %w", err)
+	}
+	return nil
 }
 
 // Close releases the database handle.

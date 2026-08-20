@@ -54,9 +54,9 @@ func TestClusterBackupAgent_RequiresAgentMTLS(t *testing.T) {
 	// No TLS state - should fail
 	client := newClusterBackupAgentClient(t, api, nil)
 	_, err := client.RunTask(context.Background(), connect.NewRequest(&procmeshv1.RunClusterBackupTaskRequest{
-		RunId:   "run-1",
-		TaskId:  "task-1",
-		NodeId:  "node-a",
+		RunId:  "run-1",
+		TaskId: "task-1",
+		NodeId: "node-a",
 	}))
 	if err == nil {
 		t.Fatal("expected error without mTLS")
@@ -79,9 +79,9 @@ func TestClusterBackupAgent_RejectsClusterIDMismatch(t *testing.T) {
 
 	client := newClusterBackupAgentClient(t, api, tlsState)
 	_, err := client.RunTask(context.Background(), connect.NewRequest(&procmeshv1.RunClusterBackupTaskRequest{
-		RunId:   "run-1",
-		TaskId:  "task-1",
-		NodeId:  "node-a",
+		RunId:  "run-1",
+		TaskId: "task-1",
+		NodeId: "node-a",
 	}))
 	if err == nil {
 		t.Fatal("expected error with cluster ID mismatch")
@@ -104,9 +104,9 @@ func TestClusterBackupAgent_RejectsNodeIDMismatch(t *testing.T) {
 
 	client := newClusterBackupAgentClient(t, api, tlsState)
 	_, err := client.RunTask(context.Background(), connect.NewRequest(&procmeshv1.RunClusterBackupTaskRequest{
-		RunId:   "run-1",
-		TaskId:  "task-1",
-		NodeId:  "node-b", // Request targets node-b, but API is on node-a
+		RunId:  "run-1",
+		TaskId: "task-1",
+		NodeId: "node-b", // Request targets node-b, but API is on node-a
 	}))
 	if err == nil {
 		t.Fatal("expected error with node ID mismatch")
@@ -130,9 +130,9 @@ func TestClusterBackupAgent_RejectsUserToken(t *testing.T) {
 
 	client := newClusterBackupAgentClient(t, api, nil)
 	req := bearerReq(sid, &procmeshv1.RunClusterBackupTaskRequest{
-		RunId:   "run-1",
-		TaskId:  "task-1",
-		NodeId:  "node-a",
+		RunId:  "run-1",
+		TaskId: "task-1",
+		NodeId: "node-a",
 	})
 
 	_, err = client.RunTask(context.Background(), req)
@@ -185,6 +185,32 @@ func TestClusterBackupAgent_ExecutesLocalTask(t *testing.T) {
 	}
 }
 
+func TestClusterBackupAgent_AuthorizesSourceTermPolicyAndLease(t *testing.T) {
+	creds := genAgentCreds(t, "cluster-1", "leader-node")
+	engine := &fakeBackupEngine{runResult: &backup.TaskResult{Status: "SUCCESS"}}
+	var sourceNodeID string
+	var authorized *procmeshv1.RunClusterBackupTaskRequest
+	api := &ClusterBackupAgentAPI{
+		Engine: engine, ClusterID: "cluster-1", NodeID: "node-a",
+		AuthorizeTask: func(source string, req *procmeshv1.RunClusterBackupTaskRequest) error {
+			sourceNodeID = source
+			authorized = req
+			return nil
+		},
+	}
+	client := newClusterBackupAgentClient(t, api, &tls.ConnectionState{PeerCertificates: []*x509.Certificate{creds.Cert}})
+	_, err := client.RunTask(context.Background(), connect.NewRequest(&procmeshv1.RunClusterBackupTaskRequest{
+		RunId: "run-1", TaskId: "task-1", NodeId: "node-a", PolicyId: "policy-1",
+		PolicyRevision: 4, LeaderTerm: 7, LeaseExpiresUnix: time.Now().Add(time.Minute).Unix(), Sink: "fs",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sourceNodeID != "leader-node" || authorized == nil || authorized.GetPolicyId() != "policy-1" || authorized.GetLeaderTerm() != 7 {
+		t.Fatalf("source=%q request=%+v", sourceNodeID, authorized)
+	}
+}
+
 func TestClusterBackupAgent_ReturnsTaskFailureOnly(t *testing.T) {
 	creds := genAgentCreds(t, "cluster-1", "node-a")
 
@@ -207,9 +233,9 @@ func TestClusterBackupAgent_ReturnsTaskFailureOnly(t *testing.T) {
 
 	client := newClusterBackupAgentClient(t, api, tlsState)
 	resp, err := client.RunTask(context.Background(), connect.NewRequest(&procmeshv1.RunClusterBackupTaskRequest{
-		RunId:   "run-1",
-		TaskId:  "task-1",
-		NodeId:  "node-a",
+		RunId:  "run-1",
+		TaskId: "task-1",
+		NodeId: "node-a",
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -246,9 +272,9 @@ func TestClusterBackupAgent_IdempotentReturnsExisting(t *testing.T) {
 
 	// First call
 	resp1, err := client.RunTask(context.Background(), connect.NewRequest(&procmeshv1.RunClusterBackupTaskRequest{
-		RunId:   "run-1",
-		TaskId:  "task-1",
-		NodeId:  "node-a",
+		RunId:  "run-1",
+		TaskId: "task-1",
+		NodeId: "node-a",
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -256,9 +282,9 @@ func TestClusterBackupAgent_IdempotentReturnsExisting(t *testing.T) {
 
 	// Second call with same IDs
 	resp2, err := client.RunTask(context.Background(), connect.NewRequest(&procmeshv1.RunClusterBackupTaskRequest{
-		RunId:   "run-1",
-		TaskId:  "task-1",
-		NodeId:  "node-a",
+		RunId:  "run-1",
+		TaskId: "task-1",
+		NodeId: "node-a",
 	}))
 	if err != nil {
 		t.Fatal(err)

@@ -43,6 +43,7 @@ type Meta struct {
 	ProcessIDs     []string
 	RevisionRanges []RevisionRange
 	SHA256         string
+	Bytes          int64
 	Sink           string // fs | s3 | peer
 	Location       string
 	SourceNodeID   string // peer receive source; empty when self-created

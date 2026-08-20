@@ -75,12 +75,14 @@ func TestClusterBackupAPI_NonLeaderForwardsMutation(t *testing.T) {
 
 func TestClusterBackupAPI_StartRunFreezesTargetsAndRevision(t *testing.T) {
 	state := control.NewState()
-	state.BackupPolicies["bp-1"] = control.BackupPolicy{PolicyID: "bp-1", Revision: 7, TargetSelector: "EXPLICIT_NODES", TargetIDs: []string{"node-a", "node-b"}}
+	state.BackupPolicies["bp-1"] = control.BackupPolicy{PolicyID: "bp-1", Revision: 7, TargetSelector: "EXPLICIT_NODES", TargetIDs: []string{"node-a", "node-b"}, Sink: "s3", DestinationProfile: "archive", MaxConcurrency: 2}
 	state.Members["node-a"] = control.Member{NodeID: "node-a", Status: control.MemberAdmitted}
 	state.Members["node-b"] = control.Member{NodeID: "node-b", Status: control.MemberAdmitted}
+	var dispatched backup.FrozenRun
 	client := newClusterBackupClient(t, &ClusterBackupAPI{
 		LocalID: "node-a", StateFn: func() control.State { return *state }, IsLeader: func() bool { return true },
-		ApplyFn: func(cmd control.Command, _ time.Duration) error { return state.Apply(cmd, time.Now()) },
+		ApplyFn:     func(cmd control.Command, _ time.Duration) error { return state.Apply(cmd, time.Now()) },
+		DispatchRun: func(run backup.FrozenRun) { dispatched = run },
 	}, false)
 	resp, err := client.StartRun(context.Background(), connect.NewRequest(&procmeshv1.StartClusterBackupRunRequest{
 		Meta: &procmeshv1.MutationMeta{OperationId: "op-run"}, PolicyId: "bp-1",
@@ -91,6 +93,9 @@ func TestClusterBackupAPI_StartRunFreezesTargetsAndRevision(t *testing.T) {
 	run := resp.Msg.GetRun()
 	if run.GetPolicyRevision() != 7 || strings.Join(run.GetTargetNodeIds(), ",") != "node-a,node-b" {
 		t.Fatalf("run=%+v", run)
+	}
+	if dispatched.RunID != run.GetRunId() || dispatched.PolicyID != "bp-1" || dispatched.Sink != "s3" || dispatched.DestinationProfile != "archive" || dispatched.MaxConcurrency != 2 {
+		t.Fatalf("dispatched=%+v", dispatched)
 	}
 }
 

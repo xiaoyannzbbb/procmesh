@@ -10,6 +10,9 @@ type ClusterTaskRequest struct {
 	PolicyRevision     int64
 	Sink               string
 	DestinationProfile string
+	PolicyID           string
+	LeaderTerm         uint64
+	LeaseExpiresUnix   int64
 	ProcessIDs         []string
 }
 

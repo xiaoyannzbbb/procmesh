@@ -513,6 +513,7 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		raftDir = filepath.Join(filepath.Dir(clusterDeps.Dir), "raft")
 	}
 	rt := &rpcRuntime{
+		ctx:         ctx,
 		opt:         opt,
 		dir:         clusterDeps.Dir,
 		nodeID:      clusterDeps.NodeID,
@@ -624,6 +625,9 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		Metrics:       collector,
 		Batch:         batchEng,
 		Backup:        rt.backup,
+		BackupDispatch: func(run backup.FrozenRun) {
+			go rt.backupCoord.DispatchRun(ctx, run)
+		},
 	})
 	if err != nil {
 		_ = ln.Close()

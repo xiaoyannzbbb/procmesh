@@ -263,8 +263,12 @@ func TestEngine_RunClusterTaskUsesDestinationProfile(t *testing.T) {
 	if _, err := filepath.Glob(want); err != nil {
 		t.Fatalf("profile sink path %q: %v", want, err)
 	}
-	if _, err := os.Stat(want); err != nil {
+	info, err := os.Stat(want)
+	if err != nil {
 		t.Fatalf("profile sink path %q: %v", want, err)
+	}
+	if result.Bytes != info.Size() {
+		t.Fatalf("result bytes = %d, file size = %d", result.Bytes, info.Size())
 	}
 }
 

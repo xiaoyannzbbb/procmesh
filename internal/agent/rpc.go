@@ -26,6 +26,7 @@ type rpcRuntime struct {
 	mu  sync.Mutex
 	srv *rpc.Server
 	ln  net.Listener
+	ctx context.Context
 
 	opt         Options
 	dir         string
@@ -227,6 +228,15 @@ func (r *rpcRuntime) localHandler() http.Handler {
 	mux.Handle(bpkup, bkh)
 	cbp, cbh := procmeshv1connect.NewClusterBackupServiceHandler(&api.ClusterBackupAPI{
 		Auth: r.auth, ControlFn: r.control, LocalOnly: true, LocalID: r.nodeID,
+		DispatchRun: func(run backup.FrozenRun) {
+			if r.backupCoord != nil {
+				ctx := r.ctx
+				if ctx == nil {
+					ctx = context.Background()
+				}
+				go r.backupCoord.DispatchRun(ctx, run)
+			}
+		},
 		DestinationHealth: func(ctx context.Context, sink, profile string) backup.DestinationHealth {
 			if r.backup == nil {
 				return backup.DestinationHealth{Sink: sink, DestinationProfile: profile, Status: "UNKNOWN", ErrorSummary: "backup engine unavailable"}
@@ -286,10 +296,11 @@ func (r *rpcRuntime) localHandler() http.Handler {
 	mux.Handle(drp, drh)
 
 	cbap, cbah := procmeshv1connect.NewClusterBackupAgentServiceHandler(&api.ClusterBackupAgentAPI{
-		Engine:    r.backup,
-		Auth:      r.auth,
-		ClusterID: r.clusterID,
-		NodeID:    r.nodeID,
+		Engine:        r.backup,
+		Auth:          r.auth,
+		ClusterID:     r.clusterID,
+		NodeID:        r.nodeID,
+		AuthorizeTask: r.authorizeClusterBackupTask,
 	})
 	mux.Handle(cbap, cbah)
 
@@ -453,4 +464,12 @@ func (f *agentForwarder) ClusterBackup(_ context.Context, rt api.Route) (procmes
 		return nil, err
 	}
 	return rpc.NewClusterBackupClient(hc, base), nil
+}
+
+func (f *agentForwarder) ClusterBackupAgent(_ context.Context, rt api.Route) (procmeshv1connect.ClusterBackupAgentServiceClient, error) {
+	hc, base, err := f.dial(rt, clusterBackupHopTimeout)
+	if err != nil {
+		return nil, err
+	}
+	return rpc.NewClusterBackupAgentClient(hc, base), nil
 }

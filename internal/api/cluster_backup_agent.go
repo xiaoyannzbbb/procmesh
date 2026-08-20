@@ -19,21 +19,28 @@ var _ procmeshv1connect.ClusterBackupAgentServiceHandler = (*ClusterBackupAgentA
 // ClusterBackupAgentAPI handles internal Agent-to-Agent backup task RPC.
 // These endpoints MUST only be accessible via mTLS Agent certificates, not user tokens.
 type ClusterBackupAgentAPI struct {
-	Engine    backup.AgentTaskExecutor
-	Auth      *auth.Service
-	ClusterID string
-	NodeID    string
-	Now       func() time.Time
+	Engine        backup.AgentTaskExecutor
+	Auth          *auth.Service
+	ClusterID     string
+	NodeID        string
+	Now           func() time.Time
+	AuthorizeTask func(string, *procmeshv1.RunClusterBackupTaskRequest) error
 }
 
 // RunTask executes a cluster backup task locally on this Agent.
 // Only accepts mTLS Agent certificates with matching cluster ID and node ID.
 func (s *ClusterBackupAgentAPI) RunTask(ctx context.Context, req *connect.Request[procmeshv1.RunClusterBackupTaskRequest]) (*connect.Response[procmeshv1.RunClusterBackupTaskResponse], error) {
-	if err := s.requireAgentMTLS(ctx, req.Header()); err != nil {
+	sourceNodeID, err := s.requireAgentMTLS(ctx, req.Header())
+	if err != nil {
 		return nil, err
 	}
 
 	msg := req.Msg
+	if s.AuthorizeTask != nil {
+		if err := s.AuthorizeTask(sourceNodeID, msg); err != nil {
+			return nil, ToConnect(err)
+		}
+	}
 	if msg.GetNodeId() != s.NodeID {
 		return nil, ToConnect(errcode.E(errcode.DENIED, "node_id mismatch"))
 	}
@@ -46,9 +53,13 @@ func (s *ClusterBackupAgentAPI) RunTask(ctx context.Context, req *connect.Reques
 		RunID:              msg.GetRunId(),
 		TaskID:             msg.GetTaskId(),
 		NodeID:             msg.GetNodeId(),
+		PolicyID:           msg.GetPolicyId(),
 		PolicyRevision:     msg.GetPolicyRevision(),
 		Sink:               msg.GetSink(),
 		DestinationProfile: msg.GetDestinationProfile(),
+		LeaderTerm:         msg.GetLeaderTerm(),
+		LeaseExpiresUnix:   msg.GetLeaseExpiresUnix(),
+		ProcessIDs:         append([]string(nil), msg.GetProcessIds()...),
 	})
 	if err != nil {
 		return nil, ToConnect(err)
@@ -61,7 +72,7 @@ func (s *ClusterBackupAgentAPI) RunTask(ctx context.Context, req *connect.Reques
 
 // GetTask retrieves the status of a cluster backup task.
 func (s *ClusterBackupAgentAPI) GetTask(ctx context.Context, req *connect.Request[procmeshv1.GetClusterBackupTaskRequest]) (*connect.Response[procmeshv1.GetClusterBackupTaskResponse], error) {
-	if err := s.requireAgentMTLS(ctx, req.Header()); err != nil {
+	if _, err := s.requireAgentMTLS(ctx, req.Header()); err != nil {
 		return nil, err
 	}
 
@@ -82,29 +93,29 @@ func (s *ClusterBackupAgentAPI) GetTask(ctx context.Context, req *connect.Reques
 
 // requireAgentMTLS verifies the request comes from a valid Agent certificate
 // with matching cluster ID. User tokens are rejected.
-func (s *ClusterBackupAgentAPI) requireAgentMTLS(ctx context.Context, header http.Header) error {
+func (s *ClusterBackupAgentAPI) requireAgentMTLS(ctx context.Context, header http.Header) (string, error) {
 	// Reject user authentication attempts
 	if rpc.SessionIDOf(header) != "" || rpc.TokenIDOf(header) != "" {
-		return ToConnect(errcode.E(errcode.DENIED, "user credentials not allowed for internal agent RPC"))
+		return "", ToConnect(errcode.E(errcode.DENIED, "user credentials not allowed for internal agent RPC"))
 	}
 
 	// Extract TLS connection state
 	tlsState, err := rpc.TLSStateFromContext(ctx)
 	if err != nil {
-		return ToConnect(errcode.E(errcode.DENIED, "mTLS required"))
+		return "", ToConnect(errcode.E(errcode.DENIED, "mTLS required"))
 	}
 
 	// Verify cluster ID from peer certificate
-	clusterID, _, err := rpc.PeerIdentity(tlsState)
+	clusterID, nodeID, err := rpc.PeerIdentity(tlsState)
 	if err != nil {
-		return ToConnect(err)
+		return "", ToConnect(err)
 	}
 
 	if clusterID != s.ClusterID {
-		return ToConnect(errcode.E(errcode.DENIED, "cluster_id mismatch"))
+		return "", ToConnect(errcode.E(errcode.DENIED, "cluster_id mismatch"))
 	}
 
-	return nil
+	return nodeID, nil
 }
 
 func toProtoTask(result *backup.TaskResult) *procmeshv1.ClusterBackupTask {
