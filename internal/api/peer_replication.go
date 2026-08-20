@@ -25,6 +25,8 @@ type PeerReplicationAPI struct {
 
 type PeerOperation struct {
 	Kind, ClusterID, SourceNodeID, TargetNodeID, SnapshotID, SHA256, RunID, TaskID string
+	PolicyID                                                                       string
+	PolicyRevision                                                                 int64
 }
 
 // PutSnapshot receives a snapshot from another agent.
@@ -33,7 +35,7 @@ func (p *PeerReplicationAPI) PutSnapshot(ctx context.Context, req *connect.Reque
 		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "peer store unavailable"))
 	}
 
-	peerNodeID, err := p.authorizeOperation(ctx, req.Msg.ClusterId, PeerOperation{Kind: "PUT", ClusterID: req.Msg.ClusterId, SourceNodeID: "", TargetNodeID: p.NodeID, SnapshotID: req.Msg.SnapshotId, SHA256: req.Msg.Sha256, RunID: req.Msg.RunId, TaskID: req.Msg.TaskId})
+	peerNodeID, err := p.authorizeOperation(ctx, req.Msg.ClusterId, PeerOperation{Kind: "PUT", ClusterID: req.Msg.ClusterId, SourceNodeID: "", TargetNodeID: p.NodeID, SnapshotID: req.Msg.SnapshotId, SHA256: req.Msg.Sha256, RunID: req.Msg.RunId, TaskID: req.Msg.TaskId, PolicyID: req.Msg.PolicyId, PolicyRevision: req.Msg.PolicyRevision})
 	if err != nil {
 		return nil, ToConnect(err)
 	}

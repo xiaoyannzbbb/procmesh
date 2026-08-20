@@ -454,7 +454,7 @@ func pushReplicationSnapshot(ctx context.Context, fwd *agentForwarder, rt *rpcRu
 	if err != nil {
 		return err
 	}
-	_, err = client.PutSnapshot(ctx, connect.NewRequest(&procmeshv1.PutSnapshotRequest{ClusterId: rt.clusterID, SnapshotId: request.SnapshotID, Sha256: request.SHA256, RunId: request.RunID, TaskId: request.TaskID, Payload: payload}))
+	_, err = client.PutSnapshot(ctx, connect.NewRequest(&procmeshv1.PutSnapshotRequest{ClusterId: rt.clusterID, SnapshotId: request.SnapshotID, Sha256: request.SHA256, RunId: request.RunID, TaskId: request.TaskID, Payload: payload, PolicyId: request.PolicyID, PolicyRevision: request.PolicyRevision}))
 	return err
 }
 

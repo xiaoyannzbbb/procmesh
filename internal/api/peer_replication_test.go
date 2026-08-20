@@ -17,6 +17,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/backup"
+	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/rpc"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
@@ -164,6 +165,43 @@ func TestPeerReplicationAPI_PutSnapshot(t *testing.T) {
 	if _, err := os.Stat(wrongPath); !os.IsNotExist(err) {
 		t.Fatalf("file should not exist at %s", wrongPath)
 	}
+}
+
+func TestPeerReplicationAPI_PutSnapshotPolicyAuthorizationBeforeStore(t *testing.T) {
+	dir := t.TempDir()
+	creds := genAgentCreds(t, "cluster-1", "source")
+	api := &PeerReplicationAPI{
+		PeerStore: &backup.PeerStore{Root: dir}, ClusterID: "cluster-1", NodeID: "target",
+		AuthorizeOperation: func(_ string, operation PeerOperation) error {
+			if operation.PolicyID != "frozen-policy" || operation.PolicyRevision != 4 {
+				return errcode.E(errcode.CONFLICT, "replication run changed")
+			}
+			return nil
+		},
+	}
+	client := newPeerReplicationClient(t, api, &tls.ConnectionState{PeerCertificates: []*x509.Certificate{creds.Cert}})
+	payload, _, err := backup.Encode(backup.Snapshot{FormatVersion: 1, SnapshotID: "snapshot", ClusterID: "cluster-1", NodeID: "source"})
+	require.NoError(t, err)
+	path := filepath.Join(dir, "backup", "peer", "source", "cluster-1", "snapshot.json")
+
+	for _, request := range []*procmeshv1.PutSnapshotRequest{
+		{ClusterId: "cluster-1", SnapshotId: "snapshot", Sha256: computeSHA256(payload), RunId: "run", TaskId: "task", PolicyId: "changed-policy", PolicyRevision: 4, Payload: payload},
+		{ClusterId: "cluster-1", SnapshotId: "snapshot", Sha256: computeSHA256(payload), RunId: "run", TaskId: "task", PolicyId: "frozen-policy", PolicyRevision: 5, Payload: payload},
+	} {
+		_, err := client.PutSnapshot(context.Background(), connect.NewRequest(request))
+		require.Error(t, err)
+		require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+		_, statErr := os.Stat(path)
+		require.True(t, os.IsNotExist(statErr), "policy authorization must run before peer store")
+	}
+
+	_, err = client.PutSnapshot(context.Background(), connect.NewRequest(&procmeshv1.PutSnapshotRequest{
+		ClusterId: "cluster-1", SnapshotId: "snapshot", Sha256: computeSHA256(payload), RunId: "run", TaskId: "task",
+		PolicyId: "frozen-policy", PolicyRevision: 4, Payload: payload,
+	}))
+	require.NoError(t, err)
+	_, err = os.Stat(path)
+	require.NoError(t, err)
 }
 
 func TestPeerReplicationAPI_PutSnapshot_Idempotent(t *testing.T) {

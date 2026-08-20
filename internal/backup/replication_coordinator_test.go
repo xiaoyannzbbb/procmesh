@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -198,6 +199,35 @@ func TestReplicationCoordinator_ConnectConflictIsTerminalFailed(t *testing.T) {
 	c.DispatchRun(context.Background(), backup.FrozenReplicationRun{RunID: "run", PolicyID: "p", LeaderTerm: 1, LeaseExpiresUnix: now.Add(time.Minute).Unix(), Tasks: []backup.FrozenReplicationTask{{TaskID: "t", SourceNodeID: "s", TargetNodeID: "d", SnapshotID: "snap", SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Status: "PENDING"}}})
 	if len(control.updates) != 1 || control.updates[0].Status != "FAILED" || control.updates[0].ErrorCode != "CONFLICT" || strings.Contains(control.updates[0].ErrorSummary, "/secret") {
 		t.Fatalf("updates=%+v", control.updates)
+	}
+}
+
+func TestReplicationPushPropagatesFrozenPolicyIdentity(t *testing.T) {
+	ctx := context.Background()
+	st, _ := seedProcess(t)
+	fsRoot := filepath.Join(t.TempDir(), "fs")
+	var pushed backup.ReplicationPushRequest
+	engine := &backup.Engine{
+		Store: st, NodeID: "source", ClusterID: "cluster", Sinks: map[string]backup.Sink{"fs": backup.NewFSSink(fsRoot)},
+		NewID: func() (string, error) { return "snapshot", nil },
+		ReplicationPush: backup.ReplicationPeerPushFunc(func(_ context.Context, request backup.ReplicationPushRequest, _ []byte) error {
+			pushed = request
+			return nil
+		}),
+	}
+	meta, err := engine.CreateCluster(ctx, backup.ClusterCreateOpts{RunID: "primary-run", TaskID: "primary-task", PolicyID: "primary-policy", ClusterID: "cluster", NodeID: "source", Sink: "fs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = engine.ReplicateSnapshot(ctx, backup.ReplicationTaskRequest{
+		RunID: "replication-run", TaskID: "replication-task", PolicyID: "frozen-policy", PolicyRevision: 4,
+		SourceNodeID: "source", TargetNodeID: "target", SnapshotID: meta.SnapshotID, SHA256: meta.SHA256,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pushed.PolicyID != "frozen-policy" || pushed.PolicyRevision != 4 {
+		t.Fatalf("replication push policy identity = %q/%d, want frozen-policy/4", pushed.PolicyID, pushed.PolicyRevision)
 	}
 }
 

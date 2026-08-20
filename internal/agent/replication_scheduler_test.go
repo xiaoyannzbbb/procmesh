@@ -8,8 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/qleelulu/procmesh/internal/api"
 	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/control"
+	"github.com/qleelulu/procmesh/internal/errcode"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 )
 
@@ -283,6 +285,79 @@ func TestReplicationRetryAuthorizationRequiresRunningTask(t *testing.T) {
 	request.SnapshotId = "changed"
 	if replicationTaskMatchesDispatch(task, request, "source") {
 		t.Fatal("changed frozen identity authorized")
+	}
+}
+
+func TestPutSnapshotPolicyAuthorizationMatchesFrozenReplicationRun(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	node, err := control.Start(control.RaftConfig{Dir: t.TempDir(), Bind: "127.0.0.1:0", NodeID: "target", ClusterID: "cluster"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = node.Shutdown() })
+	if err := node.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitRaftLeader(node, raftStartTO); err != nil {
+		t.Fatal(err)
+	}
+	apply := func(commandType string, body any) {
+		t.Helper()
+		command, encodeErr := control.EncodeCommand(commandType, body)
+		if encodeErr != nil {
+			t.Fatal(encodeErr)
+		}
+		if applyErr := node.Apply(command, raftApplyTO); applyErr != nil {
+			t.Fatal(applyErr)
+		}
+	}
+	apply(control.CmdMemberPut, control.MemberPutBody{NodeID: "source", Status: control.MemberAdmitted})
+	apply(control.CmdMemberPut, control.MemberPutBody{NodeID: "target", Status: control.MemberAdmitted})
+	apply(control.CmdReplicationPolicyPut, control.ReplicationPolicyPutBody{
+		OperationID: "policy", PolicyID: "frozen-policy", Name: "policy", Enabled: true,
+		SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"source"}, ReplicaFactor: 1,
+		Routes:  []control.ReplicationRoute{{SourceNodeID: "source", TargetNodeIDs: []string{"target"}}},
+		Trigger: "MANUAL", ExpectedRevision: -1,
+	})
+	term := node.CurrentTerm()
+	apply(control.CmdBackupRunCreate, control.CreateRunBody{
+		OperationID: "run", LeaderTerm: term, Replication: true,
+		Run:   control.ClusterBackupRun{RunID: "run", PolicyID: "frozen-policy", PolicyRevision: 1, TargetNodeIDs: []string{"source"}, Status: "RUNNING", LeaseUntilUnix: now.Add(time.Minute).Unix()},
+		Tasks: []control.ClusterBackupTask{{RunID: "run", TaskID: "task", SourceNodeID: "source", NodeID: "target", SnapshotID: "snapshot", SHA256: replicationTestSHA, Status: "PENDING"}},
+	})
+	apply(control.CmdBackupTaskUpdate, control.UpdateTaskBody{
+		OperationID: "begin", LeaderTerm: term, Replication: true,
+		Task: control.ClusterBackupTask{RunID: "run", TaskID: "task", SourceNodeID: "source", NodeID: "target", SnapshotID: "snapshot", SHA256: replicationTestSHA, Status: "RUNNING", UpdatedUnix: now.Unix()},
+	})
+	runtime := &rpcRuntime{nodeID: "target", clusterID: "cluster", node: node}
+
+	tests := []struct {
+		name           string
+		policyID       string
+		policyRevision int64
+		wantErr        bool
+	}{
+		{name: "exact frozen identity", policyID: "frozen-policy", policyRevision: 1},
+		{name: "mismatched policy ID", policyID: "changed-policy", policyRevision: 1, wantErr: true},
+		{name: "mismatched policy revision", policyID: "frozen-policy", policyRevision: 2, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := runtime.authorizePeerOperation("source", api.PeerOperation{
+				Kind: "PUT", ClusterID: "cluster", SourceNodeID: "source", TargetNodeID: "target",
+				SnapshotID: "snapshot", SHA256: replicationTestSHA, RunID: "run", TaskID: "task",
+				PolicyID: test.policyID, PolicyRevision: test.policyRevision,
+			})
+			if test.wantErr && err == nil {
+				t.Fatal("mismatched frozen policy identity authorized")
+			}
+			if test.wantErr && !errcode.Is(err, errcode.CONFLICT) && !errcode.Is(err, errcode.DENIED) {
+				t.Fatalf("mismatched frozen policy identity error = %v, want CONFLICT or DENIED", err)
+			}
+			if !test.wantErr && err != nil {
+				t.Fatalf("exact frozen policy identity rejected: %v", err)
+			}
+		})
 	}
 }
 

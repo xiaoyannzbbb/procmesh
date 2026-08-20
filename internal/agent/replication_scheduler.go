@@ -428,7 +428,7 @@ func (r *rpcRuntime) authorizePeerOperation(peerNodeID string, operation api.Pee
 		}
 		if operation.Kind == "PUT" {
 			run, ok := state.ReplicationRuns[operation.RunID]
-			if !ok || task.RunID != operation.RunID || task.TaskID != operation.TaskID || run.Status != "RUNNING" || run.LeaseUntilUnix <= time.Now().Unix() || state.ReplicationRunTerms[run.RunID] != n.CurrentTerm() || (task.Status != "PENDING" && task.Status != "RUNNING") {
+			if !ok || run.PolicyID != operation.PolicyID || run.PolicyRevision != operation.PolicyRevision || task.RunID != operation.RunID || task.TaskID != operation.TaskID || run.Status != "RUNNING" || run.LeaseUntilUnix <= time.Now().Unix() || state.ReplicationRunTerms[run.RunID] != n.CurrentTerm() || (task.Status != "PENDING" && task.Status != "RUNNING") {
 				continue
 			}
 		}

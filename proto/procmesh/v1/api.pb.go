@@ -11696,15 +11696,17 @@ func (x *GetClusterBackupTaskResponse) GetTask() *ClusterBackupTask {
 }
 
 type PutSnapshotRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ClusterId     string                 `protobuf:"bytes,1,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
-	SnapshotId    string                 `protobuf:"bytes,2,opt,name=snapshot_id,json=snapshotId,proto3" json:"snapshot_id,omitempty"`
-	Sha256        string                 `protobuf:"bytes,3,opt,name=sha256,proto3" json:"sha256,omitempty"`
-	RunId         string                 `protobuf:"bytes,4,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
-	TaskId        string                 `protobuf:"bytes,5,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	Payload       []byte                 `protobuf:"bytes,6,opt,name=payload,proto3" json:"payload,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ClusterId      string                 `protobuf:"bytes,1,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
+	SnapshotId     string                 `protobuf:"bytes,2,opt,name=snapshot_id,json=snapshotId,proto3" json:"snapshot_id,omitempty"`
+	Sha256         string                 `protobuf:"bytes,3,opt,name=sha256,proto3" json:"sha256,omitempty"`
+	RunId          string                 `protobuf:"bytes,4,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	TaskId         string                 `protobuf:"bytes,5,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	Payload        []byte                 `protobuf:"bytes,6,opt,name=payload,proto3" json:"payload,omitempty"`
+	PolicyId       string                 `protobuf:"bytes,7,opt,name=policy_id,json=policyId,proto3" json:"policy_id,omitempty"`
+	PolicyRevision int64                  `protobuf:"varint,8,opt,name=policy_revision,json=policyRevision,proto3" json:"policy_revision,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *PutSnapshotRequest) Reset() {
@@ -11777,6 +11779,20 @@ func (x *PutSnapshotRequest) GetPayload() []byte {
 		return x.Payload
 	}
 	return nil
+}
+
+func (x *PutSnapshotRequest) GetPolicyId() string {
+	if x != nil {
+		return x.PolicyId
+	}
+	return ""
+}
+
+func (x *PutSnapshotRequest) GetPolicyRevision() int64 {
+	if x != nil {
+		return x.PolicyRevision
+	}
+	return 0
 }
 
 type PutSnapshotResponse struct {
@@ -15831,7 +15847,7 @@ const file_proto_procmesh_v1_api_proto_rawDesc = "" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x17\n" +
 	"\atask_id\x18\x02 \x01(\tR\x06taskId\"R\n" +
 	"\x1cGetClusterBackupTaskResponse\x122\n" +
-	"\x04task\x18\x01 \x01(\v2\x1e.procmesh.v1.ClusterBackupTaskR\x04task\"\xb6\x01\n" +
+	"\x04task\x18\x01 \x01(\v2\x1e.procmesh.v1.ClusterBackupTaskR\x04task\"\xfc\x01\n" +
 	"\x12PutSnapshotRequest\x12\x1d\n" +
 	"\n" +
 	"cluster_id\x18\x01 \x01(\tR\tclusterId\x12\x1f\n" +
@@ -15840,7 +15856,9 @@ const file_proto_procmesh_v1_api_proto_rawDesc = "" +
 	"\x06sha256\x18\x03 \x01(\tR\x06sha256\x12\x15\n" +
 	"\x06run_id\x18\x04 \x01(\tR\x05runId\x12\x17\n" +
 	"\atask_id\x18\x05 \x01(\tR\x06taskId\x12\x18\n" +
-	"\apayload\x18\x06 \x01(\fR\apayload\"\xb3\x01\n" +
+	"\apayload\x18\x06 \x01(\fR\apayload\x12\x1b\n" +
+	"\tpolicy_id\x18\a \x01(\tR\bpolicyId\x12'\n" +
+	"\x0fpolicy_revision\x18\b \x01(\x03R\x0epolicyRevision\"\xb3\x01\n" +
 	"\x13PutSnapshotResponse\x12\x1f\n" +
 	"\vsnapshot_id\x18\x01 \x01(\tR\n" +
 	"snapshotId\x12\x1d\n" +

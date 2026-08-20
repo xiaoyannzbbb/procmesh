@@ -1104,6 +1104,8 @@ message PutSnapshotRequest {
   string run_id = 4;
   string task_id = 5;
   bytes payload = 6;
+  string policy_id = 7;
+  int64 policy_revision = 8;
 }
 
 message PutSnapshotResponse {

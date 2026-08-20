@@ -53,8 +53,9 @@ func (f PeerPushFunc) PutPeerSnapshot(ctx context.Context, nodeID, sourceNodeID 
 
 // ReplicationPushRequest carries metadata for a source-owned peer transfer.
 type ReplicationPushRequest struct {
-	RunID, TaskID, TargetNodeID string
-	SnapshotID, SHA256          string
+	RunID, TaskID, PolicyID, TargetNodeID string
+	PolicyRevision                        int64
+	SnapshotID, SHA256                    string
 }
 
 type ReplicationPeerPusher interface {
@@ -158,7 +159,7 @@ func (e *Engine) ReplicateSnapshot(ctx context.Context, req ReplicationTaskReque
 	if err != nil || snapshot.SnapshotID != req.SnapshotID || snapshot.ClusterID != e.ClusterID || snapshot.NodeID != e.NodeID {
 		return 0, errcode.E(errcode.CONFLICT, "frozen snapshot payload mismatch")
 	}
-	if err := e.ReplicationPush.PutReplicationSnapshot(ctx, ReplicationPushRequest{RunID: req.RunID, TaskID: req.TaskID, TargetNodeID: req.TargetNodeID, SnapshotID: req.SnapshotID, SHA256: req.SHA256}, payload); err != nil {
+	if err := e.ReplicationPush.PutReplicationSnapshot(ctx, ReplicationPushRequest{RunID: req.RunID, TaskID: req.TaskID, PolicyID: req.PolicyID, PolicyRevision: req.PolicyRevision, TargetNodeID: req.TargetNodeID, SnapshotID: req.SnapshotID, SHA256: req.SHA256}, payload); err != nil {
 		return 0, err
 	}
 	return int64(len(payload)), nil
