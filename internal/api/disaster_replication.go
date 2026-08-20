@@ -28,23 +28,27 @@ type DisasterReplicationForwarder interface {
 
 // DisasterReplicationAPI implements DisasterReplicationService for disaster recovery replication.
 type DisasterReplicationAPI struct {
-	ClusterID   string
-	ClusterIDFn func() string
-	NodeID      string
-	LocalID     string
-	Auth        *auth.Service
-	StateFn     func() control.State
-	ApplyFn     func(control.Command, time.Duration) error
-	IsLeader    func() bool
-	LeaderTerm  func() uint64
-	LeaderAddr  func() string
-	LeaderRoute func() (Route, bool)
-	Forward     any
-	Router      *Router
-	LocalOnly   bool
-	Now         func() time.Time
-	PeerStore   *backup.PeerStore
+	ClusterID      string
+	ClusterIDFn    func() string
+	NodeID         string
+	LocalID        string
+	Auth           *auth.Service
+	StateFn        func() control.State
+	ApplyFn        func(control.Command, time.Duration) error
+	IsLeader       func() bool
+	LeaderTerm     func() uint64
+	LeaderAddr     func() string
+	LeaderRoute    func() (Route, bool)
+	Forward        any
+	Router         *Router
+	LocalOnly      bool
+	Now            func() time.Time
+	PeerStore      *backup.PeerStore
+	SnapshotLister interface {
+		ListLocal(context.Context) ([]backup.Meta, error)
+	}
 	Members     func() []cluster.NodeSummary
+	DispatchRun func(backup.FrozenReplicationRun)
 }
 
 // GetTopology returns the cluster topology for replication planning.
@@ -491,6 +495,10 @@ func (d *DisasterReplicationAPI) StartRun(ctx context.Context, req *connect.Requ
 	if len(sources) == 0 || len(policy.Routes) == 0 {
 		return nil, ToConnect(errcode.E(errcode.INVALID, "replication routes required"))
 	}
+	refs, err := resolveReplicationSnapshotRefs(st, policy, req.Msg)
+	if err != nil {
+		return nil, ToConnect(err)
+	}
 
 	run := control.ClusterBackupRun{
 		RunID:          runID,
@@ -505,12 +513,19 @@ func (d *DisasterReplicationAPI) StartRun(ctx context.Context, req *connect.Requ
 	}
 	tasks := make([]control.ClusterBackupTask, 0)
 	for _, route := range policy.Routes {
+		ref := refs[route.SourceNodeID]
 		for _, targetID := range route.TargetNodeIDs {
+			taskID := replicationTaskID(runID, route.SourceNodeID, targetID)
+			if ref.SnapshotID != "" {
+				taskID = replicationTaskID(policy.PolicyID, ref.SnapshotID, targetID)
+			}
 			tasks = append(tasks, control.ClusterBackupTask{
 				RunID:        runID,
-				TaskID:       replicationTaskID(runID, route.SourceNodeID, targetID),
+				TaskID:       taskID,
 				NodeID:       targetID,
 				SourceNodeID: route.SourceNodeID,
+				SnapshotID:   ref.SnapshotID,
+				SHA256:       ref.SHA256,
 				Status:       "PENDING",
 				UpdatedUnix:  now.Unix(),
 			})
@@ -532,7 +547,66 @@ func (d *DisasterReplicationAPI) StartRun(ctx context.Context, req *connect.Requ
 		}
 		return nil, ToConnect(err)
 	}
+	if d.DispatchRun != nil && len(refs) != 0 {
+		frozen := make([]backup.FrozenReplicationTask, 0, len(tasks))
+		for _, task := range tasks {
+			frozen = append(frozen, backup.FrozenReplicationTask{TaskID: task.TaskID, SourceNodeID: task.SourceNodeID, TargetNodeID: task.NodeID, SnapshotID: task.SnapshotID, SHA256: task.SHA256, Status: task.Status})
+		}
+		d.DispatchRun(backup.FrozenReplicationRun{RunID: run.RunID, PolicyID: run.PolicyID, PolicyRevision: run.PolicyRevision, LeaderTerm: term, LeaseExpiresUnix: run.LeaseUntilUnix, MaxConcurrency: run.MaxConcurrency, Tasks: frozen})
+	}
 	return startRunResponse(run), nil
+}
+
+type replicationSnapshotRef struct{ SnapshotID, SHA256 string }
+
+func resolveReplicationSnapshotRefs(st control.State, policy control.ReplicationPolicy, request *procmeshv1.StartRunRequest) (map[string]replicationSnapshotRef, error) {
+	if request == nil {
+		return nil, errcode.E(errcode.INVALID, "snapshot refs required")
+	}
+	hasPrimary := request.GetPrimaryRunId() != ""
+	hasRefs := len(request.GetSnapshotRefs()) != 0
+	if policy.Trigger != "MANUAL" {
+		return map[string]replicationSnapshotRef{}, nil // scheduler paths bind their own primary results.
+	}
+	if hasPrimary == hasRefs {
+		return nil, errcode.E(errcode.INVALID, "exactly one primary run or snapshot refs required")
+	}
+	expected := make(map[string]struct{}, len(policy.Routes))
+	for _, route := range policy.Routes {
+		expected[route.SourceNodeID] = struct{}{}
+	}
+	refs := make(map[string]replicationSnapshotRef, len(expected))
+	if hasPrimary {
+		if _, ok := st.BackupRuns[request.GetPrimaryRunId()]; !ok {
+			return nil, errcode.E(errcode.NOT_FOUND, "primary backup run not found")
+		}
+		for _, task := range st.BackupTasks {
+			if task.RunID != request.GetPrimaryRunId() || (task.Status != "SUCCESS" && task.Status != "SUCCEEDED") || task.SnapshotID == "" || task.SHA256 == "" {
+				continue
+			}
+			if _, wanted := expected[task.NodeID]; !wanted {
+				continue
+			}
+			refs[task.NodeID] = replicationSnapshotRef{SnapshotID: task.SnapshotID, SHA256: task.SHA256}
+		}
+	} else {
+		for _, ref := range request.GetSnapshotRefs() {
+			if ref == nil || ref.GetSourceNodeId() == "" || ref.GetSnapshotId() == "" || len(ref.GetSha256()) != 64 {
+				return nil, errcode.E(errcode.INVALID, "invalid snapshot refs")
+			}
+			if _, wanted := expected[ref.GetSourceNodeId()]; !wanted {
+				return nil, errcode.E(errcode.INVALID, "snapshot refs do not match routes")
+			}
+			if _, duplicate := refs[ref.GetSourceNodeId()]; duplicate {
+				return nil, errcode.E(errcode.INVALID, "duplicate snapshot refs")
+			}
+			refs[ref.GetSourceNodeId()] = replicationSnapshotRef{SnapshotID: ref.GetSnapshotId(), SHA256: ref.GetSha256()}
+		}
+	}
+	if len(refs) != len(expected) {
+		return nil, errcode.E(errcode.INVALID, "snapshot refs do not cover all routes")
+	}
+	return refs, nil
 }
 
 // GetRun retrieves a replication run.
@@ -861,11 +935,52 @@ func (d *DisasterReplicationAPI) ListRecoverableSnapshots(ctx context.Context, r
 		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "peer store unavailable"))
 	}
 
-	// TODO: Implement listing all snapshots across all sources
-	// For now, return empty list
-	return connect.NewResponse(&procmeshv1.ListRecoverableSnapshotsResponse{
-		Snapshots: []*procmeshv1.ReplicaSnapshot{},
-	}), nil
+	clusterID := d.clusterID()
+	merged := make(map[string]*procmeshv1.ReplicaSnapshot)
+	if d.SnapshotLister != nil {
+		metas, err := d.SnapshotLister.ListLocal(ctx)
+		if err != nil {
+			return nil, ToConnect(err)
+		}
+		for _, meta := range metas {
+			owner := meta.SourceNodeID
+			if owner == "" {
+				owner = meta.NodeID
+			}
+			if owner == "" || meta.SnapshotID == "" || meta.SHA256 == "" {
+				continue
+			}
+			key := owner + "\x00" + meta.SnapshotID + "\x00" + meta.SHA256
+			merged[key] = &procmeshv1.ReplicaSnapshot{SnapshotId: meta.SnapshotID, ClusterId: meta.ClusterID, SourceNodeId: owner, Sha256: meta.SHA256, CreatedAt: meta.CreatedAt.Unix(), ProcessCount: int32(len(meta.ProcessIDs)), ProcessIds: append([]string(nil), meta.ProcessIDs...)}
+		}
+	}
+	listed, err := d.PeerStore.ListAllSnapshots(ctx, clusterID)
+	if err != nil {
+		return nil, ToConnect(err)
+	}
+	for _, item := range listed {
+		meta, err := d.PeerStore.GetReplicaMetadata(ctx, item.SourceNodeID, clusterID, item.SnapshotID)
+		if err != nil {
+			continue
+		}
+		owner := item.SourceNodeID
+		key := owner + "\x00" + meta.SnapshotID + "\x00" + meta.SHA256
+		merged[key] = &procmeshv1.ReplicaSnapshot{SnapshotId: meta.SnapshotID, ClusterId: meta.ClusterID, SourceNodeId: owner, Sha256: meta.SHA256, CreatedAt: meta.CreatedAt.Unix(), ProcessCount: int32(len(meta.ProcessIDs)), ProcessIds: append([]string(nil), meta.ProcessIDs...)}
+	}
+	out := make([]*procmeshv1.ReplicaSnapshot, 0, len(merged))
+	for _, snapshot := range merged {
+		out = append(out, snapshot)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].SourceNodeId == out[j].SourceNodeId {
+			if out[i].SnapshotId == out[j].SnapshotId {
+				return out[i].Sha256 < out[j].Sha256
+			}
+			return out[i].SnapshotId < out[j].SnapshotId
+		}
+		return out[i].SourceNodeId < out[j].SourceNodeId
+	})
+	return connect.NewResponse(&procmeshv1.ListRecoverableSnapshotsResponse{Snapshots: out}), nil
 }
 
 // Helper functions

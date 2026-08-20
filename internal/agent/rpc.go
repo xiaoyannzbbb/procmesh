@@ -28,28 +28,29 @@ type rpcRuntime struct {
 	ln  net.Listener
 	ctx context.Context
 
-	opt         Options
-	dir         string
-	nodeID      string
-	mgr         *process.Manager
-	st          *store.Store
-	mesh        *cluster.Mesh
-	src         *liveSource
-	ready       func() error
-	degraded    bool
-	fwd         *agentForwarder
-	auth        *auth.Service
-	node        *control.Node
-	raftDir     string
-	clusterID   string
-	controlBind string
-	controlAdv  string
-	knownLeader string
-	started     time.Time
-	logger      *slog.Logger
-	metrics     *metrics.Collector
-	backup      *backup.Engine
-	backupCoord *backup.Coordinator
+	opt              Options
+	dir              string
+	nodeID           string
+	mgr              *process.Manager
+	st               *store.Store
+	mesh             *cluster.Mesh
+	src              *liveSource
+	ready            func() error
+	degraded         bool
+	fwd              *agentForwarder
+	auth             *auth.Service
+	node             *control.Node
+	raftDir          string
+	clusterID        string
+	controlBind      string
+	controlAdv       string
+	knownLeader      string
+	started          time.Time
+	logger           *slog.Logger
+	metrics          *metrics.Collector
+	backup           *backup.Engine
+	backupCoord      *backup.Coordinator
+	replicationCoord *backup.ReplicationCoordinator
 }
 
 func (r *rpcRuntime) startRPC() error {
@@ -293,7 +294,17 @@ func (r *rpcRuntime) localHandler() http.Handler {
 			}
 			return n.CurrentTerm()
 		},
-		PeerStore: peerStore,
+		PeerStore:      peerStore,
+		SnapshotLister: r.backup,
+		DispatchRun: func(run backup.FrozenReplicationRun) {
+			if r.replicationCoord != nil {
+				ctx := r.ctx
+				if ctx == nil {
+					ctx = context.Background()
+				}
+				go r.replicationCoord.DispatchRun(ctx, run)
+			}
+		},
 		Members: func() []cluster.NodeSummary {
 			if r.mesh == nil {
 				return nil
@@ -314,9 +325,11 @@ func (r *rpcRuntime) localHandler() http.Handler {
 
 	// Internal Agent-to-Agent peer replication (no user auth, mTLS only)
 	prp, prh := procmeshv1connect.NewPeerReplicationServiceHandler(&api.PeerReplicationAPI{
-		PeerStore: peerStore,
-		ClusterID: r.clusterID,
-		NodeID:    r.nodeID,
+		PeerStore:            peerStore,
+		ClusterID:            r.clusterID,
+		NodeID:               r.nodeID,
+		Replicator:           r.backup,
+		AuthorizeReplication: r.authorizeReplicationTask,
 	})
 	mux.Handle(prp, prh)
 
@@ -489,4 +502,12 @@ func (f *agentForwarder) ClusterBackupAgent(_ context.Context, rt api.Route) (pr
 		return nil, err
 	}
 	return rpc.NewClusterBackupAgentClient(hc, base), nil
+}
+
+func (f *agentForwarder) PeerReplication(_ context.Context, rt api.Route) (procmeshv1connect.PeerReplicationServiceClient, error) {
+	hc, base, err := f.dial(rt, clusterBackupHopTimeout)
+	if err != nil {
+		return nil, err
+	}
+	return rpc.NewPeerReplicationClient(hc, base), nil
 }

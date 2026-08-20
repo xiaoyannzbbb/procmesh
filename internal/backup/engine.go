@@ -51,6 +51,22 @@ func (f PeerPushFunc) PutPeerSnapshot(ctx context.Context, nodeID, sourceNodeID 
 	return f(ctx, nodeID, sourceNodeID, payload)
 }
 
+// ReplicationPushRequest carries metadata for a source-owned peer transfer.
+type ReplicationPushRequest struct {
+	RunID, TaskID, TargetNodeID string
+	SnapshotID, SHA256          string
+}
+
+type ReplicationPeerPusher interface {
+	PutReplicationSnapshot(context.Context, ReplicationPushRequest, []byte) error
+}
+
+type ReplicationPeerPushFunc func(context.Context, ReplicationPushRequest, []byte) error
+
+func (f ReplicationPeerPushFunc) PutReplicationSnapshot(ctx context.Context, req ReplicationPushRequest, payload []byte) error {
+	return f(ctx, req, payload)
+}
+
 // CreateOpts selects processes, sink, and optional peer targets for Create.
 type CreateOpts struct {
 	ProcessIDs    []string
@@ -89,6 +105,7 @@ type Engine struct {
 	ResolveDestination func(profile string) (Sink, error)
 	PeerStore          *PeerStore
 	PeerPush           PeerPusher
+	ReplicationPush    ReplicationPeerPusher
 	Admitted           func(nodeID string) bool
 	DiskPercent        func() float64 // nil = 0
 	Now                func() time.Time
@@ -100,6 +117,49 @@ type Engine struct {
 	Schedule           string // 空 = 关；五字段 cron
 	activeMu           sync.Mutex
 	activeSnapshots    map[string]int
+}
+
+// ReplicateSnapshot reloads a stored primary payload by immutable ID and
+// checksum. It never collects current process specs.
+func (e *Engine) ReplicateSnapshot(ctx context.Context, req ReplicationTaskRequest) (int64, error) {
+	if e == nil || e.Store == nil || e.ReplicationPush == nil {
+		return 0, errcode.E(errcode.UNAVAILABLE, "replication source unavailable")
+	}
+	if req.SourceNodeID != e.NodeID || req.SnapshotID == "" || req.SHA256 == "" || req.TargetNodeID == "" {
+		return 0, errcode.E(errcode.INVALID, "invalid replication source request")
+	}
+	rec, err := e.Store.GetBackup(ctx, req.SnapshotID)
+	if err != nil {
+		return 0, err
+	}
+	if rec.NodeID != e.NodeID || rec.ClusterID != e.ClusterID || rec.SHA256 != req.SHA256 {
+		return 0, errcode.E(errcode.CONFLICT, "frozen snapshot checksum mismatch")
+	}
+	sink, err := e.clusterSink(rec.Sink, rec.DestinationProfile)
+	if err != nil {
+		return 0, err
+	}
+	var payload []byte
+	if clusterSink, ok := sink.(ClusterSink); ok && rec.PolicyID != "" {
+		payload, err = clusterSink.GetCluster(ctx, rec.ClusterID, rec.PolicyID, rec.NodeID, rec.SnapshotID)
+	} else {
+		payload, err = sink.Get(ctx, rec.SnapshotID)
+	}
+	if err != nil {
+		return 0, err
+	}
+	sum := sha256.Sum256(payload)
+	if hex.EncodeToString(sum[:]) != req.SHA256 {
+		return 0, errcode.E(errcode.CONFLICT, "frozen snapshot checksum mismatch")
+	}
+	snapshot, err := Decode(payload)
+	if err != nil || snapshot.SnapshotID != req.SnapshotID || snapshot.ClusterID != e.ClusterID || snapshot.NodeID != e.NodeID {
+		return 0, errcode.E(errcode.CONFLICT, "frozen snapshot payload mismatch")
+	}
+	if err := e.ReplicationPush.PutReplicationSnapshot(ctx, ReplicationPushRequest{RunID: req.RunID, TaskID: req.TaskID, TargetNodeID: req.TargetNodeID, SnapshotID: req.SnapshotID, SHA256: req.SHA256}, payload); err != nil {
+		return 0, err
+	}
+	return int64(len(payload)), nil
 }
 
 var _ Applier = (*process.Manager)(nil)

@@ -125,6 +125,33 @@ func (s *FSSink) Get(ctx context.Context, id string) ([]byte, error) {
 	return data, nil
 }
 
+// GetCluster reads exactly one namespaced cluster snapshot.
+func (s *FSSink) GetCluster(ctx context.Context, clusterID, policyID, nodeID, id string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	for _, value := range []string{clusterID, policyID, nodeID} {
+		if err := validateNamespaceID(value); err != nil {
+			return nil, err
+		}
+	}
+	if err := s.validateID(id); err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(s.clusterPathFor(clusterID, nodeID, id))
+	if os.IsNotExist(err) {
+		return nil, errcode.E(errcode.NOT_FOUND, "snapshot not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read cluster backup: %w", err)
+	}
+	snapshot, err := Decode(data)
+	if err != nil || snapshot.SnapshotID != id || snapshot.ClusterID != clusterID || snapshot.NodeID != nodeID || snapshot.PolicyID != policyID {
+		return nil, errcode.E(errcode.CONFLICT, "snapshot namespace mismatch")
+	}
+	return data, nil
+}
+
 // List enumerates *.json snapshot files in the sink directory.
 func (s *FSSink) List(ctx context.Context) ([]Listed, error) {
 	if err := ctx.Err(); err != nil {

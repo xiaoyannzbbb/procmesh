@@ -1091,6 +1091,7 @@ service ClusterBackupAgentService {
 // Only accessible via Agent mTLS certificates, not Web sessions.
 service PeerReplicationService {
   rpc PutSnapshot(PutSnapshotRequest) returns (PutSnapshotResponse);
+  rpc ReplicateSnapshot(ReplicateSnapshotRequest) returns (ReplicateSnapshotResponse);
   rpc CheckSnapshot(CheckSnapshotRequest) returns (CheckSnapshotResponse);
   rpc DeleteSnapshot(DeleteSnapshotRequest) returns (DeleteSnapshotResponse);
   rpc GetReplicaMetadata(GetReplicaMetadataRequest) returns (GetReplicaMetadataResponse);
@@ -1111,6 +1112,28 @@ message PutSnapshotResponse {
   string sha256 = 3;
   int32 process_count = 4;
   repeated string process_ids = 5;
+}
+
+// ReplicateSnapshot is Leader-authorized metadata-only work sent to the
+// source Agent. The source reloads the indexed payload and calls PutSnapshot
+// itself, so the Leader never observes payload bytes.
+message ReplicateSnapshotRequest {
+  string run_id = 1;
+  string task_id = 2;
+  string policy_id = 3;
+  int64 policy_revision = 4;
+  string source_node_id = 5;
+  string target_node_id = 6;
+  string snapshot_id = 7;
+  string sha256 = 8;
+  uint64 leader_term = 9;
+  int64 lease_expires_unix = 10;
+}
+
+message ReplicateSnapshotResponse {
+  string snapshot_id = 1;
+  string sha256 = 2;
+  int64 bytes = 3;
 }
 
 message CheckSnapshotRequest {
@@ -1332,6 +1355,15 @@ message DeletePolicyResponse {
 message StartRunRequest {
   string policy_id = 1;
   MutationMeta meta = 2;
+  // Exactly one binding source is required for MANUAL runs.
+  string primary_run_id = 3;
+  repeated ReplicationSnapshotRef snapshot_refs = 4;
+}
+
+message ReplicationSnapshotRef {
+  string source_node_id = 1;
+  string snapshot_id = 2;
+  string sha256 = 3;
 }
 
 message StartRunResponse {

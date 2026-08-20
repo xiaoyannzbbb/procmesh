@@ -51,6 +51,41 @@ func TestClusterPath_FS(t *testing.T) {
 	}
 }
 
+func TestEngine_ReplicateSnapshotReloadsFrozenPrimaryPayload(t *testing.T) {
+	ctx := context.Background()
+	st, spec := seedProcess(t)
+	fsRoot := filepath.Join(t.TempDir(), "fs")
+	var pushed []byte
+	e := &backup.Engine{
+		Store: st, NodeID: "node-1", ClusterID: "cluster-abc", Sinks: map[string]backup.Sink{"fs": backup.NewFSSink(fsRoot)},
+		NewID: func() (string, error) { return "snap-frozen", nil },
+		ReplicationPush: backup.ReplicationPeerPushFunc(func(_ context.Context, _ backup.ReplicationPushRequest, payload []byte) error {
+			pushed = append([]byte(nil), payload...)
+			return nil
+		}),
+	}
+	meta, err := e.CreateCluster(ctx, backup.ClusterCreateOpts{RunID: "primary-run", TaskID: "primary-task", PolicyID: "primary-policy", ClusterID: "cluster-abc", NodeID: "node-1", Sink: "fs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A changed current spec must not affect the payload selected for replication.
+	if _, err := st.PutSpec(ctx, spec, spec.LatestRevision, "test", "changed after snapshot"); err != nil {
+		t.Fatal(err)
+	}
+	bytes, err := e.ReplicateSnapshot(ctx, backup.ReplicationTaskRequest{RunID: "rep-run", TaskID: "rep-task", PolicyID: "rep-policy", SourceNodeID: "node-1", TargetNodeID: "node-2", SnapshotID: meta.SnapshotID, SHA256: meta.SHA256})
+	if err != nil || bytes != int64(len(pushed)) {
+		t.Fatalf("bytes=%d pushed=%d err=%v", bytes, len(pushed), err)
+	}
+	snapshot, err := backup.Decode(pushed)
+	if err != nil || snapshot.SnapshotID != meta.SnapshotID || snapshot.Processes[0].Revisions[len(snapshot.Processes[0].Revisions)-1].Comment == "changed after snapshot" {
+		t.Fatalf("replicated payload was regenerated: snapshot=%+v err=%v", snapshot, err)
+	}
+	_, err = e.ReplicateSnapshot(ctx, backup.ReplicationTaskRequest{RunID: "rep-run", TaskID: "rep-task", PolicyID: "rep-policy", SourceNodeID: "node-1", TargetNodeID: "node-2", SnapshotID: meta.SnapshotID, SHA256: strings.Repeat("0", 64)})
+	if !errcode.Is(err, errcode.CONFLICT) {
+		t.Fatalf("checksum conflict err=%v", err)
+	}
+}
+
 // TestClusterPath_S3 tests that CreateCluster uses namespaced S3 keys.
 func TestClusterPath_S3(t *testing.T) {
 	ctx := context.Background()

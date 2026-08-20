@@ -407,6 +407,9 @@ func newBackupEngine(opt Options, mgr *process.Manager, st *store.Store, collect
 		PeerPush: backup.PeerPushFunc(func(ctx context.Context, nodeID, sourceNodeID string, payload []byte) error {
 			return pushPeerSnapshot(ctx, fwd, rt, nodeID, sourceNodeID, payload)
 		}),
+		ReplicationPush: backup.ReplicationPeerPushFunc(func(ctx context.Context, request backup.ReplicationPushRequest, payload []byte) error {
+			return pushReplicationSnapshot(ctx, fwd, rt, request, payload)
+		}),
 		Admitted: func(nodeID string) bool {
 			n := rt.control()
 			if n == nil {
@@ -431,6 +434,28 @@ func newBackupEngine(opt Options, mgr *process.Manager, st *store.Store, collect
 		},
 		Schedule: opt.Backup.Schedule,
 	}
+}
+
+func pushReplicationSnapshot(ctx context.Context, fwd *agentForwarder, rt *rpcRuntime, request backup.ReplicationPushRequest, payload []byte) error {
+	if fwd == nil || rt == nil {
+		return errcode.E(errcode.UNAVAILABLE, "replication peer push not configured")
+	}
+	addr := ""
+	for _, member := range rt.memberList() {
+		if member.NodeID == request.TargetNodeID {
+			addr = member.RPCAddress
+			break
+		}
+	}
+	if addr == "" {
+		return errcode.E(errcode.UNAVAILABLE, "replication target unavailable")
+	}
+	client, err := fwd.PeerReplication(ctx, api.Route{NodeID: request.TargetNodeID, RPC: addr})
+	if err != nil {
+		return err
+	}
+	_, err = client.PutSnapshot(ctx, connect.NewRequest(&procmeshv1.PutSnapshotRequest{ClusterId: rt.clusterID, SnapshotId: request.SnapshotID, Sha256: request.SHA256, RunId: request.RunID, TaskId: request.TaskID, Payload: payload}))
+	return err
 }
 
 func pushPeerSnapshot(ctx context.Context, fwd *agentForwarder, rt *rpcRuntime, nodeID, sourceNodeID string, payload []byte) error {
@@ -559,6 +584,17 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		Dispatcher: localBackupDispatcher{runtime: rt},
 		RunCreator: raftBackupRunCreator{runtime: rt},
 		IsLeader:   func() bool { n := rt.control(); return n != nil && n.IsLeader() },
+		CurrentTerm: func() uint64 {
+			n := rt.control()
+			if n == nil {
+				return 0
+			}
+			return n.CurrentTerm()
+		},
+	})
+	rt.replicationCoord = backup.NewReplicationCoordinator(backup.ReplicationCoordinatorConfig{
+		Control: raftReplicationControl{runtime: rt}, Dispatcher: localReplicationDispatcher{runtime: rt},
+		IsLeader: func() bool { n := rt.control(); return n != nil && n.IsLeader() },
 		CurrentTerm: func() uint64 {
 			n := rt.control()
 			if n == nil {
@@ -705,6 +741,11 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 								if policies, err := (raftBackupControl{runtime: rt}).ListEnabledBackupPolicies(ctx); err == nil {
 									clusterPolicyReadOK = true
 									clusterEnabled = len(policies) > 0
+								}
+							}
+							if rt.replicationCoord != nil {
+								if err := rt.replicationCoord.Tick(ctx); err != nil && ctx.Err() == nil {
+									opt.Logger.Warn("replication schedule tick failed", "error", err)
 								}
 							}
 							if clusterPolicyReadOK && !clusterEnabled {

@@ -20,6 +20,7 @@ type Sink interface {
 type ClusterSink interface {
 	Sink
 	PutCluster(ctx context.Context, clusterID, policyID, nodeID, id string, payload []byte) (location string, err error)
+	GetCluster(ctx context.Context, clusterID, policyID, nodeID, id string) ([]byte, error)
 	ListCluster(ctx context.Context, clusterID, policyID string) ([]Listed, error)
 	DeleteCluster(ctx context.Context, clusterID, policyID, nodeID, id string) error
 }

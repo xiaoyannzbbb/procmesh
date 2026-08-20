@@ -742,6 +742,31 @@ func TestDisasterReplicationAPI_StartRun(t *testing.T) {
 	}
 }
 
+func TestDisasterReplicationAPI_StartRun_ManualRequiresCompleteFrozenSnapshotRefs(t *testing.T) {
+	api, state, authSvc := setupMinimalAPI(t)
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.ReplicationPolicies["policy-manual-frozen"] = control.ReplicationPolicy{
+		PolicyID: "policy-manual-frozen", Name: "manual", Enabled: true, Trigger: "MANUAL", SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"node-1", "node-2"}, Revision: 1,
+		Routes: []control.ReplicationRoute{{SourceNodeID: "node-1", TargetNodeIDs: []string{"node-3"}}, {SourceNodeID: "node-2", TargetNodeIDs: []string{"node-3"}}},
+	}
+	api.LeaderTerm = func() uint64 { return 3 }
+	api.ApplyFn = func(cmd control.Command, _ time.Duration) error { return state.Apply(cmd, time.Now()) }
+	client := newDisasterReplicationClient(t, api)
+	_, err = client.StartRun(context.Background(), bearerReq(sid, &procmeshv1.StartRunRequest{
+		PolicyId: "policy-manual-frozen", Meta: &procmeshv1.MutationMeta{OperationId: "op-manual-missing"},
+		SnapshotRefs: []*procmeshv1.ReplicationSnapshotRef{{SourceNodeId: "node-1", SnapshotId: "snap-1", Sha256: strings.Repeat("a", 64)}},
+	}))
+	if err == nil || !strings.Contains(err.Error(), "snapshot refs") {
+		t.Fatalf("expected incomplete frozen refs to be rejected, got %v", err)
+	}
+	if len(state.ReplicationRuns) != 0 {
+		t.Fatalf("unbound manual request created a run: %+v", state.ReplicationRuns)
+	}
+}
+
 func TestDisasterReplicationAPI_RunTasksHaveStableOrder(t *testing.T) {
 	state := control.NewState()
 	state.ReplicationRuns["run-stable"] = control.ClusterBackupRun{
@@ -1308,6 +1333,29 @@ func TestDisasterReplicationAPI_ListRecoverableSnapshots_Complete(t *testing.T) 
 
 	if resp.Msg.Snapshots == nil {
 		t.Error("expected non-nil snapshots slice")
+	}
+}
+
+func TestDisasterReplicationAPI_ListRecoverableSnapshots_RetainsPeerSourceOwner(t *testing.T) {
+	api, _, authSvc := setupMinimalAPI(t)
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := backup.Snapshot{FormatVersion: 1, SnapshotID: "snap-owner", ClusterID: "test-cluster", NodeID: "owner-node", CreatedAt: time.Unix(1_800_000_000, 0), Processes: []backup.ProcessDump{}}
+	payload, checksum, err := backup.Encode(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := api.PeerStore.ReceiveWithMetadata(context.Background(), backup.ReceiveParams{SourceNodeID: "owner-node", ClusterID: "test-cluster", SnapshotID: "snap-owner", SHA256: checksum, Payload: payload}); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := api.ListRecoverableSnapshots(context.Background(), bearerReq(sid, &procmeshv1.ListRecoverableSnapshotsRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Msg.Snapshots) != 1 || resp.Msg.Snapshots[0].GetSourceNodeId() != "owner-node" || resp.Msg.Snapshots[0].GetSha256() != checksum {
+		t.Fatalf("recoverable snapshots=%+v", resp.Msg.Snapshots)
 	}
 }
 

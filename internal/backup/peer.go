@@ -347,6 +347,43 @@ func (p *PeerStore) ListSnapshots(ctx context.Context, sourceNodeID, clusterID s
 	return out, nil
 }
 
+// ListAllSnapshots enumerates every source namespace for one cluster. It
+// returns metadata only; callers must not expose Listed.Location publicly.
+func (p *PeerStore) ListAllSnapshots(ctx context.Context, clusterID string) ([]Listed, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := p.validateCluster(clusterID); err != nil {
+		return nil, err
+	}
+	root := filepath.Join(paths.New(p.Root).BackupRoot(), "peer")
+	entries, err := os.ReadDir(root)
+	if os.IsNotExist(err) {
+		return []Listed{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list peer sources: %w", err)
+	}
+	out := make([]Listed, 0)
+	for _, entry := range entries {
+		if !entry.IsDir() || p.validateSource(entry.Name()) != nil {
+			continue
+		}
+		items, err := p.ListSnapshots(ctx, entry.Name(), clusterID)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, items...)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].SourceNodeID == out[j].SourceNodeID {
+			return out[i].SnapshotID < out[j].SnapshotID
+		}
+		return out[i].SourceNodeID < out[j].SourceNodeID
+	})
+	return out, nil
+}
+
 // Get reads a peer-received snapshot payload.
 func (p *PeerStore) Get(ctx context.Context, sourceNodeID, snapshotID string) ([]byte, error) {
 	if err := ctx.Err(); err != nil {

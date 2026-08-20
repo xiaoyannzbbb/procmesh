@@ -517,7 +517,7 @@ func (f *fakeSink) PutCluster(context.Context, string, string, string, string, [
 	return "", nil
 }
 
-func (f *fakeSink) GetCluster(context.Context, string) ([]byte, error) {
+func (f *fakeSink) GetCluster(context.Context, string, string, string, string) ([]byte, error) {
 	return nil, nil
 }
 

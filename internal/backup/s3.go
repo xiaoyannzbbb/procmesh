@@ -167,6 +167,22 @@ func (s *S3Sink) Get(ctx context.Context, id string) ([]byte, error) {
 	return s.do(ctx, http.MethodGet, s.objectPath(id), nil, nil)
 }
 
+// GetCluster reads exactly one snapshot under the generated policy namespace.
+func (s *S3Sink) GetCluster(ctx context.Context, clusterID, policyID, nodeID, id string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	for _, value := range []string{clusterID, policyID, nodeID} {
+		if err := validateNamespaceID(value); err != nil {
+			return nil, err
+		}
+	}
+	if err := s.validateID(id); err != nil {
+		return nil, err
+	}
+	return s.do(ctx, http.MethodGet, s.clusterObjectPath(clusterID, policyID, nodeID, id), nil, nil)
+}
+
 // List enumerates snapshot objects under the configured prefix.
 func (s *S3Sink) List(ctx context.Context) ([]Listed, error) {
 	if err := ctx.Err(); err != nil {

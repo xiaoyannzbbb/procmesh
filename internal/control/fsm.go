@@ -1314,7 +1314,7 @@ func validateInitialReplicationTasks(run ClusterBackupRun, tasks []ClusterBackup
 		if err := validateTaskMetadata(task); err != nil {
 			return err
 		}
-		if task.RunID != run.RunID || task.SourceNodeID == "" || task.Status != "PENDING" || task.SnapshotID != "" || task.SHA256 != "" || task.Bytes != 0 || task.ErrorCode != "" || task.ErrorSummary != "" {
+		if task.RunID != run.RunID || task.SourceNodeID == "" || task.Status != "PENDING" || (task.SnapshotID == "") != (task.SHA256 == "") || task.Bytes != 0 || task.ErrorCode != "" || task.ErrorSummary != "" {
 			return errcode.E(errcode.INVALID, "invalid initial replication task")
 		}
 		if _, ok := seenTaskIDs[task.TaskID]; ok {

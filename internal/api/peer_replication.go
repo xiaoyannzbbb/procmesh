@@ -13,9 +13,13 @@ import (
 // PeerReplicationAPI implements PeerReplicationService for agent-to-agent snapshot transfer.
 // Only accessible via Agent mTLS certificates, not Web sessions.
 type PeerReplicationAPI struct {
-	PeerStore *backup.PeerStore
-	ClusterID string
-	NodeID    string
+	PeerStore  *backup.PeerStore
+	ClusterID  string
+	NodeID     string
+	Replicator interface {
+		ReplicateSnapshot(context.Context, backup.ReplicationTaskRequest) (int64, error)
+	}
+	AuthorizeReplication func(string, *procmeshv1.ReplicateSnapshotRequest) error
 }
 
 // PutSnapshot receives a snapshot from another agent.
@@ -61,6 +65,32 @@ func (p *PeerReplicationAPI) PutSnapshot(ctx context.Context, req *connect.Reque
 	}
 
 	return connect.NewResponse(resp), nil
+}
+
+// ReplicateSnapshot authorizes the Leader to instruct this source Agent to
+// reload an immutable indexed payload and push it under its own mTLS identity.
+func (p *PeerReplicationAPI) ReplicateSnapshot(ctx context.Context, req *connect.Request[procmeshv1.ReplicateSnapshotRequest]) (*connect.Response[procmeshv1.ReplicateSnapshotResponse], error) {
+	tlsState, err := rpc.TLSStateFromContext(ctx)
+	if err != nil {
+		return nil, ToConnect(errcode.E(errcode.DENIED, "mTLS required"))
+	}
+	clusterID, leaderNodeID, err := rpc.PeerIdentity(tlsState)
+	if err != nil || clusterID != p.ClusterID {
+		return nil, ToConnect(errcode.E(errcode.DENIED, "peer cluster mismatch"))
+	}
+	if p.AuthorizeReplication != nil {
+		if err := p.AuthorizeReplication(leaderNodeID, req.Msg); err != nil {
+			return nil, ToConnect(err)
+		}
+	}
+	if p.Replicator == nil {
+		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "replication source unavailable"))
+	}
+	bytes, err := p.Replicator.ReplicateSnapshot(ctx, backup.ReplicationTaskRequest{RunID: req.Msg.RunId, TaskID: req.Msg.TaskId, PolicyID: req.Msg.PolicyId, PolicyRevision: req.Msg.PolicyRevision, SourceNodeID: req.Msg.SourceNodeId, TargetNodeID: req.Msg.TargetNodeId, SnapshotID: req.Msg.SnapshotId, SHA256: req.Msg.Sha256, LeaderTerm: req.Msg.LeaderTerm, LeaseExpiresUnix: req.Msg.LeaseExpiresUnix})
+	if err != nil {
+		return nil, ToConnect(err)
+	}
+	return connect.NewResponse(&procmeshv1.ReplicateSnapshotResponse{SnapshotId: req.Msg.SnapshotId, Sha256: req.Msg.Sha256, Bytes: bytes}), nil
 }
 
 // CheckSnapshot checks if a snapshot exists with the expected checksum.
