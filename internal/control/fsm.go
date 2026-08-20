@@ -170,6 +170,7 @@ type ClusterBackupTask struct {
 	RunID        string `json:"run_id"`
 	TaskID       string `json:"task_id"`
 	NodeID       string `json:"node_id"`
+	SourceNodeID string `json:"source_node_id,omitempty"`
 	SnapshotID   string `json:"snapshot_id"`
 	SHA256       string `json:"sha256"`
 	Status       string `json:"status"`
@@ -1214,6 +1215,9 @@ func validateTaskMetadata(task ClusterBackupTask) error {
 	if !validMetadataString(task.RunID, maxMetadataIDLen) || !validMetadataString(task.TaskID, maxMetadataIDLen) || !validMetadataString(task.NodeID, maxMetadataIDLen) {
 		return errcode.E(errcode.INVALID, "invalid task id")
 	}
+	if task.SourceNodeID != "" && !validMetadataString(task.SourceNodeID, maxMetadataIDLen) {
+		return errcode.E(errcode.INVALID, "invalid source node id")
+	}
 	if len(task.SnapshotID) > maxSnapshotIDLen || len(task.SHA256) > maxSHA256Len || len(task.ErrorCode) > maxErrorCodeLen || len(task.ErrorSummary) > maxErrorSummaryLen {
 		return errcode.E(errcode.INVALID, "task metadata too long")
 	}
@@ -1237,11 +1241,13 @@ func (s *State) applyCreateRun(b CreateRunBody) error {
 		return err
 	}
 	var policyRevision int64
+	var replicationPolicy ReplicationPolicy
 	if b.Replication {
 		policy, ok := s.ReplicationPolicies[b.Run.PolicyID]
 		if !ok {
 			return errcode.E(errcode.NOT_FOUND, "replication policy not found")
 		}
+		replicationPolicy = policy
 		policyRevision = policy.Revision
 		if policy.SourceSelector != "" {
 			if err := s.validateRunTargets(policy.SourceSelector, policy.SourceIDs, b.Run.TargetNodeIDs); err != nil {
@@ -1263,10 +1269,18 @@ func (s *State) applyCreateRun(b CreateRunBody) error {
 	if b.Run.PolicyRevision != policyRevision {
 		return errcode.E(errcode.CONFLICT, "policy revision changed")
 	}
-	runs, _ := runMaps(s, b.Replication)
+	if !b.Replication && len(b.Tasks) > 0 {
+		return errcode.E(errcode.INVALID, "initial tasks require replication run")
+	}
+	if b.Replication && len(b.Tasks) > 0 {
+		if err := validateInitialReplicationTasks(b.Run, b.Tasks, replicationPolicy); err != nil {
+			return err
+		}
+	}
+	runs, tasks := runMaps(s, b.Replication)
 	terms := runTerms(s, b.Replication)
 	if current, ok := runs[b.Run.RunID]; ok {
-		if reflect.DeepEqual(current, b.Run) {
+		if (!b.Replication && reflect.DeepEqual(current, b.Run)) || (b.Replication && sameFrozenRun(current, b.Run) && sameInitialRouteTasks(tasks, b.Run.RunID, b.Tasks)) {
 			return nil
 		}
 		return errcode.E(errcode.CONFLICT, "run already exists")
@@ -1274,7 +1288,79 @@ func (s *State) applyCreateRun(b CreateRunBody) error {
 	b.Run.TargetNodeIDs = append([]string(nil), b.Run.TargetNodeIDs...)
 	runs[b.Run.RunID] = b.Run
 	terms[b.Run.RunID] = b.LeaderTerm
+	for _, task := range b.Tasks {
+		task.LeaderTerm = b.LeaderTerm
+		tasks[taskMapKey(task)] = task
+	}
 	return nil
+}
+
+func validateInitialReplicationTasks(run ClusterBackupRun, tasks []ClusterBackupTask, policy ReplicationPolicy) error {
+	if len(tasks) > maxTargetNodeIDs {
+		return errcode.E(errcode.INVALID, "too many initial tasks")
+	}
+	expected := make(map[string]struct{})
+	for _, route := range policy.Routes {
+		for _, targetID := range route.TargetNodeIDs {
+			expected[route.SourceNodeID+"\x00"+targetID] = struct{}{}
+		}
+	}
+	if len(tasks) != len(expected) {
+		return errcode.E(errcode.INVALID, "initial tasks do not match frozen routes")
+	}
+	seenTaskIDs := make(map[string]struct{}, len(tasks))
+	seenRoutes := make(map[string]struct{}, len(tasks))
+	for _, task := range tasks {
+		if err := validateTaskMetadata(task); err != nil {
+			return err
+		}
+		if task.RunID != run.RunID || task.SourceNodeID == "" || task.Status != "PENDING" || task.SnapshotID != "" || task.SHA256 != "" || task.Bytes != 0 || task.ErrorCode != "" || task.ErrorSummary != "" {
+			return errcode.E(errcode.INVALID, "invalid initial replication task")
+		}
+		if _, ok := seenTaskIDs[task.TaskID]; ok {
+			return errcode.E(errcode.INVALID, "duplicate initial task id")
+		}
+		seenTaskIDs[task.TaskID] = struct{}{}
+		routeKey := task.SourceNodeID + "\x00" + task.NodeID
+		if _, ok := expected[routeKey]; !ok {
+			return errcode.E(errcode.INVALID, "initial task route not in policy")
+		}
+		if _, ok := seenRoutes[routeKey]; ok {
+			return errcode.E(errcode.INVALID, "duplicate initial task route")
+		}
+		seenRoutes[routeKey] = struct{}{}
+	}
+	return nil
+}
+
+func sameFrozenRun(current, requested ClusterBackupRun) bool {
+	return current.RunID == requested.RunID &&
+		current.PolicyID == requested.PolicyID &&
+		current.PolicyRevision == requested.PolicyRevision &&
+		equalStrings(current.TargetNodeIDs, requested.TargetNodeIDs) &&
+		current.MaxConcurrency == requested.MaxConcurrency
+}
+
+func sameInitialRouteTasks(tasks map[string]ClusterBackupTask, runID string, requested []ClusterBackupTask) bool {
+	if len(requested) == 0 {
+		return true
+	}
+	count := 0
+	for _, task := range tasks {
+		if task.RunID == runID {
+			count++
+		}
+	}
+	if count != len(requested) {
+		return false
+	}
+	for _, task := range requested {
+		current, ok := tasks[taskMapKey(task)]
+		if !ok || current.SourceNodeID != task.SourceNodeID || current.NodeID != task.NodeID {
+			return false
+		}
+	}
+	return true
 }
 
 // ClaimRun moves an expired running run to a newer leader term and renews its

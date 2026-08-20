@@ -173,11 +173,11 @@ git commit -m "fix(replication): secure internal peer request paths"
 - Produces: public `DisasterReplicationService` mounted with auth and Leader forwarding.
 - Produces: `StartRun` uses the current non-zero Leader term and creates stable route tasks before returning.
 
-- [ ] **Step 1: Write failing mount/forward and non-zero-term route-task tests.**
-- [ ] **Step 2: Run RED:** `go test ./internal/api -run 'TestServer.*DisasterReplication|TestReplicationAPI_StartRun' -count=1`
-- [ ] **Step 3: Mount the service using the ClusterBackup forwarding pattern and create the run/tasks in fenced control commands.**
-- [ ] **Step 4: Run:** `go test ./internal/api ./internal/control -count=1`
-- [ ] **Step 5: Commit:** `git commit -m "feat(replication): expose and start disaster replication runs"`
+- [x] **Step 1: Write failing mount/forward and non-zero-term route-task tests.**
+- [x] **Step 2: Run RED:** `go test ./internal/api -run 'TestServer.*DisasterReplication|TestReplicationAPI_StartRun' -count=1`
+- [x] **Step 3: Mount the service using the ClusterBackup forwarding pattern and create the run/tasks in fenced control commands.**
+- [x] **Step 4: Run:** `go test ./internal/api ./internal/control -count=1`
+- [x] **Step 5: Commit:** `git commit -m "feat(replication): expose and start disaster replication runs"`
 
 ### Task 7: Runnable replication coordinator and recoverable snapshots
 

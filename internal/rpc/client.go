@@ -82,6 +82,11 @@ func NewClusterBackupClient(hc *http.Client, base string) procmeshv1connect.Clus
 	return procmeshv1connect.NewClusterBackupServiceClient(hc, base)
 }
 
+// NewDisasterReplicationClient returns a DisasterReplicationService client over the given HTTP client and base URL.
+func NewDisasterReplicationClient(hc *http.Client, base string) procmeshv1connect.DisasterReplicationServiceClient {
+	return procmeshv1connect.NewDisasterReplicationServiceClient(hc, base)
+}
+
 // NewClusterBackupAgentClient returns a ClusterBackupAgentService client over the given HTTP client and base URL.
 func NewClusterBackupAgentClient(hc *http.Client, base string) procmeshv1connect.ClusterBackupAgentServiceClient {
 	return procmeshv1connect.NewClusterBackupAgentServiceClient(hc, base)

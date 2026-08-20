@@ -130,7 +130,7 @@ func hopRPCPerm(procedure string) (perm string, write bool, ok bool) {
 	case "GetTopology", "ListPolicies", "GetPolicy", "ListRuns", "GetRun", "ListRecoverableSnapshots":
 		return auth.PermReplicationRead, false, true
 	case "GeneratePolicyDraft":
-		return auth.PermReplicationRead, false, true
+		return auth.PermReplicationManage, false, true
 	case "ApplyPolicyDraft", "UpdatePolicy", "DeletePolicy", "StartRun", "RetryFailedRoutes", "VerifyReplica":
 		return auth.PermReplicationManage, true, true
 	default:

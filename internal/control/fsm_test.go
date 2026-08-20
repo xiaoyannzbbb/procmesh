@@ -408,6 +408,37 @@ func TestFSM_BackupRunRejectsStaleTermAndPreservesTerminalTask(t *testing.T) {
 	}
 }
 
+func TestFSM_ReplicationRunCreateCommitsTasksAtomically(t *testing.T) {
+	state := control.NewState()
+	state.Members["source"] = control.Member{NodeID: "source", Status: control.MemberAdmitted}
+	state.Members["target-a"] = control.Member{NodeID: "target-a", Status: control.MemberAdmitted}
+	state.Members["target-b"] = control.Member{NodeID: "target-b", Status: control.MemberAdmitted}
+	state.ReplicationPolicies["rp-atomic"] = control.ReplicationPolicy{
+		PolicyID: "rp-atomic", Revision: 1, SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"source"},
+		Routes: []control.ReplicationRoute{{SourceNodeID: "source", TargetNodeIDs: []string{"target-a", "target-b"}}},
+	}
+	run := control.ClusterBackupRun{RunID: "run-atomic", PolicyID: "rp-atomic", PolicyRevision: 1, TargetNodeIDs: []string{"source"}, Status: "RUNNING"}
+	tasks := []control.ClusterBackupTask{
+		{RunID: run.RunID, TaskID: "task-a", NodeID: "target-a", SourceNodeID: "source", Status: "PENDING"},
+		{RunID: run.RunID, TaskID: "task-b", NodeID: "", SourceNodeID: "source", Status: "PENDING"},
+	}
+	err := state.CreateRun(control.CreateRunBody{OperationID: "op-atomic", LeaderTerm: 4, Replication: true, Run: run, Tasks: tasks})
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("CreateRun error = %v, want INVALID", err)
+	}
+	if len(state.ReplicationRuns) != 0 || len(state.ReplicationTasks) != 0 {
+		t.Fatalf("partial state after failed create: runs=%+v tasks=%+v", state.ReplicationRuns, state.ReplicationTasks)
+	}
+
+	tasks[1].NodeID = "target-b"
+	if err := state.CreateRun(control.CreateRunBody{OperationID: "op-atomic", LeaderTerm: 4, Replication: true, Run: run, Tasks: tasks}); err != nil {
+		t.Fatal(err)
+	}
+	if len(state.ReplicationRuns) != 1 || len(state.ReplicationTasks) != 2 {
+		t.Fatalf("atomic state: runs=%+v tasks=%+v", state.ReplicationRuns, state.ReplicationTasks)
+	}
+}
+
 func TestFSM_RunMetadataPruningAndSnapshotSafety(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	s := control.NewState()

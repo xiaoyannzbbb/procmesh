@@ -180,7 +180,8 @@ func setupMinimalAPI(t *testing.T) (*DisasterReplicationAPI, *control.State, *au
 		ApplyFn: func(cmd control.Command, timeout time.Duration) error {
 			return nil
 		},
-		PeerStore: &backup.PeerStore{Root: dir},
+		LeaderTerm: func() uint64 { return 1 },
+		PeerStore:  &backup.PeerStore{Root: dir},
 		Members: func() []cluster.NodeSummary {
 			return []cluster.NodeSummary{
 				{NodeID: "node-1", State: cluster.StateAlive, Labels: map[string]string{"host": "host1", "zone": "z1"}},
@@ -492,7 +493,7 @@ func TestDisasterReplicationAPI_UpdatePolicy(t *testing.T) {
 	}
 
 	req := bearerReq(sid, &procmeshv1.UpdatePolicyRequest{
-		Meta: &procmeshv1.MutationMeta{OperationId: "op-update"},
+		Meta:     &procmeshv1.MutationMeta{OperationId: "op-update"},
 		PolicyId: "policy-1",
 		Name:     "new-name",
 	})
@@ -528,7 +529,7 @@ func TestDisasterReplicationAPI_DeletePolicy(t *testing.T) {
 	}
 
 	req := bearerReq(sid, &procmeshv1.DeletePolicyRequest{
-		Meta: &procmeshv1.MutationMeta{OperationId: "op-delete"},
+		Meta:     &procmeshv1.MutationMeta{OperationId: "op-delete"},
 		PolicyId: "policy-1",
 	})
 
@@ -627,7 +628,7 @@ func TestDisasterReplicationAPI_ListRecoverableSnapshots(t *testing.T) {
 // ===== Task 5: Complete Stub Methods Tests =====
 
 func TestDisasterReplicationAPI_StartRun(t *testing.T) {
-	api, _, authSvc := setupMinimalAPI(t)
+	api, state, authSvc := setupMinimalAPI(t)
 	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
 	if err != nil {
 		t.Fatal(err)
@@ -638,7 +639,8 @@ func TestDisasterReplicationAPI_StartRun(t *testing.T) {
 		PolicyID:       "policy-start-1",
 		Name:           "test-start-policy",
 		Enabled:        true,
-		SourceSelector: "all",
+		SourceSelector: "EXPLICIT_NODES",
+		SourceIDs:      []string{"node-1", "node-2"},
 		ReplicaFactor:  2,
 		Routes: []control.ReplicationRoute{
 			{SourceNodeID: "node-1", TargetNodeIDs: []string{"node-2", "node-3"}},
@@ -646,13 +648,20 @@ func TestDisasterReplicationAPI_StartRun(t *testing.T) {
 		},
 		Revision: 1,
 	}
-	api.StateFn().ReplicationPolicies[policy.PolicyID] = policy
+	state.ReplicationPolicies[policy.PolicyID] = policy
+	api.LeaderTerm = func() uint64 { return 7 }
+	api.Now = func() time.Time { return time.Unix(1_800_000_000, 0) }
+	api.ApplyFn = func(cmd control.Command, _ time.Duration) error {
+		return state.Apply(cmd, api.Now())
+	}
+	client := newDisasterReplicationClient(t, api)
 
 	req := bearerReq(sid, &procmeshv1.StartRunRequest{
 		PolicyId: "policy-start-1",
+		Meta:     &procmeshv1.MutationMeta{OperationId: "op-start-1"},
 	})
 
-	resp, err := api.StartRun(context.Background(), req)
+	resp, err := client.StartRun(context.Background(), req)
 	if err != nil {
 		t.Fatalf("StartRun failed: %v", err)
 	}
@@ -665,6 +674,185 @@ func TestDisasterReplicationAPI_StartRun(t *testing.T) {
 	}
 	if resp.Msg.StartedAt == 0 {
 		t.Error("expected started_at > 0")
+	}
+	if got := state.ReplicationRunTerms[resp.Msg.RunId]; got != 7 {
+		t.Fatalf("leader term = %d, want 7", got)
+	}
+
+	getResp, err := client.GetRun(context.Background(), bearerReq(sid, &procmeshv1.GetRunRequest{RunId: resp.Msg.RunId}))
+	if err != nil {
+		t.Fatalf("GetRun failed: %v", err)
+	}
+	gotRoutes := make(map[string]string)
+	for _, task := range getResp.Msg.GetRun().GetTasks() {
+		if task.GetStatus() != "PENDING" || len(task.GetTargetNodeIds()) != 1 {
+			t.Fatalf("task = %+v, want one pending route target", task)
+		}
+		gotRoutes[task.GetSourceNodeId()+">"+task.GetTargetNodeIds()[0]] = task.GetTaskId()
+	}
+	wantRoutes := []string{"node-1>node-2", "node-1>node-3", "node-2>node-3"}
+	for _, route := range wantRoutes {
+		if gotRoutes[route] == "" {
+			t.Fatalf("route tasks = %+v, missing %s", gotRoutes, route)
+		}
+	}
+	if len(gotRoutes) != len(wantRoutes) {
+		t.Fatalf("route tasks = %+v, want %v", gotRoutes, wantRoutes)
+	}
+	var runningTask control.ClusterBackupTask
+	for _, task := range state.ReplicationTasks {
+		runningTask = task
+		break
+	}
+	runningTask.Status = "RUNNING"
+	runningTask.UpdatedUnix++
+	if err := state.UpdateTask(control.UpdateTaskBody{
+		OperationID: "op-running-route", LeaderTerm: 7, Replication: true, Task: runningTask,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	policy.Revision = 2
+	policy.Routes = []control.ReplicationRoute{{SourceNodeID: "node-1", TargetNodeIDs: []string{"node-3"}}}
+	state.ReplicationPolicies[policy.PolicyID] = policy
+
+	retryResp, err := client.StartRun(context.Background(), bearerReq(sid, &procmeshv1.StartRunRequest{
+		PolicyId: "policy-start-1",
+		Meta:     &procmeshv1.MutationMeta{OperationId: "op-start-1"},
+	}))
+	if err != nil {
+		t.Fatalf("idempotent StartRun failed: %v", err)
+	}
+	if retryResp.Msg.GetRunId() != resp.Msg.GetRunId() || retryResp.Msg.GetPolicyRevision() != 1 || len(state.ReplicationTasks) != len(wantRoutes) {
+		t.Fatalf("retry run=%q tasks=%d, want run=%q tasks=%d", retryResp.Msg.GetRunId(), len(state.ReplicationTasks), resp.Msg.GetRunId(), len(wantRoutes))
+	}
+	gotRunning := state.ReplicationTasks[runningTask.RunID+":"+runningTask.TaskID]
+	if gotRunning.Status != "RUNNING" {
+		t.Fatalf("replayed task status = %q, want RUNNING", gotRunning.Status)
+	}
+
+	state.ReplicationPolicies["policy-other"] = control.ReplicationPolicy{
+		PolicyID: "policy-other", Revision: 1, SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"node-1"},
+		Routes: []control.ReplicationRoute{{SourceNodeID: "node-1", TargetNodeIDs: []string{"node-2"}}},
+	}
+	_, err = client.StartRun(context.Background(), bearerReq(sid, &procmeshv1.StartRunRequest{
+		PolicyId: "policy-other", Meta: &procmeshv1.MutationMeta{OperationId: "op-start-1"},
+	}))
+	if err == nil || connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("cross-policy operation reuse error = %v, want FAILED_PRECONDITION", err)
+	}
+}
+
+func TestDisasterReplicationAPI_RunTasksHaveStableOrder(t *testing.T) {
+	state := control.NewState()
+	state.ReplicationRuns["run-stable"] = control.ClusterBackupRun{
+		RunID: "run-stable", PolicyID: "policy-stable", PolicyRevision: 1, Status: "RUNNING",
+	}
+	for _, taskID := range []string{"task-c", "task-a", "task-b"} {
+		state.ReplicationTasks[taskID] = control.ClusterBackupTask{
+			RunID: "run-stable", TaskID: taskID, SourceNodeID: "source", NodeID: "target", Status: "PENDING",
+		}
+	}
+	api := &DisasterReplicationAPI{StateFn: func() control.State { return *state }}
+	client := newDisasterReplicationClient(t, api)
+	want := []string{"task-a", "task-b", "task-c"}
+
+	for attempt := 0; attempt < 64; attempt++ {
+		getResp, err := client.GetRun(context.Background(), connect.NewRequest(&procmeshv1.GetRunRequest{RunId: "run-stable"}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotGet := replicationTaskIDs(getResp.Msg.GetRun().GetTasks())
+		if strings.Join(gotGet, ",") != strings.Join(want, ",") {
+			t.Fatalf("GetRun task order = %v, want %v", gotGet, want)
+		}
+
+		listResp, err := client.ListRuns(context.Background(), connect.NewRequest(&procmeshv1.ListRunsRequest{}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotList := replicationTaskIDs(listResp.Msg.GetRuns()[0].GetTasks())
+		if strings.Join(gotList, ",") != strings.Join(want, ",") {
+			t.Fatalf("ListRuns task order = %v, want %v", gotList, want)
+		}
+	}
+}
+
+func replicationTaskIDs(tasks []*procmeshv1.ReplicationTask) []string {
+	ids := make([]string, 0, len(tasks))
+	for _, task := range tasks {
+		ids = append(ids, task.GetTaskId())
+	}
+	return ids
+}
+
+func TestDisasterReplicationAPI_ManagePermissionRequiredForGenerateAndVerify(t *testing.T) {
+	api, _, authSvc := setupMinimalAPI(t)
+	applyAuthCmd(t, authSvc, control.CmdUserPut, control.UserPutBody{
+		ID: "user-replication-reader", Username: "replication-reader", PasswordHash: testAdminHash(t),
+	})
+	applyAuthCmd(t, authSvc, control.CmdRolePut, control.RolePutBody{
+		ID: "replication-reader", Name: "replication-reader", Perms: []string{auth.PermReplicationRead},
+	})
+	applyAuthCmd(t, authSvc, control.CmdBindPut, control.BindPutBody{
+		UserID: "user-replication-reader", RoleID: "replication-reader", Scope: control.ScopeCluster,
+	})
+	sid, _, _, _, err := authSvc.Login("replication-reader", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := newDisasterReplicationClient(t, api)
+	_, err = client.GeneratePolicyDraft(context.Background(), bearerReq(sid, &procmeshv1.GeneratePolicyDraftRequest{
+		Name: "denied", SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1,
+	}))
+	assertDenied(t, err)
+	_, err = client.VerifyReplica(context.Background(), bearerReq(sid, &procmeshv1.VerifyReplicaRequest{
+		SourceNodeId: "node-1", SnapshotId: "snapshot-1",
+	}))
+	assertDenied(t, err)
+}
+
+type disasterReplicationForwarder struct {
+	client procmeshv1connect.DisasterReplicationServiceClient
+}
+
+func (f disasterReplicationForwarder) DisasterReplication(context.Context, Route) (procmeshv1connect.DisasterReplicationServiceClient, error) {
+	return f.client, nil
+}
+
+func TestDisasterReplicationAPI_NonLeaderForwardsMutation(t *testing.T) {
+	leaderState := control.NewState()
+	leaderState.ReplicationPolicies["policy-forward"] = control.ReplicationPolicy{
+		PolicyID: "policy-forward", Name: "forwarded", Revision: 1,
+	}
+	leader := &DisasterReplicationAPI{
+		StateFn: func() control.State { return *leaderState },
+		ApplyFn: func(cmd control.Command, _ time.Duration) error {
+			return leaderState.Apply(cmd, time.Unix(1_800_000_000, 0))
+		},
+		IsLeader:   func() bool { return true },
+		LeaderTerm: func() uint64 { return 9 },
+	}
+	leaderClient := newDisasterReplicationClient(t, leader)
+
+	follower := &DisasterReplicationAPI{
+		LocalID:  "node-a",
+		StateFn:  func() control.State { return *control.NewState() },
+		IsLeader: func() bool { return false },
+		LeaderRoute: func() (Route, bool) {
+			return Route{NodeID: "node-b", RPC: "127.0.0.1:9001"}, true
+		},
+		Forward: disasterReplicationForwarder{client: leaderClient},
+	}
+	followerClient := newDisasterReplicationClient(t, follower)
+	_, err := followerClient.DeletePolicy(context.Background(), connect.NewRequest(&procmeshv1.DeletePolicyRequest{
+		PolicyId: "policy-forward",
+		Meta:     &procmeshv1.MutationMeta{OperationId: "op-forward-policy"},
+	}))
+	if err != nil {
+		t.Fatalf("DeletePolicy through follower: %v", err)
+	}
+	if _, ok := leaderState.ReplicationPolicies["policy-forward"]; ok {
+		t.Fatal("leader policy still exists after forwarded delete")
 	}
 }
 
@@ -916,6 +1104,7 @@ func TestDisasterReplicationAPI_RetryFailedRoutes(t *testing.T) {
 
 	req := bearerReq(sid, &procmeshv1.RetryFailedRoutesRequest{
 		RunId: "run-retry-1",
+		Meta:  &procmeshv1.MutationMeta{OperationId: "op-retry-routes"},
 	})
 
 	resp, err := api.RetryFailedRoutes(context.Background(), req)
@@ -1177,4 +1366,3 @@ func TestDisasterReplicationAPI_ListRecoverableSnapshots_PeerStoreUnavailable(t 
 		t.Errorf("expected 'peer store unavailable' error, got: %v", err)
 	}
 }
-

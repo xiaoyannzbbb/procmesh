@@ -282,10 +282,11 @@ type ScheduledRunClaimBody struct {
 }
 
 type CreateRunBody struct {
-	OperationID string           `json:"operation_id"`
-	Run         ClusterBackupRun `json:"run"`
-	LeaderTerm  uint64           `json:"leader_term"`
-	Replication bool             `json:"replication"`
+	OperationID string              `json:"operation_id"`
+	Run         ClusterBackupRun    `json:"run"`
+	Tasks       []ClusterBackupTask `json:"tasks,omitempty"`
+	LeaderTerm  uint64              `json:"leader_term"`
+	Replication bool                `json:"replication"`
 }
 
 type RunClaimBody struct {

@@ -285,6 +285,14 @@ func (r *rpcRuntime) localHandler() http.Handler {
 			}
 			return n.Apply(cmd, timeout)
 		},
+		LocalOnly: true,
+		LeaderTerm: func() uint64 {
+			n := r.control()
+			if n == nil {
+				return 0
+			}
+			return n.CurrentTerm()
+		},
 		PeerStore: peerStore,
 		Members: func() []cluster.NodeSummary {
 			if r.mesh == nil {
@@ -380,14 +388,15 @@ func (f *agentForwarder) snapshot() (control.AgentCreds, string, func(string) bo
 }
 
 const (
-	processHopTimeout       = rpc.MutationTimeout
-	configHopTimeout        = rpc.MutationTimeout
-	logHopTimeout           = time.Duration(0)
-	auditHopTimeout         = 2 * time.Second
-	metricsHopTimeout       = rpc.UnaryTimeout
-	alertHopTimeout         = 2 * time.Second
-	backupHopTimeout        = rpc.MutationTimeout
-	clusterBackupHopTimeout = rpc.MutationTimeout
+	processHopTimeout             = rpc.MutationTimeout
+	configHopTimeout              = rpc.MutationTimeout
+	logHopTimeout                 = time.Duration(0)
+	auditHopTimeout               = 2 * time.Second
+	metricsHopTimeout             = rpc.UnaryTimeout
+	alertHopTimeout               = 2 * time.Second
+	backupHopTimeout              = rpc.MutationTimeout
+	clusterBackupHopTimeout       = rpc.MutationTimeout
+	disasterReplicationHopTimeout = rpc.MutationTimeout
 )
 
 func (f *agentForwarder) dial(rt api.Route, timeout time.Duration) (*http.Client, string, error) {
@@ -464,6 +473,14 @@ func (f *agentForwarder) ClusterBackup(_ context.Context, rt api.Route) (procmes
 		return nil, err
 	}
 	return rpc.NewClusterBackupClient(hc, base), nil
+}
+
+func (f *agentForwarder) DisasterReplication(_ context.Context, rt api.Route) (procmeshv1connect.DisasterReplicationServiceClient, error) {
+	hc, base, err := f.dial(rt, disasterReplicationHopTimeout)
+	if err != nil {
+		return nil, err
+	}
+	return rpc.NewDisasterReplicationClient(hc, base), nil
 }
 
 func (f *agentForwarder) ClusterBackupAgent(_ context.Context, rt api.Route) (procmeshv1connect.ClusterBackupAgentServiceClient, error) {

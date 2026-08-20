@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/qleelulu/procmesh/internal/cluster"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
@@ -69,6 +70,73 @@ func TestServer_Root(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `<div id="app">`) {
 		t.Fatalf("GET / body %q", rec.Body.String())
+	}
+}
+
+func TestServerMountsDisasterReplicationService(t *testing.T) {
+	srv, err := NewServer(Options{Started: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpSrv := httptest.NewServer(srv.Engine)
+	t.Cleanup(httpSrv.Close)
+
+	client := procmeshv1connect.NewDisasterReplicationServiceClient(httpSrv.Client(), httpSrv.URL)
+	resp, err := client.ListPolicies(context.Background(), connect.NewRequest(&procmeshv1.ListPoliciesRequest{}))
+	if err != nil {
+		t.Fatalf("ListPolicies through public server: %v", err)
+	}
+	if len(resp.Msg.GetPolicies()) != 0 {
+		t.Fatalf("policies = %+v, want empty", resp.Msg.GetPolicies())
+	}
+}
+
+func TestServerDisasterReplicationServiceRequiresAuthentication(t *testing.T) {
+	_, store, _ := newTestManager(t)
+	_, authSvc := newBootstrappedAuth(t)
+	if err := store.SetClusterID(context.Background(), "cluster-authenticated"); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(Options{
+		Started: time.Now(),
+		Auth:    authSvc,
+		Cluster: ClusterDeps{Store: store},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpSrv := httptest.NewServer(srv.Engine)
+	t.Cleanup(httpSrv.Close)
+
+	client := procmeshv1connect.NewDisasterReplicationServiceClient(httpSrv.Client(), httpSrv.URL)
+	_, err = client.ListPolicies(context.Background(), connect.NewRequest(&procmeshv1.ListPoliciesRequest{}))
+	if connect.CodeOf(err) != connect.CodePermissionDenied {
+		t.Fatalf("ListPolicies without credentials error = %v, want permission denied", err)
+	}
+}
+
+func TestServerDisasterReplicationUsesCurrentClusterID(t *testing.T) {
+	_, store, _ := newTestManager(t)
+	srv, err := NewServer(Options{
+		Started: time.Now(),
+		Cluster: ClusterDeps{Store: store},
+		Members: func() []cluster.NodeSummary { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetClusterID(context.Background(), "cluster-after-init"); err != nil {
+		t.Fatal(err)
+	}
+	httpSrv := httptest.NewServer(srv.Engine)
+	t.Cleanup(httpSrv.Close)
+	client := procmeshv1connect.NewDisasterReplicationServiceClient(httpSrv.Client(), httpSrv.URL)
+	resp, err := client.GetTopology(context.Background(), connect.NewRequest(&procmeshv1.GetTopologyRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Msg.GetClusterId() != "cluster-after-init" {
+		t.Fatalf("cluster id = %q, want cluster-after-init", resp.Msg.GetClusterId())
 	}
 }
 
