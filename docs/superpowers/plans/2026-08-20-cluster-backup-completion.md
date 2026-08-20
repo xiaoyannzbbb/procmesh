@@ -193,11 +193,32 @@ git commit -m "fix(replication): secure internal peer request paths"
 - Produces: source payload is loaded by snapshot ID/checksum from staging or primary sink, never regenerated from current specs.
 - Produces: `ListRecoverableSnapshots` merges local index/Peer metadata and retains source Owner identity.
 
-- [ ] **Step 1: Write failing tests for each trigger, route-only retry, checksum conflict, source reload, terminal aggregation, and recoverable listing.**
-- [ ] **Step 2: Run RED:** `go test ./internal/backup ./internal/api ./internal/agent -run 'TestReplicationCoordinator|Test.*Recoverable|Test.*AfterPrimary' -count=1`
-- [ ] **Step 3: Implement and wire the replication loop using direct mTLS Peer calls and small Raft status updates.**
-- [ ] **Step 4: Run:** `go test ./internal/backup ./internal/api ./internal/rpc ./internal/agent -count=1`
-- [ ] **Step 5: Commit:** `git commit -m "feat(replication): execute and recover peer replicas"`
+- [x] **Step 1: Write failing tests for each trigger, route-only retry, checksum conflict, source reload, terminal aggregation, and recoverable listing.**
+- [x] **Step 2: Run RED:** `go test ./internal/backup ./internal/api ./internal/agent -run 'TestReplicationCoordinator|Test.*Recoverable|Test.*AfterPrimary' -count=1`
+- [x] **Step 3: Implement and wire the replication loop using direct mTLS Peer calls and small Raft status updates.**
+- [x] **Step 4: Run:** `go test ./internal/backup ./internal/api ./internal/rpc ./internal/agent -count=1`
+- [x] **Step 5: Commit:** `git commit -m "feat(replication): execute and recover peer replicas"`
+
+### Task 7A: Topology draft consistency and Peer operation authorization
+
+**Files:**
+- Modify: `internal/backup/topology.go`, `internal/backup/topology_test.go`
+- Modify: `internal/control/fsm.go`, `internal/control/fsm_test.go`
+- Modify: `internal/api/disaster_replication.go`, `internal/api/disaster_replication_test.go`
+- Modify: `internal/api/peer_replication.go`, `internal/api/peer_replication_test.go`
+- Modify: Agent Peer API wiring/tests only where required to supply live control-state authorization.
+
+**Interfaces:**
+- Produces: preview/apply CAS bound to a server-derived admitted-member topology revision and hash; client-supplied draft content cannot forge freshness.
+- Produces: every admitted, non-revoked node remains in topology while offline state is surfaced as a warning.
+- Produces: replica factor and route validation use the number of available targets per source (`admitted_count - 1`), including the explicit N=1 warning case.
+- Produces: every Peer operation validates request cluster ID, mTLS same-cluster source identity, current admission, and operation-specific run/task or retention authorization before touching replica data.
+
+- [ ] **Step 1: Write failing tests for stale/forged draft apply, offline admitted candidates, N=1/N=2/factor route validation, cluster mismatch, and unauthorized Put/Check/Delete/metadata access.**
+- [ ] **Step 2: Run RED:** `go test ./internal/backup ./internal/control ./internal/api -run 'Test.*Topology|Test.*Draft|Test.*ReplicaFactor|TestPeerReplication.*Authoriz|TestPeerReplication.*Cluster' -count=1`
+- [ ] **Step 3: Bind draft apply to current server topology, correct topology/factor validation, and inject a control-state authorizer into the Peer API.**
+- [ ] **Step 4: Run:** `go test ./internal/backup ./internal/control ./internal/api ./internal/rpc ./internal/agent -count=1`
+- [ ] **Step 5: Commit:** `git commit -m "fix(replication): authorize topology-bound peer operations"`
 
 ### Task 8: RBAC, audit, metrics, and secret redaction
 
