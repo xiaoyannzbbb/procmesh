@@ -2,15 +2,34 @@ package api
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
+	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
+
+// newDisasterReplicationClient wires api behind a real HTTP handler with the
+// AuthInterceptor installed, so PrincipalFrom(ctx) is populated the same way
+// it is in production. Calling API methods directly (bypassing the mux)
+// would skip the interceptor and make requirePerm() silently allow everything.
+func newDisasterReplicationClient(t *testing.T, api *DisasterReplicationAPI) procmeshv1connect.DisasterReplicationServiceClient {
+	t.Helper()
+	mux := http.NewServeMux()
+	h, handlers := procmeshv1connect.NewDisasterReplicationServiceHandler(api,
+		connect.WithInterceptors(AuthInterceptor(api.Auth, func() bool { return true })))
+	mux.Handle(h, handlers)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return procmeshv1connect.NewDisasterReplicationServiceClient(srv.Client(), srv.URL)
+}
 
 // Test helper functions
 
@@ -223,13 +242,16 @@ func TestDisasterReplicationAPI_GeneratePolicyDraft_NoPermission(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := bearerReq(sid, &procmeshv1.GeneratePolicyDraftRequest{
+	// Viewer role does not hold replication.read, so this must be denied.
+	// Calling api.GeneratePolicyDraft directly would bypass the auth
+	// interceptor that populates the principal in ctx, so we go through a
+	// real HTTP handler to exercise the actual authorization path.
+	client := newDisasterReplicationClient(t, api)
+	_, err = client.GeneratePolicyDraft(context.Background(), bearerReq(sid, &procmeshv1.GeneratePolicyDraftRequest{
 		Name:           "test-policy",
 		SourceSelector: "all",
 		ReplicaFactor:  2,
-	})
-
-	_, err = api.GeneratePolicyDraft(context.Background(), req)
+	}))
 	assertDenied(t, err)
 }
 
@@ -268,6 +290,7 @@ func TestDisasterReplicationAPI_ApplyPolicyDraft(t *testing.T) {
 	// Apply the draft
 	applyReq := bearerReq(sid, &procmeshv1.ApplyPolicyDraftRequest{
 		Meta:          &procmeshv1.MutationMeta{OperationId: "op-apply"},
+		PolicyId:      "policy-001",
 		Draft:         genResp.Msg.Draft,
 		DraftRevision: genResp.Msg.Draft.DraftRevision,
 		DraftHash:     genResp.Msg.Draft.DraftHash,
