@@ -1874,6 +1874,7 @@ var allPerms = []string{
 	"role.read", "role.manage",
 	"audit.read",
 	"batch.execute", "alert.read", "alert.manage", "backup.read", "backup.manage",
+	"replication.read", "replication.manage",
 	"command.execute", "command.execute.batch",
 }
 
@@ -1888,6 +1889,7 @@ var clusterAdminPerms = []string{
 	"role.read",
 	"audit.read",
 	"batch.execute", "alert.read", "alert.manage", "backup.read", "backup.manage",
+	"replication.read", "replication.manage",
 }
 
 var operatorPerms = []string{
