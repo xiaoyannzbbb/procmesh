@@ -168,6 +168,9 @@ func (c *ReplicationCoordinator) DispatchRun(ctx context.Context, run FrozenRepl
 			if err := c.Control.BeginReplicationTask(leaseCtx, ReplicationTaskUpdate{RunID: req.RunID, TaskID: req.TaskID, SourceNodeID: req.SourceNodeID, TargetNodeID: req.TargetNodeID, SnapshotID: req.SnapshotID, SHA256: req.SHA256, Status: "RUNNING", LeaderTerm: req.LeaderTerm}); err != nil {
 				return
 			}
+			if leaseCtx.Err() != nil || c.now().Unix() >= req.LeaseExpiresUnix {
+				return
+			}
 			if err := c.Dispatcher.DispatchReplicationTask(leaseCtx, req); err != nil {
 				status, code, summary := classifyReplicationFailure(err, leaseCtx.Err())
 				_ = c.Control.UpdateReplicationTask(ctx, ReplicationTaskUpdate{RunID: req.RunID, TaskID: req.TaskID, SourceNodeID: req.SourceNodeID, TargetNodeID: req.TargetNodeID, SnapshotID: req.SnapshotID, SHA256: req.SHA256, Status: status, ErrorCode: code, ErrorSummary: summary, LeaderTerm: req.LeaderTerm})

@@ -365,7 +365,7 @@ func (s *State) Apply(cmd Command, now time.Time) error {
 			return err
 		})
 	case CmdBackupTaskUpdate:
-		return applyJSON(cmd.Body, s.applyUpdateTask)
+		return applyJSON(cmd.Body, func(b UpdateTaskBody) error { return s.applyUpdateTask(b, now) })
 	case CmdBackupRetryFailedTasks:
 		return applyJSON(cmd.Body, s.applyRetryFailedTasks)
 	case CmdBackupRunFinish:
@@ -1394,7 +1394,9 @@ func (s *State) ClaimRun(b RunClaimBody) (bool, error) {
 
 func taskMapKey(task ClusterBackupTask) string { return task.RunID + ":" + task.TaskID }
 
-func (s *State) UpdateTask(b UpdateTaskBody) error { return s.applyUpdateTask(b) }
+func (s *State) UpdateTask(b UpdateTaskBody) error {
+	return s.applyUpdateTask(b, time.Unix(b.Task.UpdatedUnix, 0))
+}
 
 func (s *State) RetryFailedTasks(b RetryFailedTasksBody) error { return s.applyRetryFailedTasks(b) }
 
@@ -1457,7 +1459,7 @@ func (s *State) applyRetryFailedTasks(b RetryFailedTasksBody) error {
 	return nil
 }
 
-func (s *State) applyUpdateTask(b UpdateTaskBody) error {
+func (s *State) applyUpdateTask(b UpdateTaskBody, now time.Time) error {
 	s.ensure()
 	if err := requireOperationID(b.OperationID); err != nil {
 		return err
@@ -1474,7 +1476,7 @@ func (s *State) applyUpdateTask(b UpdateTaskBody) error {
 	runs, tasks := runMaps(s, b.Replication)
 	terms := runTerms(s, b.Replication)
 	if b.Replication && b.Task.Status == "RUNNING" {
-		return applyBeginReplicationTask(b, runs, tasks, terms)
+		return applyBeginReplicationTask(b, now, runs, tasks, terms)
 	}
 	if term := terms[b.Task.RunID]; term > b.LeaderTerm {
 		return errcode.E(errcode.CONFLICT, "stale leader term")
@@ -1505,12 +1507,12 @@ func (s *State) applyUpdateTask(b UpdateTaskBody) error {
 	return nil
 }
 
-func applyBeginReplicationTask(b UpdateTaskBody, runs map[string]ClusterBackupRun, tasks map[string]ClusterBackupTask, terms map[string]uint64) error {
+func applyBeginReplicationTask(b UpdateTaskBody, now time.Time, runs map[string]ClusterBackupRun, tasks map[string]ClusterBackupTask, terms map[string]uint64) error {
 	run, ok := runs[b.Task.RunID]
 	if !ok {
 		return errcode.E(errcode.NOT_FOUND, "run not found")
 	}
-	if terms[b.Task.RunID] != b.LeaderTerm || run.Status != "RUNNING" || b.Task.UpdatedUnix <= 0 || run.LeaseUntilUnix <= b.Task.UpdatedUnix {
+	if terms[b.Task.RunID] != b.LeaderTerm || run.Status != "RUNNING" || now.IsZero() || run.LeaseUntilUnix <= now.Unix() {
 		return errcode.E(errcode.CONFLICT, "replication run changed")
 	}
 	key := taskMapKey(b.Task)
@@ -1523,7 +1525,7 @@ func applyBeginReplicationTask(b UpdateTaskBody, runs map[string]ClusterBackupRu
 	current.ErrorCode = ""
 	current.ErrorSummary = ""
 	current.LeaderTerm = b.LeaderTerm
-	current.UpdatedUnix = b.Task.UpdatedUnix
+	current.UpdatedUnix = now.Unix()
 	tasks[key] = current
 	return nil
 }

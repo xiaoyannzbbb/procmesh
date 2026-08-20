@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -226,7 +227,7 @@ func TestReplicationRetryBeginCommandContainsOnlySafeFrozenMetadata(t *testing.T
 		SnapshotID: "snapshot", SHA256: replicationTestSHA, Bytes: 42,
 		ErrorCode: "UNAVAILABLE", ErrorSummary: "safe summary", LeaderTerm: 7,
 	}
-	if err := applyBeginReplicationTask(applier, update, now); err != nil {
+	if err := applyBeginReplicationTask(context.Background(), applier, update, now); err != nil {
 		t.Fatal(err)
 	}
 	if len(applier.commands) != 1 || applier.commands[0].Type != control.CmdBackupTaskUpdate {
@@ -244,6 +245,22 @@ func TestReplicationRetryBeginCommandContainsOnlySafeFrozenMetadata(t *testing.T
 	}
 	if body.Task.Bytes != 0 || body.Task.ErrorCode != "" || body.Task.ErrorSummary != "" {
 		t.Fatalf("prior result metadata retained: %+v", body.Task)
+	}
+}
+
+func TestReplicationRetryBeginHonorsCanceledContextBeforeRaftApply(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	applier := &recordingReplicationApplier{}
+	err := applyBeginReplicationTask(ctx, applier, backup.ReplicationTaskUpdate{
+		RunID: "run", TaskID: "task", SourceNodeID: "source", TargetNodeID: "target",
+		SnapshotID: "snapshot", SHA256: replicationTestSHA, LeaderTerm: 7,
+	}, time.Unix(1_800_000_000, 0))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("begin error=%v, want context canceled", err)
+	}
+	if len(applier.commands) != 0 {
+		t.Fatalf("raft apply after canceled begin: %+v", applier.commands)
 	}
 }
 

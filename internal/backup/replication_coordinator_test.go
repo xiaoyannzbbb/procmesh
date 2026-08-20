@@ -22,6 +22,7 @@ type replicationControlFake struct {
 	runs     []backup.FrozenReplicationRun
 	updates  []backup.ReplicationTaskUpdate
 	beginErr error
+	begin    func(context.Context, backup.ReplicationTaskUpdate) error
 }
 
 type replicationFSMControl struct {
@@ -150,6 +151,24 @@ func TestReplicationCoordinator_BeginRejectionPreventsDispatch(t *testing.T) {
 	}
 }
 
+func TestReplicationCoordinator_LeaseExpiryDuringBeginPreventsDispatch(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	controlPlane := &replicationControlFake{}
+	controlPlane.begin = func(context.Context, backup.ReplicationTaskUpdate) error {
+		now = now.Add(2 * time.Second)
+		return nil
+	}
+	dispatcher := &replicationDispatcherFake{}
+	coordinator := backup.NewReplicationCoordinator(backup.ReplicationCoordinatorConfig{Control: controlPlane, Dispatcher: dispatcher, Now: func() time.Time { return now }})
+	coordinator.DispatchRun(context.Background(), backup.FrozenReplicationRun{
+		RunID: "run", PolicyID: "policy", LeaderTerm: 7, LeaseExpiresUnix: now.Add(time.Second).Unix(),
+		Tasks: []backup.FrozenReplicationTask{{TaskID: "task", SourceNodeID: "source", TargetNodeID: "target", SnapshotID: "snapshot", SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Status: "UNAVAILABLE"}},
+	})
+	if len(dispatcher.dispatch) != 0 {
+		t.Fatalf("dispatch after lease expired during begin: %+v", dispatcher.dispatch)
+	}
+}
+
 func TestReplicationCoordinator_ChecksumConflictIsTerminalFailed(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	control := &replicationControlFake{}
@@ -192,7 +211,10 @@ func (f *replicationControlFake) ClaimReplicationRuns(context.Context, uint64, t
 	return append([]backup.FrozenReplicationRun(nil), f.runs...), nil
 }
 
-func (f *replicationControlFake) BeginReplicationTask(context.Context, backup.ReplicationTaskUpdate) error {
+func (f *replicationControlFake) BeginReplicationTask(ctx context.Context, update backup.ReplicationTaskUpdate) error {
+	if f.begin != nil {
+		return f.begin(ctx, update)
+	}
 	return f.beginErr
 }
 

@@ -291,20 +291,36 @@ func replicationRetryable(status string) bool {
 	return status == "PENDING" || status == "FAILED" || status == "TIMEOUT" || status == "UNAVAILABLE" || status == "CONFIG_MISSING" || status == "SKIPPED" || status == "RETENTION_FAILED"
 }
 
-func applyBeginReplicationTask(n replicationCommandApplier, update backup.ReplicationTaskUpdate, now time.Time) error {
+func applyBeginReplicationTask(ctx context.Context, n replicationCommandApplier, update backup.ReplicationTaskUpdate, now time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	cmd, err := control.EncodeCommand(control.CmdBackupTaskUpdate, control.UpdateTaskBody{OperationID: "replication-begin-" + update.RunID + ":" + update.TaskID, LeaderTerm: update.LeaderTerm, Replication: true, Task: control.ClusterBackupTask{RunID: update.RunID, TaskID: update.TaskID, SourceNodeID: update.SourceNodeID, NodeID: update.TargetNodeID, SnapshotID: update.SnapshotID, SHA256: update.SHA256, Status: "RUNNING", UpdatedUnix: now.Unix()}})
 	if err != nil {
 		return err
 	}
-	return n.Apply(cmd, 5*time.Second)
+	timeout := 5 * time.Second
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return context.DeadlineExceeded
+		}
+		if remaining < timeout {
+			timeout = remaining
+		}
+	}
+	if err := n.Apply(cmd, timeout); err != nil {
+		return err
+	}
+	return ctx.Err()
 }
 
-func (a raftReplicationControl) BeginReplicationTask(_ context.Context, update backup.ReplicationTaskUpdate) error {
+func (a raftReplicationControl) BeginReplicationTask(ctx context.Context, update backup.ReplicationTaskUpdate) error {
 	n := a.runtime.control()
 	if n == nil {
 		return fmt.Errorf("control plane unavailable")
 	}
-	return applyBeginReplicationTask(n, update, time.Now())
+	return applyBeginReplicationTask(ctx, n, update, time.Now())
 }
 
 func (a raftReplicationControl) UpdateReplicationTask(_ context.Context, update backup.ReplicationTaskUpdate) error {

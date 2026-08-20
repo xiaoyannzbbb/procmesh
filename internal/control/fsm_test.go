@@ -541,6 +541,33 @@ func TestFSM_BeginReplicationTask(t *testing.T) {
 	}
 }
 
+func TestFSM_BeginReplicationTaskRejectsCommandAppliedAfterLeaseExpiry(t *testing.T) {
+	commandTime := time.Unix(1_800_000_000, 0)
+	state := control.NewState()
+	state.ReplicationRuns["run"] = control.ClusterBackupRun{RunID: "run", PolicyID: "policy", PolicyRevision: 3, Status: "RUNNING", LeaseUntilUnix: commandTime.Add(time.Second).Unix()}
+	state.ReplicationRunTerms["run"] = 7
+	state.ReplicationTasks["run:task"] = control.ClusterBackupTask{
+		RunID: "run", TaskID: "task", SourceNodeID: "source", NodeID: "target", SnapshotID: "snapshot",
+		SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Status: "UNAVAILABLE", LeaderTerm: 7,
+	}
+	cmd, err := control.EncodeCommand(control.CmdBackupTaskUpdate, control.UpdateTaskBody{
+		OperationID: "begin-delayed", LeaderTerm: 7, Replication: true,
+		Task: control.ClusterBackupTask{
+			RunID: "run", TaskID: "task", SourceNodeID: "source", NodeID: "target", SnapshotID: "snapshot",
+			SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Status: "RUNNING", UpdatedUnix: commandTime.Unix(),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Apply(cmd, commandTime.Add(2*time.Second)); !errcode.Is(err, errcode.CONFLICT) {
+		t.Fatalf("delayed begin error=%v, want CONFLICT", err)
+	}
+	if got := state.ReplicationTasks["run:task"]; got.Status != "UNAVAILABLE" {
+		t.Fatalf("task changed after delayed begin: %+v", got)
+	}
+}
+
 func TestFSM_ReplicationAggregatesRoutesSharingTarget(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	for name, statuses := range map[string][]string{"succeeded": {"SUCCEEDED", "SUCCEEDED"}, "partial": {"SUCCEEDED", "FAILED"}, "failed": {"FAILED", "FAILED"}} {
