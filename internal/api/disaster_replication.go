@@ -89,6 +89,12 @@ func (d *DisasterReplicationAPI) GeneratePolicyDraft(ctx context.Context, req *c
 	if err := requirePerm(ctx, d.Auth, auth.PermReplicationManage, d.NodeID, false, true); err != nil {
 		return nil, err
 	}
+	if local, cli, err := d.forwardMutation(ctx, req.Header()); !local {
+		if err != nil {
+			return nil, err
+		}
+		return cli.GeneratePolicyDraft(ctx, req)
+	}
 
 	if d.Members == nil {
 		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "cluster membership unavailable"))
@@ -96,9 +102,13 @@ func (d *DisasterReplicationAPI) GeneratePolicyDraft(ctx context.Context, req *c
 
 	topologyNodes := d.replicationTopology()
 	draftRevision := topologyDraftRevision(topologyNodes)
+	sources, err := d.state().ResolveReplicationSources(req.Msg.SourceSelector, req.Msg.SourceIds)
+	if err != nil {
+		return nil, ToConnect(err)
+	}
 
 	// Generate routes
-	result, err := backup.GenerateRoutes(topologyNodes, int(req.Msg.ReplicaFactor), backup.TopologyConstraints{})
+	result, err := backup.GenerateRoutesForSources(topologyNodes, sources, int(req.Msg.ReplicaFactor), backup.TopologyConstraints{})
 	if err != nil {
 		return nil, ToConnect(err)
 	}
@@ -187,7 +197,11 @@ func (d *DisasterReplicationAPI) ApplyPolicyDraft(ctx context.Context, req *conn
 	if req.Msg.DraftRevision != currentRevision {
 		return nil, ToConnect(errcode.E(errcode.CONFLICT, "topology changed since preview"))
 	}
-	generated, err := backup.GenerateRoutes(topologyNodes, int(req.Msg.Draft.ReplicaFactor), backup.TopologyConstraints{})
+	sources, err := d.state().ResolveReplicationSources(req.Msg.Draft.SourceSelector, req.Msg.Draft.SourceIds)
+	if err != nil {
+		return nil, ToConnect(err)
+	}
+	generated, err := backup.GenerateRoutesForSources(topologyNodes, sources, int(req.Msg.Draft.ReplicaFactor), backup.TopologyConstraints{})
 	if err != nil {
 		return nil, ToConnect(err)
 	}
@@ -1077,7 +1091,23 @@ func (d *DisasterReplicationAPI) replicationTopology() []backup.AgentTopology {
 }
 
 func topologyDraftRevision(nodes []backup.AgentTopology) int64 {
-	encoded, _ := json.Marshal(nodes)
+	type revisionNode struct {
+		NodeID         string
+		Host           string
+		Rack           string
+		Zone           string
+		CapacityWeight float64
+		Admitted       bool
+	}
+	revisionNodes := make([]revisionNode, 0, len(nodes))
+	for _, node := range nodes {
+		revisionNodes = append(revisionNodes, revisionNode{
+			NodeID: node.NodeID, Host: node.Host, Rack: node.Rack, Zone: node.Zone,
+			CapacityWeight: node.CapacityWeight, Admitted: node.Admitted,
+		})
+	}
+	sort.Slice(revisionNodes, func(i, j int) bool { return revisionNodes[i].NodeID < revisionNodes[j].NodeID })
+	encoded, _ := json.Marshal(revisionNodes)
 	sum := sha256.Sum256(encoded)
 	revision := int64(binary.BigEndian.Uint64(sum[:8]) & 0x7fffffffffffffff)
 	if revision == 0 {

@@ -1734,14 +1734,9 @@ func (s *State) applyReplicationPolicyPut(b ReplicationPolicyPutBody) error {
 			return errcode.E(errcode.CONFLICT, "replication policy name already exists")
 		}
 	}
-	if err := validateTargetIDs(b.SourceSelector, b.SourceIDs); err != nil {
-		return errcode.E(errcode.INVALID, "source ids")
-	}
-	if err := s.validateExplicitTargets(b.SourceSelector, b.SourceIDs); err != nil {
-		return errcode.E(errcode.INVALID, "source node not admitted")
-	}
-	if err := s.validateAgentGroups(b.SourceSelector, b.SourceIDs); err != nil {
-		return errcode.E(errcode.INVALID, "source agent group")
+	sources, err := s.ResolveReplicationSources(b.SourceSelector, b.SourceIDs)
+	if err != nil {
+		return err
 	}
 	if b.ReplicaFactor <= 0 {
 		return errcode.E(errcode.INVALID, "replica factor")
@@ -1799,6 +1794,14 @@ func (s *State) applyReplicationPolicyPut(b ReplicationPolicyPutBody) error {
 			}
 			seenTargets[target] = struct{}{}
 		}
+	}
+	routeSources := make([]string, 0, len(seenSources))
+	for source := range seenSources {
+		routeSources = append(routeSources, source)
+	}
+	sort.Strings(routeSources)
+	if !reflect.DeepEqual(routeSources, sources) {
+		return errcode.E(errcode.INVALID, "route sources do not match selector")
 	}
 	cur, exists := s.ReplicationPolicies[b.PolicyID]
 	if b.ExpectedRevision >= 0 {
@@ -1869,6 +1872,47 @@ func (s *State) validatePrimaryPolicies(ids []string) error {
 func (s *State) isAdmittedMember(nodeID string) bool {
 	m, ok := s.Members[nodeID]
 	return ok && m.Status == MemberAdmitted
+}
+
+// ResolveReplicationSources returns the exact sorted admitted source IDs for a
+// replication selector. Route targets are resolved independently from all
+// admitted members.
+func (s State) ResolveReplicationSources(selector string, selectorIDs []string) ([]string, error) {
+	if err := validateTargetIDs(selector, selectorIDs); err != nil {
+		return nil, errcode.E(errcode.INVALID, "source ids")
+	}
+	if err := s.validateExplicitTargets(selector, selectorIDs); err != nil {
+		return nil, errcode.E(errcode.INVALID, "source node not admitted")
+	}
+	if err := s.validateAgentGroups(selector, selectorIDs); err != nil {
+		return nil, errcode.E(errcode.INVALID, "source agent group")
+	}
+
+	sources := make([]string, 0)
+	switch selector {
+	case "ALL_ADMITTED":
+		for nodeID, member := range s.Members {
+			if member.Status == MemberAdmitted {
+				sources = append(sources, nodeID)
+			}
+		}
+	case "EXPLICIT_NODES":
+		sources = append(sources, selectorIDs...)
+	case "AGENT_GROUP":
+		seen := make(map[string]struct{})
+		for _, groupID := range selectorIDs {
+			for _, nodeID := range s.AgentGroups[groupID].MemberIDs {
+				if s.isAdmittedMember(nodeID) {
+					seen[nodeID] = struct{}{}
+				}
+			}
+		}
+		for nodeID := range seen {
+			sources = append(sources, nodeID)
+		}
+	}
+	sort.Strings(sources)
+	return sources, nil
 }
 
 func (s *State) computeCandidateCount(selector string, selectorIDs []string) int {

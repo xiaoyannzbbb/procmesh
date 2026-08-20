@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"fmt"
 	"sort"
 )
 
@@ -30,6 +31,18 @@ type RouteDraftResult struct {
 }
 
 func GenerateRoutes(nodes []AgentTopology, replicaFactor int, constraints TopologyConstraints) (RouteDraftResult, error) {
+	sourceNodeIDs := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		if node.Admitted {
+			sourceNodeIDs = append(sourceNodeIDs, node.NodeID)
+		}
+	}
+	return GenerateRoutesForSources(nodes, sourceNodeIDs, replicaFactor, constraints)
+}
+
+// GenerateRoutesForSources creates routes only for selected admitted sources while
+// retaining every admitted node as a possible target for those routes.
+func GenerateRoutesForSources(nodes []AgentTopology, sourceNodeIDs []string, replicaFactor int, constraints TopologyConstraints) (RouteDraftResult, error) {
 	// Admission defines the durable topology; liveness only affects warnings.
 	eligible := make([]AgentTopology, 0, len(nodes))
 	for _, n := range nodes {
@@ -42,9 +55,27 @@ func GenerateRoutes(nodes []AgentTopology, replicaFactor int, constraints Topolo
 	sort.Slice(eligible, func(i, j int) bool {
 		return eligible[i].NodeID < eligible[j].NodeID
 	})
+	eligibleByID := make(map[string]AgentTopology, len(eligible))
+	for _, node := range eligible {
+		eligibleByID[node.NodeID] = node
+	}
+	sources := make([]AgentTopology, 0, len(sourceNodeIDs))
+	seenSources := make(map[string]struct{}, len(sourceNodeIDs))
+	for _, sourceNodeID := range sourceNodeIDs {
+		if _, seen := seenSources[sourceNodeID]; seen {
+			return RouteDraftResult{}, fmt.Errorf("duplicate source node %q", sourceNodeID)
+		}
+		source, ok := eligibleByID[sourceNodeID]
+		if !ok {
+			return RouteDraftResult{}, fmt.Errorf("source node %q is not admitted", sourceNodeID)
+		}
+		seenSources[sourceNodeID] = struct{}{}
+		sources = append(sources, source)
+	}
+	sort.Slice(sources, func(i, j int) bool { return sources[i].NodeID < sources[j].NodeID })
 
 	result := RouteDraftResult{
-		Routes:   make([]RouteDraft, 0, len(eligible)),
+		Routes:   make([]RouteDraft, 0, len(sources)),
 		Warnings: []string{},
 	}
 	for _, node := range eligible {
@@ -83,7 +114,7 @@ func GenerateRoutes(nodes []AgentTopology, replicaFactor int, constraints Topolo
 	inboundLoad := make(map[string]int)
 
 	// Generate routes for each source
-	for _, source := range eligible {
+	for _, source := range sources {
 		targets := selectTargets(source, eligible, actualReplicas, inboundLoad)
 		result.Routes = append(result.Routes, RouteDraft{
 			SourceNodeID:  source.NodeID,

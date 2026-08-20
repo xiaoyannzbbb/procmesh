@@ -1506,7 +1506,11 @@ func TestFSM_ReplicationPolicyPutRejectsUnsafeRoutes(t *testing.T) {
 	valid := control.ReplicationPolicyPutBody{
 		PolicyID: "rp-1", Name: "dr", Enabled: true,
 		SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1, Trigger: "MANUAL",
-		Routes:           []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}}},
+		Routes: []control.ReplicationRoute{
+			{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}},
+			{SourceNodeID: "node-b", TargetNodeIDs: []string{"node-a"}},
+			{SourceNodeID: "node-c", TargetNodeIDs: []string{"node-a"}},
+		},
 		ExpectedRevision: -1,
 	}
 	if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, valid), now); err != nil {
@@ -1765,6 +1769,43 @@ func TestFSM_ReplicationPolicyPutRejectsUnsafeRoutes(t *testing.T) {
 	}
 }
 
+func TestFSM_ReplicationPolicyPutRouteSourcesMatchSelector(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := mustBootstrap(t, now)
+	for _, nodeID := range []string{"node-a", "node-b", "node-c"} {
+		if err := s.Apply(mustEncode(t, control.CmdMemberPut, control.MemberPutBody{NodeID: nodeID, Status: control.MemberAdmitted}), now); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	base := control.ReplicationPolicyPutBody{
+		PolicyID: "rp-selector", Name: "selector", Enabled: true,
+		SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"node-a"}, ReplicaFactor: 2, Trigger: "MANUAL", ExpectedRevision: -1,
+		Routes: []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b", "node-c"}}},
+	}
+	for _, tc := range []struct {
+		name   string
+		routes []control.ReplicationRoute
+	}{
+		{name: "missing selected source", routes: nil},
+		{name: "extra selector outsider", routes: []control.ReplicationRoute{
+			{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b", "node-c"}},
+			{SourceNodeID: "node-b", TargetNodeIDs: []string{"node-a", "node-c"}},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := base
+			body.OperationID = "op-" + strings.ReplaceAll(tc.name, " ", "-")
+			body.PolicyID = "rp-" + strings.ReplaceAll(tc.name, " ", "-")
+			body.Name = tc.name
+			body.Routes = tc.routes
+			if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), now); !errcode.Is(err, errcode.INVALID) {
+				t.Fatalf("Apply() error=%v, want INVALID", err)
+			}
+		})
+	}
+}
+
 func TestFSM_ReplicationPolicyDeleteRejectsMissingPolicy(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	s := mustBootstrap(t, now)
@@ -1785,7 +1826,11 @@ func TestFSM_ReplicationPolicyPutExpectedRevision(t *testing.T) {
 	body := control.ReplicationPolicyPutBody{
 		OperationID: "op-1", PolicyID: "rp-1", Name: "dr", Enabled: true,
 		SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1, Trigger: "MANUAL",
-		Routes:           []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}}},
+		Routes: []control.ReplicationRoute{
+			{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}},
+			{SourceNodeID: "node-b", TargetNodeIDs: []string{"node-a"}},
+			{SourceNodeID: "node-c", TargetNodeIDs: []string{"node-a"}},
+		},
 		ExpectedRevision: -1,
 	}
 	if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), now); err != nil {
@@ -1803,7 +1848,11 @@ func TestFSM_ReplicationPolicyPutExpectedRevision(t *testing.T) {
 	body.OperationID = "op-3"
 	body.ExpectedRevision = 1
 	body.ReplicaFactor = 2
-	body.Routes = []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b", "node-c"}}}
+	body.Routes = []control.ReplicationRoute{
+		{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b", "node-c"}},
+		{SourceNodeID: "node-b", TargetNodeIDs: []string{"node-a", "node-c"}},
+		{SourceNodeID: "node-c", TargetNodeIDs: []string{"node-a", "node-b"}},
+	}
 	if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), now); err != nil {
 		t.Fatal(err)
 	}
@@ -1843,7 +1892,10 @@ func TestFSM_ReplicationPolicyPutReplicaFactorVsCandidates(t *testing.T) {
 	body := control.ReplicationPolicyPutBody{
 		OperationID: "op-1", PolicyID: "rp-1", Name: "dr", Enabled: true,
 		SourceSelector: "ALL_ADMITTED", ReplicaFactor: 3, Trigger: "MANUAL",
-		Routes:           []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}}},
+		Routes: []control.ReplicationRoute{
+			{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}},
+			{SourceNodeID: "node-b", TargetNodeIDs: []string{"node-a"}},
+		},
 		ExpectedRevision: -1,
 	}
 	err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), now)
@@ -1930,7 +1982,10 @@ func TestFSM_ReplicationPolicyDeletePreservesReplicas(t *testing.T) {
 	body := control.ReplicationPolicyPutBody{
 		OperationID: "op-1", PolicyID: "rp-1", Name: "dr", Enabled: true,
 		SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1, Trigger: "MANUAL",
-		Routes:           []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}}},
+		Routes: []control.ReplicationRoute{
+			{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}},
+			{SourceNodeID: "node-b", TargetNodeIDs: []string{"node-a"}},
+		},
 		ExpectedRevision: -1,
 	}
 	if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), now); err != nil {

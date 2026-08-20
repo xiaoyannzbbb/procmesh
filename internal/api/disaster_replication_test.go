@@ -113,7 +113,7 @@ func TestReplicationPolicyToProto(t *testing.T) {
 func TestComputeDraftHash(t *testing.T) {
 	req := &procmeshv1.GeneratePolicyDraftRequest{
 		Name:           "test-policy",
-		SourceSelector: "all",
+		SourceSelector: "ALL_ADMITTED",
 		ReplicaFactor:  2,
 	}
 
@@ -243,7 +243,7 @@ func TestDisasterReplicationAPI_GeneratePolicyDraft(t *testing.T) {
 
 	req := bearerReq(sid, &procmeshv1.GeneratePolicyDraftRequest{
 		Name:           "test-policy",
-		SourceSelector: "all",
+		SourceSelector: "ALL_ADMITTED",
 		ReplicaFactor:  2,
 		Enabled:        true,
 	})
@@ -274,6 +274,93 @@ func TestDisasterReplicationAPI_GeneratePolicyDraft(t *testing.T) {
 	}
 	if draft.TopologyHealth == "" {
 		t.Error("expected topology health to be set")
+	}
+}
+
+func TestDisasterReplicationAPI_GeneratePolicyDraftExplicitSelectorUsesAllAdmittedTargets(t *testing.T) {
+	api, _, authSvc := setupMinimalAPI(t)
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := api.GeneratePolicyDraft(context.Background(), bearerReq(sid, &procmeshv1.GeneratePolicyDraftRequest{
+		Name: "explicit", SourceSelector: "EXPLICIT_NODES", SourceIds: []string{"node-1"}, ReplicaFactor: 2,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := resp.Msg.Draft.Routes
+	if len(routes) != 1 || routes[0].SourceNodeId != "node-1" {
+		t.Fatalf("routes=%+v, want only node-1 source", routes)
+	}
+	if got, want := routes[0].TargetNodeIds, []string{"node-2", "node-3"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("targets=%v, want %v", got, want)
+	}
+}
+
+func TestDisasterReplicationAPI_GeneratePolicyDraftGroupSelectorUsesAllAdmittedTargets(t *testing.T) {
+	api, state, authSvc := setupMinimalAPI(t)
+	state.AgentGroups["selected"] = control.AgentGroup{GroupID: "selected", MemberIDs: []string{"node-2"}}
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := api.GeneratePolicyDraft(context.Background(), bearerReq(sid, &procmeshv1.GeneratePolicyDraftRequest{
+		Name: "group", SourceSelector: "AGENT_GROUP", SourceIds: []string{"selected"}, ReplicaFactor: 2,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := resp.Msg.Draft.Routes
+	if len(routes) != 1 || routes[0].SourceNodeId != "node-2" {
+		t.Fatalf("routes=%+v, want only node-2 source", routes)
+	}
+	if got, want := routes[0].TargetNodeIds, []string{"node-1", "node-3"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("targets=%v, want %v", got, want)
+	}
+}
+
+func TestDisasterReplicationAPI_GeneratePolicyDraftForwardsLeader(t *testing.T) {
+	leader, _, authSvc := setupMinimalAPI(t)
+	leader.Auth = nil // The internal Leader endpoint authenticates forwarded identity separately.
+	leader.IsLeader = func() bool { return true }
+	leaderClient := newDisasterReplicationClient(t, leader)
+
+	follower := &DisasterReplicationAPI{
+		LocalID:  "node-follower",
+		Auth:     authSvc,
+		IsLeader: func() bool { return false },
+		LeaderRoute: func() (Route, bool) {
+			return Route{NodeID: "node-leader", RPC: "127.0.0.1:9001"}, true
+		},
+		Forward: disasterReplicationForwarder{client: leaderClient},
+	}
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client := newDisasterReplicationClient(t, follower)
+	resp, err := client.GeneratePolicyDraft(context.Background(), bearerReq(sid, &procmeshv1.GeneratePolicyDraftRequest{
+		Name: "forwarded", SourceSelector: "EXPLICIT_NODES", SourceIds: []string{"node-1"}, ReplicaFactor: 1,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Msg.Draft.Routes) != 1 || resp.Msg.Draft.Routes[0].SourceNodeId != "node-1" {
+		t.Fatalf("routes=%+v, want leader-generated selected route", resp.Msg.Draft.Routes)
+	}
+}
+
+func TestTopologyDraftRevisionIgnoresLiveness(t *testing.T) {
+	alive := []backup.AgentTopology{{NodeID: "node-1", Host: "h1", Rack: "r1", Zone: "z1", CapacityWeight: 1, Admitted: true, Alive: true}}
+	offline := append([]backup.AgentTopology(nil), alive...)
+	offline[0].Alive = false
+
+	if got, want := topologyDraftRevision(offline), topologyDraftRevision(alive); got != want {
+		t.Fatalf("offline revision=%d, want unchanged %d", got, want)
 	}
 }
 
@@ -317,7 +404,7 @@ func TestDisasterReplicationAPI_GeneratePolicyDraft_NoPermission(t *testing.T) {
 	client := newDisasterReplicationClient(t, api)
 	_, err = client.GeneratePolicyDraft(context.Background(), bearerReq(sid, &procmeshv1.GeneratePolicyDraftRequest{
 		Name:           "test-policy",
-		SourceSelector: "all",
+		SourceSelector: "ALL_ADMITTED",
 		ReplicaFactor:  2,
 	}))
 	assertDenied(t, err)
@@ -346,7 +433,7 @@ func TestDisasterReplicationAPI_ApplyPolicyDraft(t *testing.T) {
 	// Generate draft
 	genReq := bearerReq(sid, &procmeshv1.GeneratePolicyDraftRequest{
 		Name:           "test-policy",
-		SourceSelector: "all",
+		SourceSelector: "ALL_ADMITTED",
 		ReplicaFactor:  2,
 	})
 
@@ -387,7 +474,7 @@ func TestDisasterReplicationAPI_ApplyPolicyDraft_HashMismatch(t *testing.T) {
 	// Generate draft
 	genReq := bearerReq(sid, &procmeshv1.GeneratePolicyDraftRequest{
 		Name:           "test-policy",
-		SourceSelector: "all",
+		SourceSelector: "ALL_ADMITTED",
 		ReplicaFactor:  2,
 	})
 

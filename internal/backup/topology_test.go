@@ -1,10 +1,28 @@
 package backup_test
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/qleelulu/procmesh/internal/backup"
 )
+
+func TestGenerateRoutesForSources_ExplicitSourceUsesAllAdmittedTargets(t *testing.T) {
+	nodes := []backup.AgentTopology{
+		{NodeID: "a", Admitted: true},
+		{NodeID: "b", Admitted: true},
+		{NodeID: "c", Admitted: true},
+	}
+
+	got, err := backup.GenerateRoutesForSources(nodes, []string{"a"}, 2, backup.TopologyConstraints{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []backup.RouteDraft{{SourceNodeID: "a", TargetNodeIDs: []string{"b", "c"}, Warnings: []string{}}}
+	if !reflect.DeepEqual(got.Routes, want) {
+		t.Fatalf("routes=%+v, want %+v", got.Routes, want)
+	}
+}
 
 func TestGenerateRoutes_SingleNode(t *testing.T) {
 	nodes := []backup.AgentTopology{
