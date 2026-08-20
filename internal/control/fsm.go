@@ -1492,7 +1492,10 @@ func (s *State) applyReplicationPolicyPut(b ReplicationPolicyPutBody) error {
 		}
 	}
 	cur, exists := s.ReplicationPolicies[b.PolicyID]
-	if b.ExpectedRevision >= 0 && exists {
+	if b.ExpectedRevision >= 0 {
+		if !exists {
+			return errcode.E(errcode.CONFLICT, "policy not found for expected revision")
+		}
 		if cur.Revision != b.ExpectedRevision {
 			return errcode.E(errcode.CONFLICT, "revision mismatch")
 		}

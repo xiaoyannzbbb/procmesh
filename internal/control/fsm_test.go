@@ -1294,7 +1294,8 @@ func TestFSM_ReplicationPolicyPutRejectsUnsafeRoutes(t *testing.T) {
 	valid := control.ReplicationPolicyPutBody{
 		PolicyID: "rp-1", Name: "dr", Enabled: true,
 		SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1, Trigger: "MANUAL",
-		Routes: []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}}},
+		Routes:           []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}}},
+		ExpectedRevision: -1,
 	}
 	if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, valid), now); err != nil {
 		t.Fatal(err)
@@ -1572,7 +1573,8 @@ func TestFSM_ReplicationPolicyPutExpectedRevision(t *testing.T) {
 	body := control.ReplicationPolicyPutBody{
 		OperationID: "op-1", PolicyID: "rp-1", Name: "dr", Enabled: true,
 		SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1, Trigger: "MANUAL",
-		Routes: []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}}},
+		Routes:           []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}}},
+		ExpectedRevision: -1,
 	}
 	if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), now); err != nil {
 		t.Fatal(err)
@@ -1598,6 +1600,23 @@ func TestFSM_ReplicationPolicyPutExpectedRevision(t *testing.T) {
 	if got := s.ReplicationPolicies["rp-1"].ReplicaFactor; got != 2 {
 		t.Fatalf("factor=%d want 2", got)
 	}
+	body.OperationID = "op-4"
+	body.PolicyID = "rp-99"
+	body.ExpectedRevision = 5
+	err = s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), now)
+	if !errcode.Is(err, errcode.CONFLICT) {
+		t.Fatalf("expected revision on non-existent policy should reject, got %v", err)
+	}
+	body.OperationID = "op-5"
+	body.PolicyID = "rp-2"
+	body.Name = "dr-2"
+	body.ExpectedRevision = -1
+	if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), now); err != nil {
+		t.Fatalf("negative expected revision should skip check: %v", err)
+	}
+	if got := s.ReplicationPolicies["rp-2"].Revision; got != 1 {
+		t.Fatalf("new policy revision=%d want 1", got)
+	}
 }
 
 func TestFSM_ReplicationPolicyPutReplicaFactorVsCandidates(t *testing.T) {
@@ -1611,7 +1630,8 @@ func TestFSM_ReplicationPolicyPutReplicaFactorVsCandidates(t *testing.T) {
 	body := control.ReplicationPolicyPutBody{
 		OperationID: "op-1", PolicyID: "rp-1", Name: "dr", Enabled: true,
 		SourceSelector: "ALL_ADMITTED", ReplicaFactor: 3, Trigger: "MANUAL",
-		Routes: []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}}},
+		Routes:           []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}}},
+		ExpectedRevision: -1,
 	}
 	err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), now)
 	if !errcode.Is(err, errcode.INVALID) {
@@ -1650,6 +1670,17 @@ func TestFSM_ReplicationPolicyPutReplicaFactorVsCandidates(t *testing.T) {
 	if !errcode.Is(err, errcode.INVALID) {
 		t.Fatalf("factor 2 > 1 group candidate should reject, got %v", err)
 	}
+	body.OperationID = "op-5"
+	body.PolicyID = "rp-4"
+	body.Name = "missing-group"
+	body.SourceSelector = "AGENT_GROUP"
+	body.SourceIDs = []string{"g-nonexistent"}
+	body.ReplicaFactor = 1
+	body.Routes = []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}}}
+	err = s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), now)
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("non-existent group should have 0 candidates, got %v", err)
+	}
 }
 
 func TestFSM_ReplicationPolicyDeletePreservesReplicas(t *testing.T) {
@@ -1663,7 +1694,8 @@ func TestFSM_ReplicationPolicyDeletePreservesReplicas(t *testing.T) {
 	body := control.ReplicationPolicyPutBody{
 		OperationID: "op-1", PolicyID: "rp-1", Name: "dr", Enabled: true,
 		SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1, Trigger: "MANUAL",
-		Routes: []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}}},
+		Routes:           []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}}},
+		ExpectedRevision: -1,
 	}
 	if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), now); err != nil {
 		t.Fatal(err)
