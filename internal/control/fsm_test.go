@@ -608,7 +608,7 @@ func TestFSM_BackupRunAggregatesTerminalTasks(t *testing.T) {
 	}{
 		{name: "all success", statuses: []string{"SUCCESS", "SUCCEEDED"}, wantStatus: "SUCCEEDED", want: [4]int{2, 0, 0, 0}},
 		{name: "partial", statuses: []string{"SUCCESS", "UNAVAILABLE", "TIMEOUT", "CONFIG_MISSING"}, wantStatus: "PARTIAL", want: [4]int{1, 1, 1, 1}},
-		{name: "all failure", statuses: []string{"FAILED", "SKIPPED"}, wantStatus: "FAILED", want: [4]int{0, 2, 0, 0}},
+		{name: "all failure", statuses: []string{"FAILED", "RETENTION_FAILED", "SKIPPED"}, wantStatus: "FAILED", want: [4]int{0, 3, 0, 0}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -645,7 +645,7 @@ func TestFSM_BackupRunAggregatesTerminalTasks(t *testing.T) {
 
 func TestFSM_RetryFailedTasksResetsAllRetryableAndReopensRun(t *testing.T) {
 	s := control.NewState()
-	statuses := []string{"SUCCESS", "FAILED", "TIMEOUT", "UNAVAILABLE", "CONFIG_MISSING", "SKIPPED"}
+	statuses := []string{"SUCCESS", "FAILED", "TIMEOUT", "UNAVAILABLE", "CONFIG_MISSING", "RETENTION_FAILED", "SKIPPED"}
 	targets := make([]string, len(statuses))
 	for i := range targets {
 		targets[i] = fmt.Sprintf("node-%d", i)

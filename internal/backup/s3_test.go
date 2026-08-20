@@ -336,3 +336,45 @@ func TestS3Config_Redacted(t *testing.T) {
 		t.Fatal("Redacted must not mutate original")
 	}
 }
+
+func TestS3Sink_ClusterDeleteUsesExactGeneratedKey(t *testing.T) {
+	fake := newFakeS3(t)
+	s, err := backup.NewS3Sink(testS3Config(fake))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := s.PutCluster(ctx, "cluster-a", "policy-a", "node-a", "snap-a", []byte(`{"format_version":1,"snapshot_id":"snap-a"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PutCluster(ctx, "cluster-a", "policy-b", "node-a", "snap-b", []byte(`{"format_version":1,"snapshot_id":"snap-b"}`)); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := s.ListCluster(ctx, "cluster-a", "policy-a")
+	if err != nil || len(listed) != 1 || listed[0].SnapshotID != "snap-a" || listed[0].NodeID != "node-a" || listed[0].PolicyID != "policy-a" {
+		t.Fatalf("listed=%+v err=%v", listed, err)
+	}
+	if err := s.DeleteCluster(ctx, "cluster-a", "policy-a", "node-a", "snap-a"); err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if _, ok := fake.objects["p/cluster-a/policy-a/node-a/snap-a.json"]; ok {
+		t.Fatal("policy-a object still exists")
+	}
+	if _, ok := fake.objects["p/cluster-a/policy-b/node-a/snap-b.json"]; !ok {
+		t.Fatal("delete crossed policy namespace")
+	}
+}
+
+func TestS3Sink_ClusterOperationsRejectNamespaceEscape(t *testing.T) {
+	s, err := backup.NewS3Sink(testS3Config(newFakeS3(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ids := range [][3]string{{"../cluster", "policy", "node"}, {"cluster", "../policy", "node"}, {"cluster", "policy", "../node"}, {".", "policy", "node"}, {"cluster", "policy", ".."}} {
+		if _, err := s.PutCluster(context.Background(), ids[0], ids[1], ids[2], "snap", []byte(`{}`)); !errcode.Is(err, errcode.INVALID) {
+			t.Fatalf("ids=%v err=%v", ids, err)
+		}
+	}
+}

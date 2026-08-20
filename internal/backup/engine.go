@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -92,8 +93,13 @@ type Engine struct {
 	DiskPercent        func() float64 // nil = 0
 	Now                func() time.Time
 	NewID              func() (string, error) // 测试注入；默认 UUID
+	RetentionActive    func(snapshotID string) bool
+	LastUsableReplica  func(snapshotID string) bool
+	RetentionPolicy    func(policyID string) (Policy, bool)
 	LastSuccessUnix    atomic.Int64
 	Schedule           string // 空 = 关；五字段 cron
+	activeMu           sync.Mutex
+	activeSnapshots    map[string]int
 }
 
 var _ Applier = (*process.Manager)(nil)
@@ -214,6 +220,7 @@ func (e *Engine) CreateCluster(ctx context.Context, opts ClusterCreateOpts) (Met
 				SnapshotID:    existing.SnapshotID,
 				ClusterID:     opts.ClusterID,
 				NodeID:        opts.NodeID,
+				PolicyID:      existing.PolicyID,
 				CreatedAt:     existing.CreatedAt,
 				Processes:     dumps,
 			}
@@ -273,6 +280,7 @@ func (e *Engine) CreateCluster(ctx context.Context, opts ClusterCreateOpts) (Met
 		SnapshotID:    id,
 		ClusterID:     opts.ClusterID,
 		NodeID:        opts.NodeID,
+		PolicyID:      opts.PolicyID,
 		CreatedAt:     created,
 		Processes:     dumps,
 	}
@@ -297,7 +305,7 @@ func (e *Engine) CreateCluster(ctx context.Context, opts ClusterCreateOpts) (Met
 		return Meta{}, err
 	}
 
-	return e.indexClusterSnapshot(ctx, snap, sha, int64(len(payload)), opts.Sink, loc, opts.RunID, opts.TaskID, opts.PolicyID)
+	return e.indexClusterSnapshot(ctx, snap, sha, int64(len(payload)), opts.Sink, loc, opts.RunID, opts.TaskID, opts.PolicyID, opts.DestinationProfile)
 }
 
 // CreatePeer is Create with Sink=peer.
@@ -391,7 +399,7 @@ func (e *Engine) indexSnapshot(ctx context.Context, snap Snapshot, sha string, b
 	return meta, nil
 }
 
-func (e *Engine) indexClusterSnapshot(ctx context.Context, snap Snapshot, sha string, bytes int64, sink, loc, runID, taskID, policyID string) (Meta, error) {
+func (e *Engine) indexClusterSnapshot(ctx context.Context, snap Snapshot, sha string, bytes int64, sink, loc, runID, taskID, policyID, destinationProfile string) (Meta, error) {
 	meta := MetaFromSnapshot(snap)
 	meta.SHA256 = sha
 	meta.Bytes = bytes
@@ -412,6 +420,7 @@ func (e *Engine) indexClusterSnapshot(ctx context.Context, snap Snapshot, sha st
 		SHA256:             sha,
 		Bytes:              bytes,
 		Sink:               sink,
+		DestinationProfile: destinationProfile,
 		Location:           loc,
 		RunID:              runID,
 		TaskID:             taskID,
@@ -547,6 +556,8 @@ func (e *Engine) Restore(ctx context.Context, snapshotID, sinkName, opID, operat
 	if len(targets) == 0 {
 		return nil, errcode.E(errcode.INVALID, "targets required")
 	}
+	release := e.ProtectSnapshot(snapshotID)
+	defer release()
 	_, payload, err := e.Get(ctx, snapshotID, sinkName)
 	if err != nil {
 		return nil, err
@@ -575,6 +586,42 @@ func (e *Engine) Restore(ctx context.Context, snapshotID, sinkName, opID, operat
 		results = append(results, e.restoreOne(ctx, t, byID, opID, operator, comment))
 	}
 	return results, nil
+}
+
+// ProtectSnapshot holds a snapshot against retention until the returned
+// release function is called. Restore uses it automatically; replication
+// callers use the same lifecycle while copying payloads.
+func (e *Engine) ProtectSnapshot(snapshotID string) func() {
+	if e == nil || snapshotID == "" {
+		return func() {}
+	}
+	e.activeMu.Lock()
+	if e.activeSnapshots == nil {
+		e.activeSnapshots = make(map[string]int)
+	}
+	e.activeSnapshots[snapshotID]++
+	e.activeMu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			e.activeMu.Lock()
+			defer e.activeMu.Unlock()
+			if e.activeSnapshots[snapshotID] <= 1 {
+				delete(e.activeSnapshots, snapshotID)
+				return
+			}
+			e.activeSnapshots[snapshotID]--
+		})
+	}
+}
+
+func (e *Engine) retentionActive(snapshotID string) bool {
+	if e.RetentionActive != nil && e.RetentionActive(snapshotID) {
+		return true
+	}
+	e.activeMu.Lock()
+	defer e.activeMu.Unlock()
+	return e.activeSnapshots[snapshotID] > 0
 }
 
 func (e *Engine) restoreOne(ctx context.Context, t RestoreTarget, byID map[string]ProcessDump, opID, operator, comment string) RestoreResult {
@@ -889,10 +936,31 @@ func (e *Engine) RunClusterTask(ctx context.Context, req ClusterTaskRequest) (*T
 		return result, nil
 	}
 
-	result.Status = "SUCCESS"
 	result.SnapshotID = meta.SnapshotID
 	result.SHA256 = meta.SHA256
 	result.Bytes = meta.Bytes
+	result.Status = "SUCCESS"
+	if e.RetentionPolicy != nil {
+		if policy, ok := e.RetentionPolicy(req.PolicyID); ok {
+			policy.Sink = req.Sink
+			policy.DestinationProfile = req.DestinationProfile
+			retentionResults, retentionErr := e.ApplyRetention(ctx, policy)
+			if retentionErr != nil {
+				result.Status = "RETENTION_FAILED"
+				result.ErrorCode = "RETENTION_EXECUTION_FAILED"
+				result.ErrorSummary = retentionErr.Error()
+				return result, nil
+			}
+			for _, retentionResult := range retentionResults {
+				if retentionResult.Status == "RETENTION_FAILED" {
+					result.Status = "RETENTION_FAILED"
+					result.ErrorCode = retentionResult.ErrorCode
+					result.ErrorSummary = retentionResult.Error
+					return result, nil
+				}
+			}
+		}
+	}
 	return result, nil
 }
 

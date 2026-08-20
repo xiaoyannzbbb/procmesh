@@ -79,12 +79,12 @@ func TestOpen_MigratesBackupIndexBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	record := store.BackupRecord{SnapshotID: "snap", ClusterID: "cluster", NodeID: "node", CreatedAt: time.Unix(1, 0), SHA256: "abc", Bytes: 1234, Sink: "fs", Location: "/tmp/snap"}
+	record := store.BackupRecord{SnapshotID: "snap", ClusterID: "cluster", NodeID: "node", CreatedAt: time.Unix(1, 0), SHA256: "abc", Bytes: 1234, Sink: "s3", DestinationProfile: "archive", Location: "/tmp/snap"}
 	if err := st.PutBackup(context.Background(), record); err != nil {
 		t.Fatal(err)
 	}
 	got, err := st.GetBackup(context.Background(), "snap")
-	if err != nil || got.Bytes != 1234 {
+	if err != nil || got.Bytes != 1234 || got.DestinationProfile != "archive" {
 		t.Fatalf("record=%+v err=%v", got, err)
 	}
 }

@@ -383,6 +383,26 @@ func newBackupEngine(opt Options, mgr *process.Manager, st *store.Store, collect
 			}
 			return sink, nil
 		},
+		RetentionPolicy: func(policyID string) (backup.Policy, bool) {
+			n := rt.control()
+			if n == nil {
+				return backup.Policy{}, false
+			}
+			policy, ok := n.View().BackupPolicies[policyID]
+			if !ok {
+				return backup.Policy{}, false
+			}
+			return backup.PolicyFromRecord(backup.PolicyRecord{
+				PolicyID: policy.PolicyID, Name: policy.Name, Enabled: policy.Enabled,
+				ScheduleCron: policy.ScheduleCron, Timezone: policy.Timezone,
+				TargetSelector: policy.TargetSelector, TargetIDs: policy.TargetIDs,
+				Sink: policy.Sink, DestinationProfile: policy.DestinationProfile,
+				RetentionKeepLast: policy.RetentionKeepLast, RetentionKeepDays: policy.RetentionKeepDays,
+				RetentionMaxBytes: policy.RetentionMaxBytes, TimeoutSeconds: policy.TimeoutSeconds,
+				MaxConcurrency: policy.MaxConcurrency, UnavailablePolicy: policy.UnavailablePolicy,
+				Revision: policy.Revision,
+			}), true
+		},
 		PeerStore: &backup.PeerStore{Root: opt.DataDir},
 		PeerPush: backup.PeerPushFunc(func(ctx context.Context, nodeID, sourceNodeID string, payload []byte) error {
 			return pushPeerSnapshot(ctx, fwd, rt, nodeID, sourceNodeID, payload)

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/errcode"
@@ -115,6 +116,7 @@ func TestEngine_CreateCluster_Idempotency(t *testing.T) {
 	opts := backup.ClusterCreateOpts{
 		RunID:     "run-1",
 		TaskID:    "task-a",
+		PolicyID:  "policy-1",
 		ClusterID: "c1",
 		NodeID:    "n1",
 		Sink:      "fs",
@@ -138,6 +140,37 @@ func TestEngine_CreateCluster_Idempotency(t *testing.T) {
 	}
 	if meta1.SHA256 != meta2.SHA256 {
 		t.Errorf("checksum mismatch: %q vs %q", meta1.SHA256, meta2.SHA256)
+	}
+}
+
+func TestEngine_RunClusterTaskReportsRetryableRetentionFailure(t *testing.T) {
+	ctx := context.Background()
+	st, _ := seedProcess(t)
+	sink := &fakeSink{errors: map[string]bool{}}
+	ids := []string{"snap-old", "snap-new"}
+	times := []time.Time{time.Date(2026, 8, 18, 8, 0, 0, 0, time.UTC), time.Date(2026, 8, 19, 8, 0, 0, 0, time.UTC)}
+	index := 0
+	e := &backup.Engine{
+		Store: st, NodeID: "n1", ClusterID: "c1", Sinks: map[string]backup.Sink{"fs": sink},
+		NewID: func() (string, error) { return ids[index], nil }, Now: func() time.Time { return times[index] },
+		RetentionPolicy: func(policyID string) (backup.Policy, bool) {
+			return backup.Policy{PolicyID: policyID, Sink: "fs", Timezone: "UTC", RetentionKeepLast: 1}, true
+		},
+	}
+	if _, err := e.CreateCluster(ctx, backup.ClusterCreateOpts{RunID: "run-old", TaskID: "task-old", PolicyID: "bp", ClusterID: "c1", NodeID: "n1", Sink: "fs"}); err != nil {
+		t.Fatal(err)
+	}
+	sink.errors["snap-old"] = true
+	index = 1
+	result, err := e.RunClusterTask(ctx, backup.ClusterTaskRequest{RunID: "run-new", TaskID: "task-new", PolicyID: "bp", NodeID: "n1", Sink: "fs", LeaderTerm: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "RETENTION_FAILED" || result.ErrorCode != "RETENTION_DELETE_FAILED" || result.SnapshotID != "snap-new" || result.SHA256 == "" {
+		t.Fatalf("result=%+v", result)
+	}
+	if _, err := st.GetBackup(ctx, "snap-old"); err != nil {
+		t.Fatalf("failed retention removed index: %v", err)
 	}
 }
 
@@ -165,6 +198,7 @@ func TestEngine_CreateCluster_ChecksumConflict(t *testing.T) {
 	opts := backup.ClusterCreateOpts{
 		RunID:     "run-1",
 		TaskID:    "task-conflict",
+		PolicyID:  "policy-1",
 		ClusterID: "c1",
 		NodeID:    "n1",
 		Sink:      "fs",
@@ -247,7 +281,7 @@ func TestEngine_RunClusterTaskUsesDestinationProfile(t *testing.T) {
 	}
 
 	result, err := e.RunClusterTask(ctx, backup.ClusterTaskRequest{
-		RunID: "run-profile", TaskID: "task-profile", NodeID: "node-1",
+		RunID: "run-profile", TaskID: "task-profile", PolicyID: "policy-1", NodeID: "node-1",
 		Sink: "s3", DestinationProfile: "archive",
 	})
 	if err != nil {

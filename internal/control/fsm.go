@@ -1105,7 +1105,7 @@ func terminalRunStatus(status string) bool {
 }
 
 func terminalTaskStatus(status string) bool {
-	return status == "SUCCEEDED" || status == "SUCCESS" || status == "FAILED" || status == "TIMEOUT" || status == "UNAVAILABLE" || status == "CONFIG_MISSING" || status == "SKIPPED"
+	return status == "SUCCEEDED" || status == "SUCCESS" || status == "FAILED" || status == "TIMEOUT" || status == "UNAVAILABLE" || status == "CONFIG_MISSING" || status == "RETENTION_FAILED" || status == "SKIPPED"
 }
 
 func validRunStatus(status string) bool {
@@ -1433,7 +1433,7 @@ func (s *State) syncBackupFire(runID string, leaderTerm uint64, claimedUnix, lea
 
 func retryableTaskStatus(status string) bool {
 	switch status {
-	case "FAILED", "TIMEOUT", "UNAVAILABLE", "CONFIG_MISSING", "SKIPPED":
+	case "FAILED", "TIMEOUT", "UNAVAILABLE", "CONFIG_MISSING", "RETENTION_FAILED", "SKIPPED":
 		return true
 	default:
 		return false

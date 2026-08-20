@@ -64,7 +64,8 @@ func ensureBackupIndexBytes(db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("inspect backup_index: %w", err)
 	}
-	found := false
+	foundBytes := false
+	foundDestinationProfile := false
 	for rows.Next() {
 		var cid, notNull, primaryKey int
 		var name, typ string
@@ -74,7 +75,10 @@ func ensureBackupIndexBytes(db *sql.DB) error {
 			return fmt.Errorf("scan backup_index schema: %w", err)
 		}
 		if name == "bytes" {
-			found = true
+			foundBytes = true
+		}
+		if name == "destination_profile" {
+			foundDestinationProfile = true
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -84,11 +88,15 @@ func ensureBackupIndexBytes(db *sql.DB) error {
 	if err := rows.Close(); err != nil {
 		return fmt.Errorf("close backup_index schema: %w", err)
 	}
-	if found {
-		return nil
+	if !foundBytes {
+		if _, err := db.Exec(`ALTER TABLE backup_index ADD COLUMN bytes INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("migrate backup_index bytes: %w", err)
+		}
 	}
-	if _, err := db.Exec(`ALTER TABLE backup_index ADD COLUMN bytes INTEGER NOT NULL DEFAULT 0`); err != nil {
-		return fmt.Errorf("migrate backup_index bytes: %w", err)
+	if !foundDestinationProfile {
+		if _, err := db.Exec(`ALTER TABLE backup_index ADD COLUMN destination_profile TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("migrate backup_index destination profile: %w", err)
+		}
 	}
 	return nil
 }

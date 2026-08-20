@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/qleelulu/procmesh/internal/errcode"
@@ -295,6 +296,55 @@ func (p *PeerStore) DeleteSnapshot(ctx context.Context, sourceNodeID, clusterID,
 		return fmt.Errorf("delete backup peer: %w", err)
 	}
 	return nil
+}
+
+// ListSnapshots enumerates replicas in the cluster-aware Peer namespace. The
+// legacy List method below remains unchanged for pre-cluster snapshots.
+func (p *PeerStore) ListSnapshots(ctx context.Context, sourceNodeID, clusterID string) ([]Listed, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := p.validateSource(sourceNodeID); err != nil {
+		return nil, err
+	}
+	if err := p.validateCluster(clusterID); err != nil {
+		return nil, err
+	}
+	dir := p.dir(sourceNodeID, clusterID)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []Listed{}, nil
+		}
+		return nil, fmt.Errorf("list peer snapshots: %w", err)
+	}
+	out := make([]Listed, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		id := strings.TrimSuffix(entry.Name(), ".json")
+		if err := p.validateID(id); err != nil {
+			continue
+		}
+		location := p.pathFor(sourceNodeID, clusterID, id)
+		payload, err := os.ReadFile(location)
+		if err != nil {
+			continue
+		}
+		snapshot, err := Decode(payload)
+		if err != nil || snapshot.SnapshotID != id || snapshot.ClusterID != clusterID {
+			continue
+		}
+		out = append(out, Listed{SnapshotID: id, Location: location, ClusterID: clusterID, PolicyID: snapshot.PolicyID, NodeID: snapshot.NodeID, SourceNodeID: sourceNodeID, CreatedAt: snapshot.CreatedAt, Bytes: int64(len(payload))})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].SnapshotID < out[j].SnapshotID
+		}
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	return out, nil
 }
 
 // Get reads a peer-received snapshot payload.

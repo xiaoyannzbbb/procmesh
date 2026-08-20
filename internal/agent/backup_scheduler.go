@@ -273,7 +273,7 @@ func successfulBackupTaskStatus(status string) bool {
 }
 
 func terminalBackupTaskStatus(status string) bool {
-	return successfulBackupTaskStatus(status) || status == "FAILED" || status == "TIMEOUT" || status == "UNAVAILABLE" || status == "CONFIG_MISSING" || status == "SKIPPED"
+	return successfulBackupTaskStatus(status) || status == "FAILED" || status == "TIMEOUT" || status == "UNAVAILABLE" || status == "CONFIG_MISSING" || status == "RETENTION_FAILED" || status == "SKIPPED"
 }
 
 func (d localBackupDispatcher) persist(ctx context.Context, task backup.BackupTaskRequest, update backup.TaskUpdate) error {

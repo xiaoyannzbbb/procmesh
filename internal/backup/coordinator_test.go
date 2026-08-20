@@ -521,8 +521,8 @@ func (f *fakeSink) GetCluster(context.Context, string) ([]byte, error) {
 	return nil, nil
 }
 
-func (f *fakeSink) DeleteCluster(context.Context, string) error {
-	return nil
+func (f *fakeSink) DeleteCluster(ctx context.Context, _, _, _ string, snapshotID string) error {
+	return f.Delete(ctx, snapshotID)
 }
 
 func TestRetention_KeepsLast(t *testing.T) {
@@ -577,7 +577,7 @@ func TestRetention_S3DeleteFailureReturnsRetentionFailed(t *testing.T) {
 	// snap-1 should have Status=RETENTION_FAILED
 	found := false
 	for _, r := range results {
-		if r.SnapshotID == "snap-1" && r.Status == "RETENTION_FAILED" {
+		if r.SnapshotID == "snap-1" && r.Status == "RETENTION_FAILED" && r.Retryable && r.ErrorCode == "RETENTION_DELETE_FAILED" {
 			found = true
 			break
 		}

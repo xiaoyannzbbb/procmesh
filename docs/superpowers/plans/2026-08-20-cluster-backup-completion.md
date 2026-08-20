@@ -155,11 +155,11 @@ git commit -m "fix(replication): secure internal peer request paths"
 - Produces: `keep_last`, timezone-aware `keep_days`, and `max_bytes` while preserving active restore/copy and last usable replica.
 - Produces: `RETENTION_FAILED` metadata with retryability.
 
-- [ ] **Step 1: Write failing boundary tests for all retention dimensions and legacy path/schedule regression.**
-- [ ] **Step 2: Run RED:** `go test ./internal/backup -run 'TestRetention|TestScheduleCompatibility|TestLegacy' -count=1`
-- [ ] **Step 3: Implement a planner over metadata and separate FS/S3/Peer deleters; wire it after run/route terminal transitions.**
-- [ ] **Step 4: Run:** `go test ./internal/backup ./internal/api ./internal/agent -count=1`
-- [ ] **Step 5: Commit:** `git commit -m "feat(backup): enforce backup and replica retention"`
+- [x] **Step 1: Write failing boundary tests for all retention dimensions and legacy path/schedule regression.**
+- [x] **Step 2: Run RED:** `go test ./internal/backup -run 'TestRetention|TestScheduleCompatibility|TestLegacy' -count=1`
+- [x] **Step 3: Implement a planner over metadata and separate FS/S3/Peer deleters; wire it after run/route terminal transitions.**
+- [x] **Step 4: Run:** `go test ./internal/backup ./internal/api ./internal/agent -count=1`
+- [x] **Step 5: Commit:** `git commit -m "feat(backup): enforce backup and replica retention"`
 
 ### Task 6: Public disaster-replication API and correct run creation
 

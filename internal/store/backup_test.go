@@ -22,6 +22,7 @@ func TestBackupIndex_PutGetListDelete(t *testing.T) {
 		SnapshotID: "s1", ClusterID: "c", NodeID: "n",
 		CreatedAt:  time.Unix(1_700_000_000, 0).UTC(),
 		ProcessIDs: []string{"p1"}, SHA256: "abc", Sink: "fs",
+		DestinationProfile: "archive",
 		Location:           "/data/backup/fs/s1.json",
 		RevisionRangesJSON: `[{"process_id":"p1","min_revision":1,"max_revision":2}]`,
 	}
@@ -29,7 +30,7 @@ func TestBackupIndex_PutGetListDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := s.GetBackup(ctx, "s1")
-	if err != nil || got.Sink != "fs" || got.SHA256 != "abc" {
+	if err != nil || got.Sink != "fs" || got.SHA256 != "abc" || got.DestinationProfile != "archive" {
 		t.Fatalf("%+v %v", got, err)
 	}
 	list, err := s.ListBackups(ctx)

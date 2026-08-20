@@ -11,6 +11,7 @@ type Snapshot struct {
 	SnapshotID    string        `json:"snapshot_id"`
 	ClusterID     string        `json:"cluster_id"`
 	NodeID        string        `json:"node_id"`
+	PolicyID      string        `json:"policy_id,omitempty"`
 	CreatedAt     time.Time     `json:"created_at"`
 	Processes     []ProcessDump `json:"processes"`
 }

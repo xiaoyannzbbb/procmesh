@@ -75,6 +75,15 @@ func (s *FSSink) PutCluster(ctx context.Context, clusterID, policyID, nodeID, id
 	if err := s.validateID(id); err != nil {
 		return "", err
 	}
+	if err := validateNamespaceID(clusterID); err != nil {
+		return "", err
+	}
+	if err := validateNamespaceID(policyID); err != nil {
+		return "", err
+	}
+	if err := validateNamespaceID(nodeID); err != nil {
+		return "", err
+	}
 	dir := filepath.Join(s.dir, clusterID, nodeID)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return "", fmt.Errorf("mkdir backup cluster fs: %w", err)
@@ -155,6 +164,12 @@ func (s *FSSink) ListCluster(ctx context.Context, clusterID, policyID string) ([
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if err := validateNamespaceID(clusterID); err != nil {
+		return nil, err
+	}
+	if err := validateNamespaceID(policyID); err != nil {
+		return nil, err
+	}
 	clusterDir := filepath.Join(s.dir, clusterID)
 	if _, err := os.Stat(clusterDir); os.IsNotExist(err) {
 		return []Listed{}, nil
@@ -171,6 +186,9 @@ func (s *FSSink) ListCluster(ctx context.Context, clusterID, policyID string) ([
 			continue
 		}
 		nodeID := nodeEntry.Name()
+		if err := validateNamespaceID(nodeID); err != nil {
+			continue
+		}
 		nodeDir := filepath.Join(clusterDir, nodeID)
 		snapEntries, err := os.ReadDir(nodeDir)
 		if err != nil {
@@ -189,13 +207,60 @@ func (s *FSSink) ListCluster(ctx context.Context, clusterID, policyID string) ([
 			if err := s.validateID(id); err != nil {
 				continue
 			}
+			location := s.clusterPathFor(clusterID, nodeID, id)
+			payload, err := os.ReadFile(location)
+			if err != nil {
+				continue
+			}
+			snapshot, err := Decode(payload)
+			if err != nil || snapshot.SnapshotID != id || snapshot.ClusterID != clusterID || snapshot.NodeID != nodeID || snapshot.PolicyID != policyID {
+				continue
+			}
 			out = append(out, Listed{
 				SnapshotID: id,
-				Location:   s.clusterPathFor(clusterID, nodeID, id),
+				Location:   location,
+				ClusterID:  clusterID,
+				PolicyID:   policyID,
+				NodeID:     nodeID,
+				CreatedAt:  snapshot.CreatedAt,
+				Bytes:      int64(len(payload)),
 			})
 		}
 	}
 	return out, nil
+}
+
+// DeleteCluster removes exactly one generated cluster snapshot after checking
+// the payload identity, which keeps the policy boundary enforceable even
+// though the compatible FS layout does not include policyID in its path.
+func (s *FSSink) DeleteCluster(ctx context.Context, clusterID, policyID, nodeID, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	for _, value := range []string{clusterID, policyID, nodeID} {
+		if err := validateNamespaceID(value); err != nil {
+			return err
+		}
+	}
+	if err := s.validateID(id); err != nil {
+		return err
+	}
+	location := s.clusterPathFor(clusterID, nodeID, id)
+	payload, err := os.ReadFile(location)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return errcode.E(errcode.NOT_FOUND, "snapshot not found")
+		}
+		return fmt.Errorf("read cluster backup: %w", err)
+	}
+	snapshot, err := Decode(payload)
+	if err != nil || snapshot.SnapshotID != id || snapshot.ClusterID != clusterID || snapshot.NodeID != nodeID || snapshot.PolicyID != policyID {
+		return errcode.E(errcode.CONFLICT, "snapshot namespace mismatch")
+	}
+	if err := os.Remove(location); err != nil {
+		return fmt.Errorf("delete cluster backup: %w", err)
+	}
+	return nil
 }
 
 // Delete removes a snapshot file by id.

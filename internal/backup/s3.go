@@ -145,6 +145,11 @@ func (s *S3Sink) PutCluster(ctx context.Context, clusterID, policyID, nodeID, id
 	if err := s.validateID(id); err != nil {
 		return "", err
 	}
+	for _, value := range []string{clusterID, policyID, nodeID} {
+		if err := validateNamespaceID(value); err != nil {
+			return "", err
+		}
+	}
 	if _, err := s.do(ctx, http.MethodPut, s.clusterObjectPath(clusterID, policyID, nodeID, id), nil, payload); err != nil {
 		return "", err
 	}
@@ -195,6 +200,12 @@ func (s *S3Sink) ListCluster(ctx context.Context, clusterID, policyID string) ([
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if err := validateNamespaceID(clusterID); err != nil {
+		return nil, err
+	}
+	if err := validateNamespaceID(policyID); err != nil {
+		return nil, err
+	}
 	q := url.Values{}
 	q.Set("list-type", "2")
 	prefix := path.Join(s.cfg.Prefix, clusterID, policyID) + "/"
@@ -220,12 +231,35 @@ func (s *S3Sink) ListCluster(ctx context.Context, clusterID, policyID string) ([
 			continue
 		}
 		nodeID := parts[0]
+		if err := validateNamespaceID(nodeID); err != nil {
+			continue
+		}
 		out = append(out, Listed{
 			SnapshotID: id,
 			Location:   s.clusterLocation(clusterID, policyID, nodeID, id),
+			ClusterID:  clusterID,
+			PolicyID:   policyID,
+			NodeID:     nodeID,
 		})
 	}
 	return out, nil
+}
+
+// DeleteCluster removes exactly one object under the generated policy prefix.
+func (s *S3Sink) DeleteCluster(ctx context.Context, clusterID, policyID, nodeID, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	for _, value := range []string{clusterID, policyID, nodeID} {
+		if err := validateNamespaceID(value); err != nil {
+			return err
+		}
+	}
+	if err := s.validateID(id); err != nil {
+		return err
+	}
+	_, err := s.do(ctx, http.MethodDelete, s.clusterObjectPath(clusterID, policyID, nodeID, id), nil, nil)
+	return err
 }
 
 // Delete removes a snapshot object by id.

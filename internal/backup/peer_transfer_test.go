@@ -979,3 +979,27 @@ func TestPeer_ReceiveDeprecatedMethod(t *testing.T) {
 		t.Error("expected error for invalid JSON payload")
 	}
 }
+
+func TestPeer_ListSnapshotsReturnsClusterReplicaMetadata(t *testing.T) {
+	store := &PeerStore{Root: t.TempDir()}
+	created := time.Date(2026, 8, 20, 9, 0, 0, 0, time.UTC)
+	for _, id := range []string{"snap-a", "snap-b"} {
+		snapshot := Snapshot{FormatVersion: 1, SnapshotID: id, ClusterID: "cluster-a", NodeID: "owner-a", PolicyID: "primary-policy", CreatedAt: created, Processes: []ProcessDump{}}
+		payload, checksum, err := Encode(snapshot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.ReceiveWithMetadata(context.Background(), ReceiveParams{SourceNodeID: "owner-a", ClusterID: "cluster-a", SnapshotID: id, SHA256: checksum, Payload: payload}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	listed, err := store.ListSnapshots(context.Background(), "owner-a", "cluster-a")
+	if err != nil || len(listed) != 2 {
+		t.Fatalf("listed=%+v err=%v", listed, err)
+	}
+	for _, item := range listed {
+		if item.SourceNodeID != "owner-a" || item.ClusterID != "cluster-a" || item.NodeID != "owner-a" || item.PolicyID != "primary-policy" || !item.CreatedAt.Equal(created) || item.Bytes <= 0 {
+			t.Fatalf("item=%+v", item)
+		}
+	}
+}

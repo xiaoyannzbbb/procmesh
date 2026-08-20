@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/errcode"
@@ -114,5 +115,44 @@ func TestFSSink_CanceledContext(t *testing.T) {
 	}
 	if err := s.Delete(ctx, "s1"); err == nil {
 		t.Fatal("delete expected canceled")
+	}
+}
+
+func TestFSSink_ClusterDeleteIsPolicyScoped(t *testing.T) {
+	ctx := context.Background()
+	s := backup.NewFSSink(t.TempDir())
+	created := time.Date(2026, 8, 20, 8, 0, 0, 0, time.UTC)
+	payload, _, err := backup.Encode(backup.Snapshot{FormatVersion: 1, SnapshotID: "snap-a", ClusterID: "cluster-a", NodeID: "node-a", PolicyID: "policy-a", CreatedAt: created})
+	if err != nil {
+		t.Fatal(err)
+	}
+	location, err := s.PutCluster(ctx, "cluster-a", "policy-a", "node-a", "snap-a", payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed, err := s.ListCluster(ctx, "cluster-a", "policy-a")
+	if err != nil || len(listed) != 1 || listed[0].NodeID != "node-a" || listed[0].PolicyID != "policy-a" || listed[0].Bytes != int64(len(payload)) || !listed[0].CreatedAt.Equal(created) {
+		t.Fatalf("listed=%+v err=%v", listed, err)
+	}
+	if err := s.DeleteCluster(ctx, "cluster-a", "wrong-policy", "node-a", "snap-a"); !errcode.Is(err, errcode.CONFLICT) {
+		t.Fatalf("wrong policy delete err=%v", err)
+	}
+	if _, err := os.Stat(location); err != nil {
+		t.Fatalf("wrong policy removed snapshot: %v", err)
+	}
+	if err := s.DeleteCluster(ctx, "cluster-a", "policy-a", "node-a", "snap-a"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(location); !os.IsNotExist(err) {
+		t.Fatalf("snapshot still exists: %v", err)
+	}
+}
+
+func TestFSSink_ClusterOperationsRejectNamespaceEscape(t *testing.T) {
+	s := backup.NewFSSink(t.TempDir())
+	for _, ids := range [][3]string{{"../cluster", "policy", "node"}, {"cluster", "../policy", "node"}, {"cluster", "policy", "../node"}, {".", "policy", "node"}, {"cluster", "policy", ".."}} {
+		if _, err := s.PutCluster(context.Background(), ids[0], ids[1], ids[2], "snap", []byte(`{}`)); !errcode.Is(err, errcode.INVALID) {
+			t.Fatalf("ids=%v err=%v", ids, err)
+		}
 	}
 }
