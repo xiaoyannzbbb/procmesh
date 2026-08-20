@@ -54,6 +54,8 @@ const (
 	// ClusterBackupAgentServiceName is the fully-qualified name of the ClusterBackupAgentService
 	// service.
 	ClusterBackupAgentServiceName = "procmesh.v1.ClusterBackupAgentService"
+	// PeerReplicationServiceName is the fully-qualified name of the PeerReplicationService service.
+	PeerReplicationServiceName = "procmesh.v1.PeerReplicationService"
 )
 
 // These constants are the fully-qualified names of the RPCs defined in this package. They're
@@ -279,6 +281,18 @@ const (
 	// ClusterBackupAgentServiceGetTaskProcedure is the fully-qualified name of the
 	// ClusterBackupAgentService's GetTask RPC.
 	ClusterBackupAgentServiceGetTaskProcedure = "/procmesh.v1.ClusterBackupAgentService/GetTask"
+	// PeerReplicationServicePutSnapshotProcedure is the fully-qualified name of the
+	// PeerReplicationService's PutSnapshot RPC.
+	PeerReplicationServicePutSnapshotProcedure = "/procmesh.v1.PeerReplicationService/PutSnapshot"
+	// PeerReplicationServiceCheckSnapshotProcedure is the fully-qualified name of the
+	// PeerReplicationService's CheckSnapshot RPC.
+	PeerReplicationServiceCheckSnapshotProcedure = "/procmesh.v1.PeerReplicationService/CheckSnapshot"
+	// PeerReplicationServiceDeleteSnapshotProcedure is the fully-qualified name of the
+	// PeerReplicationService's DeleteSnapshot RPC.
+	PeerReplicationServiceDeleteSnapshotProcedure = "/procmesh.v1.PeerReplicationService/DeleteSnapshot"
+	// PeerReplicationServiceGetReplicaMetadataProcedure is the fully-qualified name of the
+	// PeerReplicationService's GetReplicaMetadata RPC.
+	PeerReplicationServiceGetReplicaMetadataProcedure = "/procmesh.v1.PeerReplicationService/GetReplicaMetadata"
 )
 
 // ProcessServiceClient is a client for the procmesh.v1.ProcessService service.
@@ -3091,4 +3105,153 @@ func (UnimplementedClusterBackupAgentServiceHandler) RunTask(context.Context, *c
 
 func (UnimplementedClusterBackupAgentServiceHandler) GetTask(context.Context, *connect.Request[v1.GetClusterBackupTaskRequest]) (*connect.Response[v1.GetClusterBackupTaskResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.ClusterBackupAgentService.GetTask is not implemented"))
+}
+
+// PeerReplicationServiceClient is a client for the procmesh.v1.PeerReplicationService service.
+type PeerReplicationServiceClient interface {
+	PutSnapshot(context.Context, *connect.Request[v1.PutSnapshotRequest]) (*connect.Response[v1.PutSnapshotResponse], error)
+	CheckSnapshot(context.Context, *connect.Request[v1.CheckSnapshotRequest]) (*connect.Response[v1.CheckSnapshotResponse], error)
+	DeleteSnapshot(context.Context, *connect.Request[v1.DeleteSnapshotRequest]) (*connect.Response[v1.DeleteSnapshotResponse], error)
+	GetReplicaMetadata(context.Context, *connect.Request[v1.GetReplicaMetadataRequest]) (*connect.Response[v1.GetReplicaMetadataResponse], error)
+}
+
+// NewPeerReplicationServiceClient constructs a client for the procmesh.v1.PeerReplicationService
+// service. By default, it uses the Connect protocol with the binary Protobuf Codec, asks for
+// gzipped responses, and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply
+// the connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewPeerReplicationServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) PeerReplicationServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	peerReplicationServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("PeerReplicationService").Methods()
+	return &peerReplicationServiceClient{
+		putSnapshot: connect.NewClient[v1.PutSnapshotRequest, v1.PutSnapshotResponse](
+			httpClient,
+			baseURL+PeerReplicationServicePutSnapshotProcedure,
+			connect.WithSchema(peerReplicationServiceMethods.ByName("PutSnapshot")),
+			connect.WithClientOptions(opts...),
+		),
+		checkSnapshot: connect.NewClient[v1.CheckSnapshotRequest, v1.CheckSnapshotResponse](
+			httpClient,
+			baseURL+PeerReplicationServiceCheckSnapshotProcedure,
+			connect.WithSchema(peerReplicationServiceMethods.ByName("CheckSnapshot")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteSnapshot: connect.NewClient[v1.DeleteSnapshotRequest, v1.DeleteSnapshotResponse](
+			httpClient,
+			baseURL+PeerReplicationServiceDeleteSnapshotProcedure,
+			connect.WithSchema(peerReplicationServiceMethods.ByName("DeleteSnapshot")),
+			connect.WithClientOptions(opts...),
+		),
+		getReplicaMetadata: connect.NewClient[v1.GetReplicaMetadataRequest, v1.GetReplicaMetadataResponse](
+			httpClient,
+			baseURL+PeerReplicationServiceGetReplicaMetadataProcedure,
+			connect.WithSchema(peerReplicationServiceMethods.ByName("GetReplicaMetadata")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// peerReplicationServiceClient implements PeerReplicationServiceClient.
+type peerReplicationServiceClient struct {
+	putSnapshot        *connect.Client[v1.PutSnapshotRequest, v1.PutSnapshotResponse]
+	checkSnapshot      *connect.Client[v1.CheckSnapshotRequest, v1.CheckSnapshotResponse]
+	deleteSnapshot     *connect.Client[v1.DeleteSnapshotRequest, v1.DeleteSnapshotResponse]
+	getReplicaMetadata *connect.Client[v1.GetReplicaMetadataRequest, v1.GetReplicaMetadataResponse]
+}
+
+// PutSnapshot calls procmesh.v1.PeerReplicationService.PutSnapshot.
+func (c *peerReplicationServiceClient) PutSnapshot(ctx context.Context, req *connect.Request[v1.PutSnapshotRequest]) (*connect.Response[v1.PutSnapshotResponse], error) {
+	return c.putSnapshot.CallUnary(ctx, req)
+}
+
+// CheckSnapshot calls procmesh.v1.PeerReplicationService.CheckSnapshot.
+func (c *peerReplicationServiceClient) CheckSnapshot(ctx context.Context, req *connect.Request[v1.CheckSnapshotRequest]) (*connect.Response[v1.CheckSnapshotResponse], error) {
+	return c.checkSnapshot.CallUnary(ctx, req)
+}
+
+// DeleteSnapshot calls procmesh.v1.PeerReplicationService.DeleteSnapshot.
+func (c *peerReplicationServiceClient) DeleteSnapshot(ctx context.Context, req *connect.Request[v1.DeleteSnapshotRequest]) (*connect.Response[v1.DeleteSnapshotResponse], error) {
+	return c.deleteSnapshot.CallUnary(ctx, req)
+}
+
+// GetReplicaMetadata calls procmesh.v1.PeerReplicationService.GetReplicaMetadata.
+func (c *peerReplicationServiceClient) GetReplicaMetadata(ctx context.Context, req *connect.Request[v1.GetReplicaMetadataRequest]) (*connect.Response[v1.GetReplicaMetadataResponse], error) {
+	return c.getReplicaMetadata.CallUnary(ctx, req)
+}
+
+// PeerReplicationServiceHandler is an implementation of the procmesh.v1.PeerReplicationService
+// service.
+type PeerReplicationServiceHandler interface {
+	PutSnapshot(context.Context, *connect.Request[v1.PutSnapshotRequest]) (*connect.Response[v1.PutSnapshotResponse], error)
+	CheckSnapshot(context.Context, *connect.Request[v1.CheckSnapshotRequest]) (*connect.Response[v1.CheckSnapshotResponse], error)
+	DeleteSnapshot(context.Context, *connect.Request[v1.DeleteSnapshotRequest]) (*connect.Response[v1.DeleteSnapshotResponse], error)
+	GetReplicaMetadata(context.Context, *connect.Request[v1.GetReplicaMetadataRequest]) (*connect.Response[v1.GetReplicaMetadataResponse], error)
+}
+
+// NewPeerReplicationServiceHandler builds an HTTP handler from the service implementation. It
+// returns the path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewPeerReplicationServiceHandler(svc PeerReplicationServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	peerReplicationServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("PeerReplicationService").Methods()
+	peerReplicationServicePutSnapshotHandler := connect.NewUnaryHandler(
+		PeerReplicationServicePutSnapshotProcedure,
+		svc.PutSnapshot,
+		connect.WithSchema(peerReplicationServiceMethods.ByName("PutSnapshot")),
+		connect.WithHandlerOptions(opts...),
+	)
+	peerReplicationServiceCheckSnapshotHandler := connect.NewUnaryHandler(
+		PeerReplicationServiceCheckSnapshotProcedure,
+		svc.CheckSnapshot,
+		connect.WithSchema(peerReplicationServiceMethods.ByName("CheckSnapshot")),
+		connect.WithHandlerOptions(opts...),
+	)
+	peerReplicationServiceDeleteSnapshotHandler := connect.NewUnaryHandler(
+		PeerReplicationServiceDeleteSnapshotProcedure,
+		svc.DeleteSnapshot,
+		connect.WithSchema(peerReplicationServiceMethods.ByName("DeleteSnapshot")),
+		connect.WithHandlerOptions(opts...),
+	)
+	peerReplicationServiceGetReplicaMetadataHandler := connect.NewUnaryHandler(
+		PeerReplicationServiceGetReplicaMetadataProcedure,
+		svc.GetReplicaMetadata,
+		connect.WithSchema(peerReplicationServiceMethods.ByName("GetReplicaMetadata")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/procmesh.v1.PeerReplicationService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case PeerReplicationServicePutSnapshotProcedure:
+			peerReplicationServicePutSnapshotHandler.ServeHTTP(w, r)
+		case PeerReplicationServiceCheckSnapshotProcedure:
+			peerReplicationServiceCheckSnapshotHandler.ServeHTTP(w, r)
+		case PeerReplicationServiceDeleteSnapshotProcedure:
+			peerReplicationServiceDeleteSnapshotHandler.ServeHTTP(w, r)
+		case PeerReplicationServiceGetReplicaMetadataProcedure:
+			peerReplicationServiceGetReplicaMetadataHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedPeerReplicationServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedPeerReplicationServiceHandler struct{}
+
+func (UnimplementedPeerReplicationServiceHandler) PutSnapshot(context.Context, *connect.Request[v1.PutSnapshotRequest]) (*connect.Response[v1.PutSnapshotResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.PeerReplicationService.PutSnapshot is not implemented"))
+}
+
+func (UnimplementedPeerReplicationServiceHandler) CheckSnapshot(context.Context, *connect.Request[v1.CheckSnapshotRequest]) (*connect.Response[v1.CheckSnapshotResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.PeerReplicationService.CheckSnapshot is not implemented"))
+}
+
+func (UnimplementedPeerReplicationServiceHandler) DeleteSnapshot(context.Context, *connect.Request[v1.DeleteSnapshotRequest]) (*connect.Response[v1.DeleteSnapshotResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.PeerReplicationService.DeleteSnapshot is not implemented"))
+}
+
+func (UnimplementedPeerReplicationServiceHandler) GetReplicaMetadata(context.Context, *connect.Request[v1.GetReplicaMetadataRequest]) (*connect.Response[v1.GetReplicaMetadataResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.PeerReplicationService.GetReplicaMetadata is not implemented"))
 }

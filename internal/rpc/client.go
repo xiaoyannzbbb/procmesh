@@ -87,6 +87,11 @@ func NewClusterBackupAgentClient(hc *http.Client, base string) procmeshv1connect
 	return procmeshv1connect.NewClusterBackupAgentServiceClient(hc, base)
 }
 
+// NewPeerReplicationClient returns a PeerReplicationService client over the given HTTP client and base URL.
+func NewPeerReplicationClient(hc *http.Client, base string) procmeshv1connect.PeerReplicationServiceClient {
+	return procmeshv1connect.NewPeerReplicationServiceClient(hc, base)
+}
+
 func baseURL(addr string) string {
 	if strings.HasPrefix(addr, "https://") {
 		return addr

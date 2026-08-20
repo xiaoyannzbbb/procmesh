@@ -253,6 +253,18 @@ func (r *rpcRuntime) localHandler() http.Handler {
 	})
 	mux.Handle(cbap, cbah)
 
+	// Internal Agent-to-Agent peer replication (no user auth, mTLS only)
+	var peerStore *backup.PeerStore
+	if r.backup != nil {
+		peerStore = &backup.PeerStore{Root: r.dir}
+	}
+	prp, prh := procmeshv1connect.NewPeerReplicationServiceHandler(&api.PeerReplicationAPI{
+		PeerStore: peerStore,
+		ClusterID: r.clusterID,
+		NodeID:    r.nodeID,
+	})
+	mux.Handle(prp, prh)
+
 	return mux
 }
 

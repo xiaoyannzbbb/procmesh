@@ -1080,3 +1080,67 @@ service ClusterBackupAgentService {
   rpc RunTask(RunClusterBackupTaskRequest) returns (RunClusterBackupTaskResponse);
   rpc GetTask(GetClusterBackupTaskRequest) returns (GetClusterBackupTaskResponse);
 }
+
+// PeerReplicationService provides internal agent-to-agent snapshot replication.
+// Only accessible via Agent mTLS certificates, not Web sessions.
+service PeerReplicationService {
+  rpc PutSnapshot(PutSnapshotRequest) returns (PutSnapshotResponse);
+  rpc CheckSnapshot(CheckSnapshotRequest) returns (CheckSnapshotResponse);
+  rpc DeleteSnapshot(DeleteSnapshotRequest) returns (DeleteSnapshotResponse);
+  rpc GetReplicaMetadata(GetReplicaMetadataRequest) returns (GetReplicaMetadataResponse);
+}
+
+message PutSnapshotRequest {
+  string cluster_id = 1;
+  string snapshot_id = 2;
+  string sha256 = 3;
+  string run_id = 4;
+  string task_id = 5;
+  bytes payload = 6;
+}
+
+message PutSnapshotResponse {
+  string snapshot_id = 1;
+  string cluster_id = 2;
+  string sha256 = 3;
+  int32 process_count = 4;
+  repeated string process_ids = 5;
+}
+
+message CheckSnapshotRequest {
+  string source_node_id = 1;
+  string cluster_id = 2;
+  string snapshot_id = 3;
+  string sha256 = 4;
+}
+
+message CheckSnapshotResponse {
+  bool exists = 1;
+  bool checksum_matches = 2;
+}
+
+message DeleteSnapshotRequest {
+  string source_node_id = 1;
+  string cluster_id = 2;
+  string snapshot_id = 3;
+}
+
+message DeleteSnapshotResponse {
+  bool deleted = 1;
+}
+
+message GetReplicaMetadataRequest {
+  string source_node_id = 1;
+  string cluster_id = 2;
+  string snapshot_id = 3;
+}
+
+message GetReplicaMetadataResponse {
+  string snapshot_id = 1;
+  string cluster_id = 2;
+  string node_id = 3;
+  string sha256 = 4;
+  int64 created_at = 5;
+  int32 process_count = 6;
+  repeated string process_ids = 7;
+}
