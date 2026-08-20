@@ -1491,7 +1491,18 @@ func (s *State) applyReplicationPolicyPut(b ReplicationPolicyPutBody) error {
 			seenTargets[target] = struct{}{}
 		}
 	}
-	cur := s.ReplicationPolicies[b.PolicyID]
+	cur, exists := s.ReplicationPolicies[b.PolicyID]
+	if b.ExpectedRevision >= 0 && exists {
+		if cur.Revision != b.ExpectedRevision {
+			return errcode.E(errcode.CONFLICT, "revision mismatch")
+		}
+	}
+	if len(b.Routes) > 0 {
+		candidateCount := s.computeCandidateCount(b.SourceSelector, b.SourceIDs)
+		if b.ReplicaFactor > candidateCount {
+			return errcode.E(errcode.INVALID, "replica factor exceeds candidate count")
+		}
+	}
 	cur.PolicyID, cur.Name, cur.Enabled = b.PolicyID, name, b.Enabled
 	cur.SourceSelector, cur.SourceIDs, cur.ReplicaFactor = b.SourceSelector, append([]string(nil), b.SourceIDs...), b.ReplicaFactor
 	cur.Routes = append([]ReplicationRoute(nil), b.Routes...)
@@ -1541,6 +1552,37 @@ func (s *State) validatePrimaryPolicies(ids []string) error {
 func (s *State) isAdmittedMember(nodeID string) bool {
 	m, ok := s.Members[nodeID]
 	return ok && m.Status == MemberAdmitted
+}
+
+func (s *State) computeCandidateCount(selector string, selectorIDs []string) int {
+	switch selector {
+	case "ALL_ADMITTED":
+		count := 0
+		for _, member := range s.Members {
+			if member.Status == MemberAdmitted {
+				count++
+			}
+		}
+		return count
+	case "EXPLICIT_NODES":
+		return len(selectorIDs)
+	case "AGENT_GROUP":
+		allowed := map[string]struct{}{}
+		for _, groupID := range selectorIDs {
+			group, ok := s.AgentGroups[groupID]
+			if !ok {
+				continue
+			}
+			for _, nodeID := range group.MemberIDs {
+				if s.isAdmittedMember(nodeID) {
+					allowed[nodeID] = struct{}{}
+				}
+			}
+		}
+		return len(allowed)
+	default:
+		return 0
+	}
 }
 
 func mapsClone(in map[string]string) map[string]string {

@@ -1561,6 +1561,129 @@ func TestFSM_ReplicationPolicyDeleteRejectsMissingPolicy(t *testing.T) {
 	}
 }
 
+func TestFSM_ReplicationPolicyPutExpectedRevision(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := mustBootstrap(t, now)
+	for _, nodeID := range []string{"node-a", "node-b"} {
+		if err := s.Apply(mustEncode(t, control.CmdMemberPut, control.MemberPutBody{NodeID: nodeID, Status: control.MemberAdmitted}), now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	body := control.ReplicationPolicyPutBody{
+		OperationID: "op-1", PolicyID: "rp-1", Name: "dr", Enabled: true,
+		SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1, Trigger: "MANUAL",
+		Routes: []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}}},
+	}
+	if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), now); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.ReplicationPolicies["rp-1"].Revision; got != 1 {
+		t.Fatalf("revision=%d want 1", got)
+	}
+	body.OperationID = "op-2"
+	body.ExpectedRevision = 0
+	err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), now)
+	if !errcode.Is(err, errcode.CONFLICT) {
+		t.Fatalf("stale revision should reject, got %v", err)
+	}
+	body.OperationID = "op-3"
+	body.ExpectedRevision = 1
+	body.ReplicaFactor = 2
+	if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), now); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.ReplicationPolicies["rp-1"].Revision; got != 2 {
+		t.Fatalf("revision=%d want 2", got)
+	}
+	if got := s.ReplicationPolicies["rp-1"].ReplicaFactor; got != 2 {
+		t.Fatalf("factor=%d want 2", got)
+	}
+}
+
+func TestFSM_ReplicationPolicyPutReplicaFactorVsCandidates(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := mustBootstrap(t, now)
+	for _, nodeID := range []string{"node-a", "node-b"} {
+		if err := s.Apply(mustEncode(t, control.CmdMemberPut, control.MemberPutBody{NodeID: nodeID, Status: control.MemberAdmitted}), now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	body := control.ReplicationPolicyPutBody{
+		OperationID: "op-1", PolicyID: "rp-1", Name: "dr", Enabled: true,
+		SourceSelector: "ALL_ADMITTED", ReplicaFactor: 3, Trigger: "MANUAL",
+		Routes: []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}}},
+	}
+	err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), now)
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("factor 3 > 2 candidates should reject, got %v", err)
+	}
+	body.OperationID = "op-2"
+	body.ReplicaFactor = 1
+	if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), now); err != nil {
+		t.Fatal(err)
+	}
+	body.OperationID = "op-3"
+	body.PolicyID = "rp-2"
+	body.Name = "explicit"
+	body.SourceSelector = "EXPLICIT_NODES"
+	body.SourceIDs = []string{"node-a"}
+	body.ReplicaFactor = 2
+	body.Routes = []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}}}
+	err = s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), now)
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("factor 2 > 1 explicit candidate should reject, got %v", err)
+	}
+	if err := s.Apply(mustEncode(t, control.CmdGroupPut, control.GroupPutBody{GroupID: "g-web", Name: "web", NowUnix: now.Unix()}), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Apply(mustEncode(t, control.CmdGroupMemberAdd, control.GroupMemberBody{GroupID: "g-web", NodeID: "node-a"}), now); err != nil {
+		t.Fatal(err)
+	}
+	body.OperationID = "op-4"
+	body.PolicyID = "rp-3"
+	body.Name = "group"
+	body.SourceSelector = "AGENT_GROUP"
+	body.SourceIDs = []string{"g-web"}
+	body.ReplicaFactor = 2
+	body.Routes = []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}}}
+	err = s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), now)
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("factor 2 > 1 group candidate should reject, got %v", err)
+	}
+}
+
+func TestFSM_ReplicationPolicyDeletePreservesReplicas(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := mustBootstrap(t, now)
+	for _, nodeID := range []string{"node-a", "node-b"} {
+		if err := s.Apply(mustEncode(t, control.CmdMemberPut, control.MemberPutBody{NodeID: nodeID, Status: control.MemberAdmitted}), now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	body := control.ReplicationPolicyPutBody{
+		OperationID: "op-1", PolicyID: "rp-1", Name: "dr", Enabled: true,
+		SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1, Trigger: "MANUAL",
+		Routes: []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}}},
+	}
+	if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), now); err != nil {
+		t.Fatal(err)
+	}
+	run := control.ClusterBackupRun{
+		RunID: "run-1", PolicyID: "rp-1", PolicyRevision: 1,
+		Status: "RUNNING", CreatedUnix: now.Unix(), TargetNodeIDs: []string{"node-a", "node-b"},
+	}
+	s.ReplicationRuns[run.RunID] = run
+	if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyDelete, control.ReplicationPolicyDeleteBody{OperationID: "op-2", PolicyID: "rp-1"}), now); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.ReplicationPolicies["rp-1"]; ok {
+		t.Fatal("policy should be deleted")
+	}
+	if _, ok := s.ReplicationRuns["run-1"]; !ok {
+		t.Fatal("replication run should be preserved after policy deletion")
+	}
+}
+
 func TestFSM_EnsureInitializesPolicyMaps(t *testing.T) {
 	s := &control.State{}
 	s.EnsureForTest()
