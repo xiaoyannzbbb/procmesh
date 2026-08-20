@@ -245,6 +245,40 @@ func (r *rpcRuntime) localHandler() http.Handler {
 	mux.Handle(cbp, cbh)
 
 	// Internal Agent-to-Agent backup task RPC (no user auth, mTLS only)
+	var peerStore *backup.PeerStore
+	if r.backup != nil {
+		peerStore = &backup.PeerStore{Root: r.dir}
+	}
+
+	// Disaster Replication Service (control plane)
+	drp, drh := procmeshv1connect.NewDisasterReplicationServiceHandler(&api.DisasterReplicationAPI{
+		ClusterID: r.clusterID,
+		NodeID:    r.nodeID,
+		Auth:      r.auth,
+		StateFn: func() control.State {
+			n := r.control()
+			if n == nil {
+				return control.State{}
+			}
+			return n.View()
+		},
+		ApplyFn: func(cmd control.Command, timeout time.Duration) error {
+			n := r.control()
+			if n == nil {
+				return fmt.Errorf("control plane unavailable")
+			}
+			return n.Apply(cmd, timeout)
+		},
+		PeerStore: peerStore,
+		Members: func() []cluster.NodeSummary {
+			if r.mesh == nil {
+				return nil
+			}
+			return r.mesh.Members()
+		},
+	}, opts...)
+	mux.Handle(drp, drh)
+
 	cbap, cbah := procmeshv1connect.NewClusterBackupAgentServiceHandler(&api.ClusterBackupAgentAPI{
 		Engine:    r.backup,
 		Auth:      r.auth,
@@ -254,10 +288,6 @@ func (r *rpcRuntime) localHandler() http.Handler {
 	mux.Handle(cbap, cbah)
 
 	// Internal Agent-to-Agent peer replication (no user auth, mTLS only)
-	var peerStore *backup.PeerStore
-	if r.backup != nil {
-		peerStore = &backup.PeerStore{Root: r.dir}
-	}
 	prp, prh := procmeshv1connect.NewPeerReplicationServiceHandler(&api.PeerReplicationAPI{
 		PeerStore: peerStore,
 		ClusterID: r.clusterID,
