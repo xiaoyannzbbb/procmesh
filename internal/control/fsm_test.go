@@ -2108,11 +2108,134 @@ func TestFSM_ReplicationPolicyDeletePreservesReplicas(t *testing.T) {
 func TestFSM_EnsureInitializesPolicyMaps(t *testing.T) {
 	s := &control.State{}
 	s.EnsureForTest()
-	if s.BackupPolicies == nil || s.ReplicationPolicies == nil {
-		t.Fatalf("backup=%v replication=%v", s.BackupPolicies, s.ReplicationPolicies)
+	if s.BackupPolicies == nil || s.ReplicationPolicies == nil || s.ReplicationDeleteIntents == nil {
+		t.Fatalf("backup=%v replication=%v deleteIntents=%v", s.BackupPolicies, s.ReplicationPolicies, s.ReplicationDeleteIntents)
 	}
 	_ = s.BackupPolicies["missing"]
 	_ = s.ReplicationPolicies["missing"]
+	_ = s.ReplicationDeleteIntents["missing"]
+}
+
+func TestFSM_ReplicationDeleteIntent(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	valid := func() control.ReplicationDeleteIntent {
+		return control.ReplicationDeleteIntent{
+			IntentID: "intent-1", PolicyID: "rp", PolicyRevision: 3,
+			SourceNodeID: "source", TargetNodeID: "target", SnapshotID: "snapshot",
+			LeaderTerm: 7, ExpiresUnix: now.Add(time.Minute).Unix(), Status: "PENDING",
+		}
+	}
+	put := func(state *control.State, intent control.ReplicationDeleteIntent, applyAt time.Time) error {
+		return state.Apply(mustEncode(t, control.CmdReplicationDeleteIntentPut, control.ReplicationDeleteIntentPutBody{
+			OperationID: "op-" + intent.IntentID + "-" + intent.Status, Intent: intent,
+		}), applyAt)
+	}
+
+	t.Run("stores pending metadata-only intent", func(t *testing.T) {
+		state := control.NewState()
+		intent := valid()
+		if err := put(state, intent, now); err != nil {
+			t.Fatal(err)
+		}
+		got, ok := state.ReplicationDeleteIntents[intent.IntentID]
+		if !ok {
+			t.Fatal("intent not stored")
+		}
+		if got != intent {
+			t.Fatalf("stored intent=%+v want=%+v", got, intent)
+		}
+	})
+
+	t.Run("idempotent identical put", func(t *testing.T) {
+		state := control.NewState()
+		intent := valid()
+		if err := put(state, intent, now); err != nil {
+			t.Fatal(err)
+		}
+		if err := put(state, intent, now); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("transitions pending to succeeded", func(t *testing.T) {
+		state := control.NewState()
+		intent := valid()
+		if err := put(state, intent, now); err != nil {
+			t.Fatal(err)
+		}
+		intent.Status = "SUCCEEDED"
+		if err := put(state, intent, now.Add(time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		if got := state.ReplicationDeleteIntents[intent.IntentID]; got.Status != "SUCCEEDED" {
+			t.Fatalf("status=%q", got.Status)
+		}
+	})
+
+	t.Run("rejects expired create at apply time", func(t *testing.T) {
+		state := control.NewState()
+		intent := valid()
+		intent.ExpiresUnix = now.Unix()
+		if err := put(state, intent, now); !errcode.Is(err, errcode.INVALID) {
+			t.Fatalf("error=%v want INVALID", err)
+		}
+		if _, ok := state.ReplicationDeleteIntents[intent.IntentID]; ok {
+			t.Fatal("expired intent stored")
+		}
+	})
+
+	t.Run("rejects create applied after expiry", func(t *testing.T) {
+		state := control.NewState()
+		intent := valid()
+		intent.ExpiresUnix = now.Add(time.Second).Unix()
+		if err := put(state, intent, now.Add(2*time.Second)); !errcode.Is(err, errcode.INVALID) {
+			t.Fatalf("error=%v want INVALID", err)
+		}
+	})
+
+	for _, tc := range []struct {
+		name   string
+		mutate func(*control.ReplicationDeleteIntent)
+	}{
+		{name: "missing operation fields", mutate: func(intent *control.ReplicationDeleteIntent) { intent.IntentID = "" }},
+		{name: "missing policy", mutate: func(intent *control.ReplicationDeleteIntent) { intent.PolicyID = "" }},
+		{name: "zero policy revision", mutate: func(intent *control.ReplicationDeleteIntent) { intent.PolicyRevision = 0 }},
+		{name: "missing source", mutate: func(intent *control.ReplicationDeleteIntent) { intent.SourceNodeID = "" }},
+		{name: "missing target", mutate: func(intent *control.ReplicationDeleteIntent) { intent.TargetNodeID = "" }},
+		{name: "missing snapshot", mutate: func(intent *control.ReplicationDeleteIntent) { intent.SnapshotID = "" }},
+		{name: "zero leader term", mutate: func(intent *control.ReplicationDeleteIntent) { intent.LeaderTerm = 0 }},
+		{name: "non-pending create", mutate: func(intent *control.ReplicationDeleteIntent) { intent.Status = "SUCCEEDED" }},
+	} {
+		t.Run("rejects "+tc.name, func(t *testing.T) {
+			state := control.NewState()
+			intent := valid()
+			tc.mutate(&intent)
+			body := control.ReplicationDeleteIntentPutBody{OperationID: "op-bad", Intent: intent}
+			if tc.name == "missing operation fields" {
+				body.OperationID = ""
+			}
+			err := state.Apply(mustEncode(t, control.CmdReplicationDeleteIntentPut, body), now)
+			if !errcode.Is(err, errcode.INVALID) {
+				t.Fatalf("error=%v want INVALID", err)
+			}
+		})
+	}
+
+	t.Run("rejects identity mismatch on update", func(t *testing.T) {
+		state := control.NewState()
+		intent := valid()
+		if err := put(state, intent, now); err != nil {
+			t.Fatal(err)
+		}
+		intent.SnapshotID = "other-snapshot"
+		intent.Status = "SUCCEEDED"
+		if err := put(state, intent, now.Add(time.Second)); !errcode.Is(err, errcode.CONFLICT) {
+			t.Fatalf("error=%v want CONFLICT", err)
+		}
+		if got := state.ReplicationDeleteIntents["intent-1"]; got.Status != "PENDING" || got.SnapshotID != "snapshot" {
+			t.Fatalf("intent changed after rejected update: %+v", got)
+		}
+	})
 }
 
 func hasPerm(perms []string, want string) bool {

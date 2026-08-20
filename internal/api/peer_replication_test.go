@@ -598,3 +598,86 @@ func TestPeerReplicationAPI_GetReplicaMetadata(t *testing.T) {
 	require.Equal(t, int32(2), resp.Msg.ProcessCount)
 	require.Len(t, resp.Msg.ProcessIds, 2)
 }
+
+func TestPeerReplicationAPI_DeleteSnapshotIntentAuthorizationBeforeStore(t *testing.T) {
+	dir := t.TempDir()
+	creds := genAgentCreds(t, "cluster-1", "source")
+	var authorized PeerOperation
+	var completed PeerOperation
+	api := &PeerReplicationAPI{
+		PeerStore: &backup.PeerStore{Root: dir}, ClusterID: "cluster-1", NodeID: "target",
+		AuthorizeOperation: func(_ string, operation PeerOperation) error {
+			if operation.Kind != "DELETE" {
+				return nil
+			}
+			authorized = operation
+			if operation.IntentID != "intent-1" || operation.PolicyID != "rp" || operation.PolicyRevision != 3 {
+				return errcode.E(errcode.DENIED, "peer delete requires local retention authorization")
+			}
+			return nil
+		},
+		CompleteDeleteIntent: func(operation PeerOperation) error {
+			completed = operation
+			return nil
+		},
+	}
+	client := newPeerReplicationClient(t, api, &tls.ConnectionState{PeerCertificates: []*x509.Certificate{creds.Cert}})
+	payload, _, err := backup.Encode(backup.Snapshot{FormatVersion: 1, SnapshotID: "snapshot", ClusterID: "cluster-1", NodeID: "source"})
+	require.NoError(t, err)
+	_, err = client.PutSnapshot(context.Background(), connect.NewRequest(&procmeshv1.PutSnapshotRequest{
+		ClusterId: "cluster-1", SnapshotId: "snapshot", Sha256: computeSHA256(payload), RunId: "run", TaskId: "task", Payload: payload,
+	}))
+	require.NoError(t, err)
+	path := filepath.Join(dir, "backup", "peer", "source", "cluster-1", "snapshot.json")
+
+	_, err = client.DeleteSnapshot(context.Background(), connect.NewRequest(&procmeshv1.DeleteSnapshotRequest{
+		SourceNodeId: "source", ClusterId: "cluster-1", SnapshotId: "snapshot",
+		IntentId: "wrong-intent", PolicyId: "rp", PolicyRevision: 3,
+	}))
+	require.Error(t, err)
+	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+	_, statErr := os.Stat(path)
+	require.NoError(t, statErr, "denied delete must not touch peer store")
+	require.Empty(t, completed.IntentID)
+
+	resp, err := client.DeleteSnapshot(context.Background(), connect.NewRequest(&procmeshv1.DeleteSnapshotRequest{
+		SourceNodeId: "source", ClusterId: "cluster-1", SnapshotId: "snapshot",
+		IntentId: "intent-1", PolicyId: "rp", PolicyRevision: 3,
+	}))
+	require.NoError(t, err)
+	require.True(t, resp.Msg.Deleted)
+	require.Equal(t, "DELETE", authorized.Kind)
+	require.Equal(t, "intent-1", authorized.IntentID)
+	require.Equal(t, "rp", authorized.PolicyID)
+	require.Equal(t, int64(3), authorized.PolicyRevision)
+	require.Equal(t, "intent-1", completed.IntentID)
+	_, statErr = os.Stat(path)
+	require.True(t, os.IsNotExist(statErr))
+}
+
+func TestPeerReplicationAPI_DeleteSnapshotIntentMissingFileIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	creds := genAgentCreds(t, "cluster-1", "source")
+	completed := 0
+	api := &PeerReplicationAPI{
+		PeerStore: &backup.PeerStore{Root: dir}, ClusterID: "cluster-1", NodeID: "target",
+		AuthorizeOperation: func(_ string, operation PeerOperation) error {
+			if operation.IntentID != "intent-missing" {
+				return errcode.E(errcode.DENIED, "peer delete requires local retention authorization")
+			}
+			return nil
+		},
+		CompleteDeleteIntent: func(PeerOperation) error {
+			completed++
+			return nil
+		},
+	}
+	client := newPeerReplicationClient(t, api, &tls.ConnectionState{PeerCertificates: []*x509.Certificate{creds.Cert}})
+	resp, err := client.DeleteSnapshot(context.Background(), connect.NewRequest(&procmeshv1.DeleteSnapshotRequest{
+		SourceNodeId: "source", ClusterId: "cluster-1", SnapshotId: "missing",
+		IntentId: "intent-missing", PolicyId: "rp", PolicyRevision: 1,
+	}))
+	require.NoError(t, err)
+	require.False(t, resp.Msg.Deleted)
+	require.Equal(t, 1, completed)
+}

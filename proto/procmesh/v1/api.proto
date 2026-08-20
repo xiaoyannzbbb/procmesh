@@ -1154,6 +1154,9 @@ message DeleteSnapshotRequest {
   string source_node_id = 1;
   string cluster_id = 2;
   string snapshot_id = 3;
+  string intent_id = 4;
+  string policy_id = 5;
+  int64 policy_revision = 6;
 }
 
 message DeleteSnapshotResponse {

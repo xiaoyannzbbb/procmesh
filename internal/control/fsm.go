@@ -186,29 +186,30 @@ type Policy struct {
 }
 
 type State struct {
-	ClusterID           string                       `json:"cluster_id"`
-	Users               map[string]User              `json:"users"`       // by username
-	UsersByID           map[string]string            `json:"users_by_id"` // id → username
-	Roles               map[string]Role              `json:"roles"`
-	Bindings            []Binding                    `json:"bindings"`
-	Sessions            map[string]Session           `json:"sessions"`
-	APITokens           map[string]APIToken          `json:"api_tokens"`
-	JoinTokens          map[string]JoinToken         `json:"join_tokens"`    // by id
-	Members             map[string]Member            `json:"members"`        // by node_id
-	CRL                 map[string]struct{}          `json:"crl"`            // cert serial hex
-	AgentGroups         map[string]AgentGroup        `json:"agent_groups"`   // by group_id
-	AlertChannels       map[string]AlertChannel      `json:"alert_channels"` // by channel_id
-	AlertPolicy         AlertPolicy                  `json:"alert_policy"`
-	BackupPolicies      map[string]BackupPolicy      `json:"backup_policies"`
-	ReplicationPolicies map[string]ReplicationPolicy `json:"replication_policies"`
-	BackupFireLedger    map[string]FireRecord        `json:"backup_fire_ledger"`
-	BackupRuns          map[string]ClusterBackupRun  `json:"backup_runs"`
-	BackupTasks         map[string]ClusterBackupTask `json:"backup_tasks"`
-	ReplicationRuns     map[string]ClusterBackupRun  `json:"replication_runs"`
-	ReplicationTasks    map[string]ClusterBackupTask `json:"replication_tasks"`
-	BackupRunTerms      map[string]uint64            `json:"backup_run_terms"`
-	ReplicationRunTerms map[string]uint64            `json:"replication_run_terms"`
-	Policy              Policy                       `json:"policy"`
+	ClusterID                string                             `json:"cluster_id"`
+	Users                    map[string]User                    `json:"users"`       // by username
+	UsersByID                map[string]string                  `json:"users_by_id"` // id → username
+	Roles                    map[string]Role                    `json:"roles"`
+	Bindings                 []Binding                          `json:"bindings"`
+	Sessions                 map[string]Session                 `json:"sessions"`
+	APITokens                map[string]APIToken                `json:"api_tokens"`
+	JoinTokens               map[string]JoinToken               `json:"join_tokens"`    // by id
+	Members                  map[string]Member                  `json:"members"`        // by node_id
+	CRL                      map[string]struct{}                `json:"crl"`            // cert serial hex
+	AgentGroups              map[string]AgentGroup              `json:"agent_groups"`   // by group_id
+	AlertChannels            map[string]AlertChannel            `json:"alert_channels"` // by channel_id
+	AlertPolicy              AlertPolicy                        `json:"alert_policy"`
+	BackupPolicies           map[string]BackupPolicy            `json:"backup_policies"`
+	ReplicationPolicies      map[string]ReplicationPolicy       `json:"replication_policies"`
+	BackupFireLedger         map[string]FireRecord              `json:"backup_fire_ledger"`
+	BackupRuns               map[string]ClusterBackupRun        `json:"backup_runs"`
+	BackupTasks              map[string]ClusterBackupTask       `json:"backup_tasks"`
+	ReplicationRuns          map[string]ClusterBackupRun        `json:"replication_runs"`
+	ReplicationTasks         map[string]ClusterBackupTask       `json:"replication_tasks"`
+	ReplicationDeleteIntents map[string]ReplicationDeleteIntent `json:"replication_delete_intents"`
+	BackupRunTerms           map[string]uint64                  `json:"backup_run_terms"`
+	ReplicationRunTerms      map[string]uint64                  `json:"replication_run_terms"`
+	Policy                   Policy                             `json:"policy"`
 }
 
 func NewState() *State {
@@ -271,6 +272,9 @@ func (s *State) ensure() {
 	}
 	if s.ReplicationTasks == nil {
 		s.ReplicationTasks = map[string]ClusterBackupTask{}
+	}
+	if s.ReplicationDeleteIntents == nil {
+		s.ReplicationDeleteIntents = map[string]ReplicationDeleteIntent{}
 	}
 	if s.BackupRunTerms == nil {
 		s.BackupRunTerms = map[string]uint64{}
@@ -349,6 +353,10 @@ func (s *State) Apply(cmd Command, now time.Time) error {
 		return applyJSON(cmd.Body, s.applyReplicationPolicyPut)
 	case CmdReplicationPolicyDelete:
 		return applyJSON(cmd.Body, s.applyReplicationPolicyDelete)
+	case CmdReplicationDeleteIntentPut:
+		return applyJSON(cmd.Body, func(b ReplicationDeleteIntentPutBody) error {
+			return s.applyReplicationDeleteIntentPut(b, now)
+		})
 	case CmdBackupFireClaim:
 		_, _, err := s.ClaimFireBody(cmd.Body, now)
 		return err
@@ -2003,6 +2011,54 @@ func (s *State) applyReplicationPolicyDelete(b ReplicationPolicyDeleteBody) erro
 		return errcode.E(errcode.NOT_FOUND, "replication policy not found")
 	}
 	delete(s.ReplicationPolicies, b.PolicyID)
+	return nil
+}
+
+func validDeleteIntentStatus(status string) bool {
+	return status == "PENDING" || status == "SUCCEEDED" || status == "FAILED" || status == "EXPIRED"
+}
+
+func sameDeleteIntentIdentity(a, b ReplicationDeleteIntent) bool {
+	return a.IntentID == b.IntentID && a.PolicyID == b.PolicyID && a.PolicyRevision == b.PolicyRevision &&
+		a.SourceNodeID == b.SourceNodeID && a.TargetNodeID == b.TargetNodeID && a.SnapshotID == b.SnapshotID
+}
+
+func (s *State) applyReplicationDeleteIntentPut(b ReplicationDeleteIntentPutBody, now time.Time) error {
+	s.ensure()
+	if err := requireOperationID(b.OperationID); err != nil {
+		return err
+	}
+	intent := b.Intent
+	if !validMetadataString(intent.IntentID, maxMetadataIDLen) || !validMetadataString(intent.PolicyID, maxMetadataIDLen) ||
+		!validMetadataString(intent.SourceNodeID, maxMetadataIDLen) || !validMetadataString(intent.TargetNodeID, maxMetadataIDLen) ||
+		!validMetadataString(intent.SnapshotID, maxSnapshotIDLen) || intent.PolicyRevision <= 0 || intent.LeaderTerm == 0 ||
+		!validDeleteIntentStatus(intent.Status) {
+		return errcode.E(errcode.INVALID, "invalid replication delete intent")
+	}
+	if current, ok := s.ReplicationDeleteIntents[intent.IntentID]; ok {
+		if !sameDeleteIntentIdentity(current, intent) {
+			return errcode.E(errcode.CONFLICT, "delete intent identity mismatch")
+		}
+		if current.Status == intent.Status && current.LeaderTerm == intent.LeaderTerm && current.ExpiresUnix == intent.ExpiresUnix {
+			return nil
+		}
+		if current.Status == "PENDING" && (intent.Status == "SUCCEEDED" || intent.Status == "FAILED" || intent.Status == "EXPIRED") {
+			current.Status = intent.Status
+			s.ReplicationDeleteIntents[intent.IntentID] = current
+			return nil
+		}
+		if current.Status == intent.Status {
+			return nil
+		}
+		return errcode.E(errcode.CONFLICT, "delete intent status conflict")
+	}
+	if intent.Status != "PENDING" {
+		return errcode.E(errcode.INVALID, "new delete intent must be PENDING")
+	}
+	if now.IsZero() || intent.ExpiresUnix <= now.Unix() || intent.ExpiresUnix > now.Add(24*time.Hour).Unix() {
+		return errcode.E(errcode.INVALID, "invalid delete intent expiry")
+	}
+	s.ReplicationDeleteIntents[intent.IntentID] = intent
 	return nil
 }
 

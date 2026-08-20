@@ -3,42 +3,43 @@ package control
 import "encoding/json"
 
 const (
-	CmdBootstrap               = "bootstrap"
-	CmdUserPut                 = "user_put"
-	CmdUserDisable             = "user_disable"
-	CmdLoginOK                 = "login_ok"
-	CmdLoginFail               = "login_fail"
-	CmdSessionPut              = "session_put"
-	CmdSessionDel              = "session_del"
-	CmdTokenPut                = "token_put"
-	CmdTokenRevoke             = "token_revoke"
-	CmdRolePut                 = "role_put"
-	CmdBindPut                 = "bind_put"
-	CmdJoinTokenPut            = "join_token_put"
-	CmdJoinTokenConsume        = "join_token_consume"
-	CmdJoinTokenRevoke         = "join_token_revoke"
-	CmdMemberPut               = "member_put"
-	CmdMemberRemove            = "member_remove"
-	CmdCRLAdd                  = "crl_add"
-	CmdGroupPut                = "group_put"
-	CmdGroupDelete             = "group_delete"
-	CmdGroupMemberAdd          = "group_member_add"
-	CmdGroupMemberRemove       = "group_member_remove"
-	CmdAlertChannelPut         = "alert_channel_put"
-	CmdAlertChannelDelete      = "alert_channel_delete"
-	CmdAlertPolicyPut          = "alert_policy_put"
-	CmdBackupPolicyPut         = "backup_policy_put"
-	CmdBackupPolicyDelete      = "backup_policy_delete"
-	CmdReplicationPolicyPut    = "replication_policy_put"
-	CmdReplicationPolicyDelete = "replication_policy_delete"
-	CmdBackupFireClaim         = "backup_fire_claim"
-	CmdBackupScheduledRunClaim = "backup_scheduled_run_claim"
-	CmdBackupRunCreate         = "backup_run_create"
-	CmdBackupRunClaim          = "backup_run_claim"
-	CmdBackupTaskUpdate        = "backup_task_update"
-	CmdBackupRetryFailedTasks  = "backup_retry_failed_tasks"
-	CmdBackupRunFinish         = "backup_run_finish"
-	CmdRunMetadataPrune        = "run_metadata_prune"
+	CmdBootstrap                  = "bootstrap"
+	CmdUserPut                    = "user_put"
+	CmdUserDisable                = "user_disable"
+	CmdLoginOK                    = "login_ok"
+	CmdLoginFail                  = "login_fail"
+	CmdSessionPut                 = "session_put"
+	CmdSessionDel                 = "session_del"
+	CmdTokenPut                   = "token_put"
+	CmdTokenRevoke                = "token_revoke"
+	CmdRolePut                    = "role_put"
+	CmdBindPut                    = "bind_put"
+	CmdJoinTokenPut               = "join_token_put"
+	CmdJoinTokenConsume           = "join_token_consume"
+	CmdJoinTokenRevoke            = "join_token_revoke"
+	CmdMemberPut                  = "member_put"
+	CmdMemberRemove               = "member_remove"
+	CmdCRLAdd                     = "crl_add"
+	CmdGroupPut                   = "group_put"
+	CmdGroupDelete                = "group_delete"
+	CmdGroupMemberAdd             = "group_member_add"
+	CmdGroupMemberRemove          = "group_member_remove"
+	CmdAlertChannelPut            = "alert_channel_put"
+	CmdAlertChannelDelete         = "alert_channel_delete"
+	CmdAlertPolicyPut             = "alert_policy_put"
+	CmdBackupPolicyPut            = "backup_policy_put"
+	CmdBackupPolicyDelete         = "backup_policy_delete"
+	CmdReplicationPolicyPut       = "replication_policy_put"
+	CmdReplicationPolicyDelete    = "replication_policy_delete"
+	CmdReplicationDeleteIntentPut = "replication_delete_intent_put"
+	CmdBackupFireClaim            = "backup_fire_claim"
+	CmdBackupScheduledRunClaim    = "backup_scheduled_run_claim"
+	CmdBackupRunCreate            = "backup_run_create"
+	CmdBackupRunClaim             = "backup_run_claim"
+	CmdBackupTaskUpdate           = "backup_task_update"
+	CmdBackupRetryFailedTasks     = "backup_retry_failed_tasks"
+	CmdBackupRunFinish            = "backup_run_finish"
+	CmdRunMetadataPrune           = "run_metadata_prune"
 )
 
 // Command is a Raft log payload: type + JSON body.
@@ -261,6 +262,24 @@ type ReplicationPolicyPutBody struct {
 type ReplicationPolicyDeleteBody struct {
 	OperationID string `json:"operation_id,omitempty"`
 	PolicyID    string `json:"policy_id"`
+}
+
+// ReplicationDeleteIntent is metadata-only authorization for an exact peer retention delete.
+type ReplicationDeleteIntent struct {
+	IntentID       string `json:"intent_id"`
+	PolicyID       string `json:"policy_id"`
+	PolicyRevision int64  `json:"policy_revision"`
+	SourceNodeID   string `json:"source_node_id"`
+	TargetNodeID   string `json:"target_node_id"`
+	SnapshotID     string `json:"snapshot_id"`
+	LeaderTerm     uint64 `json:"leader_term"`
+	ExpiresUnix    int64  `json:"expires_unix"`
+	Status         string `json:"status"`
+}
+
+type ReplicationDeleteIntentPutBody struct {
+	OperationID string                  `json:"operation_id"`
+	Intent      ReplicationDeleteIntent `json:"intent"`
 }
 
 // FireClaimBody records an idempotent scheduled-fire claim. LeaseUntilUnix is

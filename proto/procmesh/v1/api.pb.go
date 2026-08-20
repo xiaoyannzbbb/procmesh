@@ -12171,12 +12171,15 @@ func (x *CheckSnapshotResponse) GetChecksumMatches() bool {
 }
 
 type DeleteSnapshotRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SourceNodeId  string                 `protobuf:"bytes,1,opt,name=source_node_id,json=sourceNodeId,proto3" json:"source_node_id,omitempty"`
-	ClusterId     string                 `protobuf:"bytes,2,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
-	SnapshotId    string                 `protobuf:"bytes,3,opt,name=snapshot_id,json=snapshotId,proto3" json:"snapshot_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	SourceNodeId   string                 `protobuf:"bytes,1,opt,name=source_node_id,json=sourceNodeId,proto3" json:"source_node_id,omitempty"`
+	ClusterId      string                 `protobuf:"bytes,2,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
+	SnapshotId     string                 `protobuf:"bytes,3,opt,name=snapshot_id,json=snapshotId,proto3" json:"snapshot_id,omitempty"`
+	IntentId       string                 `protobuf:"bytes,4,opt,name=intent_id,json=intentId,proto3" json:"intent_id,omitempty"`
+	PolicyId       string                 `protobuf:"bytes,5,opt,name=policy_id,json=policyId,proto3" json:"policy_id,omitempty"`
+	PolicyRevision int64                  `protobuf:"varint,6,opt,name=policy_revision,json=policyRevision,proto3" json:"policy_revision,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *DeleteSnapshotRequest) Reset() {
@@ -12228,6 +12231,27 @@ func (x *DeleteSnapshotRequest) GetSnapshotId() string {
 		return x.SnapshotId
 	}
 	return ""
+}
+
+func (x *DeleteSnapshotRequest) GetIntentId() string {
+	if x != nil {
+		return x.IntentId
+	}
+	return ""
+}
+
+func (x *DeleteSnapshotRequest) GetPolicyId() string {
+	if x != nil {
+		return x.PolicyId
+	}
+	return ""
+}
+
+func (x *DeleteSnapshotRequest) GetPolicyRevision() int64 {
+	if x != nil {
+		return x.PolicyRevision
+	}
+	return 0
 }
 
 type DeleteSnapshotResponse struct {
@@ -15896,13 +15920,16 @@ const file_proto_procmesh_v1_api_proto_rawDesc = "" +
 	"\x06sha256\x18\x04 \x01(\tR\x06sha256\"Z\n" +
 	"\x15CheckSnapshotResponse\x12\x16\n" +
 	"\x06exists\x18\x01 \x01(\bR\x06exists\x12)\n" +
-	"\x10checksum_matches\x18\x02 \x01(\bR\x0fchecksumMatches\"}\n" +
+	"\x10checksum_matches\x18\x02 \x01(\bR\x0fchecksumMatches\"\xe0\x01\n" +
 	"\x15DeleteSnapshotRequest\x12$\n" +
 	"\x0esource_node_id\x18\x01 \x01(\tR\fsourceNodeId\x12\x1d\n" +
 	"\n" +
 	"cluster_id\x18\x02 \x01(\tR\tclusterId\x12\x1f\n" +
 	"\vsnapshot_id\x18\x03 \x01(\tR\n" +
-	"snapshotId\"2\n" +
+	"snapshotId\x12\x1b\n" +
+	"\tintent_id\x18\x04 \x01(\tR\bintentId\x12\x1b\n" +
+	"\tpolicy_id\x18\x05 \x01(\tR\bpolicyId\x12'\n" +
+	"\x0fpolicy_revision\x18\x06 \x01(\x03R\x0epolicyRevision\"2\n" +
 	"\x16DeleteSnapshotResponse\x12\x18\n" +
 	"\adeleted\x18\x01 \x01(\bR\adeleted\"\x81\x01\n" +
 	"\x19GetReplicaMetadataRequest\x12$\n" +

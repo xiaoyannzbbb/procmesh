@@ -361,6 +361,117 @@ func TestPutSnapshotPolicyAuthorizationMatchesFrozenReplicationRun(t *testing.T)
 	}
 }
 
+func TestAuthorizePeerOperationDeleteIntent(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	node, err := control.Start(control.RaftConfig{Dir: t.TempDir(), Bind: "127.0.0.1:0", NodeID: "target", ClusterID: "cluster"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = node.Shutdown() })
+	if err := node.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitRaftLeader(node, raftStartTO); err != nil {
+		t.Fatal(err)
+	}
+	apply := func(commandType string, body any) {
+		t.Helper()
+		command, encodeErr := control.EncodeCommand(commandType, body)
+		if encodeErr != nil {
+			t.Fatal(encodeErr)
+		}
+		if applyErr := node.Apply(command, raftApplyTO); applyErr != nil {
+			t.Fatal(applyErr)
+		}
+	}
+	apply(control.CmdMemberPut, control.MemberPutBody{NodeID: "source", Status: control.MemberAdmitted})
+	apply(control.CmdMemberPut, control.MemberPutBody{NodeID: "target", Status: control.MemberAdmitted})
+	term := node.CurrentTerm()
+	intent := control.ReplicationDeleteIntent{
+		IntentID: "intent-1", PolicyID: "rp", PolicyRevision: 2,
+		SourceNodeID: "source", TargetNodeID: "target", SnapshotID: "snapshot",
+		LeaderTerm: term, ExpiresUnix: now.Add(time.Minute).Unix(), Status: "PENDING",
+	}
+	apply(control.CmdReplicationDeleteIntentPut, control.ReplicationDeleteIntentPutBody{OperationID: "op-intent", Intent: intent})
+	runtime := &rpcRuntime{nodeID: "target", clusterID: "cluster", node: node}
+
+	exact := api.PeerOperation{
+		Kind: "DELETE", ClusterID: "cluster", SourceNodeID: "source", TargetNodeID: "target",
+		SnapshotID: "snapshot", IntentID: "intent-1", PolicyID: "rp", PolicyRevision: 2,
+	}
+	if err := runtime.authorizePeerOperation("source", exact); err != nil {
+		t.Fatalf("exact pending intent rejected: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		op   api.PeerOperation
+	}{
+		{name: "missing intent", op: api.PeerOperation{Kind: "DELETE", ClusterID: "cluster", SourceNodeID: "source", TargetNodeID: "target", SnapshotID: "snapshot", IntentID: "missing", PolicyID: "rp", PolicyRevision: 2}},
+		{name: "policy mismatch", op: api.PeerOperation{Kind: "DELETE", ClusterID: "cluster", SourceNodeID: "source", TargetNodeID: "target", SnapshotID: "snapshot", IntentID: "intent-1", PolicyID: "other", PolicyRevision: 2}},
+		{name: "revision mismatch", op: api.PeerOperation{Kind: "DELETE", ClusterID: "cluster", SourceNodeID: "source", TargetNodeID: "target", SnapshotID: "snapshot", IntentID: "intent-1", PolicyID: "rp", PolicyRevision: 3}},
+		{name: "snapshot mismatch", op: api.PeerOperation{Kind: "DELETE", ClusterID: "cluster", SourceNodeID: "source", TargetNodeID: "target", SnapshotID: "other", IntentID: "intent-1", PolicyID: "rp", PolicyRevision: 2}},
+		{name: "target mismatch", op: api.PeerOperation{Kind: "DELETE", ClusterID: "cluster", SourceNodeID: "source", TargetNodeID: "other", SnapshotID: "snapshot", IntentID: "intent-1", PolicyID: "rp", PolicyRevision: 2}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := runtime.authorizePeerOperation("source", tc.op)
+			if !errcode.Is(err, errcode.DENIED) {
+				t.Fatalf("error=%v want DENIED", err)
+			}
+		})
+	}
+
+	t.Run("expired and stale term", func(t *testing.T) {
+		apply(control.CmdReplicationDeleteIntentPut, control.ReplicationDeleteIntentPutBody{
+			OperationID: "op-stale", Intent: control.ReplicationDeleteIntent{
+				IntentID: "intent-stale", PolicyID: "rp", PolicyRevision: 2,
+				SourceNodeID: "source", TargetNodeID: "target", SnapshotID: "snapshot",
+				LeaderTerm: term + 10, ExpiresUnix: now.Add(time.Minute).Unix(), Status: "PENDING",
+			},
+		})
+		err := runtime.authorizePeerOperation("source", api.PeerOperation{
+			Kind: "DELETE", ClusterID: "cluster", SourceNodeID: "source", TargetNodeID: "target",
+			SnapshotID: "snapshot", IntentID: "intent-stale", PolicyID: "rp", PolicyRevision: 2,
+		})
+		if !errcode.Is(err, errcode.DENIED) {
+			t.Fatalf("stale-term error=%v want DENIED", err)
+		}
+
+		apply(control.CmdReplicationDeleteIntentPut, control.ReplicationDeleteIntentPutBody{
+			OperationID: "op-live-expire", Intent: control.ReplicationDeleteIntent{
+				IntentID: "intent-live-expire", PolicyID: "rp", PolicyRevision: 2,
+				SourceNodeID: "source", TargetNodeID: "target", SnapshotID: "snapshot",
+				LeaderTerm: term, ExpiresUnix: time.Now().Add(1500 * time.Millisecond).Unix(), Status: "PENDING",
+			},
+		})
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			err = runtime.authorizePeerOperation("source", api.PeerOperation{
+				Kind: "DELETE", ClusterID: "cluster", SourceNodeID: "source", TargetNodeID: "target",
+				SnapshotID: "snapshot", IntentID: "intent-live-expire", PolicyID: "rp", PolicyRevision: 2,
+			})
+			if errcode.Is(err, errcode.DENIED) {
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		t.Fatalf("expired intent still authorized: %v", err)
+	})
+
+	t.Run("complete marks succeeded", func(t *testing.T) {
+		if err := runtime.completeDeleteIntent(exact); err != nil {
+			t.Fatal(err)
+		}
+		got := node.View().ReplicationDeleteIntents["intent-1"]
+		if got.Status != "SUCCEEDED" {
+			t.Fatalf("status=%q", got.Status)
+		}
+		if err := runtime.authorizePeerOperation("source", exact); !errcode.Is(err, errcode.DENIED) {
+			t.Fatalf("succeeded intent still authorized: %v", err)
+		}
+	})
+}
+
 func (a *recordingReplicationApplier) Apply(command control.Command, _ time.Duration) error {
 	a.commands = append(a.commands, command)
 	return a.err

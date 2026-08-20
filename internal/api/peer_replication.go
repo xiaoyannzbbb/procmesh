@@ -21,11 +21,12 @@ type PeerReplicationAPI struct {
 	}
 	AuthorizeReplication func(string, *procmeshv1.ReplicateSnapshotRequest) error
 	AuthorizeOperation   func(string, PeerOperation) error
+	CompleteDeleteIntent func(PeerOperation) error
 }
 
 type PeerOperation struct {
 	Kind, ClusterID, SourceNodeID, TargetNodeID, SnapshotID, SHA256, RunID, TaskID string
-	PolicyID                                                                       string
+	PolicyID, IntentID                                                             string
 	PolicyRevision                                                                 int64
 }
 
@@ -119,20 +120,30 @@ func (p *PeerReplicationAPI) DeleteSnapshot(ctx context.Context, req *connect.Re
 	if p.PeerStore == nil {
 		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "peer store unavailable"))
 	}
-	if _, err := p.authorizeOperation(ctx, req.Msg.ClusterId, PeerOperation{Kind: "DELETE", ClusterID: req.Msg.ClusterId, SourceNodeID: req.Msg.SourceNodeId, TargetNodeID: p.NodeID, SnapshotID: req.Msg.SnapshotId}); err != nil {
-		return nil, ToConnect(err)
+	operation := PeerOperation{
+		Kind: "DELETE", ClusterID: req.Msg.ClusterId, SourceNodeID: req.Msg.SourceNodeId, TargetNodeID: p.NodeID,
+		SnapshotID: req.Msg.SnapshotId, IntentID: req.Msg.IntentId, PolicyID: req.Msg.PolicyId, PolicyRevision: req.Msg.PolicyRevision,
 	}
-
-	err := p.PeerStore.DeleteSnapshot(ctx, req.Msg.SourceNodeId, req.Msg.ClusterId, req.Msg.SnapshotId)
+	peerNodeID, err := p.authorizeOperation(ctx, req.Msg.ClusterId, operation)
 	if err != nil {
-		if errcode.Is(err, errcode.NOT_FOUND) {
-			// Idempotent - already deleted
-			return connect.NewResponse(&procmeshv1.DeleteSnapshotResponse{Deleted: false}), nil
-		}
 		return nil, ToConnect(err)
 	}
+	operation.SourceNodeID = peerNodeID
 
-	return connect.NewResponse(&procmeshv1.DeleteSnapshotResponse{Deleted: true}), nil
+	err = p.PeerStore.DeleteSnapshot(ctx, req.Msg.SourceNodeId, req.Msg.ClusterId, req.Msg.SnapshotId)
+	deleted := true
+	if err != nil {
+		if !errcode.Is(err, errcode.NOT_FOUND) {
+			return nil, ToConnect(err)
+		}
+		deleted = false
+	}
+	if p.CompleteDeleteIntent != nil {
+		if err := p.CompleteDeleteIntent(operation); err != nil {
+			return nil, ToConnect(err)
+		}
+	}
+	return connect.NewResponse(&procmeshv1.DeleteSnapshotResponse{Deleted: deleted}), nil
 }
 
 // GetReplicaMetadata retrieves metadata for a stored replica.

@@ -417,7 +417,13 @@ func (r *rpcRuntime) authorizePeerOperation(peerNodeID string, operation api.Pee
 		return errcode.E(errcode.DENIED, "peer source not admitted")
 	}
 	if operation.Kind == "DELETE" {
-		return errcode.E(errcode.DENIED, "peer delete requires local retention authorization")
+		intent, ok := state.ReplicationDeleteIntents[operation.IntentID]
+		if !ok || intent.Status != "PENDING" || intent.LeaderTerm != n.CurrentTerm() || intent.ExpiresUnix <= time.Now().Unix() ||
+			intent.SourceNodeID != peerNodeID || intent.TargetNodeID != r.nodeID || intent.SnapshotID != operation.SnapshotID ||
+			intent.PolicyID != operation.PolicyID || intent.PolicyRevision != operation.PolicyRevision {
+			return errcode.E(errcode.DENIED, "peer delete requires local retention authorization")
+		}
+		return nil
 	}
 	for _, task := range state.ReplicationTasks {
 		if task.SourceNodeID != peerNodeID || task.NodeID != r.nodeID || task.SnapshotID != operation.SnapshotID {
@@ -435,6 +441,29 @@ func (r *rpcRuntime) authorizePeerOperation(peerNodeID string, operation api.Pee
 		return nil
 	}
 	return errcode.E(errcode.DENIED, "peer operation not authorized")
+}
+
+func (r *rpcRuntime) completeDeleteIntent(operation api.PeerOperation) error {
+	if r == nil || operation.IntentID == "" {
+		return errcode.E(errcode.INVALID, "delete intent id required")
+	}
+	n := r.control()
+	if n == nil {
+		return errcode.E(errcode.UNAVAILABLE, "peer delete intent control unavailable")
+	}
+	intent, ok := n.View().ReplicationDeleteIntents[operation.IntentID]
+	if !ok {
+		return errcode.E(errcode.NOT_FOUND, "delete intent not found")
+	}
+	intent.Status = "SUCCEEDED"
+	cmd, err := control.EncodeCommand(control.CmdReplicationDeleteIntentPut, control.ReplicationDeleteIntentPutBody{
+		OperationID: "delete-complete-" + operation.IntentID,
+		Intent:      intent,
+	})
+	if err != nil {
+		return err
+	}
+	return n.Apply(cmd, 5*time.Second)
 }
 
 var _ peerReplicationForwarder = (*agentForwarder)(nil)
