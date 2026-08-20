@@ -5,6 +5,8 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/qleelulu/procmesh/internal/errcode"
 )
 
 // FrozenReplicationTask is a durable route with its immutable source payload
@@ -162,10 +164,15 @@ func (c *ReplicationCoordinator) DispatchRun(ctx context.Context, run FrozenRepl
 			req := ReplicationTaskRequest{RunID: run.RunID, TaskID: task.TaskID, PolicyID: run.PolicyID, PolicyRevision: run.PolicyRevision, SourceNodeID: task.SourceNodeID, TargetNodeID: task.TargetNodeID, SnapshotID: task.SnapshotID, SHA256: task.SHA256, LeaderTerm: run.LeaderTerm, LeaseExpiresUnix: run.LeaseExpiresUnix}
 			if err := c.Dispatcher.DispatchReplicationTask(leaseCtx, req); err != nil {
 				status := "UNAVAILABLE"
+				code, summary := "UNAVAILABLE", "replication route unavailable"
+				if errcode.Is(err, errcode.CONFLICT) {
+					status, code, summary = "FAILED", "CONFLICT", "frozen snapshot conflict"
+				}
 				if errors.Is(leaseCtx.Err(), context.DeadlineExceeded) {
 					status = "TIMEOUT"
+					code, summary = "TIMEOUT", "replication route timed out"
 				}
-				_ = c.Control.UpdateReplicationTask(ctx, ReplicationTaskUpdate{RunID: req.RunID, TaskID: req.TaskID, SourceNodeID: req.SourceNodeID, TargetNodeID: req.TargetNodeID, SnapshotID: req.SnapshotID, SHA256: req.SHA256, Status: status, ErrorCode: status, ErrorSummary: boundedTaskError(err), LeaderTerm: req.LeaderTerm})
+				_ = c.Control.UpdateReplicationTask(ctx, ReplicationTaskUpdate{RunID: req.RunID, TaskID: req.TaskID, SourceNodeID: req.SourceNodeID, TargetNodeID: req.TargetNodeID, SnapshotID: req.SnapshotID, SHA256: req.SHA256, Status: status, ErrorCode: code, ErrorSummary: summary, LeaderTerm: req.LeaderTerm})
 			}
 		}()
 	}

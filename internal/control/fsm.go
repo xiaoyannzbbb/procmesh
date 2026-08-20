@@ -1419,7 +1419,7 @@ func (s *State) applyRetryFailedTasks(b RetryFailedTasksBody) error {
 	}
 	retried := false
 	for key, task := range tasks {
-		if task.RunID != b.RunID || !retryableTaskStatus(task.Status) {
+		if task.RunID != b.RunID || !retryableTaskStatus(task.Status) || (b.Replication && (task.SnapshotID == "" || task.SHA256 == "")) {
 			continue
 		}
 		retried = true

@@ -128,6 +128,8 @@ func (e *Engine) ReplicateSnapshot(ctx context.Context, req ReplicationTaskReque
 	if req.SourceNodeID != e.NodeID || req.SnapshotID == "" || req.SHA256 == "" || req.TargetNodeID == "" {
 		return 0, errcode.E(errcode.INVALID, "invalid replication source request")
 	}
+	release := e.ProtectSnapshot(req.SnapshotID)
+	defer release()
 	rec, err := e.Store.GetBackup(ctx, req.SnapshotID)
 	if err != nil {
 		return 0, err

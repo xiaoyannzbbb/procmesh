@@ -86,6 +86,7 @@ func (r *rpcRuntime) startRPCLocked() error {
 	if clusterID == "" {
 		return fmt.Errorf("cluster id required for rpc")
 	}
+	r.clusterID = clusterID
 	listen := r.opt.RPCListen
 	if listen == "" {
 		listen = defaultRPCListen

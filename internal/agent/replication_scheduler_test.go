@@ -1,6 +1,9 @@
 package agent
 
 import (
+	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -67,7 +70,7 @@ func TestPlanAutomaticReplicationRunsAfterPrimaryPlansEveryUnreplicatedPrimaryRu
 }
 
 func TestPlanAutomaticReplicationRunsScheduleWithoutPrimaryMarksMissingRoute(t *testing.T) {
-	now := time.Date(2027, 1, 15, 2, 2, 0, 0, time.UTC)
+	now := time.Date(2027, 1, 15, 2, 0, 0, 0, time.UTC)
 	state := control.NewState()
 	state.ReplicationPolicies["rp"] = control.ReplicationPolicy{
 		PolicyID: "rp", Enabled: true, Trigger: "SCHEDULE", ScheduleCron: "0 * * * *", Timezone: "UTC",
@@ -92,6 +95,103 @@ func TestPlanAutomaticReplicationRunsScheduleWithoutPrimaryMarksMissingRoute(t *
 	if err != nil || len(plans) != 0 {
 		t.Fatalf("same schedule fire plans=%+v err=%v", plans, err)
 	}
+}
+
+func TestPlanAutomaticReplicationRunsScheduleWithoutPrimaryPolicyIDsUsesSourceSnapshot(t *testing.T) {
+	now := time.Date(2027, 1, 15, 2, 0, 0, 0, time.UTC)
+	state := automaticReplicationState(now, "SCHEDULE")
+	policy := state.ReplicationPolicies["rp"]
+	policy.ScheduleCron, policy.Timezone, policy.PrimaryPolicyIDs = "0 * * * *", "UTC", nil
+	state.ReplicationPolicies["rp"] = policy
+	plans, err := planAutomaticReplicationRuns(*state, 9, now)
+	if err != nil || len(plans) != 1 {
+		t.Fatalf("plans=%+v err=%v", plans, err)
+	}
+	task := plans[0].Create.Tasks[0]
+	if task.SnapshotID != "snapshot-primary" || task.SHA256 != replicationTestSHA {
+		t.Fatalf("task=%+v, want source frozen primary", task)
+	}
+}
+
+func TestPlanAutomaticReplicationRunsScheduleSelectsLatestSnapshotForEachSource(t *testing.T) {
+	now := time.Date(2027, 1, 15, 2, 2, 0, 0, time.UTC)
+	state := control.NewState()
+	state.ReplicationPolicies["rp"] = control.ReplicationPolicy{
+		PolicyID: "rp", Enabled: true, Trigger: "SCHEDULE", ScheduleCron: "0 * * * *", Timezone: "UTC", Revision: 1,
+		Routes: []control.ReplicationRoute{
+			{SourceNodeID: "source-a", TargetNodeIDs: []string{"target-a"}},
+			{SourceNodeID: "source-b", TargetNodeIDs: []string{"target-b"}},
+		},
+	}
+	state.BackupRuns["run-a"] = control.ClusterBackupRun{RunID: "run-a", PolicyID: "primary-a", Status: "SUCCEEDED", FinishedUnix: now.Add(-2 * time.Hour).Unix()}
+	state.BackupRuns["run-b"] = control.ClusterBackupRun{RunID: "run-b", PolicyID: "primary-b", Status: "SUCCEEDED", FinishedUnix: now.Add(-time.Hour).Unix()}
+	state.BackupTasks["run-a:task-a"] = control.ClusterBackupTask{RunID: "run-a", TaskID: "task-a", NodeID: "source-a", SnapshotID: "snapshot-a", SHA256: replicationTestSHA, Status: "SUCCEEDED", UpdatedUnix: now.Add(-2 * time.Hour).Unix()}
+	state.BackupTasks["run-b:task-b"] = control.ClusterBackupTask{RunID: "run-b", TaskID: "task-b", NodeID: "source-b", SnapshotID: "snapshot-b", SHA256: strings.Repeat("b", 64), Status: "SUCCEEDED", UpdatedUnix: now.Add(-time.Hour).Unix()}
+
+	plans, err := planAutomaticReplicationRuns(*state, 9, now)
+	if err != nil || len(plans) != 1 || len(plans[0].Create.Tasks) != 2 {
+		t.Fatalf("plans=%+v err=%v", plans, err)
+	}
+	tasks := plans[0].Create.Tasks
+	if tasks[0].SourceNodeID != "source-a" || tasks[0].SnapshotID != "snapshot-a" || tasks[0].SHA256 != replicationTestSHA {
+		t.Fatalf("first source task=%+v, want source-a frozen snapshot", tasks[0])
+	}
+	if tasks[1].SourceNodeID != "source-b" || tasks[1].SnapshotID != "snapshot-b" || tasks[1].SHA256 != strings.Repeat("b", 64) {
+		t.Fatalf("second source task=%+v, want source-b frozen snapshot", tasks[1])
+	}
+}
+
+func TestReplicationFrozenTasksStableByTaskID(t *testing.T) {
+	state := control.NewState()
+	run := control.ClusterBackupRun{RunID: "run", Status: "RUNNING"}
+	state.ReplicationTasks["run:z"] = control.ClusterBackupTask{RunID: "run", TaskID: "z", SourceNodeID: "s", NodeID: "t", SnapshotID: "z", SHA256: replicationTestSHA, Status: "PENDING"}
+	state.ReplicationTasks["run:a"] = control.ClusterBackupTask{RunID: "run", TaskID: "a", SourceNodeID: "s", NodeID: "t", SnapshotID: "a", SHA256: replicationTestSHA, Status: "PENDING"}
+	tasks := replicationFrozenTasks(*state, run)
+	if len(tasks) != 2 || tasks[0].TaskID != "a" || tasks[1].TaskID != "z" {
+		t.Fatalf("tasks=%+v", tasks)
+	}
+}
+
+func TestReconcileMissingReplicationTasksReturnsApplyFailureThenRetriesOnNextTick(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	state := control.NewState()
+	state.ReplicationPolicies["rp"] = control.ReplicationPolicy{PolicyID: "rp", Enabled: true, Trigger: "SCHEDULE"}
+	state.ReplicationRuns["run-missing"] = control.ClusterBackupRun{RunID: "run-missing", PolicyID: "rp", Status: "RUNNING"}
+	task := control.ClusterBackupTask{RunID: "run-missing", TaskID: "route-missing", SourceNodeID: "source", NodeID: "target", Status: "PENDING"}
+	state.ReplicationTasks["run-missing:route-missing"] = task
+	applyErr := errors.New("raft apply failed")
+	failed := &recordingReplicationApplier{err: applyErr}
+	if err := reconcileMissingReplicationTasks(failed, *state, 7, now); !errors.Is(err, applyErr) {
+		t.Fatalf("first reconciliation error = %v, want apply failure", err)
+	}
+	if len(failed.commands) != 1 {
+		t.Fatalf("first reconciliation commands = %d, want 1", len(failed.commands))
+	}
+
+	retried := &recordingReplicationApplier{}
+	if err := reconcileMissingReplicationTasks(retried, *state, 7, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if len(retried.commands) != 1 {
+		t.Fatalf("second reconciliation commands = %d, want 1", len(retried.commands))
+	}
+	var update control.UpdateTaskBody
+	if err := json.Unmarshal(retried.commands[0].Body, &update); err != nil {
+		t.Fatal(err)
+	}
+	if update.Task.Status != "FAILED" || update.Task.ErrorCode != "SOURCE_SNAPSHOT_MISSING" || update.Task.SnapshotID != "" || update.Task.SHA256 != "" {
+		t.Fatalf("second reconciliation update = %+v", update.Task)
+	}
+}
+
+type recordingReplicationApplier struct {
+	commands []control.Command
+	err      error
+}
+
+func (a *recordingReplicationApplier) Apply(command control.Command, _ time.Duration) error {
+	a.commands = append(a.commands, command)
+	return a.err
 }
 
 func automaticReplicationState(now time.Time, trigger string) *control.State {

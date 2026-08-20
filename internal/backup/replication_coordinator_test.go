@@ -2,17 +2,38 @@ package backup_test
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/qleelulu/procmesh/internal/backup"
+	"github.com/qleelulu/procmesh/internal/errcode"
 )
 
 type replicationControlFake struct {
 	mu      sync.Mutex
 	runs    []backup.FrozenReplicationRun
 	updates []backup.ReplicationTaskUpdate
+}
+
+func TestReplicationCoordinator_ChecksumConflictIsTerminalFailed(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	control := &replicationControlFake{}
+	dispatcher := replicationDispatcherFunc(func(context.Context, backup.ReplicationTaskRequest) error {
+		return errcode.E(errcode.CONFLICT, "snapshot exists at /secret/path")
+	})
+	c := backup.NewReplicationCoordinator(backup.ReplicationCoordinatorConfig{Control: control, Dispatcher: dispatcher, Now: func() time.Time { return now }})
+	c.DispatchRun(context.Background(), backup.FrozenReplicationRun{RunID: "run", PolicyID: "p", LeaderTerm: 1, LeaseExpiresUnix: now.Add(time.Minute).Unix(), Tasks: []backup.FrozenReplicationTask{{TaskID: "t", SourceNodeID: "s", TargetNodeID: "d", SnapshotID: "snap", SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Status: "PENDING"}}})
+	if len(control.updates) != 1 || control.updates[0].Status != "FAILED" || control.updates[0].ErrorCode != "CONFLICT" || strings.Contains(control.updates[0].ErrorSummary, "/secret") {
+		t.Fatalf("updates=%+v", control.updates)
+	}
+}
+
+type replicationDispatcherFunc func(context.Context, backup.ReplicationTaskRequest) error
+
+func (f replicationDispatcherFunc) DispatchReplicationTask(ctx context.Context, task backup.ReplicationTaskRequest) error {
+	return f(ctx, task)
 }
 
 func (f *replicationControlFake) ClaimReplicationRuns(context.Context, uint64, time.Time) ([]backup.FrozenReplicationRun, error) {

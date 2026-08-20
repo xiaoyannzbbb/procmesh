@@ -490,6 +490,9 @@ func (d *DisasterReplicationAPI) StartRun(ctx context.Context, req *connect.Requ
 	if !ok {
 		return nil, ToConnect(errcode.E(errcode.NOT_FOUND, "replication policy not found"))
 	}
+	if policy.Trigger != "MANUAL" {
+		return nil, ToConnect(errcode.E(errcode.INVALID, "public start is only available for manual replication policies"))
+	}
 	now := d.now()
 	sources := replicationSources(policy)
 	if len(sources) == 0 || len(policy.Routes) == 0 {
@@ -622,7 +625,6 @@ func (d *DisasterReplicationAPI) GetRun(ctx context.Context, req *connect.Reques
 	if !ok {
 		return nil, ToConnect(errcode.E(errcode.NOT_FOUND, "replication run not found"))
 	}
-
 	// Collect tasks for this run
 	tasks := make([]*procmeshv1.ReplicationTask, 0)
 	for _, task := range st.ReplicationTasks {
@@ -750,6 +752,16 @@ func (d *DisasterReplicationAPI) RetryFailedRoutes(ctx context.Context, req *con
 	if !ok {
 		return nil, ToConnect(errcode.E(errcode.NOT_FOUND, "replication run not found"))
 	}
+	retriedCount := 0
+	for _, task := range st.ReplicationTasks {
+		if task.RunID == run.RunID &&
+			(task.Status == "FAILED" || task.Status == "TIMEOUT" ||
+				task.Status == "UNAVAILABLE" || task.Status == "CONFIG_MISSING" ||
+				task.Status == "RETENTION_FAILED" || task.Status == "SKIPPED") &&
+			task.SnapshotID != "" && task.SHA256 != "" {
+			retriedCount++
+		}
+	}
 
 	// Apply retry command to Raft
 	cmd, err := control.EncodeCommand(control.CmdBackupRetryFailedTasks, control.RetryFailedTasksBody{
@@ -765,14 +777,6 @@ func (d *DisasterReplicationAPI) RetryFailedRoutes(ctx context.Context, req *con
 
 	if err := d.ApplyFn(cmd, 5*time.Second); err != nil {
 		return nil, ToConnect(err)
-	}
-
-	// Count failed tasks that were retried
-	retriedCount := 0
-	for _, task := range st.ReplicationTasks {
-		if task.RunID == run.RunID && (task.Status == "FAILED" || task.Status == "TIMEOUT" || task.Status == "UNAVAILABLE") {
-			retriedCount++
-		}
 	}
 
 	return connect.NewResponse(&procmeshv1.RetryFailedRoutesResponse{

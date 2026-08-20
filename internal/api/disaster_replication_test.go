@@ -639,6 +639,7 @@ func TestDisasterReplicationAPI_StartRun(t *testing.T) {
 		PolicyID:       "policy-start-1",
 		Name:           "test-start-policy",
 		Enabled:        true,
+		Trigger:        "MANUAL",
 		SourceSelector: "EXPLICIT_NODES",
 		SourceIDs:      []string{"node-1", "node-2"},
 		ReplicaFactor:  2,
@@ -659,6 +660,10 @@ func TestDisasterReplicationAPI_StartRun(t *testing.T) {
 	req := bearerReq(sid, &procmeshv1.StartRunRequest{
 		PolicyId: "policy-start-1",
 		Meta:     &procmeshv1.MutationMeta{OperationId: "op-start-1"},
+		SnapshotRefs: []*procmeshv1.ReplicationSnapshotRef{
+			{SourceNodeId: "node-1", SnapshotId: "snapshot-node-1", Sha256: strings.Repeat("a", 64)},
+			{SourceNodeId: "node-2", SnapshotId: "snapshot-node-2", Sha256: strings.Repeat("b", 64)},
+		},
 	})
 
 	resp, err := client.StartRun(context.Background(), req)
@@ -718,6 +723,10 @@ func TestDisasterReplicationAPI_StartRun(t *testing.T) {
 	retryResp, err := client.StartRun(context.Background(), bearerReq(sid, &procmeshv1.StartRunRequest{
 		PolicyId: "policy-start-1",
 		Meta:     &procmeshv1.MutationMeta{OperationId: "op-start-1"},
+		SnapshotRefs: []*procmeshv1.ReplicationSnapshotRef{
+			{SourceNodeId: "node-1", SnapshotId: "snapshot-node-1", Sha256: strings.Repeat("a", 64)},
+			{SourceNodeId: "node-2", SnapshotId: "snapshot-node-2", Sha256: strings.Repeat("b", 64)},
+		},
 	}))
 	if err != nil {
 		t.Fatalf("idempotent StartRun failed: %v", err)
@@ -764,6 +773,20 @@ func TestDisasterReplicationAPI_StartRun_ManualRequiresCompleteFrozenSnapshotRef
 	}
 	if len(state.ReplicationRuns) != 0 {
 		t.Fatalf("unbound manual request created a run: %+v", state.ReplicationRuns)
+	}
+}
+
+func TestDisasterReplicationAPI_StartRunRejectsNonManualPolicy(t *testing.T) {
+	api, state, authSvc := setupMinimalAPI(t)
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.ReplicationPolicies["scheduled"] = control.ReplicationPolicy{PolicyID: "scheduled", Enabled: true, Trigger: "SCHEDULE", SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"node-1"}, Revision: 1, Routes: []control.ReplicationRoute{{SourceNodeID: "node-1", TargetNodeIDs: []string{"node-2"}}}}
+	api.LeaderTerm = func() uint64 { return 3 }
+	_, err = api.StartRun(context.Background(), bearerReq(sid, &procmeshv1.StartRunRequest{PolicyId: "scheduled", Meta: &procmeshv1.MutationMeta{OperationId: "op-scheduled"}}))
+	if err == nil || !strings.Contains(err.Error(), "manual") {
+		t.Fatalf("expected non-manual rejection, got %v", err)
 	}
 }
 
@@ -1107,6 +1130,7 @@ func TestDisasterReplicationAPI_RetryFailedRoutes(t *testing.T) {
 		TaskID:     "task-retry-1",
 		NodeID:     "node-1",
 		SnapshotID: "snap-1",
+		SHA256:     strings.Repeat("a", 64),
 		Status:     "FAILED",
 	}
 	task2 := control.ClusterBackupTask{
@@ -1114,6 +1138,7 @@ func TestDisasterReplicationAPI_RetryFailedRoutes(t *testing.T) {
 		TaskID:     "task-retry-2",
 		NodeID:     "node-2",
 		SnapshotID: "snap-2",
+		SHA256:     strings.Repeat("b", 64),
 		Status:     "FAILED",
 	}
 	task3 := control.ClusterBackupTask{
@@ -1121,6 +1146,7 @@ func TestDisasterReplicationAPI_RetryFailedRoutes(t *testing.T) {
 		TaskID:     "task-retry-3",
 		NodeID:     "node-3",
 		SnapshotID: "snap-3",
+		SHA256:     strings.Repeat("c", 64),
 		Status:     "SUCCESS",
 	}
 	api.StateFn().ReplicationTasks[task1.TaskID] = task1
@@ -1139,6 +1165,28 @@ func TestDisasterReplicationAPI_RetryFailedRoutes(t *testing.T) {
 
 	if resp.Msg.RetriedCount != 2 {
 		t.Errorf("expected 2 retried tasks, got %d", resp.Msg.RetriedCount)
+	}
+}
+
+func TestDisasterReplicationAPI_RetryFailedRoutesExcludesTasksWithoutFrozenRefs(t *testing.T) {
+	api, _, authSvc := setupMinimalAPI(t)
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := api.StateFn()
+	state.ReplicationRuns["run-retry-frozen"] = control.ClusterBackupRun{RunID: "run-retry-frozen", PolicyID: "policy-retry", Status: "FAILED"}
+	state.ReplicationTasks["with-refs"] = control.ClusterBackupTask{RunID: "run-retry-frozen", TaskID: "with-refs", NodeID: "node-1", SnapshotID: "snap-frozen", SHA256: strings.Repeat("d", 64), Status: "FAILED"}
+	state.ReplicationTasks["missing-refs"] = control.ClusterBackupTask{RunID: "run-retry-frozen", TaskID: "missing-refs", NodeID: "node-2", Status: "FAILED"}
+
+	resp, err := api.RetryFailedRoutes(context.Background(), bearerReq(sid, &procmeshv1.RetryFailedRoutesRequest{
+		RunId: "run-retry-frozen", Meta: &procmeshv1.MutationMeta{OperationId: "op-retry-frozen"},
+	}))
+	if err != nil {
+		t.Fatalf("RetryFailedRoutes failed: %v", err)
+	}
+	if resp.Msg.RetriedCount != 1 {
+		t.Fatalf("retried count = %d, want 1 eligible frozen route", resp.Msg.RetriedCount)
 	}
 }
 

@@ -19,6 +19,10 @@ import (
 
 type raftReplicationControl struct{ runtime *rpcRuntime }
 
+type replicationCommandApplier interface {
+	Apply(control.Command, time.Duration) error
+}
+
 func (a raftReplicationControl) ClaimReplicationRuns(_ context.Context, term uint64, now time.Time) ([]backup.FrozenReplicationRun, error) {
 	n := a.runtime.control()
 	if n == nil {
@@ -35,15 +39,17 @@ func (a raftReplicationControl) ClaimReplicationRuns(_ context.Context, term uin
 			return nil, err
 		}
 		if err := n.Apply(cmd, 5*time.Second); err != nil {
-			continue
+			return nil, err
 		}
 		for _, taskID := range plan.MissingTaskIDs {
-			task := plan.task(taskID)
-			cmd, err := control.EncodeCommand(control.CmdBackupTaskUpdate, control.UpdateTaskBody{OperationID: "replication-missing-" + plan.Create.Run.RunID + ":" + taskID, LeaderTerm: term, Replication: true, Task: control.ClusterBackupTask{RunID: task.RunID, TaskID: task.TaskID, SourceNodeID: task.SourceNodeID, NodeID: task.NodeID, Status: "FAILED", ErrorCode: "SOURCE_SNAPSHOT_MISSING", ErrorSummary: "no successful primary snapshot", UpdatedUnix: now.Unix()}})
-			if err == nil {
-				_ = n.Apply(cmd, 5*time.Second)
+			if err := applyMissingReplicationTask(n, plan.task(taskID), term, now); err != nil {
+				return nil, err
 			}
 		}
+	}
+	state = n.View()
+	if err := reconcileMissingReplicationTasks(n, state, term, now); err != nil {
+		return nil, err
 	}
 	state = n.View()
 	runnable, takeovers := runnableReplicationRuns(state, term, now)
@@ -61,6 +67,32 @@ func (a raftReplicationControl) ClaimReplicationRuns(_ context.Context, term uin
 		}
 	}
 	return runnable, nil
+}
+
+func applyMissingReplicationTask(n replicationCommandApplier, task control.ClusterBackupTask, term uint64, now time.Time) error {
+	cmd, err := control.EncodeCommand(control.CmdBackupTaskUpdate, control.UpdateTaskBody{OperationID: "replication-missing-" + task.RunID + ":" + task.TaskID, LeaderTerm: term, Replication: true, Task: control.ClusterBackupTask{RunID: task.RunID, TaskID: task.TaskID, SourceNodeID: task.SourceNodeID, NodeID: task.NodeID, Status: "FAILED", ErrorCode: "SOURCE_SNAPSHOT_MISSING", ErrorSummary: "source snapshot missing", UpdatedUnix: now.Unix()}})
+	if err != nil {
+		return err
+	}
+	return n.Apply(cmd, 5*time.Second)
+}
+
+func reconcileMissingReplicationTasks(n replicationCommandApplier, state control.State, term uint64, now time.Time) error {
+	keys := make([]string, 0)
+	for key, task := range state.ReplicationTasks {
+		run, ok := state.ReplicationRuns[task.RunID]
+		policy, pok := state.ReplicationPolicies[run.PolicyID]
+		if ok && pok && (policy.Trigger == "SCHEDULE" || policy.Trigger == "AFTER_PRIMARY_BACKUP") && task.Status == "PENDING" && task.SnapshotID == "" && task.SHA256 == "" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if err := applyMissingReplicationTask(n, state.ReplicationTasks[key], term, now); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type automaticReplicationPlan struct {
@@ -119,7 +151,9 @@ func planAutomaticReplicationRuns(state control.State, term uint64, now time.Tim
 		}
 		if policy.Trigger == "AFTER_PRIMARY_BACKUP" {
 			for _, primaryRun := range successfulPrimaryRuns(state, policy.PrimaryPolicyIDs, now.Unix()) {
-				if plan, ok := automaticReplicationPlanForPrimary(state, policy, term, now, primaryRun, primaryRun.RunID); ok {
+				if plan, ok := buildAutomaticReplicationPlan(state, policy, term, now, primaryRun.RunID, func(source string) control.ClusterBackupTask {
+					return successfulPrimaryTask(state, primaryRun.RunID, source)
+				}); ok {
 					plans = append(plans, plan)
 				}
 			}
@@ -129,8 +163,9 @@ func planAutomaticReplicationRuns(state control.State, term uint64, now time.Tim
 				return nil, err
 			}
 			qualifier := fmt.Sprintf("%d", fire.Unix())
-			primary := latestPrimaryRun(state, policy.PrimaryPolicyIDs, fire.Unix())
-			if plan, ok := automaticReplicationPlanForPrimary(state, policy, term, now, primary, qualifier); ok {
+			if plan, ok := buildAutomaticReplicationPlan(state, policy, term, now, qualifier, func(source string) control.ClusterBackupTask {
+				return latestPrimaryTaskForSource(state, policy.PrimaryPolicyIDs, source, fire.Unix())
+			}); ok {
 				plans = append(plans, plan)
 			}
 		}
@@ -138,7 +173,7 @@ func planAutomaticReplicationRuns(state control.State, term uint64, now time.Tim
 	return plans, nil
 }
 
-func automaticReplicationPlanForPrimary(state control.State, policy control.ReplicationPolicy, term uint64, now time.Time, primary control.ClusterBackupRun, qualifier string) (automaticReplicationPlan, bool) {
+func buildAutomaticReplicationPlan(state control.State, policy control.ReplicationPolicy, term uint64, now time.Time, qualifier string, sourceTask func(string) control.ClusterBackupTask) (automaticReplicationPlan, bool) {
 	runID := automaticReplicationID("run", policy.PolicyID, qualifier)
 	if _, exists := state.ReplicationRuns[runID]; exists {
 		return automaticReplicationPlan{}, false
@@ -146,7 +181,7 @@ func automaticReplicationPlanForPrimary(state control.State, policy control.Repl
 	run := control.ClusterBackupRun{RunID: runID, PolicyID: policy.PolicyID, PolicyRevision: policy.Revision, TargetNodeIDs: replicationSourcesForPolicy(policy), Status: "RUNNING", CreatedUnix: now.Unix(), StartedUnix: now.Unix(), MaxConcurrency: policy.MaxConcurrency, LeaseUntilUnix: now.Add(30 * time.Second).Unix()}
 	plan := automaticReplicationPlan{Create: control.CreateRunBody{OperationID: "replication-auto-" + runID, LeaderTerm: term, Replication: true, Run: run}}
 	for _, route := range policy.Routes {
-		source := successfulPrimaryTask(state, primary.RunID, route.SourceNodeID)
+		source := sourceTask(route.SourceNodeID)
 		for _, target := range route.TargetNodeIDs {
 			taskID := automaticReplicationID("task", policy.PolicyID, qualifier, route.SourceNodeID, target)
 			task := control.ClusterBackupTask{RunID: runID, TaskID: taskID, SourceNodeID: route.SourceNodeID, NodeID: target, Status: "PENDING", UpdatedUnix: now.Unix()}
@@ -162,21 +197,29 @@ func automaticReplicationPlanForPrimary(state control.State, policy control.Repl
 	return plan, true
 }
 
-func latestPrimaryRun(state control.State, policyIDs []string, before int64) control.ClusterBackupRun {
+func latestPrimaryTaskForSource(state control.State, policyIDs []string, source string, before int64) control.ClusterBackupTask {
 	allowed := map[string]bool{}
 	for _, id := range policyIDs {
 		allowed[id] = true
 	}
-	var best control.ClusterBackupRun
+	var bestRun control.ClusterBackupRun
+	var bestTask control.ClusterBackupTask
 	for _, run := range state.BackupRuns {
-		if !allowed[run.PolicyID] || (run.Status != "SUCCEEDED" && run.Status != "SUCCESS" && run.Status != "PARTIAL") || run.FinishedUnix > before {
+		if (len(allowed) != 0 && !allowed[run.PolicyID]) || (run.Status != "SUCCEEDED" && run.Status != "SUCCESS" && run.Status != "PARTIAL") || run.FinishedUnix > before {
 			continue
 		}
-		if run.FinishedUnix > best.FinishedUnix || (run.FinishedUnix == best.FinishedUnix && run.RunID > best.RunID) {
-			best = run
+		for _, task := range state.BackupTasks {
+			if task.RunID != run.RunID || task.NodeID != source || (task.Status != "SUCCEEDED" && task.Status != "SUCCESS") || task.SnapshotID == "" || task.SHA256 == "" {
+				continue
+			}
+			if run.FinishedUnix > bestRun.FinishedUnix ||
+				(run.FinishedUnix == bestRun.FinishedUnix && run.RunID > bestRun.RunID) ||
+				(run.FinishedUnix == bestRun.FinishedUnix && run.RunID == bestRun.RunID && (task.UpdatedUnix > bestTask.UpdatedUnix || (task.UpdatedUnix == bestTask.UpdatedUnix && task.TaskID > bestTask.TaskID))) {
+				bestRun, bestTask = run, task
+			}
 		}
 	}
-	return best
+	return bestTask
 }
 func successfulPrimaryRuns(state control.State, policyIDs []string, before int64) []control.ClusterBackupRun {
 	allowed := map[string]bool{}
@@ -241,6 +284,7 @@ func replicationFrozenTasks(state control.State, run control.ClusterBackupRun) [
 		}
 		out = append(out, backup.FrozenReplicationTask{TaskID: task.TaskID, SourceNodeID: task.SourceNodeID, TargetNodeID: task.NodeID, SnapshotID: task.SnapshotID, SHA256: task.SHA256, Status: task.Status})
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].TaskID < out[j].TaskID })
 	return out
 }
 
