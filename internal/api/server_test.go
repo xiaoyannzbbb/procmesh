@@ -324,3 +324,75 @@ func TestServer_ConnectNilMgrReturnsDegraded(t *testing.T) {
 		t.Fatalf("TailLogs code=%v detail=%s err=%v", code, detail, err)
 	}
 }
+
+func TestServer_RootReturnsIndex(t *testing.T) {
+	s, err := NewServer(Options{Started: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+
+	s.Engine.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET / status=%d, want 200", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "ProcMesh") {
+		t.Fatalf("GET / body missing 'ProcMesh': %q", body)
+	}
+	if !strings.Contains(body, "<!doctype html>") {
+		t.Fatalf("GET / body missing '<!doctype html>': %q", body)
+	}
+}
+
+func TestServer_HealthzNotAffectedBySPA(t *testing.T) {
+	s, err := NewServer(Options{Started: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("GET", "/healthz", nil)
+	w := httptest.NewRecorder()
+
+	s.Engine.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /healthz status=%d, want 200", w.Code)
+	}
+	body := w.Body.String()
+	if body != "ok" {
+		t.Fatalf("GET /healthz body=%q, want 'ok'", body)
+	}
+	// 应该是纯文本 "ok"，不是 index.html
+	if strings.Contains(body, "ProcMesh") || strings.Contains(body, "<div id=\"app\">") {
+		t.Fatalf("GET /healthz returned HTML instead of plain text: %q", body)
+	}
+}
+
+func TestServer_MetricsNotAffectedBySPA(t *testing.T) {
+	s, err := NewServer(Options{Started: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	w := httptest.NewRecorder()
+
+	s.Engine.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /metrics status=%d, want 200", w.Code)
+	}
+	body := w.Body.String()
+	// 应该是 Prometheus 格式，不是 index.html
+	if strings.Contains(body, "ProcMesh</title>") || strings.Contains(body, "<div id=\"app\">") {
+		t.Fatalf("GET /metrics returned HTML instead of metrics: %q", body)
+	}
+	// Prometheus metrics 应该包含 # HELP 或 # TYPE
+	if !strings.Contains(body, "# HELP") && !strings.Contains(body, "# TYPE") {
+		t.Fatalf("GET /metrics doesn't look like Prometheus format: %q", body)
+	}
+}
