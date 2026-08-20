@@ -127,20 +127,34 @@ func TestClusterBackupAPI_LeaderRouteUsesRaftLeaderAddress(t *testing.T) {
 func TestClusterBackupAPI_RetryFailedTasksMutatesRaftState(t *testing.T) {
 	state := control.NewState()
 	state.Members["node-a"] = control.Member{NodeID: "node-a", Status: control.MemberAdmitted}
-	state.BackupPolicies["bp"] = control.BackupPolicy{PolicyID: "bp", Revision: 1, TargetSelector: "EXPLICIT_NODES", TargetIDs: []string{"node-a"}}
-	if err := state.CreateRun(control.CreateRunBody{OperationID: "op-run", LeaderTerm: 1, Run: control.ClusterBackupRun{RunID: "run", PolicyID: "bp", PolicyRevision: 1, TargetNodeIDs: []string{"node-a"}, Status: "PARTIAL"}}); err != nil {
+	state.Members["node-b"] = control.Member{NodeID: "node-b", Status: control.MemberAdmitted}
+	state.BackupPolicies["bp"] = control.BackupPolicy{PolicyID: "bp", Revision: 1, TargetSelector: "EXPLICIT_NODES", TargetIDs: []string{"node-a", "node-b"}}
+	if err := state.CreateRun(control.CreateRunBody{OperationID: "op-run", LeaderTerm: 1, Run: control.ClusterBackupRun{RunID: "run", PolicyID: "bp", PolicyRevision: 1, TargetNodeIDs: []string{"node-a", "node-b"}, Status: "PARTIAL", Sink: "s3", DestinationProfile: "archive", MaxConcurrency: 2, TimeoutSeconds: 40, UnavailablePolicy: "FAIL_FAST", LeaseUntilUnix: 90}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := state.UpdateTask(control.UpdateTaskBody{OperationID: "op-task", LeaderTerm: 1, Task: control.ClusterBackupTask{RunID: "run", TaskID: "task", NodeID: "node-a", Status: "FAILED", ErrorCode: "E"}}); err != nil {
+	if err := state.UpdateTask(control.UpdateTaskBody{OperationID: "op-task-a", LeaderTerm: 1, Task: control.ClusterBackupTask{RunID: "run", TaskID: "task-node-a", NodeID: "node-a", Status: "SUCCESS", SnapshotID: "keep", SHA256: "sha", Bytes: 42}}); err != nil {
 		t.Fatal(err)
 	}
-	client := newClusterBackupClient(t, &ClusterBackupAPI{StateFn: func() control.State { return *state }, IsLeader: func() bool { return true }, LeaderTerm: func() uint64 { return 2 }, Now: func() time.Time { return time.Unix(100, 0) }, ApplyFn: func(cmd control.Command, _ time.Duration) error { return state.Apply(cmd, time.Unix(100, 0)) }}, false)
+	if err := state.UpdateTask(control.UpdateTaskBody{OperationID: "op-task-b", LeaderTerm: 1, Task: control.ClusterBackupTask{RunID: "run", TaskID: "task-node-b", NodeID: "node-b", Status: "FAILED", ErrorCode: "E"}}); err != nil {
+		t.Fatal(err)
+	}
+	var dispatched backup.FrozenRun
+	client := newClusterBackupClient(t, &ClusterBackupAPI{StateFn: func() control.State { return *state }, IsLeader: func() bool { return true }, LeaderTerm: func() uint64 { return 2 }, Now: func() time.Time { return time.Unix(100, 0) }, ApplyFn: func(cmd control.Command, _ time.Duration) error { return state.Apply(cmd, time.Unix(100, 0)) }, DispatchRun: func(run backup.FrozenRun) { dispatched = run }}, false)
 	_, err := client.RetryFailedTasks(context.Background(), connect.NewRequest(&procmeshv1.RetryFailedClusterBackupTasksRequest{Meta: &procmeshv1.MutationMeta{OperationId: "op-retry"}, RunId: "run"}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := state.BackupTasks["run:task"]; got.Status != "PENDING" {
+	if got := state.BackupTasks["run:task-node-b"]; got.Status != "PENDING" {
 		t.Fatalf("task=%+v", got)
+	}
+	if got := state.BackupTasks["run:task-node-a"]; got.Status != "SUCCESS" || got.SnapshotID != "keep" || got.Bytes != 42 {
+		t.Fatalf("successful task changed: %+v", got)
+	}
+	if dispatched.RunID != "run" || len(dispatched.TargetNodeIDs) != 1 || dispatched.TargetNodeIDs[0] != "node-b" || dispatched.Sink != "s3" || dispatched.LeaderTerm != 2 || dispatched.LeaseExpiresUnix != 140 {
+		t.Fatalf("dispatched=%+v", dispatched)
+	}
+	if got := state.BackupRuns["run"]; got.Status != "RUNNING" || got.LeaseUntilUnix != 140 {
+		t.Fatalf("run=%+v", got)
 	}
 }
 

@@ -73,14 +73,80 @@ func (a raftBackupControl) ClaimScheduledRun(_ context.Context, key string, view
 	}
 	targets := append([]string(nil), view.TargetNodeIDs...)
 	sort.Strings(targets)
+	timeout := backupTimeout(view.Policy.TimeoutSeconds)
+	leaseUntil := now.Add(time.Duration(timeout) * time.Second).Unix()
 	record, run, acquired, err := n.ClaimScheduledBackupRun(control.ScheduledRunClaimBody{
-		Fire: control.FireClaimBody{OperationID: "scheduler-" + key, FireKey: key, PolicyID: view.Policy.PolicyID, ScheduledUnix: scheduledUnix(key), LeaderTerm: term},
-		Run:  control.ClusterBackupRun{RunID: "run-" + fireID(key), PolicyID: view.Policy.PolicyID, PolicyRevision: policyRevision(view), TargetNodeIDs: targets, Status: "RUNNING", CreatedUnix: now.Unix(), StartedUnix: now.Unix(), Sink: view.Policy.Sink, DestinationProfile: view.Policy.DestinationProfile, MaxConcurrency: view.Policy.MaxConcurrency},
+		Fire: control.FireClaimBody{OperationID: "scheduler-" + key, FireKey: key, PolicyID: view.Policy.PolicyID, ScheduledUnix: scheduledUnix(key), LeaderTerm: term, LeaseUntilUnix: leaseUntil},
+		Run:  control.ClusterBackupRun{RunID: "run-" + fireID(key), PolicyID: view.Policy.PolicyID, PolicyRevision: policyRevision(view), TargetNodeIDs: targets, Status: "RUNNING", CreatedUnix: now.Unix(), StartedUnix: now.Unix(), Sink: view.Policy.Sink, DestinationProfile: view.Policy.DestinationProfile, MaxConcurrency: view.Policy.MaxConcurrency, TimeoutSeconds: timeout, UnavailablePolicy: view.Policy.UnavailablePolicy, LeaseUntilUnix: leaseUntil},
 	}, now)
 	if err != nil {
 		return backup.FrozenRun{}, false, err
 	}
-	return backup.FrozenRun{RunID: record.RunID, PolicyID: run.PolicyID, PolicyRevision: run.PolicyRevision, TargetNodeIDs: append([]string(nil), run.TargetNodeIDs...), Sink: run.Sink, DestinationProfile: run.DestinationProfile, MaxConcurrency: run.MaxConcurrency, LeaderTerm: record.LeaderTerm, LeaseExpiresUnix: record.LeaseUntilUnix}, acquired, nil
+	return backup.FrozenRun{RunID: record.RunID, PolicyID: run.PolicyID, PolicyRevision: run.PolicyRevision, TargetNodeIDs: append([]string(nil), run.TargetNodeIDs...), Sink: run.Sink, DestinationProfile: run.DestinationProfile, MaxConcurrency: run.MaxConcurrency, LeaderTerm: record.LeaderTerm, LeaseExpiresUnix: run.LeaseUntilUnix, TimeoutSeconds: run.TimeoutSeconds, UnavailablePolicy: run.UnavailablePolicy}, acquired, nil
+}
+
+func (a raftBackupControl) ClaimRecoverableRuns(_ context.Context, term uint64, now time.Time) ([]backup.FrozenRun, error) {
+	n := a.node()
+	if n == nil {
+		return nil, fmt.Errorf("control plane unavailable")
+	}
+	state := n.View()
+	ids := make([]string, 0, len(state.BackupRuns))
+	for id, run := range state.BackupRuns {
+		if run.Status == "RUNNING" && run.LeaseUntilUnix <= now.Unix() && state.BackupRunTerms[id] < term {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	out := make([]backup.FrozenRun, 0, len(ids))
+	for _, id := range ids {
+		run := state.BackupRuns[id]
+		timeout := backupTimeout(run.TimeoutSeconds)
+		leaseUntil := now.Add(time.Duration(timeout) * time.Second).Unix()
+		cmd, err := control.EncodeCommand(control.CmdBackupRunClaim, control.RunClaimBody{OperationID: "scheduler-recover-" + id, RunID: id, LeaderTerm: term, UpdatedUnix: now.Unix(), LeaseUntilUnix: leaseUntil})
+		if err != nil {
+			return nil, err
+		}
+		if err := n.Apply(cmd, 5*time.Second); err != nil {
+			return nil, err
+		}
+		claimed := n.View()
+		run = claimed.BackupRuns[id]
+		if claimed.BackupRunTerms[id] != term || run.LeaseUntilUnix != leaseUntil {
+			continue
+		}
+		targets := unfinishedBackupTargets(claimed, run)
+		if len(targets) == 0 {
+			continue
+		}
+		out = append(out, backup.FrozenRun{RunID: run.RunID, PolicyID: run.PolicyID, PolicyRevision: run.PolicyRevision, TargetNodeIDs: targets, Sink: run.Sink, DestinationProfile: run.DestinationProfile, MaxConcurrency: run.MaxConcurrency, LeaderTerm: term, LeaseExpiresUnix: leaseUntil, TimeoutSeconds: timeout, UnavailablePolicy: run.UnavailablePolicy})
+	}
+	return out, nil
+}
+
+func unfinishedBackupTargets(state control.State, run control.ClusterBackupRun) []string {
+	targets := make([]string, 0, len(run.TargetNodeIDs))
+	for _, nodeID := range run.TargetNodeIDs {
+		status := ""
+		updated := int64(-1)
+		for _, task := range state.BackupTasks {
+			if task.RunID == run.RunID && task.NodeID == nodeID && task.UpdatedUnix >= updated {
+				status = task.Status
+				updated = task.UpdatedUnix
+			}
+		}
+		if status == "" || status == "PENDING" || status == "RUNNING" {
+			targets = append(targets, nodeID)
+		}
+	}
+	return targets
+}
+
+func backupTimeout(seconds int) int {
+	if seconds <= 0 {
+		return 30
+	}
+	return seconds
 }
 
 func (a raftBackupControl) UpdateTask(ctx context.Context, u backup.TaskUpdate) error {
@@ -130,8 +196,11 @@ func (d localBackupDispatcher) DispatchBackupTask(ctx context.Context, task back
 		return fmt.Errorf("backup runtime unavailable")
 	}
 	if n := d.runtime.control(); n != nil {
-		if existing, ok := n.View().BackupTasks[task.RunID+":"+task.TaskID]; ok && existing.Status == "SUCCEEDED" {
-			return nil
+		if existing, ok := n.View().BackupTasks[task.RunID+":"+task.TaskID]; ok && terminalBackupTaskStatus(existing.Status) {
+			if successfulBackupTaskStatus(existing.Status) {
+				return nil
+			}
+			return &backup.TaskOutcomeError{Status: existing.Status}
 		}
 	}
 	if task.NodeID == d.runtime.nodeID {
@@ -150,7 +219,7 @@ func (d localBackupDispatcher) DispatchBackupTask(ctx context.Context, task back
 		if err != nil {
 			return err
 		}
-		return d.persist(ctx, task, taskResultUpdate(result, task))
+		return d.persistResult(ctx, task, taskResultUpdate(result, task))
 	}
 
 	addr := ""
@@ -186,7 +255,25 @@ func (d localBackupDispatcher) DispatchBackupTask(ctx context.Context, task back
 	if err != nil {
 		return err
 	}
-	return d.persist(ctx, task, taskResultUpdateFromProto(resp.Msg.GetTask(), task))
+	return d.persistResult(ctx, task, taskResultUpdateFromProto(resp.Msg.GetTask(), task))
+}
+
+func (d localBackupDispatcher) persistResult(ctx context.Context, task backup.BackupTaskRequest, update backup.TaskUpdate) error {
+	if err := d.persist(ctx, task, update); err != nil {
+		return err
+	}
+	if terminalBackupTaskStatus(update.Status) && !successfulBackupTaskStatus(update.Status) {
+		return &backup.TaskOutcomeError{Status: update.Status}
+	}
+	return nil
+}
+
+func successfulBackupTaskStatus(status string) bool {
+	return status == "SUCCESS" || status == "SUCCEEDED"
+}
+
+func terminalBackupTaskStatus(status string) bool {
+	return successfulBackupTaskStatus(status) || status == "FAILED" || status == "TIMEOUT" || status == "UNAVAILABLE" || status == "CONFIG_MISSING" || status == "SKIPPED"
 }
 
 func (d localBackupDispatcher) persist(ctx context.Context, task backup.BackupTaskRequest, update backup.TaskUpdate) error {

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -54,6 +55,44 @@ func TestBackupDispatcherDispatchesRemoteAgentTaskAndPersistsResult(t *testing.T
 	}
 	if updated.Status != "SUCCESS" || updated.SnapshotID != "snap-1" || updated.Bytes != 42 || updated.LeaderTerm != 7 {
 		t.Fatalf("updated=%+v", updated)
+	}
+}
+
+func TestBackupDispatcherPreservesPersistedTerminalFailure(t *testing.T) {
+	client := &fakeClusterBackupAgentClient{result: &procmeshv1.ClusterBackupTask{
+		RunId: "run-1", TaskId: "task-node-b", NodeId: "node-b", Status: "FAILED", ErrorCode: "SNAPSHOT_FAILED", LeaderTerm: 7,
+	}}
+	var updated backup.TaskUpdate
+	d := localBackupDispatcher{
+		runtime: &rpcRuntime{nodeID: "node-a"},
+		forward: fakeClusterBackupAgentForwarder{client: client},
+		members: func() []cluster.NodeSummary {
+			return []cluster.NodeSummary{{NodeID: "node-b", RPCAddress: "127.0.0.1:9001"}}
+		},
+		update: func(_ context.Context, got backup.TaskUpdate) error { updated = got; return nil },
+	}
+	err := d.DispatchBackupTask(context.Background(), backup.BackupTaskRequest{
+		RunID: "run-1", TaskID: "task-node-b", PolicyID: "policy-1", NodeID: "node-b",
+		PolicyRevision: 3, Sink: "fs", LeaderTerm: 7, LeaseExpiresUnix: 123,
+	})
+	var outcome *backup.TaskOutcomeError
+	if !errors.As(err, &outcome) || outcome.Status != "FAILED" {
+		t.Fatalf("error=%v", err)
+	}
+	if updated.Status != "FAILED" || updated.ErrorCode != "SNAPSHOT_FAILED" {
+		t.Fatalf("updated=%+v", updated)
+	}
+}
+
+func TestUnfinishedBackupTargetsPreservesTerminalResults(t *testing.T) {
+	state := *control.NewState()
+	run := control.ClusterBackupRun{RunID: "run-1", TargetNodeIDs: []string{"a", "b", "c", "d"}}
+	state.BackupTasks["run-1:task-a"] = control.ClusterBackupTask{RunID: run.RunID, NodeID: "a", Status: "SUCCESS"}
+	state.BackupTasks["run-1:task-b"] = control.ClusterBackupTask{RunID: run.RunID, NodeID: "b", Status: "FAILED"}
+	state.BackupTasks["run-1:task-c"] = control.ClusterBackupTask{RunID: run.RunID, NodeID: "c", Status: "RUNNING"}
+	got := unfinishedBackupTargets(state, run)
+	if len(got) != 2 || got[0] != "c" || got[1] != "d" {
+		t.Fatalf("targets=%v", got)
 	}
 }
 

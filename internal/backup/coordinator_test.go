@@ -3,6 +3,7 @@ package backup_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -21,12 +22,12 @@ type fakeControl struct {
 }
 
 type runState struct {
-	runID         string
-	totalTasks    int
-	successCount  int
-	failureCount  int
-	pendingCount  int
-	finalStatus   string // SUCCESS | PARTIAL | FAILED
+	runID        string
+	totalTasks   int
+	successCount int
+	failureCount int
+	pendingCount int
+	finalStatus  string // SUCCESS | PARTIAL | FAILED
 }
 
 func (f *fakeControl) ListEnabledBackupPolicies(context.Context) ([]backup.PolicyView, error) {
@@ -106,6 +107,7 @@ type fakeDispatcher struct {
 	mu       sync.Mutex
 	tasks    []backup.BackupTaskRequest
 	errNodes map[string]bool
+	dispatch func(context.Context, backup.BackupTaskRequest) error
 }
 
 type atomicControl struct {
@@ -119,14 +121,28 @@ func (f *atomicControl) ClaimScheduledRun(_ context.Context, _ string, _ backup.
 	return f.run, f.acquired, nil
 }
 
-func (f *fakeDispatcher) DispatchBackupTask(_ context.Context, task backup.BackupTaskRequest) error {
+func (f *fakeDispatcher) DispatchBackupTask(ctx context.Context, task backup.BackupTaskRequest) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.tasks = append(f.tasks, task)
+	f.mu.Unlock()
+	if f.dispatch != nil {
+		return f.dispatch(ctx, task)
+	}
 	if f.errNodes[task.NodeID] {
 		return errors.New("dispatch failed")
 	}
 	return nil
+}
+
+type recoveryControl struct {
+	*fakeControl
+	runs  []backup.FrozenRun
+	calls int
+}
+
+func (f *recoveryControl) ClaimRecoverableRuns(_ context.Context, _ uint64, _ time.Time) ([]backup.FrozenRun, error) {
+	f.calls++
+	return append([]backup.FrozenRun(nil), f.runs...), nil
 }
 
 func TestCoordinator_LeaderOnlyAndIdempotentTick(t *testing.T) {
@@ -265,6 +281,19 @@ func TestCoordinator_DispatchErrorUpdatesTask(t *testing.T) {
 	}
 }
 
+func TestCoordinator_BoundsDispatchErrorSummary(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	ctrl := &fakeControl{claims: map[string]string{}}
+	disp := &fakeDispatcher{dispatch: func(context.Context, backup.BackupTaskRequest) error {
+		return errors.New(strings.Repeat("x", 3000))
+	}}
+	c := backup.NewCoordinator(backup.CoordinatorConfig{Control: ctrl, Dispatcher: disp, Now: func() time.Time { return now }})
+	c.DispatchRun(context.Background(), backup.FrozenRun{RunID: "run", PolicyID: "bp", TargetNodeIDs: []string{"a"}, LeaderTerm: 1, LeaseExpiresUnix: now.Add(time.Minute).Unix()})
+	if len(ctrl.updates) != 1 || len(ctrl.updates[0].ErrorSummary) > 2048 {
+		t.Fatalf("updates=%+v summary_len=%d", ctrl.updates, len(ctrl.updates[0].ErrorSummary))
+	}
+}
+
 func TestClusterSchedule_NextTimezone(t *testing.T) {
 	from := time.Date(2026, 8, 19, 9, 59, 0, 0, time.UTC)
 	got, err := backup.NextInTimezone("0 18 * * *", "Asia/Shanghai", from)
@@ -377,11 +406,75 @@ func TestCoordinator_RetryFailedTasksOnly(t *testing.T) {
 	}
 	// Retry: should only retry b, not a
 	disp.errNodes["b"] = false // b now succeeds
-	disp.tasks = nil            // clear for retry check
+	disp.tasks = nil           // clear for retry check
 	// NOTE: Actual retry logic would be in a separate method or run recovery
 	// For now, this test verifies the UNAVAILABLE update was recorded
 	if len(ctrl.updates) != 1 || ctrl.updates[0].NodeID != "b" {
 		t.Fatalf("expected UNAVAILABLE update for b, got %+v", ctrl.updates)
+	}
+}
+
+func TestCoordinator_TimeoutMarksEveryUnfinishedTask(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	ctrl := &fakeControl{claims: map[string]string{}}
+	disp := &fakeDispatcher{dispatch: func(ctx context.Context, _ backup.BackupTaskRequest) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}}
+	c := backup.NewCoordinator(backup.CoordinatorConfig{Control: ctrl, Dispatcher: disp, CurrentTerm: func() uint64 { return 4 }, Now: func() time.Time { return now }})
+	c.DispatchRun(context.Background(), backup.FrozenRun{RunID: "run-timeout", PolicyID: "bp", PolicyRevision: 1, TargetNodeIDs: []string{"a", "b"}, MaxConcurrency: 1, LeaderTerm: 4, LeaseExpiresUnix: now.Add(-time.Second).Unix()})
+	if len(ctrl.updates) != 2 {
+		t.Fatalf("updates=%+v", ctrl.updates)
+	}
+	for _, update := range ctrl.updates {
+		if update.Status != "TIMEOUT" || update.LeaderTerm != 4 {
+			t.Fatalf("update=%+v", update)
+		}
+	}
+}
+
+func TestCoordinator_FailFastSkipsTasksThatHaveNotStarted(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	ctrl := &fakeControl{claims: map[string]string{}}
+	disp := &fakeDispatcher{dispatch: func(_ context.Context, task backup.BackupTaskRequest) error {
+		if task.NodeID == "a" {
+			return errors.New("agent unavailable")
+		}
+		return nil
+	}}
+	c := backup.NewCoordinator(backup.CoordinatorConfig{Control: ctrl, Dispatcher: disp, CurrentTerm: func() uint64 { return 5 }, Now: func() time.Time { return now }})
+	c.DispatchRun(context.Background(), backup.FrozenRun{RunID: "run-fail-fast", PolicyID: "bp", PolicyRevision: 1, TargetNodeIDs: []string{"a", "b", "c"}, MaxConcurrency: 1, LeaderTerm: 5, LeaseExpiresUnix: now.Add(time.Minute).Unix(), UnavailablePolicy: "FAIL_FAST"})
+	if len(disp.tasks) != 1 || disp.tasks[0].NodeID != "a" {
+		t.Fatalf("dispatched=%+v", disp.tasks)
+	}
+	statuses := map[string]string{}
+	for _, update := range ctrl.updates {
+		statuses[update.NodeID] = update.Status
+	}
+	if statuses["a"] != "UNAVAILABLE" || statuses["b"] != "SKIPPED" || statuses["c"] != "SKIPPED" {
+		t.Fatalf("statuses=%v updates=%+v", statuses, ctrl.updates)
+	}
+}
+
+func TestCoordinator_ResumeExpiredRunsBeforeScheduling(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	base := &fakeControl{claims: map[string]string{}}
+	ctrl := &recoveryControl{fakeControl: base, runs: []backup.FrozenRun{{
+		RunID: "run-resume", PolicyID: "bp", PolicyRevision: 3, TargetNodeIDs: []string{"node-b"},
+		Sink: "s3", DestinationProfile: "archive", MaxConcurrency: 1, LeaderTerm: 8,
+		LeaseExpiresUnix: now.Add(time.Minute).Unix(), TimeoutSeconds: 60,
+	}}}
+	disp := &fakeDispatcher{}
+	c := backup.NewCoordinator(backup.CoordinatorConfig{Control: ctrl, Dispatcher: disp, IsLeader: func() bool { return true }, CurrentTerm: func() uint64 { return 8 }, Now: func() time.Time { return now }})
+	if err := c.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if ctrl.calls != 1 || len(disp.tasks) != 1 {
+		t.Fatalf("recovery calls=%d tasks=%+v", ctrl.calls, disp.tasks)
+	}
+	got := disp.tasks[0]
+	if got.RunID != "run-resume" || got.TaskID != "task-node-b" || got.LeaderTerm != 8 || got.DestinationProfile != "archive" {
+		t.Fatalf("task=%+v", got)
 	}
 }
 
@@ -431,7 +524,6 @@ func (f *fakeSink) GetCluster(context.Context, string) ([]byte, error) {
 func (f *fakeSink) DeleteCluster(context.Context, string) error {
 	return nil
 }
-
 
 func TestRetention_KeepsLast(t *testing.T) {
 	// Test: retention policy keeps last N snapshots

@@ -34,6 +34,7 @@ const (
 	CmdBackupFireClaim         = "backup_fire_claim"
 	CmdBackupScheduledRunClaim = "backup_scheduled_run_claim"
 	CmdBackupRunCreate         = "backup_run_create"
+	CmdBackupRunClaim          = "backup_run_claim"
 	CmdBackupTaskUpdate        = "backup_task_update"
 	CmdBackupRetryFailedTasks  = "backup_retry_failed_tasks"
 	CmdBackupRunFinish         = "backup_run_finish"
@@ -287,6 +288,15 @@ type CreateRunBody struct {
 	Replication bool             `json:"replication"`
 }
 
+type RunClaimBody struct {
+	OperationID    string `json:"operation_id"`
+	RunID          string `json:"run_id"`
+	LeaderTerm     uint64 `json:"leader_term"`
+	UpdatedUnix    int64  `json:"updated_unix"`
+	LeaseUntilUnix int64  `json:"lease_until_unix"`
+	Replication    bool   `json:"replication"`
+}
+
 type UpdateTaskBody struct {
 	OperationID string            `json:"operation_id"`
 	Task        ClusterBackupTask `json:"task"`
@@ -295,11 +305,12 @@ type UpdateTaskBody struct {
 }
 
 type RetryFailedTasksBody struct {
-	OperationID string `json:"operation_id"`
-	RunID       string `json:"run_id"`
-	LeaderTerm  uint64 `json:"leader_term"`
-	UpdatedUnix int64  `json:"updated_unix"`
-	Replication bool   `json:"replication"`
+	OperationID    string `json:"operation_id"`
+	RunID          string `json:"run_id"`
+	LeaderTerm     uint64 `json:"leader_term"`
+	UpdatedUnix    int64  `json:"updated_unix"`
+	LeaseUntilUnix int64  `json:"lease_until_unix,omitempty"`
+	Replication    bool   `json:"replication"`
 }
 
 type FinishRunBody struct {

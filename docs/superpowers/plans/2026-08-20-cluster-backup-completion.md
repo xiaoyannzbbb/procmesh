@@ -135,11 +135,11 @@ git commit -m "fix(replication): secure internal peer request paths"
 - Produces: run terminal status `SUCCEEDED`, `PARTIAL`, `FAILED`, or `CANCELED` from frozen task results.
 - Produces: retry selects only failed/timeout/unavailable/config-missing tasks and preserves successful task IDs/results.
 
-- [ ] **Step 1: Write failing tests for aggregation matrix, timeout, fail-fast, retry selection, stale-term rejection, and new-Leader resume.**
-- [ ] **Step 2: Run RED:** `go test ./internal/backup ./internal/control ./internal/api -run 'Test.*Aggregate|Test.*Timeout|Test.*FailFast|Test.*RetryFailed|Test.*Resume' -count=1`
-- [ ] **Step 3: Add durable run finalization/CAS commands and make the coordinator reconcile expired running runs before evaluating new fires.**
-- [ ] **Step 4: Run:** `go test ./internal/backup ./internal/control ./internal/api -count=1`
-- [ ] **Step 5: Commit:** `git commit -m "feat(backup): finalize and recover cluster backup runs"`
+- [x] **Step 1: Write failing tests for aggregation matrix, timeout, fail-fast, retry selection, stale-term rejection, and new-Leader resume.**
+- [x] **Step 2: Run RED:** `go test ./internal/backup ./internal/control ./internal/api -run 'Test.*Aggregate|Test.*Timeout|Test.*FailFast|Test.*RetryFailed|Test.*Resume' -count=1`
+- [x] **Step 3: Add durable run finalization/CAS commands and make the coordinator reconcile expired running runs before evaluating new fires.**
+- [x] **Step 4: Run:** `go test ./internal/backup ./internal/control ./internal/api -count=1`
+- [x] **Step 5: Commit:** `git commit -m "feat(backup): finalize and recover cluster backup runs"`
 
 ### Task 5: Complete retention and compatibility behavior
 

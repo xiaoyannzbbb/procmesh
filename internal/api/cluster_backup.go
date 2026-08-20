@@ -183,7 +183,12 @@ func (s *ClusterBackupAPI) StartRun(ctx context.Context, req *connect.Request[pr
 	}
 	now := s.now()
 	runID := newRunID(operationID, policy.PolicyID, now)
-	run := control.ClusterBackupRun{RunID: runID, PolicyID: policy.PolicyID, PolicyRevision: policy.Revision, TargetNodeIDs: targets, Status: "RUNNING", CreatedUnix: now.Unix(), StartedUnix: now.Unix(), Sink: policy.Sink, DestinationProfile: policy.DestinationProfile, MaxConcurrency: policy.MaxConcurrency}
+	timeout := policy.TimeoutSeconds
+	if timeout <= 0 {
+		timeout = 30
+	}
+	leaseUntil := now.Add(time.Duration(timeout) * time.Second).Unix()
+	run := control.ClusterBackupRun{RunID: runID, PolicyID: policy.PolicyID, PolicyRevision: policy.Revision, TargetNodeIDs: targets, Status: "RUNNING", CreatedUnix: now.Unix(), StartedUnix: now.Unix(), Sink: policy.Sink, DestinationProfile: policy.DestinationProfile, MaxConcurrency: policy.MaxConcurrency, TimeoutSeconds: timeout, UnavailablePolicy: policy.UnavailablePolicy, LeaseUntilUnix: leaseUntil}
 	term := s.leaderTerm()
 	cmd, err := control.EncodeCommand(control.CmdBackupRunCreate, control.CreateRunBody{OperationID: operationID, LeaderTerm: term, Run: run})
 	if err != nil {
@@ -193,15 +198,11 @@ func (s *ClusterBackupAPI) StartRun(ctx context.Context, req *connect.Request[pr
 		return nil, ToConnect(err)
 	}
 	if s.DispatchRun != nil {
-		timeout := policy.TimeoutSeconds
-		if timeout <= 0 {
-			timeout = 30
-		}
 		s.DispatchRun(backup.FrozenRun{
 			RunID: runID, PolicyID: policy.PolicyID, PolicyRevision: policy.Revision,
 			TargetNodeIDs: append([]string(nil), targets...), Sink: policy.Sink,
 			DestinationProfile: policy.DestinationProfile, MaxConcurrency: policy.MaxConcurrency,
-			LeaderTerm: term, LeaseExpiresUnix: now.Add(time.Duration(timeout) * time.Second).Unix(),
+			LeaderTerm: term, LeaseExpiresUnix: leaseUntil, TimeoutSeconds: timeout, UnavailablePolicy: policy.UnavailablePolicy,
 		})
 	}
 	return connect.NewResponse(&procmeshv1.StartClusterBackupRunResponse{Run: runToProto(run, nil)}), nil
@@ -287,7 +288,13 @@ func (s *ClusterBackupAPI) RetryFailedTasks(ctx context.Context, req *connect.Re
 		return nil, err
 	}
 	now := s.now()
-	cmd, err := control.EncodeCommand(control.CmdBackupRetryFailedTasks, control.RetryFailedTasksBody{OperationID: operationID, RunID: run.RunID, LeaderTerm: s.leaderTerm(), UpdatedUnix: now.Unix()})
+	timeout := run.TimeoutSeconds
+	if timeout <= 0 {
+		timeout = 30
+	}
+	term := s.leaderTerm()
+	leaseUntil := now.Add(time.Duration(timeout) * time.Second).Unix()
+	cmd, err := control.EncodeCommand(control.CmdBackupRetryFailedTasks, control.RetryFailedTasksBody{OperationID: operationID, RunID: run.RunID, LeaderTerm: term, UpdatedUnix: now.Unix(), LeaseUntilUnix: leaseUntil})
 	if err != nil {
 		return nil, ToConnect(err)
 	}
@@ -296,6 +303,23 @@ func (s *ClusterBackupAPI) RetryFailedTasks(ctx context.Context, req *connect.Re
 	}
 	state = s.state()
 	run = state.BackupRuns[run.RunID]
+	if s.DispatchRun != nil {
+		pending := make(map[string]bool, len(run.TargetNodeIDs))
+		for _, task := range state.BackupTasks {
+			if task.RunID == run.RunID && task.Status == "PENDING" {
+				pending[task.NodeID] = true
+			}
+		}
+		targets := make([]string, 0, len(pending))
+		for _, nodeID := range run.TargetNodeIDs {
+			if pending[nodeID] {
+				targets = append(targets, nodeID)
+			}
+		}
+		if len(targets) > 0 {
+			s.DispatchRun(backup.FrozenRun{RunID: run.RunID, PolicyID: run.PolicyID, PolicyRevision: run.PolicyRevision, TargetNodeIDs: targets, Sink: run.Sink, DestinationProfile: run.DestinationProfile, MaxConcurrency: run.MaxConcurrency, LeaderTerm: term, LeaseExpiresUnix: leaseUntil, TimeoutSeconds: timeout, UnavailablePolicy: run.UnavailablePolicy})
+		}
+	}
 	return connect.NewResponse(&procmeshv1.RetryFailedClusterBackupTasksResponse{Run: runToProto(run, nil)}), nil
 }
 

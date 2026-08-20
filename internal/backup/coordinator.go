@@ -2,10 +2,12 @@ package backup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // PolicyView is the immutable policy/target view used when a scheduled run is
@@ -51,6 +53,8 @@ type FrozenRun struct {
 	MaxConcurrency                            int
 	LeaderTerm                                uint64
 	LeaseExpiresUnix                          int64
+	TimeoutSeconds                            int
+	UnavailablePolicy                         string
 }
 
 // ScheduledRunClaimer is an optional stronger control-plane capability. The
@@ -58,6 +62,19 @@ type FrozenRun struct {
 type ScheduledRunClaimer interface {
 	ClaimScheduledRun(context.Context, string, PolicyView, uint64, time.Time) (FrozenRun, bool, error)
 }
+
+// RunRecovery claims expired running runs for the current Leader term and
+// returns only targets that still need work.
+type RunRecovery interface {
+	ClaimRecoverableRuns(context.Context, uint64, time.Time) ([]FrozenRun, error)
+}
+
+// TaskOutcomeError means the dispatcher already persisted a terminal task
+// result. The coordinator uses it to drive fail-fast without overwriting that
+// result with a transport status.
+type TaskOutcomeError struct{ Status string }
+
+func (e *TaskOutcomeError) Error() string { return "backup task completed with status " + e.Status }
 
 // BackupRunRequest is optional coordinator wiring for adapters that need the
 // scheduler to persist a run record after ClaimFire.
@@ -127,6 +144,15 @@ func (c *Coordinator) Tick(ctx context.Context) error {
 		return nil
 	}
 	now := c.now()
+	if recovery, ok := c.Control.(RunRecovery); ok {
+		runs, err := recovery.ClaimRecoverableRuns(ctx, term, now)
+		if err != nil {
+			return err
+		}
+		for _, run := range runs {
+			c.DispatchRun(ctx, run)
+		}
+	}
 	policies, err := c.Control.ListEnabledBackupPolicies(ctx)
 	if err != nil {
 		return err
@@ -176,7 +202,8 @@ func (c *Coordinator) Tick(ctx context.Context) error {
 			}
 		}
 		c.markDispatched(key, term)
-		c.DispatchRun(ctx, FrozenRun{RunID: runID, PolicyID: view.Policy.PolicyID, PolicyRevision: effectiveRevision(view), TargetNodeIDs: targets, Sink: view.Policy.Sink, DestinationProfile: view.Policy.DestinationProfile, MaxConcurrency: view.Policy.MaxConcurrency, LeaderTerm: term})
+		timeout := effectiveTimeout(view.Policy.TimeoutSeconds)
+		c.DispatchRun(ctx, FrozenRun{RunID: runID, PolicyID: view.Policy.PolicyID, PolicyRevision: effectiveRevision(view), TargetNodeIDs: targets, Sink: view.Policy.Sink, DestinationProfile: view.Policy.DestinationProfile, MaxConcurrency: view.Policy.MaxConcurrency, LeaderTerm: term, TimeoutSeconds: timeout, UnavailablePolicy: view.Policy.UnavailablePolicy, LeaseExpiresUnix: now.Add(time.Duration(timeout) * time.Second).Unix()})
 	}
 	return nil
 }
@@ -186,6 +213,13 @@ func effectiveRevision(v PolicyView) int64 {
 		return v.Revision
 	}
 	return v.Policy.Revision
+}
+
+func effectiveTimeout(seconds int) int {
+	if seconds <= 0 {
+		return 30
+	}
+	return seconds
 }
 
 func (c *Coordinator) wasDispatched(key string, term uint64) bool {
@@ -210,26 +244,111 @@ func (c *Coordinator) dispatchFrozenTargets(ctx context.Context, run FrozenRun) 
 	if limit <= 0 {
 		limit = 1
 	}
+	leaseDuration := time.Unix(run.LeaseExpiresUnix, 0).Sub(c.now())
+	leaseCtx, leaseCancel := context.WithTimeout(ctx, leaseDuration)
+	defer leaseCancel()
+	runCtx, failFastCancel := context.WithCancel(leaseCtx)
+	defer failFastCancel()
+	failFast := run.UnavailablePolicy == "FAIL_FAST"
+
 	sem := make(chan struct{}, limit)
 	var wg sync.WaitGroup
-	for _, nodeID := range run.TargetNodeIDs {
+	var failureMu sync.Mutex
+	failFastTriggered := false
+	markFailFast := func() {
+		failureMu.Lock()
+		failFastTriggered = true
+		failureMu.Unlock()
+		failFastCancel()
+	}
+	wasFailFast := func() bool {
+		failureMu.Lock()
+		defer failureMu.Unlock()
+		return failFastTriggered
+	}
+	statusAfterCancel := func() string {
+		if errors.Is(leaseCtx.Err(), context.DeadlineExceeded) {
+			return "TIMEOUT"
+		}
+		if wasFailFast() {
+			return "SKIPPED"
+		}
+		return "UNAVAILABLE"
+	}
+	updateCanceled := func(nodeID string) {
+		status := statusAfterCancel()
+		_ = c.Control.UpdateTask(ctx, TaskUpdate{RunID: run.RunID, TaskID: "task-" + nodeID, NodeID: nodeID, Status: status, ErrorCode: status, ErrorSummary: contextStatusSummary(status), LeaderTerm: run.LeaderTerm})
+	}
+
+dispatchLoop:
+	for i, nodeID := range run.TargetNodeIDs {
+		select {
+		case sem <- struct{}{}:
+			if runCtx.Err() != nil {
+				<-sem
+				for _, remaining := range run.TargetNodeIDs[i:] {
+					updateCanceled(remaining)
+				}
+				break dispatchLoop
+			}
+		case <-runCtx.Done():
+			for _, remaining := range run.TargetNodeIDs[i:] {
+				updateCanceled(remaining)
+			}
+			break dispatchLoop
+		}
 		nodeID := nodeID
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
-				return
-			}
 			defer func() { <-sem }()
 			task := BackupTaskRequest{RunID: run.RunID, TaskID: "task-" + nodeID, PolicyID: run.PolicyID, NodeID: nodeID, PolicyRevision: run.PolicyRevision, Sink: run.Sink, DestinationProfile: run.DestinationProfile, LeaderTerm: run.LeaderTerm, LeaseExpiresUnix: run.LeaseExpiresUnix}
-			if err := c.Dispatcher.DispatchBackupTask(ctx, task); err != nil {
-				_ = c.Control.UpdateTask(ctx, TaskUpdate{RunID: run.RunID, TaskID: task.TaskID, NodeID: nodeID, Status: "UNAVAILABLE", ErrorCode: "UNAVAILABLE", ErrorSummary: err.Error(), LeaderTerm: run.LeaderTerm})
+			if err := c.Dispatcher.DispatchBackupTask(runCtx, task); err != nil {
+				var outcome *TaskOutcomeError
+				if errors.As(err, &outcome) {
+					if failFast && outcome.Status != "SUCCESS" && outcome.Status != "SUCCEEDED" {
+						markFailFast()
+					}
+					return
+				}
+				status := "UNAVAILABLE"
+				if runCtx.Err() != nil {
+					status = statusAfterCancel()
+				}
+				_ = c.Control.UpdateTask(ctx, TaskUpdate{RunID: run.RunID, TaskID: task.TaskID, NodeID: nodeID, Status: status, ErrorCode: status, ErrorSummary: boundedTaskError(err), LeaderTerm: run.LeaderTerm})
+				if failFast && status != "TIMEOUT" {
+					markFailFast()
+				}
 			}
 		}()
 	}
 	wg.Wait()
+}
+
+func boundedTaskError(err error) string {
+	if err == nil {
+		return ""
+	}
+	const maxBytes = 2048
+	summary := err.Error()
+	if len(summary) <= maxBytes {
+		return summary
+	}
+	summary = summary[:maxBytes]
+	for !utf8.ValidString(summary) {
+		summary = summary[:len(summary)-1]
+	}
+	return summary
+}
+
+func contextStatusSummary(status string) string {
+	if status == "TIMEOUT" {
+		return "backup task lease expired"
+	}
+	if status == "SKIPPED" {
+		return "skipped after fail-fast failure"
+	}
+	return "backup task unavailable"
 }
 
 func (c *Coordinator) DispatchRun(ctx context.Context, run FrozenRun) {
@@ -237,7 +356,8 @@ func (c *Coordinator) DispatchRun(ctx context.Context, run FrozenRun) {
 		run.LeaderTerm = c.term()
 	}
 	if run.LeaseExpiresUnix == 0 {
-		run.LeaseExpiresUnix = c.now().Add(30 * time.Second).Unix()
+		run.TimeoutSeconds = effectiveTimeout(run.TimeoutSeconds)
+		run.LeaseExpiresUnix = c.now().Add(time.Duration(run.TimeoutSeconds) * time.Second).Unix()
 	}
 	c.dispatchFrozenTargets(ctx, run)
 }

@@ -364,6 +364,15 @@ func TestFSM_ClaimScheduledRunIsAtomicAndFreezesRun(t *testing.T) {
 	if err != nil || acquired || live.RunID != run.RunID {
 		t.Fatalf("live=%+v acquired=%v err=%v", live, acquired, err)
 	}
+	if err := s.UpdateTask(control.UpdateTaskBody{OperationID: "op-complete", LeaderTerm: 1, Task: control.ClusterBackupTask{RunID: run.RunID, TaskID: "task-a", NodeID: "a", Status: "SUCCESS", UpdatedUnix: now.Add(time.Minute).Unix()}}); err != nil {
+		t.Fatal(err)
+	}
+	good.Fire.OperationID = "op-after-complete"
+	good.Fire.LeaderTerm = 2
+	_, completed, acquired, err := s.ClaimScheduledRun(good, now.Add(3*time.Minute))
+	if err != nil || acquired || completed.Status != "SUCCEEDED" {
+		t.Fatalf("completed=%+v acquired=%v err=%v", completed, acquired, err)
+	}
 }
 
 func TestFSM_BackupRunRejectsStaleTermAndPreservesTerminalTask(t *testing.T) {
@@ -467,10 +476,7 @@ func TestFSM_MetadataUsesSpecTerminalStatuses(t *testing.T) {
 	if got := s.BackupTasks["run-status:task-status"]; got.Status != "SUCCEEDED" || got.SHA256 != "abc" {
 		t.Fatalf("terminal task changed: %+v", got)
 	}
-	if err := s.FinishRun(control.FinishRunBody{OperationID: "op-status-finish", RunID: run.RunID, LeaderTerm: 1, Status: "PARTIAL", FinishedUnix: now.Unix()}); err != nil {
-		t.Fatal(err)
-	}
-	if got := s.BackupRuns[run.RunID]; got.Status != "PARTIAL" {
+	if got := s.BackupRuns[run.RunID]; got.Status != "SUCCEEDED" || got.Success != 1 {
 		t.Fatalf("run status=%q", got.Status)
 	}
 }
@@ -590,6 +596,124 @@ func TestFSM_RetryFailedTasksResetsOnlyRetryableTasks(t *testing.T) {
 	got := s.BackupTasks["run-retry:task-a"]
 	if got.Status != "PENDING" || got.ErrorCode != "" || got.ErrorSummary != "" || got.LeaderTerm != 3 || got.UpdatedUnix != 1_700_000_100 {
 		t.Fatalf("task=%+v", got)
+	}
+}
+
+func TestFSM_BackupRunAggregatesTerminalTasks(t *testing.T) {
+	tests := []struct {
+		name       string
+		statuses   []string
+		wantStatus string
+		want       [4]int
+	}{
+		{name: "all success", statuses: []string{"SUCCESS", "SUCCEEDED"}, wantStatus: "SUCCEEDED", want: [4]int{2, 0, 0, 0}},
+		{name: "partial", statuses: []string{"SUCCESS", "UNAVAILABLE", "TIMEOUT", "CONFIG_MISSING"}, wantStatus: "PARTIAL", want: [4]int{1, 1, 1, 1}},
+		{name: "all failure", statuses: []string{"FAILED", "SKIPPED"}, wantStatus: "FAILED", want: [4]int{0, 2, 0, 0}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := control.NewState()
+			targets := make([]string, len(tt.statuses))
+			for i := range targets {
+				targets[i] = fmt.Sprintf("node-%d", i)
+			}
+			s.BackupPolicies["bp-aggregate"] = control.BackupPolicy{PolicyID: "bp-aggregate", Revision: 1, TargetSelector: "EXPLICIT_NODES", TargetIDs: targets}
+			run := control.ClusterBackupRun{RunID: "run-aggregate", PolicyID: "bp-aggregate", PolicyRevision: 1, TargetNodeIDs: targets, Status: "RUNNING", CreatedUnix: 1_700_000_000, StartedUnix: 1_700_000_000}
+			if err := s.CreateRun(control.CreateRunBody{OperationID: "op-create", LeaderTerm: 2, Run: run}); err != nil {
+				t.Fatal(err)
+			}
+			for i, status := range tt.statuses {
+				updated := int64(1_700_000_010 + i)
+				if err := s.UpdateTask(control.UpdateTaskBody{OperationID: fmt.Sprintf("op-task-%d", i), LeaderTerm: 2, Task: control.ClusterBackupTask{RunID: run.RunID, TaskID: "task-" + targets[i], NodeID: targets[i], Status: status, UpdatedUnix: updated}}); err != nil {
+					t.Fatal(err)
+				}
+				if i < len(tt.statuses)-1 && s.BackupRuns[run.RunID].Status != "RUNNING" {
+					t.Fatalf("run completed before every frozen target reported: %+v", s.BackupRuns[run.RunID])
+				}
+			}
+			got := s.BackupRuns[run.RunID]
+			if got.Status != tt.wantStatus || got.Success != tt.want[0] || got.Failed != tt.want[1] || got.Unavailable != tt.want[2] || got.Timeout != tt.want[3] {
+				t.Fatalf("run=%+v", got)
+			}
+			wantFinished := int64(1_700_000_010 + len(tt.statuses) - 1)
+			if got.FinishedUnix != wantFinished {
+				t.Fatalf("finished_unix=%d want=%d", got.FinishedUnix, wantFinished)
+			}
+		})
+	}
+}
+
+func TestFSM_RetryFailedTasksResetsAllRetryableAndReopensRun(t *testing.T) {
+	s := control.NewState()
+	statuses := []string{"SUCCESS", "FAILED", "TIMEOUT", "UNAVAILABLE", "CONFIG_MISSING", "SKIPPED"}
+	targets := make([]string, len(statuses))
+	for i := range targets {
+		targets[i] = fmt.Sprintf("node-%d", i)
+	}
+	s.BackupPolicies["bp-retry-all"] = control.BackupPolicy{PolicyID: "bp-retry-all", Revision: 1, TargetSelector: "EXPLICIT_NODES", TargetIDs: targets}
+	run := control.ClusterBackupRun{RunID: "run-retry-all", PolicyID: "bp-retry-all", PolicyRevision: 1, TargetNodeIDs: targets, Status: "RUNNING"}
+	if err := s.CreateRun(control.CreateRunBody{OperationID: "op-create", LeaderTerm: 2, Run: run}); err != nil {
+		t.Fatal(err)
+	}
+	for i, status := range statuses {
+		task := control.ClusterBackupTask{RunID: run.RunID, TaskID: "task-" + targets[i], NodeID: targets[i], Status: status, SnapshotID: "snapshot", SHA256: "sha", Bytes: 42, ErrorCode: "E_TEST", ErrorSummary: "failed", UpdatedUnix: int64(100 + i)}
+		if err := s.UpdateTask(control.UpdateTaskBody{OperationID: fmt.Sprintf("op-task-%d", i), LeaderTerm: 2, Task: task}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	terminal := s.BackupRuns[run.RunID]
+	if terminal.Status != "PARTIAL" {
+		t.Fatalf("precondition run=%+v", terminal)
+	}
+	if err := s.RetryFailedTasks(control.RetryFailedTasksBody{OperationID: "op-retry", RunID: run.RunID, LeaderTerm: 3, UpdatedUnix: 1_700_000_100}); err != nil {
+		t.Fatal(err)
+	}
+	gotRun := s.BackupRuns[run.RunID]
+	if gotRun.Status != "RUNNING" || gotRun.Success != 0 || gotRun.Failed != 0 || gotRun.Unavailable != 0 || gotRun.Timeout != 0 || gotRun.FinishedUnix != 0 {
+		t.Fatalf("run not reopened cleanly: %+v", gotRun)
+	}
+	for i, oldStatus := range statuses {
+		got := s.BackupTasks[run.RunID+":"+"task-"+targets[i]]
+		if oldStatus == "SUCCESS" {
+			if got.Status != "SUCCESS" || got.SnapshotID != "snapshot" || got.SHA256 != "sha" || got.Bytes != 42 || got.LeaderTerm != 2 {
+				t.Fatalf("successful task changed: %+v", got)
+			}
+			continue
+		}
+		if got.Status != "PENDING" || got.SnapshotID != "" || got.SHA256 != "" || got.Bytes != 0 || got.ErrorCode != "" || got.ErrorSummary != "" || got.LeaderTerm != 3 || got.UpdatedUnix != 1_700_000_100 {
+			t.Fatalf("retryable %s task=%+v", oldStatus, got)
+		}
+	}
+}
+
+func TestFSM_ClaimExpiredBackupRunFencesOldLeader(t *testing.T) {
+	s := control.NewState()
+	s.BackupPolicies["bp-claim"] = control.BackupPolicy{PolicyID: "bp-claim", Revision: 1}
+	run := control.ClusterBackupRun{
+		RunID: "run-claim", PolicyID: "bp-claim", PolicyRevision: 1, TargetNodeIDs: []string{"node-a"}, Status: "RUNNING",
+		TimeoutSeconds: 45, UnavailablePolicy: "FAIL_FAST", LeaseUntilUnix: 1_700_000_100,
+	}
+	if err := s.CreateRun(control.CreateRunBody{OperationID: "op-create", LeaderTerm: 2, Run: run}); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := s.ClaimRun(control.RunClaimBody{OperationID: "op-live", RunID: run.RunID, LeaderTerm: 3, UpdatedUnix: 1_700_000_099, LeaseUntilUnix: 1_700_000_200})
+	if err != nil || claimed {
+		t.Fatalf("live run claimed=%v err=%v", claimed, err)
+	}
+	claimed, err = s.ClaimRun(control.RunClaimBody{OperationID: "op-takeover", RunID: run.RunID, LeaderTerm: 3, UpdatedUnix: 1_700_000_101, LeaseUntilUnix: 1_700_000_200})
+	if err != nil || !claimed {
+		t.Fatalf("expired run claimed=%v err=%v", claimed, err)
+	}
+	got := s.BackupRuns[run.RunID]
+	if got.LeaseUntilUnix != 1_700_000_200 || got.TimeoutSeconds != 45 || got.UnavailablePolicy != "FAIL_FAST" {
+		t.Fatalf("claimed run=%+v", got)
+	}
+	if err := s.UpdateTask(control.UpdateTaskBody{OperationID: "op-stale-task", LeaderTerm: 2, Task: control.ClusterBackupTask{RunID: run.RunID, TaskID: "task-node-a", NodeID: "node-a", Status: "FAILED"}}); !errcode.Is(err, errcode.CONFLICT) {
+		t.Fatalf("old leader was not fenced: %v", err)
+	}
+	claimed, err = s.ClaimRun(control.RunClaimBody{OperationID: "op-same-term", RunID: run.RunID, LeaderTerm: 3, UpdatedUnix: 1_700_000_201, LeaseUntilUnix: 1_700_000_300})
+	if err != nil || claimed {
+		t.Fatalf("same term reclaimed=%v err=%v", claimed, err)
 	}
 }
 

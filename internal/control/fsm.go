@@ -161,6 +161,9 @@ type ClusterBackupRun struct {
 	Sink               string   `json:"sink,omitempty"`
 	DestinationProfile string   `json:"destination_profile,omitempty"`
 	MaxConcurrency     int      `json:"max_concurrency,omitempty"`
+	TimeoutSeconds     int      `json:"timeout_seconds,omitempty"`
+	UnavailablePolicy  string   `json:"unavailable_policy,omitempty"`
+	LeaseUntilUnix     int64    `json:"lease_until_unix,omitempty"`
 }
 
 type ClusterBackupTask struct {
@@ -355,6 +358,11 @@ func (s *State) Apply(cmd Command, now time.Time) error {
 		})
 	case CmdBackupRunCreate:
 		return applyJSON(cmd.Body, s.applyCreateRun)
+	case CmdBackupRunClaim:
+		return applyJSON(cmd.Body, func(b RunClaimBody) error {
+			_, err := s.ClaimRun(b)
+			return err
+		})
 	case CmdBackupTaskUpdate:
 		return applyJSON(cmd.Body, s.applyUpdateTask)
 	case CmdBackupRetryFailedTasks:
@@ -1038,10 +1046,18 @@ func (s *State) ClaimScheduledRun(b ScheduledRunClaimBody, now time.Time) (FireR
 		if current.PolicyID != b.Fire.PolicyID {
 			return FireRecord{}, ClusterBackupRun{}, false, errcode.E(errcode.CONFLICT, "fire key belongs to another policy")
 		}
+		if terminalRunStatus(run.Status) {
+			return current, run, false, nil
+		}
 		if current.LeaseUntilUnix > now.Unix() || b.Fire.LeaderTerm <= current.LeaderTerm {
 			return current, run, false, nil
 		}
 		record, acquired, err := s.ClaimFire(b.Fire, now)
+		if err == nil && acquired {
+			run.LeaseUntilUnix = record.LeaseUntilUnix
+			s.BackupRuns[run.RunID] = run
+			s.BackupRunTerms[run.RunID] = record.LeaderTerm
+		}
 		return record, run, acquired, err
 	}
 	if b.Run.RunID != runIDForFire(b.Fire.FireKey) || b.Run.PolicyID != b.Fire.PolicyID {
@@ -1057,6 +1073,9 @@ func (s *State) ClaimScheduledRun(b ScheduledRunClaimBody, now time.Time) (FireR
 		return record, ClusterBackupRun{}, acquired, err
 	}
 	b.Run.TargetNodeIDs = append([]string(nil), b.Run.TargetNodeIDs...)
+	if b.Run.LeaseUntilUnix == 0 {
+		b.Run.LeaseUntilUnix = record.LeaseUntilUnix
+	}
 	s.BackupRuns[b.Run.RunID] = b.Run
 	s.BackupRunTerms[b.Run.RunID] = b.Fire.LeaderTerm
 	return record, b.Run, true, nil
@@ -1258,6 +1277,35 @@ func (s *State) applyCreateRun(b CreateRunBody) error {
 	return nil
 }
 
+// ClaimRun moves an expired running run to a newer leader term and renews its
+// lease. The boolean is false for a live lease, a terminal run, or a term that
+// is not newer than the current owner.
+func (s *State) ClaimRun(b RunClaimBody) (bool, error) {
+	s.ensure()
+	if err := requireOperationID(b.OperationID); err != nil {
+		return false, err
+	}
+	if !validMetadataString(b.RunID, maxMetadataIDLen) || b.LeaderTerm == 0 || b.UpdatedUnix <= 0 || b.LeaseUntilUnix <= b.UpdatedUnix || b.LeaseUntilUnix > b.UpdatedUnix+int64((24*time.Hour)/time.Second) {
+		return false, errcode.E(errcode.INVALID, "invalid run claim")
+	}
+	runs, _ := runMaps(s, b.Replication)
+	terms := runTerms(s, b.Replication)
+	run, ok := runs[b.RunID]
+	if !ok {
+		return false, errcode.E(errcode.NOT_FOUND, "run not found")
+	}
+	if terminalRunStatus(run.Status) || run.LeaseUntilUnix > b.UpdatedUnix || b.LeaderTerm <= terms[b.RunID] {
+		return false, nil
+	}
+	run.LeaseUntilUnix = b.LeaseUntilUnix
+	runs[b.RunID] = run
+	terms[b.RunID] = b.LeaderTerm
+	if !b.Replication {
+		s.syncBackupFire(b.RunID, b.LeaderTerm, b.UpdatedUnix, b.LeaseUntilUnix, "CLAIMED")
+	}
+	return true, nil
+}
+
 func taskMapKey(task ClusterBackupTask) string { return task.RunID + ":" + task.TaskID }
 
 func (s *State) UpdateTask(b UpdateTaskBody) error { return s.applyUpdateTask(b) }
@@ -1272,6 +1320,9 @@ func (s *State) applyRetryFailedTasks(b RetryFailedTasksBody) error {
 	if b.LeaderTerm == 0 || !validMetadataString(b.RunID, maxMetadataIDLen) {
 		return errcode.E(errcode.INVALID, "run id and leader term required")
 	}
+	if b.LeaseUntilUnix != 0 && (b.UpdatedUnix <= 0 || b.LeaseUntilUnix <= b.UpdatedUnix || b.LeaseUntilUnix > b.UpdatedUnix+int64((24*time.Hour)/time.Second)) {
+		return errcode.E(errcode.INVALID, "invalid retry lease")
+	}
 	runs, tasks := runMaps(s, b.Replication)
 	terms := runTerms(s, b.Replication)
 	if _, ok := runs[b.RunID]; !ok {
@@ -1280,10 +1331,12 @@ func (s *State) applyRetryFailedTasks(b RetryFailedTasksBody) error {
 	if term := terms[b.RunID]; term > b.LeaderTerm {
 		return errcode.E(errcode.CONFLICT, "stale leader term")
 	}
+	retried := false
 	for key, task := range tasks {
-		if task.RunID != b.RunID || task.Status != "FAILED" {
+		if task.RunID != b.RunID || !retryableTaskStatus(task.Status) {
 			continue
 		}
+		retried = true
 		task.Status = "PENDING"
 		task.SnapshotID = ""
 		task.SHA256 = ""
@@ -1293,6 +1346,22 @@ func (s *State) applyRetryFailedTasks(b RetryFailedTasksBody) error {
 		task.LeaderTerm = b.LeaderTerm
 		task.UpdatedUnix = b.UpdatedUnix
 		tasks[key] = task
+	}
+	if retried {
+		run := runs[b.RunID]
+		run.Status = "RUNNING"
+		run.Success = 0
+		run.Failed = 0
+		run.Unavailable = 0
+		run.Timeout = 0
+		run.FinishedUnix = 0
+		if b.LeaseUntilUnix != 0 {
+			run.LeaseUntilUnix = b.LeaseUntilUnix
+		}
+		runs[b.RunID] = run
+		if !b.Replication {
+			s.syncBackupFire(b.RunID, b.LeaderTerm, b.UpdatedUnix, run.LeaseUntilUnix, "CLAIMED")
+		}
 	}
 	if b.LeaderTerm > terms[b.RunID] {
 		terms[b.RunID] = b.LeaderTerm
@@ -1336,7 +1405,104 @@ func (s *State) applyUpdateTask(b UpdateTaskBody) error {
 	if b.LeaderTerm > terms[b.Task.RunID] {
 		terms[b.Task.RunID] = b.LeaderTerm
 	}
+	aggregateTerminalRun(runs, tasks, b.Task.RunID)
+	if !b.Replication {
+		if run := runs[b.Task.RunID]; terminalRunStatus(run.Status) {
+			s.syncBackupFire(run.RunID, b.LeaderTerm, 0, 0, run.Status)
+		}
+	}
 	return nil
+}
+
+func (s *State) syncBackupFire(runID string, leaderTerm uint64, claimedUnix, leaseUntilUnix int64, status string) {
+	for key, fire := range s.BackupFireLedger {
+		if fire.RunID != runID {
+			continue
+		}
+		if leaderTerm > fire.LeaderTerm {
+			fire.LeaderTerm = leaderTerm
+		}
+		if claimedUnix != 0 {
+			fire.ClaimedUnix = claimedUnix
+		}
+		fire.LeaseUntilUnix = leaseUntilUnix
+		fire.Status = status
+		s.BackupFireLedger[key] = fire
+	}
+}
+
+func retryableTaskStatus(status string) bool {
+	switch status {
+	case "FAILED", "TIMEOUT", "UNAVAILABLE", "CONFIG_MISSING", "SKIPPED":
+		return true
+	default:
+		return false
+	}
+}
+
+func aggregateTerminalRun(runs map[string]ClusterBackupRun, tasks map[string]ClusterBackupTask, runID string) {
+	run, ok := runs[runID]
+	if !ok || terminalRunStatus(run.Status) || len(run.TargetNodeIDs) == 0 {
+		return
+	}
+
+	targets := make(map[string]struct{}, len(run.TargetNodeIDs))
+	for _, nodeID := range run.TargetNodeIDs {
+		targets[nodeID] = struct{}{}
+	}
+	byNode := make(map[string]ClusterBackupTask, len(targets))
+	for _, task := range tasks {
+		if task.RunID != runID {
+			continue
+		}
+		if _, wanted := targets[task.NodeID]; !wanted {
+			continue
+		}
+		current, exists := byNode[task.NodeID]
+		if !exists || task.UpdatedUnix >= current.UpdatedUnix {
+			byNode[task.NodeID] = task
+		}
+	}
+	if len(byNode) != len(targets) {
+		return
+	}
+
+	var success, failed, unavailable, timeout int
+	var finishedUnix int64
+	for nodeID := range targets {
+		task := byNode[nodeID]
+		if !terminalTaskStatus(task.Status) {
+			return
+		}
+		switch task.Status {
+		case "SUCCESS", "SUCCEEDED":
+			success++
+		case "UNAVAILABLE":
+			unavailable++
+		case "TIMEOUT":
+			timeout++
+		default:
+			failed++
+		}
+		if task.UpdatedUnix > finishedUnix {
+			finishedUnix = task.UpdatedUnix
+		}
+	}
+
+	switch {
+	case success == len(targets):
+		run.Status = "SUCCEEDED"
+	case success > 0:
+		run.Status = "PARTIAL"
+	default:
+		run.Status = "FAILED"
+	}
+	run.Success = success
+	run.Failed = failed
+	run.Unavailable = unavailable
+	run.Timeout = timeout
+	run.FinishedUnix = finishedUnix
+	runs[runID] = run
 }
 
 func (s *State) FinishRun(b FinishRunBody) error { return s.applyFinishRun(b) }
@@ -1371,6 +1537,9 @@ func (s *State) applyFinishRun(b FinishRunBody) error {
 	}
 	run.Status, run.Success, run.Failed, run.Unavailable, run.Timeout, run.FinishedUnix = b.Status, b.Success, b.Failed, b.Unavailable, b.Timeout, b.FinishedUnix
 	runs[b.RunID] = run
+	if !b.Replication && terminalRunStatus(run.Status) {
+		s.syncBackupFire(run.RunID, b.LeaderTerm, 0, 0, run.Status)
+	}
 	if b.LeaderTerm > terms[b.RunID] {
 		terms[b.RunID] = b.LeaderTerm
 	}
