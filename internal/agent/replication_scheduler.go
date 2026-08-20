@@ -2,7 +2,10 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"sort"
 	"time"
 
 	"connectrpc.com/connect"
@@ -22,11 +25,29 @@ func (a raftReplicationControl) ClaimReplicationRuns(_ context.Context, term uin
 		return nil, fmt.Errorf("control plane unavailable")
 	}
 	state := n.View()
-	out := make([]backup.FrozenReplicationRun, 0)
-	for id, run := range state.ReplicationRuns {
-		if run.Status != "RUNNING" || run.LeaseUntilUnix > now.Unix() || state.ReplicationRunTerms[id] >= term {
+	plans, err := planAutomaticReplicationRuns(state, term, now)
+	if err != nil {
+		return nil, err
+	}
+	for _, plan := range plans {
+		cmd, err := control.EncodeCommand(control.CmdBackupRunCreate, plan.Create)
+		if err != nil {
+			return nil, err
+		}
+		if err := n.Apply(cmd, 5*time.Second); err != nil {
 			continue
 		}
+		for _, taskID := range plan.MissingTaskIDs {
+			task := plan.task(taskID)
+			cmd, err := control.EncodeCommand(control.CmdBackupTaskUpdate, control.UpdateTaskBody{OperationID: "replication-missing-" + plan.Create.Run.RunID + ":" + taskID, LeaderTerm: term, Replication: true, Task: control.ClusterBackupTask{RunID: task.RunID, TaskID: task.TaskID, SourceNodeID: task.SourceNodeID, NodeID: task.NodeID, Status: "FAILED", ErrorCode: "SOURCE_SNAPSHOT_MISSING", ErrorSummary: "no successful primary snapshot", UpdatedUnix: now.Unix()}})
+			if err == nil {
+				_ = n.Apply(cmd, 5*time.Second)
+			}
+		}
+	}
+	state = n.View()
+	runnable, takeovers := runnableReplicationRuns(state, term, now)
+	for _, id := range takeovers {
 		leaseUntil := now.Add(30 * time.Second).Unix()
 		cmd, err := control.EncodeCommand(control.CmdBackupRunClaim, control.RunClaimBody{OperationID: "replication-recover-" + id, RunID: id, LeaderTerm: term, UpdatedUnix: now.Unix(), LeaseUntilUnix: leaseUntil, Replication: true})
 		if err != nil || n.Apply(cmd, 5*time.Second) != nil {
@@ -36,10 +57,180 @@ func (a raftReplicationControl) ClaimReplicationRuns(_ context.Context, term uin
 		claimed := state.ReplicationRuns[id]
 		tasks := replicationFrozenTasks(state, claimed)
 		if len(tasks) != 0 {
-			out = append(out, backup.FrozenReplicationRun{RunID: claimed.RunID, PolicyID: claimed.PolicyID, PolicyRevision: claimed.PolicyRevision, LeaderTerm: term, LeaseExpiresUnix: claimed.LeaseUntilUnix, MaxConcurrency: claimed.MaxConcurrency, Tasks: tasks})
+			runnable = append(runnable, backup.FrozenReplicationRun{RunID: claimed.RunID, PolicyID: claimed.PolicyID, PolicyRevision: claimed.PolicyRevision, LeaderTerm: term, LeaseExpiresUnix: claimed.LeaseUntilUnix, MaxConcurrency: claimed.MaxConcurrency, Tasks: tasks})
 		}
 	}
-	return out, nil
+	return runnable, nil
+}
+
+type automaticReplicationPlan struct {
+	Create         control.CreateRunBody
+	MissingTaskIDs []string
+}
+
+func (p automaticReplicationPlan) task(id string) control.ClusterBackupTask {
+	for _, task := range p.Create.Tasks {
+		if task.TaskID == id {
+			return task
+		}
+	}
+	return control.ClusterBackupTask{}
+}
+
+func runnableReplicationRuns(state control.State, term uint64, now time.Time) ([]backup.FrozenReplicationRun, []string) {
+	ids := make([]string, 0, len(state.ReplicationRuns))
+	for id := range state.ReplicationRuns {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	runs := make([]backup.FrozenReplicationRun, 0)
+	takeovers := make([]string, 0)
+	for _, id := range ids {
+		run := state.ReplicationRuns[id]
+		if run.Status != "RUNNING" {
+			continue
+		}
+		owner := state.ReplicationRunTerms[id]
+		if owner == term && run.LeaseUntilUnix > now.Unix() {
+			tasks := replicationFrozenTasks(state, run)
+			if len(tasks) > 0 {
+				runs = append(runs, backup.FrozenReplicationRun{RunID: run.RunID, PolicyID: run.PolicyID, PolicyRevision: run.PolicyRevision, LeaderTerm: term, LeaseExpiresUnix: run.LeaseUntilUnix, MaxConcurrency: run.MaxConcurrency, Tasks: tasks})
+			}
+			continue
+		}
+		if owner < term || run.LeaseUntilUnix <= now.Unix() {
+			takeovers = append(takeovers, id)
+		}
+	}
+	return runs, takeovers
+}
+
+func planAutomaticReplicationRuns(state control.State, term uint64, now time.Time) ([]automaticReplicationPlan, error) {
+	ids := make([]string, 0, len(state.ReplicationPolicies))
+	for id := range state.ReplicationPolicies {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	plans := make([]automaticReplicationPlan, 0)
+	for _, id := range ids {
+		policy := state.ReplicationPolicies[id]
+		if !policy.Enabled || (policy.Trigger != "AFTER_PRIMARY_BACKUP" && policy.Trigger != "SCHEDULE") {
+			continue
+		}
+		if policy.Trigger == "AFTER_PRIMARY_BACKUP" {
+			for _, primaryRun := range successfulPrimaryRuns(state, policy.PrimaryPolicyIDs, now.Unix()) {
+				if plan, ok := automaticReplicationPlanForPrimary(state, policy, term, now, primaryRun, primaryRun.RunID); ok {
+					plans = append(plans, plan)
+				}
+			}
+		} else {
+			fire, err := backup.PreviousOrEqualInTimezone(policy.ScheduleCron, policy.Timezone, now)
+			if err != nil {
+				return nil, err
+			}
+			qualifier := fmt.Sprintf("%d", fire.Unix())
+			primary := latestPrimaryRun(state, policy.PrimaryPolicyIDs, fire.Unix())
+			if plan, ok := automaticReplicationPlanForPrimary(state, policy, term, now, primary, qualifier); ok {
+				plans = append(plans, plan)
+			}
+		}
+	}
+	return plans, nil
+}
+
+func automaticReplicationPlanForPrimary(state control.State, policy control.ReplicationPolicy, term uint64, now time.Time, primary control.ClusterBackupRun, qualifier string) (automaticReplicationPlan, bool) {
+	runID := automaticReplicationID("run", policy.PolicyID, qualifier)
+	if _, exists := state.ReplicationRuns[runID]; exists {
+		return automaticReplicationPlan{}, false
+	}
+	run := control.ClusterBackupRun{RunID: runID, PolicyID: policy.PolicyID, PolicyRevision: policy.Revision, TargetNodeIDs: replicationSourcesForPolicy(policy), Status: "RUNNING", CreatedUnix: now.Unix(), StartedUnix: now.Unix(), MaxConcurrency: policy.MaxConcurrency, LeaseUntilUnix: now.Add(30 * time.Second).Unix()}
+	plan := automaticReplicationPlan{Create: control.CreateRunBody{OperationID: "replication-auto-" + runID, LeaderTerm: term, Replication: true, Run: run}}
+	for _, route := range policy.Routes {
+		source := successfulPrimaryTask(state, primary.RunID, route.SourceNodeID)
+		for _, target := range route.TargetNodeIDs {
+			taskID := automaticReplicationID("task", policy.PolicyID, qualifier, route.SourceNodeID, target)
+			task := control.ClusterBackupTask{RunID: runID, TaskID: taskID, SourceNodeID: route.SourceNodeID, NodeID: target, Status: "PENDING", UpdatedUnix: now.Unix()}
+			if source.SnapshotID != "" && source.SHA256 != "" {
+				task.SnapshotID, task.SHA256 = source.SnapshotID, source.SHA256
+				task.TaskID = automaticReplicationID("task", policy.PolicyID, source.SnapshotID, target)
+			} else {
+				plan.MissingTaskIDs = append(plan.MissingTaskIDs, taskID)
+			}
+			plan.Create.Tasks = append(plan.Create.Tasks, task)
+		}
+	}
+	return plan, true
+}
+
+func latestPrimaryRun(state control.State, policyIDs []string, before int64) control.ClusterBackupRun {
+	allowed := map[string]bool{}
+	for _, id := range policyIDs {
+		allowed[id] = true
+	}
+	var best control.ClusterBackupRun
+	for _, run := range state.BackupRuns {
+		if !allowed[run.PolicyID] || (run.Status != "SUCCEEDED" && run.Status != "SUCCESS" && run.Status != "PARTIAL") || run.FinishedUnix > before {
+			continue
+		}
+		if run.FinishedUnix > best.FinishedUnix || (run.FinishedUnix == best.FinishedUnix && run.RunID > best.RunID) {
+			best = run
+		}
+	}
+	return best
+}
+func successfulPrimaryRuns(state control.State, policyIDs []string, before int64) []control.ClusterBackupRun {
+	allowed := map[string]bool{}
+	for _, id := range policyIDs {
+		allowed[id] = true
+	}
+	out := make([]control.ClusterBackupRun, 0)
+	for _, run := range state.BackupRuns {
+		if allowed[run.PolicyID] && (run.Status == "SUCCEEDED" || run.Status == "SUCCESS" || run.Status == "PARTIAL") && run.FinishedUnix <= before {
+			out = append(out, run)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].FinishedUnix == out[j].FinishedUnix {
+			return out[i].RunID < out[j].RunID
+		}
+		return out[i].FinishedUnix < out[j].FinishedUnix
+	})
+	return out
+}
+func successfulPrimaryTask(state control.State, runID, source string) control.ClusterBackupTask {
+	var best control.ClusterBackupTask
+	for _, task := range state.BackupTasks {
+		if task.RunID == runID && task.NodeID == source && (task.Status == "SUCCEEDED" || task.Status == "SUCCESS") && task.UpdatedUnix >= best.UpdatedUnix {
+			best = task
+		}
+	}
+	return best
+}
+func replicationSourcesForPolicy(policy control.ReplicationPolicy) []string {
+	seen := map[string]bool{}
+	for _, route := range policy.Routes {
+		seen[route.SourceNodeID] = true
+	}
+	ids := make([]string, 0, len(seen))
+	for id := range seen {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+func automaticReplicationID(kind string, values ...string) string {
+	sum := sha256.Sum256([]byte(kind + "\x00" + joinReplicationValues(values)))
+	return kind + "-" + hex.EncodeToString(sum[:12])
+}
+func joinReplicationValues(values []string) string {
+	out := ""
+	for i, v := range values {
+		if i != 0 {
+			out += "\x00"
+		}
+		out += v
+	}
+	return out
 }
 
 func replicationFrozenTasks(state control.State, run control.ClusterBackupRun) []backup.FrozenReplicationTask {

@@ -1380,7 +1380,7 @@ func (s *State) ClaimRun(b RunClaimBody) (bool, error) {
 	if !ok {
 		return false, errcode.E(errcode.NOT_FOUND, "run not found")
 	}
-	if terminalRunStatus(run.Status) || run.LeaseUntilUnix > b.UpdatedUnix || b.LeaderTerm <= terms[b.RunID] {
+	if terminalRunStatus(run.Status) || run.LeaseUntilUnix > b.UpdatedUnix || (!b.Replication && b.LeaderTerm <= terms[b.RunID]) || (b.Replication && b.LeaderTerm < terms[b.RunID]) {
 		return false, nil
 	}
 	run.LeaseUntilUnix = b.LeaseUntilUnix
@@ -1424,8 +1424,10 @@ func (s *State) applyRetryFailedTasks(b RetryFailedTasksBody) error {
 		}
 		retried = true
 		task.Status = "PENDING"
-		task.SnapshotID = ""
-		task.SHA256 = ""
+		if !b.Replication {
+			task.SnapshotID = ""
+			task.SHA256 = ""
+		}
 		task.Bytes = 0
 		task.ErrorCode = ""
 		task.ErrorSummary = ""
@@ -1491,7 +1493,7 @@ func (s *State) applyUpdateTask(b UpdateTaskBody) error {
 	if b.LeaderTerm > terms[b.Task.RunID] {
 		terms[b.Task.RunID] = b.LeaderTerm
 	}
-	aggregateTerminalRun(runs, tasks, b.Task.RunID)
+	aggregateTerminalRun(runs, tasks, b.Task.RunID, b.Replication)
 	if !b.Replication {
 		if run := runs[b.Task.RunID]; terminalRunStatus(run.Status) {
 			s.syncBackupFire(run.RunID, b.LeaderTerm, 0, 0, run.Status)
@@ -1526,9 +1528,16 @@ func retryableTaskStatus(status string) bool {
 	}
 }
 
-func aggregateTerminalRun(runs map[string]ClusterBackupRun, tasks map[string]ClusterBackupTask, runID string) {
+func aggregateTerminalRun(runs map[string]ClusterBackupRun, tasks map[string]ClusterBackupTask, runID string, replication bool) {
 	run, ok := runs[runID]
-	if !ok || terminalRunStatus(run.Status) || len(run.TargetNodeIDs) == 0 {
+	if !ok || terminalRunStatus(run.Status) {
+		return
+	}
+	if replication {
+		aggregateReplicationTerminalRun(runs, tasks, runID)
+		return
+	}
+	if len(run.TargetNodeIDs) == 0 {
 		return
 	}
 
@@ -1588,6 +1597,51 @@ func aggregateTerminalRun(runs map[string]ClusterBackupRun, tasks map[string]Clu
 	run.Unavailable = unavailable
 	run.Timeout = timeout
 	run.FinishedUnix = finishedUnix
+	runs[runID] = run
+}
+
+// Replication routes are identified by task ID, not target node. Several
+// sources may intentionally replicate to one target, so target de-duplication
+// would leave the run permanently non-terminal.
+func aggregateReplicationTerminalRun(runs map[string]ClusterBackupRun, tasks map[string]ClusterBackupTask, runID string) {
+	run := runs[runID]
+	routeTasks := make([]ClusterBackupTask, 0)
+	for _, task := range tasks {
+		if task.RunID == runID {
+			routeTasks = append(routeTasks, task)
+		}
+	}
+	if len(routeTasks) == 0 {
+		return
+	}
+	var success, failed, unavailable, timeout int
+	var finished int64
+	for _, task := range routeTasks {
+		if !terminalTaskStatus(task.Status) {
+			return
+		}
+		switch task.Status {
+		case "SUCCESS", "SUCCEEDED":
+			success++
+		case "UNAVAILABLE":
+			unavailable++
+		case "TIMEOUT":
+			timeout++
+		default:
+			failed++
+		}
+		if task.UpdatedUnix > finished {
+			finished = task.UpdatedUnix
+		}
+	}
+	if success == len(routeTasks) {
+		run.Status = "SUCCEEDED"
+	} else if success > 0 {
+		run.Status = "PARTIAL"
+	} else {
+		run.Status = "FAILED"
+	}
+	run.Success, run.Failed, run.Unavailable, run.Timeout, run.FinishedUnix = success, failed, unavailable, timeout, finished
 	runs[runID] = run
 }
 

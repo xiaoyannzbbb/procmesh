@@ -439,6 +439,63 @@ func TestFSM_ReplicationRunCreateCommitsTasksAtomically(t *testing.T) {
 	}
 }
 
+func TestFSM_ReplicationRetryPreservesFrozenSnapshotBinding(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	state := control.NewState()
+	state.Members["source"] = control.Member{NodeID: "source", Status: control.MemberAdmitted}
+	state.Members["target"] = control.Member{NodeID: "target", Status: control.MemberAdmitted}
+	state.ReplicationPolicies["rp-retry"] = control.ReplicationPolicy{
+		PolicyID: "rp-retry", Revision: 1, SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"source"},
+		Routes: []control.ReplicationRoute{{SourceNodeID: "source", TargetNodeIDs: []string{"target"}}},
+	}
+	run := control.ClusterBackupRun{RunID: "run-retry-replica", PolicyID: "rp-retry", PolicyRevision: 1, TargetNodeIDs: []string{"source"}, Status: "RUNNING"}
+	task := control.ClusterBackupTask{
+		RunID: run.RunID, TaskID: "task-retry-replica", NodeID: "target", SourceNodeID: "source",
+		SnapshotID: "snapshot-frozen", SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Status: "PENDING",
+	}
+	if err := state.CreateRun(control.CreateRunBody{OperationID: "op-create-replica", LeaderTerm: 5, Replication: true, Run: run, Tasks: []control.ClusterBackupTask{task}}); err != nil {
+		t.Fatal(err)
+	}
+	task.Status = "FAILED"
+	task.ErrorCode = "UNAVAILABLE"
+	if err := state.UpdateTask(control.UpdateTaskBody{OperationID: "op-fail-replica", LeaderTerm: 5, Replication: true, Task: task}); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.RetryFailedTasks(control.RetryFailedTasksBody{OperationID: "op-retry-replica", RunID: run.RunID, LeaderTerm: 5, UpdatedUnix: now.Unix(), Replication: true}); err != nil {
+		t.Fatal(err)
+	}
+	got := state.ReplicationTasks[run.RunID+":"+task.TaskID]
+	if got.Status != "PENDING" || got.SnapshotID != task.SnapshotID || got.SHA256 != task.SHA256 {
+		t.Fatalf("retried task=%+v, want frozen snapshot/checksum preserved", got)
+	}
+}
+
+func TestFSM_ReplicationAggregatesRoutesSharingTarget(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	for name, statuses := range map[string][]string{"succeeded": {"SUCCEEDED", "SUCCEEDED"}, "partial": {"SUCCEEDED", "FAILED"}, "failed": {"FAILED", "FAILED"}} {
+		t.Run(name, func(t *testing.T) {
+			state := control.NewState()
+			state.ReplicationRuns["rep"] = control.ClusterBackupRun{RunID: "rep", PolicyID: "rp", Status: "RUNNING", TargetNodeIDs: []string{"source-a", "source-b"}}
+			state.ReplicationRunTerms["rep"] = 3
+			for i := range statuses {
+				task := control.ClusterBackupTask{RunID: "rep", TaskID: fmt.Sprintf("route-%d", i), SourceNodeID: fmt.Sprintf("source-%d", i), NodeID: "shared-target", SnapshotID: fmt.Sprintf("snap-%d", i), SHA256: strings.Repeat("a", 64), Status: "PENDING"}
+				state.ReplicationTasks[task.RunID+":"+task.TaskID] = task
+			}
+			for i, status := range statuses {
+				task := state.ReplicationTasks["rep:"+fmt.Sprintf("route-%d", i)]
+				task.Status, task.UpdatedUnix = status, now.Unix()+int64(i)
+				if err := state.UpdateTask(control.UpdateTaskBody{OperationID: fmt.Sprintf("op-%s-%d", name, i), LeaderTerm: 3, Replication: true, Task: task}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want := map[string]string{"succeeded": "SUCCEEDED", "partial": "PARTIAL", "failed": "FAILED"}[name]
+			if got := state.ReplicationRuns["rep"].Status; got != want {
+				t.Fatalf("status=%s want=%s", got, want)
+			}
+		})
+	}
+}
+
 func TestFSM_RunMetadataPruningAndSnapshotSafety(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	s := control.NewState()
