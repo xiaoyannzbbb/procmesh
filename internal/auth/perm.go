@@ -31,6 +31,8 @@ const (
 	PermAlertManage         = "alert.manage"
 	PermBackupRead          = "backup.read"
 	PermBackupManage        = "backup.manage"
+	PermReplicationRead     = "replication.read"
+	PermReplicationManage   = "replication.manage"
 	CookieName              = "procmesh_session"
 	HeaderCSRF              = "X-CSRF-Token"
 )
