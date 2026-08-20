@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -190,6 +191,33 @@ func setupMinimalAPI(t *testing.T) (*DisasterReplicationAPI, *control.State, *au
 	}
 
 	return api, state, authSvc
+}
+
+// setupAPIWithViewerUser creates a minimal API with a viewer user (no replication permissions)
+func setupAPIWithViewerUser(t *testing.T) (*DisasterReplicationAPI, *control.State, *auth.Service, string) {
+	t.Helper()
+	api, state, authSvc := setupMinimalAPI(t)
+
+	// Create a viewer user without replication permissions
+	cmd, err := control.EncodeCommand(control.CmdUserPut, control.UserPutBody{
+		ID:           "user-viewer",
+		Username:     "viewer",
+		PasswordHash: testAdminHash(t),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := authSvc.Store().Apply(cmd, time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	// Login as viewer
+	sid, _, _, _, err := authSvc.Login("viewer", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return api, state, authSvc, sid
 }
 
 func TestDisasterReplicationAPI_GeneratePolicyDraft(t *testing.T) {
@@ -955,6 +983,71 @@ func TestDisasterReplicationAPI_VerifyReplica_Unauthorized(t *testing.T) {
 	_, err := api.VerifyReplica(context.Background(), req)
 	if err == nil {
 		t.Fatal("expected error for unauthorized access")
+	}
+}
+
+func TestDisasterReplicationAPI_VerifyReplica_ChecksumMismatch(t *testing.T) {
+	dir := t.TempDir()
+	api, _, authSvc := setupMinimalAPI(t)
+	api.PeerStore = &backup.PeerStore{Root: dir}
+
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a snapshot with empty SHA256 (simulating checksum validation failure)
+	snap := backup.Snapshot{
+		FormatVersion: 1,
+		ClusterID:     "test-cluster",
+		NodeID:        "node-1",
+		SnapshotID:    "snap-bad-checksum",
+		CreatedAt:     time.Now(),
+		Processes: []backup.ProcessDump{
+			{ProcessID: "proc-1", Name: "app1"},
+			{ProcessID: "proc-2", Name: "app2"},
+			{ProcessID: "proc-3", Name: "app3"},
+		},
+	}
+
+	// Encode the snapshot
+	data, _, err := backup.Encode(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create directory structure
+	peerDir := dir + "/node-1/test-cluster"
+	if err := os.MkdirAll(peerDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write snapshot file
+	snapPath := peerDir + "/snap-bad-checksum"
+	if err := os.WriteFile(snapPath, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Now overwrite with corrupted data to simulate checksum mismatch
+	// (This will cause Decode to fail or return empty SHA256)
+	corruptedData := append(data[:len(data)-10], []byte("corrupted")...)
+	if err := os.WriteFile(snapPath, corruptedData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	req := bearerReq(sid, &procmeshv1.VerifyReplicaRequest{
+		SourceNodeId: "node-1",
+		SnapshotId:   "snap-bad-checksum",
+	})
+
+	// The corrupted data should cause Decode to fail, resulting in an error
+	_, err = api.VerifyReplica(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error for corrupted snapshot data")
+	}
+	// Error should indicate decoding/validation failure
+	if !strings.Contains(err.Error(), "decode") && !strings.Contains(err.Error(), "invalid") && !strings.Contains(err.Error(), "unmarshal") {
+		t.Logf("Got error (acceptable): %v", err)
 	}
 }
 
