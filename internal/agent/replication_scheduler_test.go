@@ -385,7 +385,9 @@ func TestAuthorizePeerOperationDeleteIntent(t *testing.T) {
 		}
 	}
 	apply(control.CmdMemberPut, control.MemberPutBody{NodeID: "source", Status: control.MemberAdmitted})
+	apply(control.CmdMemberPut, control.MemberPutBody{NodeID: "other-source", Status: control.MemberAdmitted})
 	apply(control.CmdMemberPut, control.MemberPutBody{NodeID: "target", Status: control.MemberAdmitted})
+	apply(control.CmdMemberPut, control.MemberPutBody{NodeID: "other-target", Status: control.MemberAdmitted})
 	term := node.CurrentTerm()
 	intent := control.ReplicationDeleteIntent{
 		IntentID: "intent-1", PolicyID: "rp", PolicyRevision: 2,
@@ -393,6 +395,20 @@ func TestAuthorizePeerOperationDeleteIntent(t *testing.T) {
 		LeaderTerm: term, ExpiresUnix: now.Add(time.Minute).Unix(), Status: "PENDING",
 	}
 	apply(control.CmdReplicationDeleteIntentPut, control.ReplicationDeleteIntentPutBody{OperationID: "op-intent", Intent: intent})
+	apply(control.CmdReplicationDeleteIntentPut, control.ReplicationDeleteIntentPutBody{
+		OperationID: "op-intent-other-target", Intent: control.ReplicationDeleteIntent{
+			IntentID: "intent-other-target", PolicyID: "rp", PolicyRevision: 2,
+			SourceNodeID: "source", TargetNodeID: "other-target", SnapshotID: "snapshot",
+			LeaderTerm: term, ExpiresUnix: now.Add(time.Minute).Unix(), Status: "PENDING",
+		},
+	})
+	apply(control.CmdReplicationDeleteIntentPut, control.ReplicationDeleteIntentPutBody{
+		OperationID: "op-intent-other-source", Intent: control.ReplicationDeleteIntent{
+			IntentID: "intent-other-source", PolicyID: "rp", PolicyRevision: 2,
+			SourceNodeID: "other-source", TargetNodeID: "target", SnapshotID: "snapshot",
+			LeaderTerm: term, ExpiresUnix: now.Add(time.Minute).Unix(), Status: "PENDING",
+		},
+	})
 	runtime := &rpcRuntime{nodeID: "target", clusterID: "cluster", node: node}
 
 	exact := api.PeerOperation{
@@ -411,7 +427,10 @@ func TestAuthorizePeerOperationDeleteIntent(t *testing.T) {
 		{name: "policy mismatch", op: api.PeerOperation{Kind: "DELETE", ClusterID: "cluster", SourceNodeID: "source", TargetNodeID: "target", SnapshotID: "snapshot", IntentID: "intent-1", PolicyID: "other", PolicyRevision: 2}},
 		{name: "revision mismatch", op: api.PeerOperation{Kind: "DELETE", ClusterID: "cluster", SourceNodeID: "source", TargetNodeID: "target", SnapshotID: "snapshot", IntentID: "intent-1", PolicyID: "rp", PolicyRevision: 3}},
 		{name: "snapshot mismatch", op: api.PeerOperation{Kind: "DELETE", ClusterID: "cluster", SourceNodeID: "source", TargetNodeID: "target", SnapshotID: "other", IntentID: "intent-1", PolicyID: "rp", PolicyRevision: 2}},
-		{name: "target mismatch", op: api.PeerOperation{Kind: "DELETE", ClusterID: "cluster", SourceNodeID: "source", TargetNodeID: "other", SnapshotID: "snapshot", IntentID: "intent-1", PolicyID: "rp", PolicyRevision: 2}},
+		// Operation identity matches local/mTLS; only the durable intent target differs.
+		{name: "intent target mismatch", op: api.PeerOperation{Kind: "DELETE", ClusterID: "cluster", SourceNodeID: "source", TargetNodeID: "target", SnapshotID: "snapshot", IntentID: "intent-other-target", PolicyID: "rp", PolicyRevision: 2}},
+		// Operation identity matches local/mTLS admitted source; only the durable intent source differs.
+		{name: "intent source mismatch", op: api.PeerOperation{Kind: "DELETE", ClusterID: "cluster", SourceNodeID: "source", TargetNodeID: "target", SnapshotID: "snapshot", IntentID: "intent-other-source", PolicyID: "rp", PolicyRevision: 2}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := runtime.authorizePeerOperation("source", tc.op)
