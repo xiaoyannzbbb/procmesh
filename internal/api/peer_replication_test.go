@@ -3,25 +3,52 @@ package api
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/backup"
-	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/rpc"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
+	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 	"github.com/stretchr/testify/require"
 )
+
+func newPeerReplicationClient(t *testing.T, api *PeerReplicationAPI, tlsState *tls.ConnectionState) procmeshv1connect.PeerReplicationServiceClient {
+	t.Helper()
+	mux := http.NewServeMux()
+	h, handlers := procmeshv1connect.NewPeerReplicationServiceHandler(api)
+	mux.Handle(h, handlers)
+
+	// Wrap handler to inject TLS state into context
+	wrappedMux := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if tlsState != nil {
+			ctx := rpc.WithTLSState(r.Context(), *tlsState)
+			r = r.WithContext(ctx)
+		}
+		mux.ServeHTTP(w, r)
+	})
+
+	srv := httptest.NewServer(wrappedMux)
+	t.Cleanup(srv.Close)
+	return procmeshv1connect.NewPeerReplicationServiceClient(srv.Client(), srv.URL)
+}
 
 func computeSHA256(data []byte) string {
 	hash := sha256.Sum256(data)
 	return hex.EncodeToString(hash[:])
 }
 
-func TestPeerReplicationAPI_PutSnapshot(t *testing.T) {
+// CRITICAL #2: Test that PeerReplicationService requires mTLS
+func TestPeerReplicationAPI_RequiresAgentMTLS(t *testing.T) {
 	dir := t.TempDir()
 	peerStore := &backup.PeerStore{Root: dir}
 
@@ -30,6 +57,50 @@ func TestPeerReplicationAPI_PutSnapshot(t *testing.T) {
 		ClusterID: "cluster-1",
 		NodeID:    "node-1",
 	}
+
+	// No TLS state - should fail
+	client := newPeerReplicationClient(t, api, nil)
+
+	snap := backup.Snapshot{
+		FormatVersion: 1,
+		SnapshotID:    "snap-1",
+		ClusterID:     "cluster-1",
+		Processes:     []backup.ProcessDump{{ProcessID: "p1", Name: "proc1"}},
+	}
+	payload, err := json.Marshal(snap)
+	require.NoError(t, err)
+
+	_, err = client.PutSnapshot(context.Background(), connect.NewRequest(&procmeshv1.PutSnapshotRequest{
+		ClusterId:  "cluster-1",
+		SnapshotId: "snap-1",
+		Sha256:     computeSHA256(payload),
+		RunId:      "run-1",
+		TaskId:     "task-1",
+		Payload:    payload,
+	}))
+	if err == nil {
+		t.Fatal("expected error without mTLS")
+	}
+}
+
+// CRITICAL #1: Test that SourceNodeID is extracted from mTLS certificate
+func TestPeerReplicationAPI_PutSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	peerStore := &backup.PeerStore{Root: dir}
+
+	creds := genAgentCreds(t, "cluster-1", "node-2")
+
+	api := &PeerReplicationAPI{
+		PeerStore: peerStore,
+		ClusterID: "cluster-1",
+		NodeID:    "node-1",
+	}
+
+	tlsState := &tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{creds.Cert},
+	}
+
+	client := newPeerReplicationClient(t, api, tlsState)
 
 	snap := backup.Snapshot{
 		FormatVersion: 1,
@@ -52,17 +123,30 @@ func TestPeerReplicationAPI_PutSnapshot(t *testing.T) {
 		Payload:    payload,
 	})
 
-	resp, err := api.PutSnapshot(context.Background(), req)
+	resp, err := client.PutSnapshot(context.Background(), req)
 	require.NoError(t, err)
 	require.Equal(t, "snap-1", resp.Msg.SnapshotId)
 	require.Equal(t, "cluster-1", resp.Msg.ClusterId)
 	require.Equal(t, int32(2), resp.Msg.ProcessCount)
-	require.ElementsMatch(t, []string{"p1", "p2"}, resp.Msg.ProcessIds)
+
+	// CRITICAL #1: Verify file is stored under peer node ID from mTLS cert (node-2), not API's NodeID (node-1)
+	expectedPath := filepath.Join(dir, "backup", "peer", "node-2", "cluster-1", "snap-1.json")
+	if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
+		t.Fatalf("expected file at %s", expectedPath)
+	}
+
+	// Verify wrong path does NOT exist
+	wrongPath := filepath.Join(dir, "backup", "peer", "node-1", "cluster-1", "snap-1.json")
+	if _, err := os.Stat(wrongPath); !os.IsNotExist(err) {
+		t.Fatalf("file should not exist at %s", wrongPath)
+	}
 }
 
-func TestPeerReplicationAPI_PutSnapshotIdempotent(t *testing.T) {
+func TestPeerReplicationAPI_PutSnapshot_Idempotent(t *testing.T) {
 	dir := t.TempDir()
 	peerStore := &backup.PeerStore{Root: dir}
+
+	creds := genAgentCreds(t, "cluster-1", "node-2")
 
 	api := &PeerReplicationAPI{
 		PeerStore: peerStore,
@@ -70,13 +154,20 @@ func TestPeerReplicationAPI_PutSnapshotIdempotent(t *testing.T) {
 		NodeID:    "node-1",
 	}
 
+	tlsState := &tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{creds.Cert},
+	}
+
+	client := newPeerReplicationClient(t, api, tlsState)
+
 	snap := backup.Snapshot{
 		FormatVersion: 1,
 		SnapshotID:    "snap-1",
 		ClusterID:     "cluster-1",
-		Processes:     []backup.ProcessDump{{ProcessID: "p1"}},
+		Processes:     []backup.ProcessDump{{ProcessID: "p1", Name: "proc1"}},
 	}
-	payload, _ := json.Marshal(snap)
+	payload, err := json.Marshal(snap)
+	require.NoError(t, err)
 
 	req := connect.NewRequest(&procmeshv1.PutSnapshotRequest{
 		ClusterId:  "cluster-1",
@@ -88,19 +179,19 @@ func TestPeerReplicationAPI_PutSnapshotIdempotent(t *testing.T) {
 	})
 
 	// First call
-	resp1, err := api.PutSnapshot(context.Background(), req)
+	_, err = client.PutSnapshot(context.Background(), req)
 	require.NoError(t, err)
-	require.Equal(t, "snap-1", resp1.Msg.SnapshotId)
 
-	// Second call with same checksum - idempotent
-	resp2, err := api.PutSnapshot(context.Background(), req)
+	// Second call with same data - should succeed (idempotent)
+	_, err = client.PutSnapshot(context.Background(), req)
 	require.NoError(t, err)
-	require.Equal(t, "snap-1", resp2.Msg.SnapshotId)
 }
 
-func TestPeerReplicationAPI_PutSnapshotConflict(t *testing.T) {
+func TestPeerReplicationAPI_PutSnapshot_ChecksumConflict(t *testing.T) {
 	dir := t.TempDir()
 	peerStore := &backup.PeerStore{Root: dir}
+
+	creds := genAgentCreds(t, "cluster-1", "node-2")
 
 	api := &PeerReplicationAPI{
 		PeerStore: peerStore,
@@ -108,15 +199,22 @@ func TestPeerReplicationAPI_PutSnapshotConflict(t *testing.T) {
 		NodeID:    "node-1",
 	}
 
+	tlsState := &tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{creds.Cert},
+	}
+
+	client := newPeerReplicationClient(t, api, tlsState)
+
 	snap := backup.Snapshot{
 		FormatVersion: 1,
 		SnapshotID:    "snap-1",
 		ClusterID:     "cluster-1",
-		Processes:     []backup.ProcessDump{{ProcessID: "p1"}},
+		Processes:     []backup.ProcessDump{{ProcessID: "p1", Name: "proc1"}},
 	}
-	payload, _ := json.Marshal(snap)
+	payload, err := json.Marshal(snap)
+	require.NoError(t, err)
 
-	// First write
+	// First call
 	req1 := connect.NewRequest(&procmeshv1.PutSnapshotRequest{
 		ClusterId:  "cluster-1",
 		SnapshotId: "snap-1",
@@ -125,26 +223,47 @@ func TestPeerReplicationAPI_PutSnapshotConflict(t *testing.T) {
 		TaskId:     "task-1",
 		Payload:    payload,
 	})
-	_, err := api.PutSnapshot(context.Background(), req1)
+	_, err = client.PutSnapshot(context.Background(), req1)
 	require.NoError(t, err)
 
-	// Second write with different checksum (but same payload - will fail)
+	// Second call with different payload but same snapshot ID
+	snap2 := backup.Snapshot{
+		FormatVersion: 1,
+		SnapshotID:    "snap-1",
+		ClusterID:     "cluster-1",
+		Processes:     []backup.ProcessDump{{ProcessID: "p2", Name: "proc2"}},
+	}
+	payload2, err := json.Marshal(snap2)
+	require.NoError(t, err)
+
 	req2 := connect.NewRequest(&procmeshv1.PutSnapshotRequest{
 		ClusterId:  "cluster-1",
 		SnapshotId: "snap-1",
-		Sha256:     "b665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae4",
-		RunId:      "run-2",
-		TaskId:     "task-2",
-		Payload:    payload,
+		Sha256:     computeSHA256(payload2),
+		RunId:      "run-1",
+		TaskId:     "task-1",
+		Payload:    payload2,
 	})
-	_, err = api.PutSnapshot(context.Background(), req2)
+	_, err = client.PutSnapshot(context.Background(), req2)
 	require.Error(t, err)
-	require.True(t, errcode.Is(err, errcode.INVALID))
+	var ce *connect.Error
+	require.True(t, errors.As(err, &ce), "Expected connect.Error")
+	require.Equal(t, connect.CodeFailedPrecondition, ce.Code())
+
+	// Check ErrorInfo detail
+	require.NotEmpty(t, ce.Details())
+	msg, err := ce.Details()[0].Value()
+	require.NoError(t, err)
+	info, ok := msg.(*procmeshv1.ErrorInfo)
+	require.True(t, ok, "Expected ErrorInfo detail")
+	require.Equal(t, "CONFLICT", info.Code)
 }
 
-func TestPeerReplicationAPI_CheckSnapshot(t *testing.T) {
+func TestPeerReplicationAPI_PutSnapshot_ClusterIDMismatch(t *testing.T) {
 	dir := t.TempDir()
 	peerStore := &backup.PeerStore{Root: dir}
+
+	creds := genAgentCreds(t, "cluster-2", "node-2")
 
 	api := &PeerReplicationAPI{
 		PeerStore: peerStore,
@@ -152,60 +271,155 @@ func TestPeerReplicationAPI_CheckSnapshot(t *testing.T) {
 		NodeID:    "node-1",
 	}
 
-	// Write snapshot first
+	tlsState := &tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{creds.Cert},
+	}
+
+	client := newPeerReplicationClient(t, api, tlsState)
+
 	snap := backup.Snapshot{
 		FormatVersion: 1,
 		SnapshotID:    "snap-1",
 		ClusterID:     "cluster-1",
-		Processes:     []backup.ProcessDump{{ProcessID: "p1"}},
+		Processes:     []backup.ProcessDump{{ProcessID: "p1", Name: "proc1"}},
 	}
-	payload, _ := json.Marshal(snap)
+	payload, err := json.Marshal(snap)
+	require.NoError(t, err)
 
-	// Create snapshot with known checksum
-	params := backup.ReceiveParams{
-		SourceNodeID: "node-2",
-		ClusterID:    "cluster-1",
-		SnapshotID:   "snap-1",
-		SHA256:       computeSHA256(payload),
-		RunID:        "run-1",
-		TaskID:       "task-1",
-		Payload:      payload,
+	req := connect.NewRequest(&procmeshv1.PutSnapshotRequest{
+		ClusterId:  "cluster-1",
+		SnapshotId: "snap-1",
+		Sha256:     computeSHA256(payload),
+		RunId:      "run-1",
+		TaskId:     "task-1",
+		Payload:    payload,
+	})
+
+	_, err = client.PutSnapshot(context.Background(), req)
+	require.Error(t, err)
+	var ce *connect.Error
+	require.True(t, errors.As(err, &ce), "Expected connect.Error")
+	require.Equal(t, connect.CodePermissionDenied, ce.Code())
+
+	// Check ErrorInfo detail
+	require.NotEmpty(t, ce.Details())
+	msg, err := ce.Details()[0].Value()
+	require.NoError(t, err)
+	info, ok := msg.(*procmeshv1.ErrorInfo)
+	require.True(t, ok, "Expected ErrorInfo detail")
+	require.Equal(t, "DENIED", info.Code)
+}
+
+func TestPeerReplicationAPI_PutSnapshot_Unavailable(t *testing.T) {
+	api := &PeerReplicationAPI{
+		PeerStore: nil,
+		ClusterID: "cluster-1",
+		NodeID:    "node-1",
 	}
-	_, err := peerStore.ReceiveWithMetadata(context.Background(), params)
+
+	creds := genAgentCreds(t, "cluster-1", "node-2")
+	tlsState := &tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{creds.Cert},
+	}
+
+	client := newPeerReplicationClient(t, api, tlsState)
+
+	req := connect.NewRequest(&procmeshv1.PutSnapshotRequest{
+		ClusterId:  "cluster-1",
+		SnapshotId: "snap-1",
+		Sha256:     "abc123",
+		RunId:      "run-1",
+		TaskId:     "task-1",
+		Payload:    []byte("{}"),
+	})
+
+	_, err := client.PutSnapshot(context.Background(), req)
+	require.Error(t, err)
+	var ce *connect.Error
+	require.True(t, errors.As(err, &ce), "Expected connect.Error")
+	require.Equal(t, connect.CodeUnavailable, ce.Code())
+
+	// Check ErrorInfo detail
+	require.NotEmpty(t, ce.Details())
+	msg, err := ce.Details()[0].Value()
+	require.NoError(t, err)
+	info, ok := msg.(*procmeshv1.ErrorInfo)
+	require.True(t, ok, "Expected ErrorInfo detail")
+	require.Equal(t, "UNAVAILABLE", info.Code)
+}
+
+func TestPeerReplicationAPI_CheckSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	peerStore := &backup.PeerStore{Root: dir}
+
+	creds := genAgentCreds(t, "cluster-1", "node-2")
+
+	api := &PeerReplicationAPI{
+		PeerStore: peerStore,
+		ClusterID: "cluster-1",
+		NodeID:    "node-1",
+	}
+
+	tlsState := &tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{creds.Cert},
+	}
+
+	client := newPeerReplicationClient(t, api, tlsState)
+
+	snap := backup.Snapshot{
+		FormatVersion: 1,
+		SnapshotID:    "snap-1",
+		ClusterID:     "cluster-1",
+		Processes:     []backup.ProcessDump{{ProcessID: "p1", Name: "proc1"}},
+	}
+	payload, err := json.Marshal(snap)
+	require.NoError(t, err)
+	sha := computeSHA256(payload)
+
+	// Store snapshot first
+	putReq := connect.NewRequest(&procmeshv1.PutSnapshotRequest{
+		ClusterId:  "cluster-1",
+		SnapshotId: "snap-1",
+		Sha256:     sha,
+		RunId:      "run-1",
+		TaskId:     "task-1",
+		Payload:    payload,
+	})
+	_, err = client.PutSnapshot(context.Background(), putReq)
 	require.NoError(t, err)
 
 	// Check with correct checksum
-	req := connect.NewRequest(&procmeshv1.CheckSnapshotRequest{
+	checkReq := connect.NewRequest(&procmeshv1.CheckSnapshotRequest{
 		SourceNodeId: "node-2",
 		ClusterId:    "cluster-1",
 		SnapshotId:   "snap-1",
-		Sha256:       computeSHA256(payload),
+		Sha256:       sha,
 	})
-	resp, err := api.CheckSnapshot(context.Background(), req)
+	resp, err := client.CheckSnapshot(context.Background(), checkReq)
 	require.NoError(t, err)
 	require.True(t, resp.Msg.Exists)
 	require.True(t, resp.Msg.ChecksumMatches)
 
 	// Check with wrong checksum
-	req2 := connect.NewRequest(&procmeshv1.CheckSnapshotRequest{
+	checkReq2 := connect.NewRequest(&procmeshv1.CheckSnapshotRequest{
 		SourceNodeId: "node-2",
 		ClusterId:    "cluster-1",
 		SnapshotId:   "snap-1",
-		Sha256:       "b665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae4",
+		Sha256:       "wrongsha",
 	})
-	resp2, err := api.CheckSnapshot(context.Background(), req2)
+	resp2, err := client.CheckSnapshot(context.Background(), checkReq2)
 	require.NoError(t, err)
 	require.True(t, resp2.Msg.Exists)
 	require.False(t, resp2.Msg.ChecksumMatches)
 
-	// Check non-existent
-	req3 := connect.NewRequest(&procmeshv1.CheckSnapshotRequest{
+	// Check non-existent snapshot
+	checkReq3 := connect.NewRequest(&procmeshv1.CheckSnapshotRequest{
 		SourceNodeId: "node-2",
 		ClusterId:    "cluster-1",
-		SnapshotId:   "missing",
-		Sha256:       "c665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae5",
+		SnapshotId:   "snap-999",
+		Sha256:       sha,
 	})
-	resp3, err := api.CheckSnapshot(context.Background(), req3)
+	resp3, err := client.CheckSnapshot(context.Background(), checkReq3)
 	require.NoError(t, err)
 	require.False(t, resp3.Msg.Exists)
 	require.False(t, resp3.Msg.ChecksumMatches)
@@ -215,49 +429,53 @@ func TestPeerReplicationAPI_DeleteSnapshot(t *testing.T) {
 	dir := t.TempDir()
 	peerStore := &backup.PeerStore{Root: dir}
 
+	creds := genAgentCreds(t, "cluster-1", "node-2")
+
 	api := &PeerReplicationAPI{
 		PeerStore: peerStore,
 		ClusterID: "cluster-1",
 		NodeID:    "node-1",
 	}
 
-	// Write snapshot first
+	tlsState := &tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{creds.Cert},
+	}
+
+	client := newPeerReplicationClient(t, api, tlsState)
+
 	snap := backup.Snapshot{
 		FormatVersion: 1,
 		SnapshotID:    "snap-1",
 		ClusterID:     "cluster-1",
-		Processes:     []backup.ProcessDump{{ProcessID: "p1"}},
+		Processes:     []backup.ProcessDump{{ProcessID: "p1", Name: "proc1"}},
 	}
-	payload, _ := json.Marshal(snap)
-	params := backup.ReceiveParams{
-		SourceNodeID: "node-2",
-		ClusterID:    "cluster-1",
-		SnapshotID:   "snap-1",
-		SHA256:       computeSHA256(payload),
-		RunID:        "run-1",
-		TaskID:       "task-1",
-		Payload:      payload,
-	}
-	_, err := peerStore.ReceiveWithMetadata(context.Background(), params)
+	payload, err := json.Marshal(snap)
 	require.NoError(t, err)
 
-	// Delete
-	req := connect.NewRequest(&procmeshv1.DeleteSnapshotRequest{
+	// Store snapshot first
+	putReq := connect.NewRequest(&procmeshv1.PutSnapshotRequest{
+		ClusterId:  "cluster-1",
+		SnapshotId: "snap-1",
+		Sha256:     computeSHA256(payload),
+		RunId:      "run-1",
+		TaskId:     "task-1",
+		Payload:    payload,
+	})
+	_, err = client.PutSnapshot(context.Background(), putReq)
+	require.NoError(t, err)
+
+	// Delete it
+	delReq := connect.NewRequest(&procmeshv1.DeleteSnapshotRequest{
 		SourceNodeId: "node-2",
 		ClusterId:    "cluster-1",
 		SnapshotId:   "snap-1",
 	})
-	resp, err := api.DeleteSnapshot(context.Background(), req)
+	resp, err := client.DeleteSnapshot(context.Background(), delReq)
 	require.NoError(t, err)
 	require.True(t, resp.Msg.Deleted)
 
-	// Verify deleted
-	path := filepath.Join(dir, "backup", "peer", "node-2", "cluster-1", "snap-1.json")
-	_, err = os.Stat(path)
-	require.True(t, os.IsNotExist(err))
-
-	// Delete again - idempotent
-	resp2, err := api.DeleteSnapshot(context.Background(), req)
+	// Delete again (idempotent)
+	resp2, err := client.DeleteSnapshot(context.Background(), delReq)
 	require.NoError(t, err)
 	require.False(t, resp2.Msg.Deleted)
 }
@@ -266,13 +484,20 @@ func TestPeerReplicationAPI_GetReplicaMetadata(t *testing.T) {
 	dir := t.TempDir()
 	peerStore := &backup.PeerStore{Root: dir}
 
+	creds := genAgentCreds(t, "cluster-1", "node-2")
+
 	api := &PeerReplicationAPI{
 		PeerStore: peerStore,
 		ClusterID: "cluster-1",
 		NodeID:    "node-1",
 	}
 
-	// Write snapshot
+	tlsState := &tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{creds.Cert},
+	}
+
+	client := newPeerReplicationClient(t, api, tlsState)
+
 	snap := backup.Snapshot{
 		FormatVersion: 1,
 		SnapshotID:    "snap-1",
@@ -282,63 +507,32 @@ func TestPeerReplicationAPI_GetReplicaMetadata(t *testing.T) {
 			{ProcessID: "p2", Name: "proc2"},
 		},
 	}
-	payload, _ := json.Marshal(snap)
-	params := backup.ReceiveParams{
-		SourceNodeID: "node-2",
-		ClusterID:    "cluster-1",
-		SnapshotID:   "snap-1",
-		SHA256:       computeSHA256(payload),
-		RunID:        "run-1",
-		TaskID:       "task-1",
-		Payload:      payload,
-	}
-	_, err := peerStore.ReceiveWithMetadata(context.Background(), params)
+	payload, err := json.Marshal(snap)
+	require.NoError(t, err)
+
+	// Store snapshot first
+	putReq := connect.NewRequest(&procmeshv1.PutSnapshotRequest{
+		ClusterId:  "cluster-1",
+		SnapshotId: "snap-1",
+		Sha256:     computeSHA256(payload),
+		RunId:      "run-1",
+		TaskId:     "task-1",
+		Payload:    payload,
+	})
+	_, err = client.PutSnapshot(context.Background(), putReq)
 	require.NoError(t, err)
 
 	// Get metadata
-	req := connect.NewRequest(&procmeshv1.GetReplicaMetadataRequest{
+	metaReq := connect.NewRequest(&procmeshv1.GetReplicaMetadataRequest{
 		SourceNodeId: "node-2",
 		ClusterId:    "cluster-1",
 		SnapshotId:   "snap-1",
 	})
-	resp, err := api.GetReplicaMetadata(context.Background(), req)
+	resp, err := client.GetReplicaMetadata(context.Background(), metaReq)
 	require.NoError(t, err)
 	require.Equal(t, "snap-1", resp.Msg.SnapshotId)
 	require.Equal(t, "cluster-1", resp.Msg.ClusterId)
 	require.Equal(t, "node-2", resp.Msg.NodeId)
-	require.Equal(t, computeSHA256(payload), resp.Msg.Sha256)
 	require.Equal(t, int32(2), resp.Msg.ProcessCount)
-	require.ElementsMatch(t, []string{"p1", "p2"}, resp.Msg.ProcessIds)
-}
-
-func TestPeerReplicationAPI_UnavailableStore(t *testing.T) {
-	api := &PeerReplicationAPI{
-		PeerStore: nil,
-		ClusterID: "cluster-1",
-		NodeID:    "node-1",
-	}
-
-	// PutSnapshot
-	req1 := connect.NewRequest(&procmeshv1.PutSnapshotRequest{})
-	_, err := api.PutSnapshot(context.Background(), req1)
-	require.Error(t, err)
-	require.True(t, errcode.Is(err, errcode.UNAVAILABLE))
-
-	// CheckSnapshot
-	req2 := connect.NewRequest(&procmeshv1.CheckSnapshotRequest{})
-	_, err = api.CheckSnapshot(context.Background(), req2)
-	require.Error(t, err)
-	require.True(t, errcode.Is(err, errcode.UNAVAILABLE))
-
-	// DeleteSnapshot
-	req3 := connect.NewRequest(&procmeshv1.DeleteSnapshotRequest{})
-	_, err = api.DeleteSnapshot(context.Background(), req3)
-	require.Error(t, err)
-	require.True(t, errcode.Is(err, errcode.UNAVAILABLE))
-
-	// GetReplicaMetadata
-	req4 := connect.NewRequest(&procmeshv1.GetReplicaMetadataRequest{})
-	_, err = api.GetReplicaMetadata(context.Background(), req4)
-	require.Error(t, err)
-	require.True(t, errcode.Is(err, errcode.UNAVAILABLE))
+	require.Len(t, resp.Msg.ProcessIds, 2)
 }

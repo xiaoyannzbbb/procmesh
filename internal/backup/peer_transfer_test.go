@@ -571,3 +571,137 @@ func TestPeer_ReceivePayloadChecksumMismatch(t *testing.T) {
 		t.Errorf("expected INVALID error for payload mismatch, got: %v", err)
 	}
 }
+
+// TestPeer_ReceiveContextCanceled tests context cancellation handling
+func TestPeer_ReceiveContextCanceled(t *testing.T) {
+	root := t.TempDir()
+	ps := &PeerStore{Root: root}
+
+	snap := Snapshot{
+		FormatVersion: 1,
+		SnapshotID:    "snap-001",
+		ClusterID:     "cluster-A",
+		NodeID:        "node-1",
+		CreatedAt:     time.Now().UTC(),
+		Processes:     []ProcessDump{},
+	}
+
+	payload, expectedSHA, err := Encode(snap)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	_, err = ps.ReceiveWithMetadata(ctx, ReceiveParams{
+		SourceNodeID: "node-2",
+		SnapshotID:   "snap-001",
+		ClusterID:    "cluster-A",
+		Payload:      payload,
+		SHA256:       expectedSHA,
+	})
+
+	if err == nil {
+		t.Fatal("expected context.Canceled error")
+	}
+	if err != context.Canceled {
+		t.Errorf("expected context.Canceled, got: %v", err)
+	}
+}
+
+// TestPeer_ReceiveMkdirError tests directory creation failure
+func TestPeer_ReceiveMkdirError(t *testing.T) {
+	// Create a file where the directory should be to cause mkdir to fail
+	root := t.TempDir()
+	ps := &PeerStore{Root: root}
+
+	// Create a file at the directory path to block mkdir
+	blockingFile := filepath.Join(root, "backup", "peer", "node-2")
+	if err := os.MkdirAll(filepath.Dir(blockingFile), 0o750); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if err := os.WriteFile(blockingFile, []byte("block"), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	snap := Snapshot{
+		FormatVersion: 1,
+		SnapshotID:    "snap-001",
+		ClusterID:     "cluster-A",
+		NodeID:        "node-1",
+		CreatedAt:     time.Now().UTC(),
+		Processes:     []ProcessDump{},
+	}
+
+	payload, expectedSHA, err := Encode(snap)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	_, err = ps.ReceiveWithMetadata(context.Background(), ReceiveParams{
+		SourceNodeID: "node-2",
+		SnapshotID:   "snap-001",
+		ClusterID:    "cluster-A",
+		Payload:      payload,
+		SHA256:       expectedSHA,
+	})
+
+	if err == nil {
+		t.Fatal("expected mkdir error")
+	}
+}
+
+// TestPeer_DeleteSnapshotErrors tests error paths in DeleteSnapshot
+func TestPeer_DeleteSnapshotErrors(t *testing.T) {
+	root := t.TempDir()
+	ps := &PeerStore{Root: root}
+
+	// Test deleting non-existent snapshot (should return NOT_FOUND)
+	err := ps.DeleteSnapshot(context.Background(), "node-2", "cluster-A", "snap-999")
+	if !errcode.Is(err, errcode.NOT_FOUND) {
+		t.Errorf("expected NOT_FOUND for non-existent delete, got: %v", err)
+	}
+
+	// Test context cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err = ps.DeleteSnapshot(ctx, "node-2", "cluster-A", "snap-001")
+	if err == nil {
+		t.Fatal("expected context.Canceled error")
+	}
+}
+
+// TestPeer_CheckSnapshotErrors tests error paths in CheckSnapshot
+func TestPeer_CheckSnapshotErrors(t *testing.T) {
+	root := t.TempDir()
+	ps := &PeerStore{Root: root}
+
+	// Test context cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err := ps.CheckSnapshot(ctx, "node-2", "cluster-A", "snap-001", "abc123")
+	if err == nil {
+		t.Fatal("expected context.Canceled error")
+	}
+}
+
+// TestPeer_GetReplicaMetadataErrors tests error paths in GetReplicaMetadata
+func TestPeer_GetReplicaMetadataErrors(t *testing.T) {
+	root := t.TempDir()
+	ps := &PeerStore{Root: root}
+
+	// Test context cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := ps.GetReplicaMetadata(ctx, "node-2", "cluster-A", "snap-001")
+	if err == nil {
+		t.Fatal("expected context.Canceled error")
+	}
+
+	// Test non-existent snapshot
+	_, err = ps.GetReplicaMetadata(context.Background(), "node-2", "cluster-A", "snap-999")
+	if !errcode.Is(err, errcode.NOT_FOUND) {
+		t.Errorf("expected NOT_FOUND, got: %v", err)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/rpc"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 )
 
@@ -20,11 +21,24 @@ type PeerReplicationAPI struct {
 // PutSnapshot receives a snapshot from another agent.
 func (p *PeerReplicationAPI) PutSnapshot(ctx context.Context, req *connect.Request[procmeshv1.PutSnapshotRequest]) (*connect.Response[procmeshv1.PutSnapshotResponse], error) {
 	if p.PeerStore == nil {
-		return nil, errcode.E(errcode.UNAVAILABLE, "peer store unavailable")
+		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "peer store unavailable"))
+	}
+
+	// Extract peer node ID from mTLS client certificate
+	tlsState, err := rpc.TLSStateFromContext(ctx)
+	if err != nil {
+		return nil, ToConnect(err)
+	}
+	peerClusterID, peerNodeID, err := rpc.PeerIdentity(tlsState)
+	if err != nil {
+		return nil, ToConnect(err)
+	}
+	if peerClusterID != p.ClusterID {
+		return nil, ToConnect(errcode.E(errcode.DENIED, "peer cluster mismatch"))
 	}
 
 	params := backup.ReceiveParams{
-		SourceNodeID: p.NodeID, // Source is extracted from mTLS cert
+		SourceNodeID: peerNodeID, // Peer node ID from mTLS certificate
 		ClusterID:    req.Msg.ClusterId,
 		SnapshotID:   req.Msg.SnapshotId,
 		SHA256:       req.Msg.Sha256,
@@ -35,7 +49,7 @@ func (p *PeerReplicationAPI) PutSnapshot(ctx context.Context, req *connect.Reque
 
 	meta, err := p.PeerStore.ReceiveWithMetadata(ctx, params)
 	if err != nil {
-		return nil, err
+		return nil, ToConnect(err)
 	}
 
 	resp := &procmeshv1.PutSnapshotResponse{
@@ -52,12 +66,12 @@ func (p *PeerReplicationAPI) PutSnapshot(ctx context.Context, req *connect.Reque
 // CheckSnapshot checks if a snapshot exists with the expected checksum.
 func (p *PeerReplicationAPI) CheckSnapshot(ctx context.Context, req *connect.Request[procmeshv1.CheckSnapshotRequest]) (*connect.Response[procmeshv1.CheckSnapshotResponse], error) {
 	if p.PeerStore == nil {
-		return nil, errcode.E(errcode.UNAVAILABLE, "peer store unavailable")
+		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "peer store unavailable"))
 	}
 
 	exists, matches, err := p.PeerStore.CheckSnapshot(ctx, req.Msg.SourceNodeId, req.Msg.ClusterId, req.Msg.SnapshotId, req.Msg.Sha256)
 	if err != nil {
-		return nil, err
+		return nil, ToConnect(err)
 	}
 
 	resp := &procmeshv1.CheckSnapshotResponse{
@@ -71,7 +85,7 @@ func (p *PeerReplicationAPI) CheckSnapshot(ctx context.Context, req *connect.Req
 // DeleteSnapshot removes a peer replica snapshot.
 func (p *PeerReplicationAPI) DeleteSnapshot(ctx context.Context, req *connect.Request[procmeshv1.DeleteSnapshotRequest]) (*connect.Response[procmeshv1.DeleteSnapshotResponse], error) {
 	if p.PeerStore == nil {
-		return nil, errcode.E(errcode.UNAVAILABLE, "peer store unavailable")
+		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "peer store unavailable"))
 	}
 
 	err := p.PeerStore.DeleteSnapshot(ctx, req.Msg.SourceNodeId, req.Msg.ClusterId, req.Msg.SnapshotId)
@@ -80,7 +94,7 @@ func (p *PeerReplicationAPI) DeleteSnapshot(ctx context.Context, req *connect.Re
 			// Idempotent - already deleted
 			return connect.NewResponse(&procmeshv1.DeleteSnapshotResponse{Deleted: false}), nil
 		}
-		return nil, err
+		return nil, ToConnect(err)
 	}
 
 	return connect.NewResponse(&procmeshv1.DeleteSnapshotResponse{Deleted: true}), nil
@@ -89,12 +103,12 @@ func (p *PeerReplicationAPI) DeleteSnapshot(ctx context.Context, req *connect.Re
 // GetReplicaMetadata retrieves metadata for a stored replica.
 func (p *PeerReplicationAPI) GetReplicaMetadata(ctx context.Context, req *connect.Request[procmeshv1.GetReplicaMetadataRequest]) (*connect.Response[procmeshv1.GetReplicaMetadataResponse], error) {
 	if p.PeerStore == nil {
-		return nil, errcode.E(errcode.UNAVAILABLE, "peer store unavailable")
+		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "peer store unavailable"))
 	}
 
 	meta, err := p.PeerStore.GetReplicaMetadata(ctx, req.Msg.SourceNodeId, req.Msg.ClusterId, req.Msg.SnapshotId)
 	if err != nil {
-		return nil, err
+		return nil, ToConnect(err)
 	}
 
 	resp := &procmeshv1.GetReplicaMetadataResponse{
