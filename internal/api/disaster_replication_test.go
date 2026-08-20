@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -740,6 +741,19 @@ func TestDisasterReplicationAPI_GetRun_NotFound(t *testing.T) {
 	}
 }
 
+func TestDisasterReplicationAPI_GetRun_Unauthorized(t *testing.T) {
+	api, _, _ := setupMinimalAPI(t)
+
+	req := bearerReq("invalid-session", &procmeshv1.GetRunRequest{
+		RunId: "run-1",
+	})
+
+	_, err := api.GetRun(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error for unauthorized access")
+	}
+}
+
 func TestDisasterReplicationAPI_ListRuns(t *testing.T) {
 	api, _, authSvc := setupMinimalAPI(t)
 	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
@@ -875,6 +889,19 @@ func TestDisasterReplicationAPI_RetryFailedRoutes_RunNotFound(t *testing.T) {
 	}
 }
 
+func TestDisasterReplicationAPI_RetryFailedRoutes_Unauthorized(t *testing.T) {
+	api, _, _ := setupMinimalAPI(t)
+
+	req := bearerReq("invalid-session", &procmeshv1.RetryFailedRoutesRequest{
+		RunId: "run-1",
+	})
+
+	_, err := api.RetryFailedRoutes(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error for unauthorized access")
+	}
+}
+
 func TestDisasterReplicationAPI_VerifyReplica(t *testing.T) {
 	api, _, authSvc := setupMinimalAPI(t)
 	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
@@ -907,10 +934,52 @@ func TestDisasterReplicationAPI_VerifyReplica_Missing(t *testing.T) {
 		SnapshotId:   "nonexistent-snap",
 	})
 
-	resp, err := api.VerifyReplica(context.Background(), req)
-	// Depending on implementation, this might error or return valid=false
-	_ = resp
-	_ = err
+	_, err = api.VerifyReplica(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error for missing snapshot")
+	}
+	// Should return NOT_FOUND error
+	if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "NOT_FOUND") {
+		t.Errorf("expected NOT_FOUND error, got: %v", err)
+	}
+}
+
+func TestDisasterReplicationAPI_VerifyReplica_Unauthorized(t *testing.T) {
+	api, _, _ := setupMinimalAPI(t)
+
+	req := bearerReq("invalid-session", &procmeshv1.VerifyReplicaRequest{
+		SourceNodeId: "node-1",
+		SnapshotId:   "snap-1",
+	})
+
+	_, err := api.VerifyReplica(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error for unauthorized access")
+	}
+}
+
+func TestDisasterReplicationAPI_VerifyReplica_PeerStoreUnavailable(t *testing.T) {
+	api, _, authSvc := setupMinimalAPI(t)
+	// Override PeerStore to nil
+	api.PeerStore = nil
+
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := bearerReq(sid, &procmeshv1.VerifyReplicaRequest{
+		SourceNodeId: "node-1",
+		SnapshotId:   "snap-1",
+	})
+
+	_, err = api.VerifyReplica(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error when PeerStore is unavailable")
+	}
+	if !strings.Contains(err.Error(), "peer store unavailable") {
+		t.Errorf("expected 'peer store unavailable' error, got: %v", err)
+	}
 }
 
 func TestDisasterReplicationAPI_ListRecoverableSnapshots_Complete(t *testing.T) {
@@ -929,6 +998,47 @@ func TestDisasterReplicationAPI_ListRecoverableSnapshots_Complete(t *testing.T) 
 
 	if resp.Msg.Snapshots == nil {
 		t.Error("expected non-nil snapshots slice")
+	}
+}
+
+func TestDisasterReplicationAPI_ListRecoverableSnapshots_Empty(t *testing.T) {
+	api, _, authSvc := setupMinimalAPI(t)
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := bearerReq(sid, &procmeshv1.ListRecoverableSnapshotsRequest{})
+
+	resp, err := api.ListRecoverableSnapshots(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ListRecoverableSnapshots failed: %v", err)
+	}
+
+	// Should return empty list (stub implementation)
+	if len(resp.Msg.Snapshots) != 0 {
+		t.Errorf("expected empty snapshots list, got %d items", len(resp.Msg.Snapshots))
+	}
+}
+
+func TestDisasterReplicationAPI_ListRecoverableSnapshots_PeerStoreUnavailable(t *testing.T) {
+	api, _, authSvc := setupMinimalAPI(t)
+	// Override PeerStore to nil
+	api.PeerStore = nil
+
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := bearerReq(sid, &procmeshv1.ListRecoverableSnapshotsRequest{})
+
+	_, err = api.ListRecoverableSnapshots(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error when PeerStore is unavailable")
+	}
+	if !strings.Contains(err.Error(), "peer store unavailable") {
+		t.Errorf("expected 'peer store unavailable' error, got: %v", err)
 	}
 }
 

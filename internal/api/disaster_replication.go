@@ -635,7 +635,7 @@ func (d *DisasterReplicationAPI) RetryFailedRoutes(ctx context.Context, req *con
 
 // VerifyReplica verifies replica integrity without executing apply.
 func (d *DisasterReplicationAPI) VerifyReplica(ctx context.Context, req *connect.Request[procmeshv1.VerifyReplicaRequest]) (*connect.Response[procmeshv1.VerifyReplicaResponse], error) {
-	if err := requirePerm(ctx, d.Auth, auth.PermReplicationManage, d.NodeID, true, true); err != nil {
+	if err := requirePerm(ctx, d.Auth, auth.PermReplicationRead, d.NodeID, false, true); err != nil {
 		return nil, err
 	}
 
