@@ -705,3 +705,268 @@ func TestPeer_GetReplicaMetadataErrors(t *testing.T) {
 		t.Errorf("expected NOT_FOUND, got: %v", err)
 	}
 }
+
+// TestPeer_ListErrors tests error paths in List
+func TestPeer_ListErrors(t *testing.T) {
+	root := t.TempDir()
+	ps := &PeerStore{Root: root}
+
+	// Test context cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := ps.List(ctx, "node-2")
+	if err == nil {
+		t.Fatal("expected context.Canceled error")
+	}
+
+	// Test invalid source node ID
+	_, err = ps.List(context.Background(), "invalid/node")
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Errorf("expected INVALID error, got: %v", err)
+	}
+
+	// Test non-existent directory (should return empty list)
+	list, err := ps.List(context.Background(), "node-nonexistent")
+	if err != nil {
+		t.Errorf("expected nil error for non-existent dir, got: %v", err)
+	}
+	if len(list) != 0 {
+		t.Errorf("expected empty list, got %d items", len(list))
+	}
+
+	// Test directory with files that should be filtered
+	snap := Snapshot{
+		FormatVersion: 1,
+		SnapshotID:    "snap-001",
+		ClusterID:     "cluster-A",
+		NodeID:        "node-1",
+		CreatedAt:     time.Now().UTC(),
+		Processes:     []ProcessDump{},
+	}
+	payload, expectedSHA, err := Encode(snap)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	// Create a valid snapshot
+	_, err = ps.ReceiveWithMetadata(context.Background(), ReceiveParams{
+		SourceNodeID: "node-list-test",
+		SnapshotID:   "snap-001",
+		ClusterID:    "cluster-A",
+		Payload:      payload,
+		SHA256:       expectedSHA,
+	})
+	if err != nil {
+		t.Fatalf("receive: %v", err)
+	}
+
+	// Create a file with invalid name (should be filtered)
+	legacyDir := filepath.Join(root, "backup", "peer", "node-list-test")
+	if err := os.WriteFile(filepath.Join(legacyDir, "invalid-no-json-ext"), []byte("test"), 0o600); err != nil {
+		t.Fatalf("write invalid file: %v", err)
+	}
+
+	// Create a subdirectory (should be filtered)
+	if err := os.MkdirAll(filepath.Join(legacyDir, "subdir"), 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// Create a file with invalid snapshot ID (should be filtered)
+	if err := os.WriteFile(filepath.Join(legacyDir, "invalid/../id.json"), []byte("test"), 0o600); err != nil {
+		// This might fail due to path validation - that's OK
+	}
+
+	// List should only return valid snapshots
+	list, err = ps.List(context.Background(), "node-list-test")
+	if err != nil {
+		t.Errorf("list error: %v", err)
+	}
+	// Should only have the valid cluster-A/snap-001 file, not the invalid ones
+	if len(list) == 0 {
+		t.Error("expected at least one valid snapshot in list")
+	}
+
+	// Test read error by creating a file where directory should be
+	blockingFile := filepath.Join(root, "backup", "peer", "node-blocked")
+	if err := os.MkdirAll(filepath.Dir(blockingFile), 0o750); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if err := os.WriteFile(blockingFile, []byte("block"), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	// This should fail with a read error (not IsNotExist)
+	_, err = ps.List(context.Background(), "node-blocked")
+	if err == nil {
+		t.Error("expected read error for blocked directory")
+	}
+}
+
+// TestPeer_CheckSnapshotValidation tests validation in CheckSnapshot
+func TestPeer_CheckSnapshotValidation(t *testing.T) {
+	root := t.TempDir()
+	ps := &PeerStore{Root: root}
+
+	// Test invalid source node ID
+	_, _, err := ps.CheckSnapshot(context.Background(), "invalid/node", "cluster-A", "snap-001", "abc123")
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Errorf("expected INVALID for source node, got: %v", err)
+	}
+
+	// Test invalid snapshot ID
+	_, _, err = ps.CheckSnapshot(context.Background(), "node-2", "cluster-A", "invalid/../id", "abc123")
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Errorf("expected INVALID for snapshot ID, got: %v", err)
+	}
+
+	// Test empty cluster ID
+	_, _, err = ps.CheckSnapshot(context.Background(), "node-2", "", "snap-001", "abc123")
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Errorf("expected INVALID for empty cluster ID, got: %v", err)
+	}
+
+	// Test checksum mismatch
+	snap := Snapshot{
+		FormatVersion: 1,
+		SnapshotID:    "snap-002",
+		ClusterID:     "cluster-A",
+		NodeID:        "node-1",
+		CreatedAt:     time.Now().UTC(),
+		Processes:     []ProcessDump{},
+	}
+	payload, expectedSHA, err := Encode(snap)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	_, err = ps.ReceiveWithMetadata(context.Background(), ReceiveParams{
+		SourceNodeID: "node-check",
+		SnapshotID:   "snap-002",
+		ClusterID:    "cluster-A",
+		Payload:      payload,
+		SHA256:       expectedSHA,
+	})
+	if err != nil {
+		t.Fatalf("receive: %v", err)
+	}
+
+	// Check with wrong SHA - should return exists=true, matches=false
+	exists, matches, err := ps.CheckSnapshot(context.Background(), "node-check", "cluster-A", "snap-002", "wrongsha256")
+	if err != nil {
+		t.Errorf("check error: %v", err)
+	}
+	if !exists {
+		t.Error("expected exists=true")
+	}
+	if matches {
+		t.Error("expected matches=false for wrong SHA")
+	}
+}
+
+// TestPeer_DeleteSnapshotValidation tests validation in DeleteSnapshot
+func TestPeer_DeleteSnapshotValidation(t *testing.T) {
+	root := t.TempDir()
+	ps := &PeerStore{Root: root}
+
+	// Test invalid source node ID
+	err := ps.DeleteSnapshot(context.Background(), "invalid/node", "cluster-A", "snap-001")
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Errorf("expected INVALID for source node, got: %v", err)
+	}
+
+	// Test invalid snapshot ID
+	err = ps.DeleteSnapshot(context.Background(), "node-2", "cluster-A", "invalid/../id")
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Errorf("expected INVALID for snapshot ID, got: %v", err)
+	}
+
+	// Test empty cluster ID
+	err = ps.DeleteSnapshot(context.Background(), "node-2", "", "snap-001")
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Errorf("expected INVALID for empty cluster ID, got: %v", err)
+	}
+
+	// Test successful delete
+	snap := Snapshot{
+		FormatVersion: 1,
+		SnapshotID:    "snap-del",
+		ClusterID:     "cluster-A",
+		NodeID:        "node-1",
+		CreatedAt:     time.Now().UTC(),
+		Processes:     []ProcessDump{},
+	}
+	payload, expectedSHA, err := Encode(snap)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	_, err = ps.ReceiveWithMetadata(context.Background(), ReceiveParams{
+		SourceNodeID: "node-del",
+		SnapshotID:   "snap-del",
+		ClusterID:    "cluster-A",
+		Payload:      payload,
+		SHA256:       expectedSHA,
+	})
+	if err != nil {
+		t.Fatalf("receive: %v", err)
+	}
+
+	// Delete should succeed
+	err = ps.DeleteSnapshot(context.Background(), "node-del", "cluster-A", "snap-del")
+	if err != nil {
+		t.Errorf("delete error: %v", err)
+	}
+
+	// Second delete should return NOT_FOUND
+	err = ps.DeleteSnapshot(context.Background(), "node-del", "cluster-A", "snap-del")
+	if !errcode.Is(err, errcode.NOT_FOUND) {
+		t.Errorf("expected NOT_FOUND on second delete, got: %v", err)
+	}
+}
+
+// TestPeer_ReceiveDeprecatedMethod tests the deprecated Receive method
+func TestPeer_ReceiveDeprecatedMethod(t *testing.T) {
+	root := t.TempDir()
+	ps := &PeerStore{Root: root}
+
+	snap := Snapshot{
+		FormatVersion: 1,
+		SnapshotID:    "snap-deprecated",
+		ClusterID:     "cluster-A",
+		NodeID:        "node-1",
+		CreatedAt:     time.Now().UTC(),
+		Processes:     []ProcessDump{},
+	}
+	payload, _, err := Encode(snap)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	// Test deprecated Receive method success path
+	_, err = ps.Receive(context.Background(), "node-src", payload)
+	if err != nil {
+		t.Errorf("deprecated Receive error: %v", err)
+	}
+
+	// Test context cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = ps.Receive(ctx, "node-src", payload)
+	if err == nil {
+		t.Error("expected context.Canceled error")
+	}
+
+	// Test invalid source node ID
+	_, err = ps.Receive(context.Background(), "invalid/node", payload)
+	if !errcode.Is(err, errcode.INVALID) {
+		t.Errorf("expected INVALID for source node, got: %v", err)
+	}
+
+	// Test invalid payload (non-JSON)
+	_, err = ps.Receive(context.Background(), "node-src", []byte("not json"))
+	if err == nil {
+		t.Error("expected error for invalid JSON payload")
+	}
+}
+
+
