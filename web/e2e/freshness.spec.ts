@@ -57,7 +57,7 @@ test("FAILED node with old last_updated shows STALE not green", async ({ page })
   });
 
   await page.goto("/processes");
-  const badge = page.locator(".freshness-stale").first();
+  const badge = page.locator(".freshness-stale:visible").first();
   await expect(badge).toBeVisible();
   await expect(page.locator(".freshness-live")).toHaveCount(0);
 
