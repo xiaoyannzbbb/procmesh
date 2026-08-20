@@ -1,6 +1,7 @@
 # ProcMesh 集群备份与灾备副本设计
 
 日期：2026-08-19
+修订：2026-08-20（Task 7A fix round）
 状态：待用户审阅
 范围：在现有 Q5 配置备份能力之上的集群级备份、定时备份与 Peer 灾备副本
 
@@ -295,6 +296,40 @@ Preview 返回完整 route 表、故障域信息、每个目标的预计 inbound
 Peer 复制失败只重试失败 route，不重新复制成功 route。目标节点已存在相同 snapshot ID 和 checksum 时直接返回幂等成功；ID 相同但 checksum 不同视为冲突并阻止覆盖。
 
 恢复页面可以列出 Peer 副本，并跳转到 Owner 选择和 CAS 恢复流程。Peer 目标本身不是新的 Owner，不能在目标节点直接启动源节点的进程。
+
+### 10.4 Draft 一致性与 source selector
+
+`GeneratePolicyDraft` 必须在当前 Raft Leader 上执行。Follower 收到请求时使用现有内部 mTLS forwarding 转发到 Leader；preview 本身不写 Raft。`ApplyPolicyDraft` 在同一个 Leader 权威边界重新解析拓扑并验证 draft。
+
+Draft 中的节点集合分为两个不同概念：
+
+- source 集合由 `source_selector/source_ids` 从当前 Raft state 解析。`ALL_ADMITTED` 取全部已准入且未撤销成员，`EXPLICIT_NODES` 取显式节点，`AGENT_GROUP` 取所列 group 的已准入成员。
+- target 候选集合始终是全部已准入且未撤销成员；每条 route 再排除 source 自身。
+
+生成器只为解析后的 source 集合生成 route，但可以从完整 target 候选集合选取目标。FSM 保存 policy 时必须重新解析 selector，并要求 route source 集合与解析结果完全相等；不得缺少 source、增加 selector 外 source 或重复 source。
+
+Topology revision 绑定排序后的 Raft 成员身份及实际参与路由选择的 host/rack/zone/capacity 属性。瞬时 Gossip `Alive` 不进入 revision；它只影响 preview warning 和 topology health。Apply 时成员或路由属性变化返回稳定 conflict，单纯 liveness 波动不使 draft 失效。
+
+### 10.5 Peer operation authorization state
+
+Peer 写入授权以 Raft 中冻结的 replication run/task 为唯一权威。`PutSnapshot` 除 cluster、run、task、snapshot 和 checksum 外，还必须携带 `policy_id` 与 `policy_revision`。目标 Agent 将这些字段与当前 Raft run、task、run term 和 lease 逐项比较，并验证 mTLS source、local target、snapshot/checksum 及 route 状态；任何不一致都在访问 `PeerStore` 前拒绝。
+
+失败 route 不可直接从终态重新发起网络写入。Leader 必须先通过 Raft transition 创建当前 term/lease 下的 retry intent，将选中的失败 task 原子恢复为 `PENDING`，再派发任务。目标只接受 `PENDING` 或 `RUNNING` task。已经 `SUCCEEDED` 的 task 不重新派发；网络响应丢失时，只要 Raft task 仍处于授权非终态，相同 immutable identity 与 checksum 的 Put 由 `PeerStore` 幂等成功。
+
+Peer 删除使用独立的 durable `ReplicationDeleteIntent`：
+
+```text
+ReplicationDeleteIntent
+  intent_id
+  policy_id / policy_revision
+  source_node_id / target_node_id / snapshot_id
+  leader_term / expires_unix
+  status             PENDING | SUCCEEDED | FAILED | EXPIRED
+```
+
+Retention planner 只能为策略 namespace 中已确认可删除的精确副本创建 intent，并继续遵守“正在复制、正在恢复、唯一最后副本不得删除”的保留约束。`DeleteSnapshot` 必须携带 `intent_id`、policy identity 和 source/target/snapshot identity；目标 Agent 在本地删除前验证 intent 为当前 term 下未过期的 `PENDING` intent。删除不存在的精确对象仍是幂等成功；成功或确定不存在后 intent 进入 `SUCCEEDED`。仅有 admitted source 身份、用户输入路径或过期 intent 均不得授权删除。
+
+Check 和 metadata 操作只允许 mTLS source 查询 Raft 中曾冻结到当前 target 的同一 source/snapshot route。授权失败统一返回拒绝，不根据本地文件是否存在改变响应，并且不得调用 `PeerStore`。
 
 ## 11. 保留策略
 
