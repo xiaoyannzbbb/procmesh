@@ -43,6 +43,29 @@ func TestMetrics_ControlQuorum(t *testing.T) {
 	assertBatchMetricsPresent(t, body)
 }
 
+func TestMetrics_ControlQuorumTrue(t *testing.T) {
+	m, st, _ := newTestManager(t)
+	srv, err := NewServer(Options{
+		Mgr:       m,
+		Store:     st,
+		Started:   time.Now(),
+		HasQuorum: func() bool { return true },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	srv.Engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("metrics %d %q", rec.Code, body)
+	}
+	if !strings.Contains(body, "procmesh_cluster_control_quorum 1") {
+		t.Fatalf("want procmesh_cluster_control_quorum 1, got:\n%s", body)
+	}
+	assertBatchMetricsPresent(t, body)
+}
+
 func TestMetrics_ForwardTotal(t *testing.T) {
 	m, st, _ := newTestManager(t)
 	fakeCli := &fakeProcessClient{
