@@ -43,6 +43,13 @@ func (p *PeerStore) validateSource(sourceNodeID string) error {
 	return nil
 }
 
+func (p *PeerStore) validateCluster(clusterID string) error {
+	if clusterID == "." || clusterID == ".." || !snapshotIDRe.MatchString(clusterID) {
+		return errcode.E(errcode.INVALID, "invalid cluster id")
+	}
+	return nil
+}
+
 func (p *PeerStore) dir(sourceNodeID, clusterID string) string {
 	return filepath.Join(paths.New(p.Root).BackupRoot(), "peer", sourceNodeID, clusterID)
 }
@@ -63,8 +70,8 @@ func (p *PeerStore) ReceiveWithMetadata(ctx context.Context, params ReceiveParam
 	if err := p.validateID(params.SnapshotID); err != nil {
 		return Meta{}, err
 	}
-	if params.ClusterID == "" {
-		return Meta{}, errcode.E(errcode.INVALID, "cluster_id required")
+	if err := p.validateCluster(params.ClusterID); err != nil {
+		return Meta{}, err
 	}
 	if params.SHA256 == "" {
 		return Meta{}, errcode.E(errcode.INVALID, "sha256 required")
@@ -202,8 +209,8 @@ func (p *PeerStore) GetReplicaMetadata(ctx context.Context, sourceNodeID, cluste
 	if err := p.validateID(snapshotID); err != nil {
 		return Meta{}, err
 	}
-	if clusterID == "" {
-		return Meta{}, errcode.E(errcode.INVALID, "cluster_id required")
+	if err := p.validateCluster(clusterID); err != nil {
+		return Meta{}, err
 	}
 
 	path := p.pathFor(sourceNodeID, clusterID, snapshotID)
@@ -241,8 +248,8 @@ func (p *PeerStore) CheckSnapshot(ctx context.Context, sourceNodeID, clusterID, 
 	if err := p.validateID(snapshotID); err != nil {
 		return false, false, err
 	}
-	if clusterID == "" {
-		return false, false, errcode.E(errcode.INVALID, "cluster_id required")
+	if err := p.validateCluster(clusterID); err != nil {
+		return false, false, err
 	}
 
 	path := p.pathFor(sourceNodeID, clusterID, snapshotID)
@@ -271,8 +278,8 @@ func (p *PeerStore) DeleteSnapshot(ctx context.Context, sourceNodeID, clusterID,
 	if err := p.validateID(snapshotID); err != nil {
 		return err
 	}
-	if clusterID == "" {
-		return errcode.E(errcode.INVALID, "cluster_id required")
+	if err := p.validateCluster(clusterID); err != nil {
+		return err
 	}
 
 	path := p.pathFor(sourceNodeID, clusterID, snapshotID)

@@ -22,7 +22,13 @@ func NewServer(addr string, creds control.AgentCreds, clusterID string, h http.H
 	if err != nil {
 		return nil, err
 	}
-	s := &http.Server{Addr: addr, Handler: h, TLSConfig: tlsCfg}
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.TLS != nil {
+			r = r.WithContext(WithTLSState(r.Context(), *r.TLS))
+		}
+		h.ServeHTTP(w, r)
+	})
+	s := &http.Server{Addr: addr, Handler: handler, TLSConfig: tlsCfg}
 	return &Server{http: s, addr: addr}, nil
 }
 

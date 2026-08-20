@@ -863,6 +863,17 @@ func TestPeer_CheckSnapshotValidation(t *testing.T) {
 	}
 }
 
+func TestPeerStore_RejectsTraversalClusterIdentifiers(t *testing.T) {
+	ps := &PeerStore{Root: t.TempDir()}
+
+	for _, clusterID := range []string{"..", ".", "../outside", "/absolute", `..\outside`, "cluster/child", "cluster\x00child"} {
+		_, _, err := ps.CheckSnapshot(context.Background(), "node-2", clusterID, "snap-001", "abc123")
+		if !errcode.Is(err, errcode.INVALID) {
+			t.Errorf("cluster ID %q: expected INVALID, got %v", clusterID, err)
+		}
+	}
+}
+
 // TestPeer_DeleteSnapshotValidation tests validation in DeleteSnapshot
 func TestPeer_DeleteSnapshotValidation(t *testing.T) {
 	root := t.TempDir()
@@ -968,5 +979,3 @@ func TestPeer_ReceiveDeprecatedMethod(t *testing.T) {
 		t.Error("expected error for invalid JSON payload")
 	}
 }
-
-
