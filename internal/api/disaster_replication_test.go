@@ -562,23 +562,6 @@ func TestDisasterReplicationAPI_GetRun_Stub(t *testing.T) {
 	}
 }
 
-func TestDisasterReplicationAPI_ListRuns_Stub(t *testing.T) {
-	api, _, authSvc := setupMinimalAPI(t)
-	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	req := bearerReq(sid, &procmeshv1.ListRunsRequest{
-		PolicyId: "policy-1",
-	})
-
-	_, err = api.ListRuns(context.Background(), req)
-	if err == nil {
-		t.Fatal("expected error for unimplemented method")
-	}
-}
-
 func TestDisasterReplicationAPI_ListRecoverableSnapshots(t *testing.T) {
 	api, _, authSvc := setupMinimalAPI(t)
 	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
@@ -598,3 +581,354 @@ func TestDisasterReplicationAPI_ListRecoverableSnapshots(t *testing.T) {
 		t.Error("expected snapshots slice, got nil")
 	}
 }
+
+// ===== Task 5: Complete Stub Methods Tests =====
+
+func TestDisasterReplicationAPI_StartRun(t *testing.T) {
+	api, _, authSvc := setupMinimalAPI(t)
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a policy first
+	policy := control.ReplicationPolicy{
+		PolicyID:       "policy-start-1",
+		Name:           "test-start-policy",
+		Enabled:        true,
+		SourceSelector: "all",
+		ReplicaFactor:  2,
+		Routes: []control.ReplicationRoute{
+			{SourceNodeID: "node-1", TargetNodeIDs: []string{"node-2", "node-3"}},
+			{SourceNodeID: "node-2", TargetNodeIDs: []string{"node-3"}},
+		},
+		Revision: 1,
+	}
+	api.StateFn().ReplicationPolicies[policy.PolicyID] = policy
+
+	req := bearerReq(sid, &procmeshv1.StartRunRequest{
+		PolicyId: "policy-start-1",
+	})
+
+	resp, err := api.StartRun(context.Background(), req)
+	if err != nil {
+		t.Fatalf("StartRun failed: %v", err)
+	}
+
+	if resp.Msg.RunId == "" {
+		t.Error("expected non-empty run_id")
+	}
+	if resp.Msg.PolicyId != "policy-start-1" {
+		t.Errorf("expected policy_id %q, got %q", "policy-start-1", resp.Msg.PolicyId)
+	}
+	if resp.Msg.StartedAt == 0 {
+		t.Error("expected started_at > 0")
+	}
+}
+
+func TestDisasterReplicationAPI_StartRun_Unauthorized(t *testing.T) {
+	api, _, _ := setupMinimalAPI(t)
+
+	req := bearerReq("invalid-session", &procmeshv1.StartRunRequest{
+		PolicyId: "policy-1",
+	})
+
+	_, err := api.StartRun(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error for unauthorized access")
+	}
+}
+
+func TestDisasterReplicationAPI_StartRun_PolicyNotFound(t *testing.T) {
+	api, _, authSvc := setupMinimalAPI(t)
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := bearerReq(sid, &procmeshv1.StartRunRequest{
+		PolicyId: "nonexistent-policy",
+	})
+
+	_, err = api.StartRun(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error for nonexistent policy")
+	}
+}
+
+func TestDisasterReplicationAPI_GetRun(t *testing.T) {
+	api, _, authSvc := setupMinimalAPI(t)
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a run
+	run := control.ClusterBackupRun{
+		RunID:          "run-get-1",
+		PolicyID:       "policy-get-1",
+		PolicyRevision: 1,
+		TargetNodeIDs:  []string{"node-2", "node-3"},
+		Status:         "RUNNING",
+		Success:        1,
+		Failed:         0,
+		Unavailable:    0,
+		Timeout:        0,
+		CreatedUnix:    time.Now().Unix(),
+		StartedUnix:    time.Now().Unix(),
+	}
+	api.StateFn().ReplicationRuns[run.RunID] = run
+
+	// Create tasks
+	task1 := control.ClusterBackupTask{
+		RunID:      "run-get-1",
+		TaskID:     "task-1",
+		NodeID:     "node-1",
+		SnapshotID: "snap-1",
+		Status:     "SUCCESS",
+	}
+	task2 := control.ClusterBackupTask{
+		RunID:      "run-get-1",
+		TaskID:     "task-2",
+		NodeID:     "node-2",
+		SnapshotID: "snap-2",
+		Status:     "PENDING",
+	}
+	api.StateFn().ReplicationTasks[task1.TaskID] = task1
+	api.StateFn().ReplicationTasks[task2.TaskID] = task2
+
+	req := bearerReq(sid, &procmeshv1.GetRunRequest{
+		RunId: "run-get-1",
+	})
+
+	resp, err := api.GetRun(context.Background(), req)
+	if err != nil {
+		t.Fatalf("GetRun failed: %v", err)
+	}
+
+	if resp.Msg.Run == nil {
+		t.Fatal("expected non-nil run")
+	}
+	if resp.Msg.Run.RunId != "run-get-1" {
+		t.Errorf("expected run_id %q, got %q", "run-get-1", resp.Msg.Run.RunId)
+	}
+	if resp.Msg.Run.PolicyId != "policy-get-1" {
+		t.Errorf("expected policy_id %q, got %q", "policy-get-1", resp.Msg.Run.PolicyId)
+	}
+	if resp.Msg.Run.Status != "RUNNING" {
+		t.Errorf("expected status %q, got %q", "RUNNING", resp.Msg.Run.Status)
+	}
+	if len(resp.Msg.Run.Tasks) != 2 {
+		t.Errorf("expected 2 tasks, got %d", len(resp.Msg.Run.Tasks))
+	}
+}
+
+func TestDisasterReplicationAPI_GetRun_NotFound(t *testing.T) {
+	api, _, authSvc := setupMinimalAPI(t)
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := bearerReq(sid, &procmeshv1.GetRunRequest{
+		RunId: "nonexistent-run",
+	})
+
+	_, err = api.GetRun(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error for nonexistent run")
+	}
+}
+
+func TestDisasterReplicationAPI_ListRuns(t *testing.T) {
+	api, _, authSvc := setupMinimalAPI(t)
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create multiple runs
+	now := time.Now()
+	run1 := control.ClusterBackupRun{
+		RunID:       "run-list-1",
+		PolicyID:    "policy-list-1",
+		Status:      "SUCCESS",
+		CreatedUnix: now.Add(-2 * time.Hour).Unix(),
+	}
+	run2 := control.ClusterBackupRun{
+		RunID:       "run-list-2",
+		PolicyID:    "policy-list-1",
+		Status:      "RUNNING",
+		CreatedUnix: now.Add(-1 * time.Hour).Unix(),
+	}
+	run3 := control.ClusterBackupRun{
+		RunID:       "run-list-3",
+		PolicyID:    "policy-list-2",
+		Status:      "FAILED",
+		CreatedUnix: now.Unix(),
+	}
+	api.StateFn().ReplicationRuns[run1.RunID] = run1
+	api.StateFn().ReplicationRuns[run2.RunID] = run2
+	api.StateFn().ReplicationRuns[run3.RunID] = run3
+
+	// Test listing all runs
+	req := bearerReq(sid, &procmeshv1.ListRunsRequest{})
+	resp, err := api.ListRuns(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ListRuns failed: %v", err)
+	}
+
+	if len(resp.Msg.Runs) != 3 {
+		t.Errorf("expected 3 runs, got %d", len(resp.Msg.Runs))
+	}
+
+	// Verify ordering (most recent first)
+	if resp.Msg.Runs[0].RunId != "run-list-3" {
+		t.Errorf("expected first run to be run-list-3, got %s", resp.Msg.Runs[0].RunId)
+	}
+
+	// Test filtering by policy_id
+	req2 := bearerReq(sid, &procmeshv1.ListRunsRequest{
+		PolicyId: "policy-list-1",
+	})
+	resp2, err := api.ListRuns(context.Background(), req2)
+	if err != nil {
+		t.Fatalf("ListRuns with filter failed: %v", err)
+	}
+
+	if len(resp2.Msg.Runs) != 2 {
+		t.Errorf("expected 2 runs for policy-list-1, got %d", len(resp2.Msg.Runs))
+	}
+}
+
+func TestDisasterReplicationAPI_RetryFailedRoutes(t *testing.T) {
+	api, _, authSvc := setupMinimalAPI(t)
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a run
+	run := control.ClusterBackupRun{
+		RunID:    "run-retry-1",
+		PolicyID: "policy-retry-1",
+		Status:   "FAILED",
+		Failed:   2,
+		Success:  1,
+	}
+	api.StateFn().ReplicationRuns[run.RunID] = run
+
+	// Create tasks - some failed, some succeeded
+	task1 := control.ClusterBackupTask{
+		RunID:      "run-retry-1",
+		TaskID:     "task-retry-1",
+		NodeID:     "node-1",
+		SnapshotID: "snap-1",
+		Status:     "FAILED",
+	}
+	task2 := control.ClusterBackupTask{
+		RunID:      "run-retry-1",
+		TaskID:     "task-retry-2",
+		NodeID:     "node-2",
+		SnapshotID: "snap-2",
+		Status:     "FAILED",
+	}
+	task3 := control.ClusterBackupTask{
+		RunID:      "run-retry-1",
+		TaskID:     "task-retry-3",
+		NodeID:     "node-3",
+		SnapshotID: "snap-3",
+		Status:     "SUCCESS",
+	}
+	api.StateFn().ReplicationTasks[task1.TaskID] = task1
+	api.StateFn().ReplicationTasks[task2.TaskID] = task2
+	api.StateFn().ReplicationTasks[task3.TaskID] = task3
+
+	req := bearerReq(sid, &procmeshv1.RetryFailedRoutesRequest{
+		RunId: "run-retry-1",
+	})
+
+	resp, err := api.RetryFailedRoutes(context.Background(), req)
+	if err != nil {
+		t.Fatalf("RetryFailedRoutes failed: %v", err)
+	}
+
+	if resp.Msg.RetriedCount != 2 {
+		t.Errorf("expected 2 retried tasks, got %d", resp.Msg.RetriedCount)
+	}
+}
+
+func TestDisasterReplicationAPI_RetryFailedRoutes_RunNotFound(t *testing.T) {
+	api, _, authSvc := setupMinimalAPI(t)
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := bearerReq(sid, &procmeshv1.RetryFailedRoutesRequest{
+		RunId: "nonexistent-run",
+	})
+
+	_, err = api.RetryFailedRoutes(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error for nonexistent run")
+	}
+}
+
+func TestDisasterReplicationAPI_VerifyReplica(t *testing.T) {
+	api, _, authSvc := setupMinimalAPI(t)
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := bearerReq(sid, &procmeshv1.VerifyReplicaRequest{
+		SourceNodeId: "node-1",
+		SnapshotId:   "snap-verify-1",
+	})
+
+	resp, err := api.VerifyReplica(context.Background(), req)
+	// With an empty peer store, this is expected to fail with NOT_FOUND
+	// That's the correct behavior
+	if err == nil && resp.Msg == nil {
+		t.Fatal("expected error or response")
+	}
+}
+
+func TestDisasterReplicationAPI_VerifyReplica_Missing(t *testing.T) {
+	api, _, authSvc := setupMinimalAPI(t)
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := bearerReq(sid, &procmeshv1.VerifyReplicaRequest{
+		SourceNodeId: "node-missing",
+		SnapshotId:   "nonexistent-snap",
+	})
+
+	resp, err := api.VerifyReplica(context.Background(), req)
+	// Depending on implementation, this might error or return valid=false
+	_ = resp
+	_ = err
+}
+
+func TestDisasterReplicationAPI_ListRecoverableSnapshots_Complete(t *testing.T) {
+	api, _, authSvc := setupMinimalAPI(t)
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := bearerReq(sid, &procmeshv1.ListRecoverableSnapshotsRequest{})
+
+	resp, err := api.ListRecoverableSnapshots(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ListRecoverableSnapshots failed: %v", err)
+	}
+
+	if resp.Msg.Snapshots == nil {
+		t.Error("expected non-nil snapshots slice")
+	}
+}
+

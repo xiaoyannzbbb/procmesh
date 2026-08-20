@@ -421,7 +421,61 @@ func (d *DisasterReplicationAPI) StartRun(ctx context.Context, req *connect.Requ
 		return nil, err
 	}
 
-	return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "StartRun not yet implemented"))
+	st := d.StateFn()
+
+	// Find the policy
+	policy, ok := st.ReplicationPolicies[req.Msg.PolicyId]
+	if !ok {
+		return nil, ToConnect(errcode.E(errcode.NOT_FOUND, "replication policy not found"))
+	}
+
+	// Generate run ID
+	runID := generateID("run")
+	now := time.Now()
+
+	// Create run
+	run := control.ClusterBackupRun{
+		RunID:          runID,
+		PolicyID:       policy.PolicyID,
+		PolicyRevision: policy.Revision,
+		TargetNodeIDs:  []string{}, // Will be populated from routes
+		Status:         "PENDING",
+		Success:        0,
+		Failed:         0,
+		Unavailable:    0,
+		Timeout:        0,
+		CreatedUnix:    now.Unix(),
+		StartedUnix:    now.Unix(),
+		FinishedUnix:   0,
+	}
+
+	// Generate operation ID for idempotency
+	opID := req.Msg.Meta.GetOperationId()
+	if opID == "" {
+		opID = generateID("op")
+	}
+
+	// Apply to Raft
+	cmd, err := control.EncodeCommand(control.CmdBackupRunCreate, control.CreateRunBody{
+		OperationID: opID,
+		Run:         run,
+		LeaderTerm:  0, // Will be filled by FSM
+		Replication: true,
+	})
+	if err != nil {
+		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "failed to encode command"))
+	}
+
+	if err := d.ApplyFn(cmd, 5*time.Second); err != nil {
+		return nil, ToConnect(err)
+	}
+
+	return connect.NewResponse(&procmeshv1.StartRunResponse{
+		RunId:          runID,
+		PolicyId:       policy.PolicyID,
+		PolicyRevision: policy.Revision,
+		StartedAt:      now.Unix(),
+	}), nil
 }
 
 // GetRun retrieves a replication run.
@@ -430,7 +484,48 @@ func (d *DisasterReplicationAPI) GetRun(ctx context.Context, req *connect.Reques
 		return nil, err
 	}
 
-	return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "GetRun not yet implemented"))
+	st := d.StateFn()
+
+	// Find the run
+	run, ok := st.ReplicationRuns[req.Msg.RunId]
+	if !ok {
+		return nil, ToConnect(errcode.E(errcode.NOT_FOUND, "replication run not found"))
+	}
+
+	// Collect tasks for this run
+	tasks := make([]*procmeshv1.ReplicationTask, 0)
+	for _, task := range st.ReplicationTasks {
+		if task.RunID == run.RunID {
+			tasks = append(tasks, &procmeshv1.ReplicationTask{
+				TaskId:       task.TaskID,
+				RunId:        task.RunID,
+				SourceNodeId: "", // Not stored in ClusterBackupTask
+				SnapshotId:   task.SnapshotID,
+				Status:       task.Status,
+				Sha256:       task.SHA256,
+				Bytes:        task.Bytes,
+				ErrorCode:    task.ErrorCode,
+				ErrorSummary: task.ErrorSummary,
+				StartedAt:    0, // Not tracked
+				FinishedAt:   task.UpdatedUnix,
+			})
+		}
+	}
+
+	// Build run response
+	protoRun := &procmeshv1.ReplicationRun{
+		RunId:          run.RunID,
+		PolicyId:       run.PolicyID,
+		PolicyRevision: run.PolicyRevision,
+		Status:         run.Status,
+		Tasks:          tasks,
+		StartedAt:      run.StartedUnix,
+		FinishedAt:     run.FinishedUnix,
+	}
+
+	return connect.NewResponse(&procmeshv1.GetRunResponse{
+		Run: protoRun,
+	}), nil
 }
 
 // ListRuns lists replication runs.
@@ -439,7 +534,54 @@ func (d *DisasterReplicationAPI) ListRuns(ctx context.Context, req *connect.Requ
 		return nil, err
 	}
 
-	return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "ListRuns not yet implemented"))
+	st := d.StateFn()
+
+	// Filter runs by policy_id if specified
+	runs := make([]control.ClusterBackupRun, 0)
+	for _, run := range st.ReplicationRuns {
+		if req.Msg.PolicyId == "" || run.PolicyID == req.Msg.PolicyId {
+			runs = append(runs, run)
+		}
+	}
+
+	// Sort by creation time, most recent first
+	sort.Slice(runs, func(i, j int) bool {
+		return runs[i].CreatedUnix > runs[j].CreatedUnix
+	})
+
+	// Build task map for efficient lookup
+	tasksByRun := make(map[string][]*procmeshv1.ReplicationTask)
+	for _, task := range st.ReplicationTasks {
+		tasksByRun[task.RunID] = append(tasksByRun[task.RunID], &procmeshv1.ReplicationTask{
+			TaskId:       task.TaskID,
+			RunId:        task.RunID,
+			SnapshotId:   task.SnapshotID,
+			Status:       task.Status,
+			Sha256:       task.SHA256,
+			Bytes:        task.Bytes,
+			ErrorCode:    task.ErrorCode,
+			ErrorSummary: task.ErrorSummary,
+			FinishedAt:   task.UpdatedUnix,
+		})
+	}
+
+	// Convert to proto
+	protoRuns := make([]*procmeshv1.ReplicationRun, 0, len(runs))
+	for _, run := range runs {
+		protoRuns = append(protoRuns, &procmeshv1.ReplicationRun{
+			RunId:          run.RunID,
+			PolicyId:       run.PolicyID,
+			PolicyRevision: run.PolicyRevision,
+			Status:         run.Status,
+			Tasks:          tasksByRun[run.RunID],
+			StartedAt:      run.StartedUnix,
+			FinishedAt:     run.FinishedUnix,
+		})
+	}
+
+	return connect.NewResponse(&procmeshv1.ListRunsResponse{
+		Runs: protoRuns,
+	}), nil
 }
 
 // RetryFailedRoutes retries failed replication routes.
@@ -448,7 +590,47 @@ func (d *DisasterReplicationAPI) RetryFailedRoutes(ctx context.Context, req *con
 		return nil, err
 	}
 
-	return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "RetryFailedRoutes not yet implemented"))
+	st := d.StateFn()
+
+	// Find the run
+	run, ok := st.ReplicationRuns[req.Msg.RunId]
+	if !ok {
+		return nil, ToConnect(errcode.E(errcode.NOT_FOUND, "replication run not found"))
+	}
+
+	// Generate operation ID for idempotency
+	opID := req.Msg.Meta.GetOperationId()
+	if opID == "" {
+		opID = generateID("op")
+	}
+
+	// Apply retry command to Raft
+	cmd, err := control.EncodeCommand(control.CmdBackupRetryFailedTasks, control.RetryFailedTasksBody{
+		OperationID: opID,
+		RunID:       run.RunID,
+		LeaderTerm:  0, // Will be filled by FSM
+		UpdatedUnix: time.Now().Unix(),
+		Replication: true,
+	})
+	if err != nil {
+		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "failed to encode command"))
+	}
+
+	if err := d.ApplyFn(cmd, 5*time.Second); err != nil {
+		return nil, ToConnect(err)
+	}
+
+	// Count failed tasks that were retried
+	retriedCount := 0
+	for _, task := range st.ReplicationTasks {
+		if task.RunID == run.RunID && (task.Status == "FAILED" || task.Status == "TIMEOUT" || task.Status == "UNAVAILABLE") {
+			retriedCount++
+		}
+	}
+
+	return connect.NewResponse(&procmeshv1.RetryFailedRoutesResponse{
+		RetriedCount: int32(retriedCount),
+	}), nil
 }
 
 // VerifyReplica verifies replica integrity without executing apply.
@@ -557,4 +739,11 @@ func computeDraftHash(req *procmeshv1.GeneratePolicyDraftRequest, routes []*proc
 	jsonData, _ := json.Marshal(data)
 	hash := sha256.Sum256(jsonData)
 	return hex.EncodeToString(hash[:])
+}
+
+// generateID creates a deterministic ID with a prefix.
+func generateID(prefix string) string {
+	now := time.Now()
+	sum := sha256.Sum256([]byte(prefix + "\x00" + now.String()))
+	return prefix + "-" + hex.EncodeToString(sum[:12])
 }
