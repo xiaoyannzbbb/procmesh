@@ -184,6 +184,33 @@ func TestReconcileMissingReplicationTasksReturnsApplyFailureThenRetriesOnNextTic
 	}
 }
 
+func TestReconcileMissingReplicationTasksDoesNotDependOnMutablePolicy(t *testing.T) {
+	now := time.Unix(1_800_000_100, 0)
+	for _, tc := range []struct {
+		name   string
+		policy *control.ReplicationPolicy
+	}{
+		{name: "policy deleted"},
+		{name: "trigger changed", policy: &control.ReplicationPolicy{PolicyID: "rp", Trigger: "MANUAL"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			state := control.NewState()
+			if tc.policy != nil {
+				state.ReplicationPolicies[tc.policy.PolicyID] = *tc.policy
+			}
+			state.ReplicationRuns["run-missing"] = control.ClusterBackupRun{RunID: "run-missing", PolicyID: "rp", Status: "RUNNING"}
+			state.ReplicationTasks["run-missing:route-missing"] = control.ClusterBackupTask{RunID: "run-missing", TaskID: "route-missing", SourceNodeID: "source", NodeID: "target", Status: "PENDING"}
+			applier := &recordingReplicationApplier{}
+			if err := reconcileMissingReplicationTasks(applier, *state, 7, now); err != nil {
+				t.Fatal(err)
+			}
+			if len(applier.commands) != 1 {
+				t.Fatalf("commands = %d, want durable task reconciliation", len(applier.commands))
+			}
+		})
+	}
+}
+
 type recordingReplicationApplier struct {
 	commands []control.Command
 	err      error

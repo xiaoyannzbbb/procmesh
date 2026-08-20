@@ -7,8 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/errcode"
+	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 )
 
 type replicationControlFake struct {
@@ -22,6 +24,25 @@ func TestReplicationCoordinator_ChecksumConflictIsTerminalFailed(t *testing.T) {
 	control := &replicationControlFake{}
 	dispatcher := replicationDispatcherFunc(func(context.Context, backup.ReplicationTaskRequest) error {
 		return errcode.E(errcode.CONFLICT, "snapshot exists at /secret/path")
+	})
+	c := backup.NewReplicationCoordinator(backup.ReplicationCoordinatorConfig{Control: control, Dispatcher: dispatcher, Now: func() time.Time { return now }})
+	c.DispatchRun(context.Background(), backup.FrozenReplicationRun{RunID: "run", PolicyID: "p", LeaderTerm: 1, LeaseExpiresUnix: now.Add(time.Minute).Unix(), Tasks: []backup.FrozenReplicationTask{{TaskID: "t", SourceNodeID: "s", TargetNodeID: "d", SnapshotID: "snap", SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Status: "PENDING"}}})
+	if len(control.updates) != 1 || control.updates[0].Status != "FAILED" || control.updates[0].ErrorCode != "CONFLICT" || strings.Contains(control.updates[0].ErrorSummary, "/secret") {
+		t.Fatalf("updates=%+v", control.updates)
+	}
+}
+
+func TestReplicationCoordinator_ConnectConflictIsTerminalFailed(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	control := &replicationControlFake{}
+	connectErr := connect.NewError(connect.CodeFailedPrecondition, nil)
+	detail, err := connect.NewErrorDetail(&procmeshv1.ErrorInfo{Code: "CONFLICT", Message: "snapshot exists at /secret/path"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connectErr.AddDetail(detail)
+	dispatcher := replicationDispatcherFunc(func(context.Context, backup.ReplicationTaskRequest) error {
+		return connectErr
 	})
 	c := backup.NewReplicationCoordinator(backup.ReplicationCoordinatorConfig{Control: control, Dispatcher: dispatcher, Now: func() time.Time { return now }})
 	c.DispatchRun(context.Background(), backup.FrozenReplicationRun{RunID: "run", PolicyID: "p", LeaderTerm: 1, LeaseExpiresUnix: now.Add(time.Minute).Unix(), Tasks: []backup.FrozenReplicationTask{{TaskID: "t", SourceNodeID: "s", TargetNodeID: "d", SnapshotID: "snap", SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Status: "PENDING"}}})

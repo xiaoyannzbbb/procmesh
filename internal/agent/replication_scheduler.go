@@ -80,9 +80,8 @@ func applyMissingReplicationTask(n replicationCommandApplier, task control.Clust
 func reconcileMissingReplicationTasks(n replicationCommandApplier, state control.State, term uint64, now time.Time) error {
 	keys := make([]string, 0)
 	for key, task := range state.ReplicationTasks {
-		run, ok := state.ReplicationRuns[task.RunID]
-		policy, pok := state.ReplicationPolicies[run.PolicyID]
-		if ok && pok && (policy.Trigger == "SCHEDULE" || policy.Trigger == "AFTER_PRIMARY_BACKUP") && task.Status == "PENDING" && task.SnapshotID == "" && task.SHA256 == "" {
+		_, runExists := state.ReplicationRuns[task.RunID]
+		if runExists && task.Status == "PENDING" && task.SnapshotID == "" && task.SHA256 == "" {
 			keys = append(keys, key)
 		}
 	}

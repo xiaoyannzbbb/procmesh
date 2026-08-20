@@ -6,7 +6,9 @@ import (
 	"sync"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/errcode"
+	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 )
 
 // FrozenReplicationTask is a durable route with its immutable source payload
@@ -163,18 +165,41 @@ func (c *ReplicationCoordinator) DispatchRun(ctx context.Context, run FrozenRepl
 			defer func() { <-sem }()
 			req := ReplicationTaskRequest{RunID: run.RunID, TaskID: task.TaskID, PolicyID: run.PolicyID, PolicyRevision: run.PolicyRevision, SourceNodeID: task.SourceNodeID, TargetNodeID: task.TargetNodeID, SnapshotID: task.SnapshotID, SHA256: task.SHA256, LeaderTerm: run.LeaderTerm, LeaseExpiresUnix: run.LeaseExpiresUnix}
 			if err := c.Dispatcher.DispatchReplicationTask(leaseCtx, req); err != nil {
-				status := "UNAVAILABLE"
-				code, summary := "UNAVAILABLE", "replication route unavailable"
-				if errcode.Is(err, errcode.CONFLICT) {
-					status, code, summary = "FAILED", "CONFLICT", "frozen snapshot conflict"
-				}
-				if errors.Is(leaseCtx.Err(), context.DeadlineExceeded) {
-					status = "TIMEOUT"
-					code, summary = "TIMEOUT", "replication route timed out"
-				}
+				status, code, summary := classifyReplicationFailure(err, leaseCtx.Err())
 				_ = c.Control.UpdateReplicationTask(ctx, ReplicationTaskUpdate{RunID: req.RunID, TaskID: req.TaskID, SourceNodeID: req.SourceNodeID, TargetNodeID: req.TargetNodeID, SnapshotID: req.SnapshotID, SHA256: req.SHA256, Status: status, ErrorCode: code, ErrorSummary: summary, LeaderTerm: req.LeaderTerm})
 			}
 		}()
 	}
 	wg.Wait()
+}
+
+func classifyReplicationFailure(err, contextErr error) (status, code, summary string) {
+	if errors.Is(contextErr, context.DeadlineExceeded) || errcode.Is(err, errcode.TIMEOUT) {
+		return "TIMEOUT", "TIMEOUT", "replication route timed out"
+	}
+	if errcode.Is(err, errcode.CONFLICT) || connectErrorInfoCode(err) == string(errcode.CONFLICT) {
+		return "FAILED", "CONFLICT", "frozen snapshot conflict"
+	}
+	var connectErr *connect.Error
+	if errors.As(err, &connectErr) && connectErr.Code() == connect.CodeDeadlineExceeded {
+		return "TIMEOUT", "TIMEOUT", "replication route timed out"
+	}
+	return "UNAVAILABLE", "UNAVAILABLE", "replication route unavailable"
+}
+
+func connectErrorInfoCode(err error) string {
+	var connectErr *connect.Error
+	if !errors.As(err, &connectErr) {
+		return ""
+	}
+	for _, detail := range connectErr.Details() {
+		value, detailErr := detail.Value()
+		if detailErr != nil {
+			continue
+		}
+		if info, ok := value.(*procmeshv1.ErrorInfo); ok {
+			return info.GetCode()
+		}
+	}
+	return ""
 }
