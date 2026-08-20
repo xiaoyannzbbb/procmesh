@@ -491,6 +491,91 @@ func TestAuthorizePeerOperationDeleteIntent(t *testing.T) {
 	})
 }
 
+func TestAuthorizePeerOperationPutFencing(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	node, err := control.Start(control.RaftConfig{Dir: t.TempDir(), Bind: "127.0.0.1:0", NodeID: "target", ClusterID: "cluster"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = node.Shutdown() })
+	if err := node.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitRaftLeader(node, raftStartTO); err != nil {
+		t.Fatal(err)
+	}
+	apply := func(commandType string, body any) {
+		t.Helper()
+		command, encodeErr := control.EncodeCommand(commandType, body)
+		if encodeErr != nil {
+			t.Fatal(encodeErr)
+		}
+		if applyErr := node.Apply(command, raftApplyTO); applyErr != nil {
+			t.Fatal(applyErr)
+		}
+	}
+	apply(control.CmdMemberPut, control.MemberPutBody{NodeID: "source", Status: control.MemberAdmitted})
+	apply(control.CmdMemberPut, control.MemberPutBody{NodeID: "target", Status: control.MemberAdmitted})
+	apply(control.CmdReplicationPolicyPut, control.ReplicationPolicyPutBody{
+		OperationID: "policy", PolicyID: "rp", Name: "policy", Enabled: true,
+		SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"source"}, ReplicaFactor: 1,
+		Routes:  []control.ReplicationRoute{{SourceNodeID: "source", TargetNodeIDs: []string{"target"}}},
+		Trigger: "MANUAL", ExpectedRevision: -1,
+	})
+	term := node.CurrentTerm()
+	liveOp := api.PeerOperation{
+		Kind: "PUT", ClusterID: "cluster", SourceNodeID: "source", TargetNodeID: "target",
+		SnapshotID: "snapshot", SHA256: replicationTestSHA, RunID: "run-live", TaskID: "task-live",
+		PolicyID: "rp", PolicyRevision: 1,
+	}
+	apply(control.CmdBackupRunCreate, control.CreateRunBody{
+		OperationID: "run-live", LeaderTerm: term, Replication: true,
+		Run:   control.ClusterBackupRun{RunID: "run-live", PolicyID: "rp", PolicyRevision: 1, TargetNodeIDs: []string{"source"}, Status: "RUNNING", LeaseUntilUnix: now.Add(time.Hour).Unix()},
+		Tasks: []control.ClusterBackupTask{{RunID: "run-live", TaskID: "task-live", SourceNodeID: "source", NodeID: "target", SnapshotID: "snapshot", SHA256: replicationTestSHA, Status: "PENDING"}},
+	})
+	apply(control.CmdBackupTaskUpdate, control.UpdateTaskBody{
+		OperationID: "begin-live", LeaderTerm: term, Replication: true,
+		Task: control.ClusterBackupTask{RunID: "run-live", TaskID: "task-live", SourceNodeID: "source", NodeID: "target", SnapshotID: "snapshot", SHA256: replicationTestSHA, Status: "RUNNING", UpdatedUnix: now.Unix()},
+	})
+	apply(control.CmdBackupRunCreate, control.CreateRunBody{
+		OperationID: "run-expired", LeaderTerm: term, Replication: true,
+		Run:   control.ClusterBackupRun{RunID: "run-expired", PolicyID: "rp", PolicyRevision: 1, TargetNodeIDs: []string{"source"}, Status: "RUNNING", LeaseUntilUnix: now.Add(-time.Minute).Unix()},
+		Tasks: []control.ClusterBackupTask{{RunID: "run-expired", TaskID: "task-expired", SourceNodeID: "source", NodeID: "target", SnapshotID: "snapshot-expired", SHA256: replicationTestSHA, Status: "PENDING"}},
+	})
+	apply(control.CmdBackupRunCreate, control.CreateRunBody{
+		OperationID: "run-stale", LeaderTerm: term + 10, Replication: true,
+		Run:   control.ClusterBackupRun{RunID: "run-stale", PolicyID: "rp", PolicyRevision: 1, TargetNodeIDs: []string{"source"}, Status: "RUNNING", LeaseUntilUnix: now.Add(time.Hour).Unix()},
+		Tasks: []control.ClusterBackupTask{{RunID: "run-stale", TaskID: "task-stale", SourceNodeID: "source", NodeID: "target", SnapshotID: "snapshot-stale", SHA256: replicationTestSHA, Status: "PENDING"}},
+	})
+	runtime := &rpcRuntime{nodeID: "target", clusterID: "cluster", node: node}
+	if err := runtime.authorizePeerOperation("source", liveOp); err != nil {
+		t.Fatalf("live put rejected: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		op   api.PeerOperation
+	}{
+		{name: "expired lease", op: api.PeerOperation{Kind: "PUT", ClusterID: "cluster", SourceNodeID: "source", TargetNodeID: "target", SnapshotID: "snapshot-expired", SHA256: replicationTestSHA, RunID: "run-expired", TaskID: "task-expired", PolicyID: "rp", PolicyRevision: 1}},
+		{name: "stale term", op: api.PeerOperation{Kind: "PUT", ClusterID: "cluster", SourceNodeID: "source", TargetNodeID: "target", SnapshotID: "snapshot-stale", SHA256: replicationTestSHA, RunID: "run-stale", TaskID: "task-stale", PolicyID: "rp", PolicyRevision: 1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := runtime.authorizePeerOperation("source", tc.op)
+			if !errcode.Is(err, errcode.DENIED) && !errcode.Is(err, errcode.CONFLICT) {
+				t.Fatalf("error=%v want DENIED or CONFLICT", err)
+			}
+		})
+	}
+
+	apply(control.CmdBackupTaskUpdate, control.UpdateTaskBody{
+		OperationID: "fail-live", LeaderTerm: term, Replication: true,
+		Task: control.ClusterBackupTask{RunID: "run-live", TaskID: "task-live", SourceNodeID: "source", NodeID: "target", SnapshotID: "snapshot", SHA256: replicationTestSHA, Status: "FAILED", UpdatedUnix: now.Unix()},
+	})
+	if err := runtime.authorizePeerOperation("source", liveOp); !errcode.Is(err, errcode.DENIED) && !errcode.Is(err, errcode.CONFLICT) {
+		t.Fatalf("terminal task still authorized: %v", err)
+	}
+}
+
 func (a *recordingReplicationApplier) Apply(command control.Command, _ time.Duration) error {
 	a.commands = append(a.commands, command)
 	return a.err
