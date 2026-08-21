@@ -89,6 +89,8 @@ const backupI18n = {
   errorSummary: "Error",
   agentStatus: "Agent status",
   runDetail: "Run detail",
+  policiesUnreachable: "Cluster backup policies are unreachable. This is not an empty catalog.",
+  runsUnreachable: "Cluster backup runs are unreachable. This is not an empty catalog.",
 };
 
 beforeEach(async () => {
@@ -229,6 +231,8 @@ async function mountBackup(
     runs?: unknown[];
     run?: unknown;
     health?: unknown;
+    policiesError?: Error;
+    runsError?: Error;
   } = {},
 ) {
   session.value = {
@@ -256,12 +260,16 @@ async function mountBackup(
     getBackup: vi.fn(),
   };
   const clusterBackupClient = {
-    listPolicies: vi.fn().mockResolvedValue({ policies }),
+    listPolicies: opts.policiesError
+      ? vi.fn().mockRejectedValue(opts.policiesError)
+      : vi.fn().mockResolvedValue({ policies }),
     createPolicy: vi.fn().mockResolvedValue({ policy: clusterPolicy }),
     updatePolicy: vi.fn().mockResolvedValue({ policy: clusterPolicy }),
     deletePolicy: vi.fn().mockResolvedValue({}),
     validatePolicy: vi.fn().mockResolvedValue({ valid: true, errors: [] }),
-    listRuns: vi.fn().mockResolvedValue({ runs }),
+    listRuns: opts.runsError
+      ? vi.fn().mockRejectedValue(opts.runsError)
+      : vi.fn().mockResolvedValue({ runs }),
     getRun: vi.fn().mockResolvedValue({ run }),
     startRun: vi.fn().mockResolvedValue({ run }),
     retryFailedTasks: vi.fn().mockResolvedValue({ run }),
@@ -615,8 +623,63 @@ describe("BackupPage", () => {
     expect(wrapper.find('[data-action="edit-policy"]').exists()).toBe(false);
     expect(wrapper.find('[data-action="delete-policy"]').exists()).toBe(false);
     expect(wrapper.find('[data-action="start-run"]').exists()).toBe(false);
-    expect(wrapper.find('[data-action="retry-failed"]').exists()).toBe(false);
     expect(wrapper.get('[data-section="policies"]').text()).toContain("nightly-fs");
     expect(wrapper.get('[data-section="runs"]').text()).toContain("run-partial");
+    await wrapper.get('[data-run-id="run-partial"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+    expect(wrapper.get("[data-run-detail]").exists()).toBe(true);
+    expect(wrapper.find('[data-action="retry-failed"]').exists()).toBe(false);
+  });
+
+  it("pins latest run by createdUnix, not list order", async () => {
+    const older = {
+      ...partialRun,
+      runId: "run-old",
+      status: "SUCCEEDED",
+      createdUnix: 1_700_000_000n,
+      success: 2,
+      failed: 0,
+    };
+    const newer = {
+      ...partialRun,
+      runId: "run-new",
+      status: "PARTIAL",
+      createdUnix: 1_700_000_100n,
+    };
+    const { wrapper } = await mountBackup({ runs: [older, newer] });
+    expect(wrapper.get("[data-latest-run]").text()).toBe("PARTIAL");
+    expect(wrapper.get("[data-latest-run]").text()).not.toBe("SUCCEEDED");
+  });
+
+  it("does not present policy or run query errors as an empty catalog", async () => {
+    const { wrapper } = await mountBackup({
+      policiesError: new Error("leader unavailable"),
+      runsError: new Error("leader unavailable"),
+    });
+    const policies = wrapper.get('[data-section="policies"]');
+    const runs = wrapper.get('[data-section="runs"]');
+    expect(policies.text()).toContain("Cluster backup policies are unreachable. This is not an empty catalog.");
+    expect(runs.text()).toContain("Cluster backup runs are unreachable. This is not an empty catalog.");
+    expect(policies.text()).not.toContain("No cluster backup policies");
+    expect(runs.text()).not.toContain("No cluster backup runs");
+    expect(policies.find(".freshness-unknown, .freshness-stale").exists()).toBe(true);
+    expect(runs.find(".freshness-unknown, .freshness-stale").exists()).toBe(true);
+  });
+
+  it("keeps last successful policy and run rows when a later fetch fails", async () => {
+    const { wrapper, clusterBackupClient, queryClient } = await mountBackup();
+    expect(wrapper.get('[data-section="policies"]').text()).toContain("nightly-fs");
+    expect(wrapper.get('[data-section="runs"]').text()).toContain("run-partial");
+    clusterBackupClient.listPolicies.mockRejectedValue(new Error("leader unavailable"));
+    clusterBackupClient.listRuns.mockRejectedValue(new Error("leader unavailable"));
+    await queryClient.invalidateQueries({ queryKey: ["cluster-backup-policies"] });
+    await queryClient.invalidateQueries({ queryKey: ["cluster-backup-runs"] });
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+    expect(wrapper.get('[data-section="policies"]').text()).toContain("nightly-fs");
+    expect(wrapper.get('[data-section="runs"]').text()).toContain("run-partial");
+    expect(wrapper.text()).not.toContain("No cluster backup policies");
+    expect(wrapper.text()).not.toContain("No cluster backup runs");
   });
 });

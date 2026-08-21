@@ -63,6 +63,7 @@ type ClusterRun = {
   failed?: number;
   unavailable?: number;
   timeout?: number;
+  createdUnix?: bigint | number;
   startedUnix?: bigint | number;
   finishedUnix?: bigint | number;
   tasks?: ClusterTask[];
@@ -263,6 +264,14 @@ const clusterErrorText = computed(() => {
 const listPending = computed(() => listQuery.isPending.value && !listQuery.data.value);
 const policiesPending = computed(() => policyQuery.isPending.value && !policyQuery.data.value);
 const runsPending = computed(() => runQuery.isPending.value && !runQuery.data.value);
+const policiesUnreachable = computed(
+  () => Boolean(policyQuery.error.value) && !policiesPending.value && !policies.value.length,
+);
+const runsUnreachable = computed(
+  () => Boolean(runQuery.error.value) && !runsPending.value && !runs.value.length,
+);
+const policiesStale = computed(() => Boolean(policyQuery.error.value) && policies.value.length > 0);
+const runsStale = computed(() => Boolean(runQuery.error.value) && runs.value.length > 0);
 const showEmptyCatalog = computed(() => !listPending.value && !hasStale.value && !rows.value.length);
 const showPeerHint = computed(
   () => !listPending.value && (nodesUnavailable.value || lastPeerNodeIds.value.length === 0),
@@ -349,11 +358,37 @@ function isSuccessStatus(status: string | undefined): boolean {
   return s === "SUCCEEDED" || s === "SUCCESS";
 }
 
+function unixNumber(unix: bigint | number | undefined): number {
+  if (typeof unix === "bigint") {
+    const n = Number(unix);
+    return Number.isFinite(n) ? n : 0;
+  }
+  if (typeof unix === "number" && Number.isFinite(unix)) {
+    return unix;
+  }
+  return 0;
+}
+
 function latestRunFor(policyId: string): ClusterRun | undefined {
   if (!policyId) {
     return undefined;
   }
-  return runs.value.find((run) => run.policyId === policyId);
+  let latest: ClusterRun | undefined;
+  let latestUnix = Number.NEGATIVE_INFINITY;
+  let latestId = "";
+  for (const run of runs.value) {
+    if (run.policyId !== policyId) {
+      continue;
+    }
+    const created = unixNumber(run.createdUnix);
+    const runId = run.runId ?? "";
+    if (!latest || created > latestUnix || (created === latestUnix && runId > latestId)) {
+      latest = run;
+      latestUnix = created;
+      latestId = runId;
+    }
+  }
+  return latest;
 }
 
 function nextRunLabel(policy: ClusterPolicy): string {
@@ -946,6 +981,7 @@ async function onRetryFailed(): Promise<void> {
     <section class="section" data-section="policies">
       <div class="section-header">
         <h2>{{ t("backup.policies") }}</h2>
+        <FreshnessBadge v-if="policiesStale" :status="STALE" />
         <button
           v-if="canManage"
           type="button"
@@ -959,6 +995,15 @@ async function onRetryFailed(): Promise<void> {
         </button>
       </div>
       <p v-if="policiesPending" class="muted">{{ t("backup.loading") }}</p>
+      <div
+        v-else-if="policiesUnreachable"
+        class="banner warning-banner"
+        data-policies-unreachable
+        role="status"
+      >
+        <FreshnessBadge :status="UNKNOWN" />
+        {{ t("backup.policiesUnreachable") }}
+      </div>
       <div v-else class="card">
         <table class="table">
           <thead>
@@ -981,6 +1026,7 @@ async function onRetryFailed(): Promise<void> {
               <td>
                 <span
                   class="status-badge"
+                  data-latest-run
                   :class="statusClass(row.latestStatus)"
                   :data-status="row.latestStatus"
                   :style="statusStyle(row.latestStatus)"
@@ -1030,11 +1076,21 @@ async function onRetryFailed(): Promise<void> {
     <section class="section" data-section="runs">
       <div class="section-header">
         <h2>{{ t("backup.runs") }}</h2>
+        <FreshnessBadge v-if="runsStale" :status="STALE" />
       </div>
       <div v-if="hasPartialRun" class="banner warning-banner" data-partial-warning role="status">
         {{ t("backup.partialWarning") }}
       </div>
       <p v-if="runsPending" class="muted">{{ t("backup.loading") }}</p>
+      <div
+        v-else-if="runsUnreachable"
+        class="banner warning-banner"
+        data-runs-unreachable
+        role="status"
+      >
+        <FreshnessBadge :status="UNKNOWN" />
+        {{ t("backup.runsUnreachable") }}
+      </div>
       <div v-else class="card">
         <table class="table">
           <thead>

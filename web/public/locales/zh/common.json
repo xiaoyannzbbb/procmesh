@@ -909,6 +909,8 @@
     "runs": "集群运行",
     "noPolicies": "没有集群备份策略",
     "noRuns": "没有集群备份运行",
+    "policiesUnreachable": "集群备份策略不可达，不能视为没有策略。",
+    "runsUnreachable": "集群备份运行不可达，不能视为没有运行。",
     "createPolicy": "创建策略",
     "editPolicy": "编辑策略",
     "savePolicy": "保存策略",
