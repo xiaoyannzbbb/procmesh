@@ -52,6 +52,10 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := ensureInstanceLastError(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	if err := ensureSchemaVersion(db); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -97,6 +101,40 @@ func ensureBackupIndexBytes(db *sql.DB) error {
 		if _, err := db.Exec(`ALTER TABLE backup_index ADD COLUMN destination_profile TEXT NOT NULL DEFAULT ''`); err != nil {
 			return fmt.Errorf("migrate backup_index destination profile: %w", err)
 		}
+	}
+	return nil
+}
+
+func ensureInstanceLastError(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(process_instances)`)
+	if err != nil {
+		return fmt.Errorf("inspect process_instances: %w", err)
+	}
+	found := false
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, typ string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan process_instances schema: %w", err)
+		}
+		if name == "last_error" {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("inspect process_instances rows: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close process_instances schema: %w", err)
+	}
+	if found {
+		return nil
+	}
+	if _, err := db.Exec(`ALTER TABLE process_instances ADD COLUMN last_error TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("migrate process_instances last_error: %w", err)
 	}
 	return nil
 }

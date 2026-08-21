@@ -12,7 +12,7 @@ import (
 )
 
 const instanceCols = `instance_id, process_id, ordinal, pid, shim_pid, desired, observed, health,
-	started_at, exit_at, exit_code, restart_count, active_revision, boot_id`
+	started_at, exit_at, exit_code, restart_count, active_revision, boot_id, last_error`
 
 // PutInstance inserts or replaces a runtime instance row.
 func (s *Store) PutInstance(ctx context.Context, inst process.Instance) error {
@@ -23,8 +23,8 @@ func (s *Store) PutInstance(ctx context.Context, inst process.Instance) error {
 		INSERT INTO process_instances(
 			instance_id, process_id, ordinal, pid, shim_pid,
 			desired, observed, health, started_at, exit_at, exit_code,
-			restart_count, active_revision, boot_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			restart_count, active_revision, boot_id, last_error
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(instance_id) DO UPDATE SET
 			process_id = excluded.process_id,
 			ordinal = excluded.ordinal,
@@ -38,11 +38,12 @@ func (s *Store) PutInstance(ctx context.Context, inst process.Instance) error {
 			exit_code = excluded.exit_code,
 			restart_count = excluded.restart_count,
 			active_revision = excluded.active_revision,
-			boot_id = excluded.boot_id
+			boot_id = excluded.boot_id,
+			last_error = excluded.last_error
 	`, inst.InstanceID, inst.ProcessID, inst.Ordinal, inst.PID, inst.ShimPID,
 		string(inst.Desired), string(inst.Observed), string(inst.Health),
 		formatTimePtr(inst.StartedAt), formatTimePtr(inst.ExitAt), nullInt(inst.ExitCode),
-		inst.RestartCount, inst.ActiveRevision, inst.BootID)
+		inst.RestartCount, inst.ActiveRevision, inst.BootID, inst.LastError)
 	if err != nil {
 		return fmt.Errorf("put instance: %w", err)
 	}
@@ -133,7 +134,7 @@ func scanInstanceDest(row instanceScanner) (process.Instance, error) {
 	err := row.Scan(
 		&inst.InstanceID, &inst.ProcessID, &inst.Ordinal, &inst.PID, &inst.ShimPID,
 		&desired, &observed, &health, &startedAt, &exitAt, &exitCode,
-		&inst.RestartCount, &inst.ActiveRevision, &inst.BootID,
+		&inst.RestartCount, &inst.ActiveRevision, &inst.BootID, &inst.LastError,
 	)
 	if err != nil {
 		return process.Instance{}, err

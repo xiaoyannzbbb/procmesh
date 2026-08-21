@@ -237,6 +237,9 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
       <div v-if="detail.logPathPending" class="banner" role="status">
         {{ t("processDetail.logPathPending") }}
       </div>
+      <div v-if="detail.lastError" class="banner fail" role="alert">
+        {{ t("processDetail.process.lastError") }}: {{ detail.lastError }}
+      </div>
       <div class="tabs" role="tablist">
         <button
           type="button"
@@ -340,6 +343,10 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
             <dt>{{ t("processDetail.process.exitCode") }}</dt>
             <dd>{{ detail.exitCode }}</dd>
           </div>
+          <div v-if="detail.lastError">
+            <dt>{{ t("processDetail.process.lastError") }}</dt>
+            <dd class="error-text">{{ detail.lastError }}</dd>
+          </div>
           <div>
             <dt>{{ t("processDetail.process.activeRevision") }}</dt>
             <dd>{{ detail.activeRevision }}</dd>
@@ -378,6 +385,7 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
               <th>{{ t("processDetail.instances.table.uptime") }}</th>
               <th>{{ t("processDetail.instances.table.restarts") }}</th>
               <th>{{ t("processDetail.instances.table.exit") }}</th>
+              <th>{{ t("processDetail.instances.table.lastError") }}</th>
               <th>{{ t("processDetail.instances.table.revision") }}</th>
               <th>{{ t("processDetail.instances.table.cpu") }}</th>
               <th>{{ t("processDetail.instances.table.memory") }}</th>
@@ -393,6 +401,7 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
               <td>{{ inst.uptime }}</td>
               <td>{{ inst.restartCount }}</td>
               <td>{{ inst.exitCode }}</td>
+              <td class="error-text">{{ inst.lastError || "—" }}</td>
               <td>{{ inst.activeRevision }}</td>
               <td>
                 {{ inst.cpu }}
@@ -522,6 +531,19 @@ h2 {
 .restart {
   background: var(--color-stale);
   color: var(--color-stale-fg);
+}
+.fail {
+  background: color-mix(in srgb, var(--color-danger) 16%, transparent);
+  color: var(--color-danger);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.error-text {
+  color: var(--color-danger);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .card {
   border: 1px solid var(--color-border);

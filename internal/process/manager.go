@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -54,6 +55,8 @@ type Deps struct {
 	LookUser func(user string) error
 	// Logs is optional disk-protection state. Nil is accepted (writes allowed).
 	Logs *logmgr.Manager
+	// Logger is optional. Nil discards process-manager logs.
+	Logger *slog.Logger
 }
 
 // Manager reconciles desired process specs against observed instances.
@@ -695,6 +698,26 @@ func (m *Manager) closeAll() {
 
 func (m *Manager) now() time.Time {
 	return m.deps.Now()
+}
+
+func (m *Manager) logger() *slog.Logger {
+	if m.deps.Logger != nil {
+		return m.deps.Logger
+	}
+	return slog.New(slog.DiscardHandler)
+}
+
+func (m *Manager) noteStartError(ctx context.Context, spec ProcessSpec, inst *Instance, msg string) {
+	inst.LastError = msg
+	m.logger().Warn("process start failed",
+		"process", spec.Name,
+		"process_id", spec.ProcessID,
+		"instance_id", inst.InstanceID,
+		"error", msg,
+	)
+	if err := m.deps.Store.PutInstance(ctx, *inst); err != nil {
+		m.logger().Warn("persist start error failed", "instance_id", inst.InstanceID, "error", err)
+	}
 }
 
 func sameBoot(instBoot, current string) bool {

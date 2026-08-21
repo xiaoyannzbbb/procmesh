@@ -159,6 +159,7 @@ func ViewOf(spec process.ProcessSpec, insts []process.Instance) *procmeshv1.Proc
 			Pid:            int32(inst.PID),
 			ActiveRevision: inst.ActiveRevision,
 			RestartCount:   int32(inst.RestartCount),
+			LastError:      inst.LastError,
 		}
 		if inst.ExitCode != nil {
 			pi.ExitCode = int32(*inst.ExitCode)

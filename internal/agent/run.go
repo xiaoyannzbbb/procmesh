@@ -139,6 +139,7 @@ func Run(ctx context.Context, opt Options) error {
 		Now:      time.Now,
 		LookUser: lookupUser,
 		Logs:     logs,
+		Logger:   logger,
 	})
 	if err := mgr.Recover(ctx); err != nil {
 		logger.Warn("process recovery failed", "error", err)
@@ -626,7 +627,7 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		},
 		Now: opt.Now,
 	})
-	if control.AlreadyInited(clusterDeps.Dir) {
+	if control.AlreadyInited(clusterDeps.Dir) || raftLogExists(raftDir) {
 		if err := rt.startRaft(false); err != nil {
 			_ = ln.Close()
 			rt.shutdown(context.Background())

@@ -41,9 +41,11 @@ const processDetailEn = {
     title: "Process",
     name: "Name",
     processId: "Process ID",
+    lastError: "Last Error",
   },
   instances: {
     title: "Instances",
+    table: { lastError: "Last Error" },
   },
 };
 
@@ -247,6 +249,34 @@ describe("ProcessDetailPage i18n", () => {
     expect(text).toContain("启动");
     expect(text).toContain("停止");
     expect(text).toContain("重启");
+  });
+});
+
+describe("ProcessDetailPage last error", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    await i18n.addResourceBundle("en", "common", {
+      processDetail: processDetailEn,
+      metricsHistory: metricsHistoryEn,
+    });
+  });
+
+  it("shows the start failure reason from lastError", async () => {
+    const wrapper = await mountProcessDetailPage({
+      processId: "proc-1",
+      spec: { name: "test-process", ownerAgentId: "node1", latestRevision: 1 },
+      instances: [
+        {
+          instanceId: "inst-1",
+          desired: "RUNNING",
+          observed: "BACKOFF",
+          lastError: "chdir /missing: no such file or directory",
+          activeRevision: 1,
+        },
+      ],
+    });
+    expect(wrapper.text()).toContain("chdir /missing: no such file or directory");
+    expect(wrapper.find('[role="alert"]').text()).toContain("chdir /missing: no such file or directory");
   });
 });
 

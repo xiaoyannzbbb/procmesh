@@ -569,6 +569,7 @@ declare module "i18next" {
         'processDetail.process.uptime': string
         'processDetail.process.restartCount': string
         'processDetail.process.exitCode': string
+        'processDetail.process.lastError': string
         'processDetail.process.activeRevision': string
         'processDetail.process.latestRevision': string
         'processDetail.process.cpu': string
@@ -582,6 +583,7 @@ declare module "i18next" {
         'processDetail.instances.table.uptime': string
         'processDetail.instances.table.restarts': string
         'processDetail.instances.table.exit': string
+        'processDetail.instances.table.lastError': string
         'processDetail.instances.table.revision': string
         'processDetail.instances.table.cpu': string
         'processDetail.instances.table.memory': string

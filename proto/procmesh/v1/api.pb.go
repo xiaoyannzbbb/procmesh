@@ -815,6 +815,7 @@ type Instance struct {
 	HasExitCode    bool                   `protobuf:"varint,10,opt,name=has_exit_code,json=hasExitCode,proto3" json:"has_exit_code,omitempty"`
 	StartedUnixMs  int64                  `protobuf:"varint,11,opt,name=started_unix_ms,json=startedUnixMs,proto3" json:"started_unix_ms,omitempty"`
 	LogPathPending bool                   `protobuf:"varint,12,opt,name=log_path_pending,json=logPathPending,proto3" json:"log_path_pending,omitempty"`
+	LastError      string                 `protobuf:"bytes,13,opt,name=last_error,json=lastError,proto3" json:"last_error,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -931,6 +932,13 @@ func (x *Instance) GetLogPathPending() bool {
 		return x.LogPathPending
 	}
 	return false
+}
+
+func (x *Instance) GetLastError() string {
+	if x != nil {
+		return x.LastError
+	}
+	return ""
 }
 
 type ProcessView struct {
@@ -15041,7 +15049,7 @@ const file_proto_procmesh_v1_api_proto_rawDesc = "" +
 	"\x0flatest_revision\x18\x15 \x01(\x03R\x0elatestRevision\x1a>\n" +
 	"\x10EnvironmentEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x86\x03\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa5\x03\n" +
 	"\bInstance\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12\x18\n" +
@@ -15056,7 +15064,9 @@ const file_proto_procmesh_v1_api_proto_rawDesc = "" +
 	"\rhas_exit_code\x18\n" +
 	" \x01(\bR\vhasExitCode\x12&\n" +
 	"\x0fstarted_unix_ms\x18\v \x01(\x03R\rstartedUnixMs\x12(\n" +
-	"\x10log_path_pending\x18\f \x01(\bR\x0elogPathPending\"\x8f\x01\n" +
+	"\x10log_path_pending\x18\f \x01(\bR\x0elogPathPending\x12\x1d\n" +
+	"\n" +
+	"last_error\x18\r \x01(\tR\tlastError\"\x8f\x01\n" +
 	"\vProcessView\x12\x1d\n" +
 	"\n" +
 	"process_id\x18\x01 \x01(\tR\tprocessId\x12,\n" +

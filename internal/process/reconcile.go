@@ -298,9 +298,12 @@ func (m *Manager) handleExit(ctx context.Context, inst *Instance, st *shimpb.Sta
 func (m *Manager) startInstance(ctx context.Context, spec ProcessSpec, inst *Instance, boot string) error {
 	if spec.RunAsUser != "" {
 		if m.deps.LookUser == nil {
-			return errcode.E(errcode.INVALID, "run_as_user")
+			err := errcode.E(errcode.INVALID, "run_as_user")
+			m.noteStartError(ctx, spec, inst, err.Error())
+			return err
 		}
 		if err := m.deps.LookUser(spec.RunAsUser); err != nil {
+			m.noteStartError(ctx, spec, inst, err.Error())
 			return err
 		}
 	}
@@ -332,16 +335,20 @@ func (m *Manager) startInstance(ctx context.Context, spec ProcessSpec, inst *Ins
 			var err error
 			bin, err = shim.LookPath()
 			if err != nil {
+				m.noteStartError(ctx, spec, inst, err.Error())
 				return err
 			}
 		}
 		shimPID, err := shim.Launch(ctx, bin, sock, inst.InstanceID)
 		if err != nil {
+			msg := fmt.Sprintf("launch shim: %v", err)
+			m.noteStartError(ctx, spec, inst, msg)
 			return fmt.Errorf("launch shim: %w", err)
 		}
 		inst.ShimPID = shimPID
 		c, status, err := shim.Reconnect(ctx, sock)
 		if err != nil {
+			m.noteStartError(ctx, spec, inst, err.Error())
 			return err
 		}
 		client, st = c, status
@@ -370,6 +377,7 @@ func (m *Manager) startInstance(ctx context.Context, spec ProcessSpec, inst *Ins
 			err = logmgr.Prepare(stdout, stderr)
 		}
 		if err != nil {
+			m.noteStartError(ctx, spec, inst, err.Error())
 			return err
 		}
 	}
@@ -396,7 +404,7 @@ func (m *Manager) startInstance(ctx context.Context, spec ProcessSpec, inst *Ins
 			inst.Observed = ObservedBackoff
 		}
 		m.recordFailure(inst.InstanceID)
-		_ = m.deps.Store.PutInstance(ctx, *inst)
+		m.noteStartError(ctx, spec, inst, msg)
 		return fmt.Errorf("start: %s", msg)
 	}
 	now := m.now()
@@ -404,6 +412,7 @@ func (m *Manager) startInstance(ctx context.Context, spec ProcessSpec, inst *Ins
 	inst.StartedAt = &now
 	inst.ExitAt = nil
 	inst.ExitCode = nil
+	inst.LastError = ""
 	inst.ActiveRevision = spec.LatestRevision
 	inst.BootID = boot
 	inst.Health = HealthUnknown
@@ -425,6 +434,7 @@ func (m *Manager) applyRunning(ctx context.Context, inst *Instance, pid int, boo
 	inst.PID = pid
 	inst.Health = HealthUnknown
 	inst.BootID = boot
+	inst.LastError = ""
 	if inst.Observed != ObservedRunning {
 		if next, err := ApplyObserved(inst.Observed, EvStartOK); err == nil {
 			inst.Observed = next

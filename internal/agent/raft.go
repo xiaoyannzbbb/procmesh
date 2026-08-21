@@ -113,6 +113,7 @@ func (r *rpcRuntime) startRaft(bootstrap bool) error {
 	if r == nil {
 		return nil
 	}
+	recovering := raftLogExists(r.raftDir)
 	r.mu.Lock()
 	if r.node == nil {
 		clusterID := r.clusterID
@@ -151,6 +152,10 @@ func (r *rpcRuntime) startRaft(bootstrap bool) error {
 	if bootstrap {
 		if err := r.bootstrapFSM(); err != nil {
 			return err
+		}
+	} else if recovering {
+		if err := r.waitCatchup(raftStartTO); err != nil && r.logger != nil {
+			r.logger.With("component", "raft").Warn("raft fsm not caught up", "error", err)
 		}
 	}
 	return r.ensureLocalMemberAdmitted()

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -739,6 +740,98 @@ func startSleep(t *testing.T, m *process.Manager, st *store.Store, spec process.
 		t.Fatalf("start %+v %v", inst, err)
 	}
 	return inst
+}
+
+func TestReconcile_MissingWorkingDirRecordsLastError(t *testing.T) {
+	ctx := context.Background()
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	root := shortRoot(t)
+	st := openStoreAt(t, filepath.Join(root, "store.db"))
+	layout := paths.New(root)
+	if err := layout.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { killTestLayout(st, layout) })
+	m := process.NewManager(process.Deps{
+		Store:   st,
+		Layout:  layout,
+		ShimBin: testShimBin,
+		Now:     time.Now,
+		Logger:  logger,
+	})
+	missing := filepath.Join(t.TempDir(), "no-such-workdir")
+	spec := process.ProcessSpec{
+		ProcessID:        "p1",
+		Name:             "missing-cwd",
+		Command:          "/bin/true",
+		WorkingDirectory: missing,
+		Instances:        1,
+	}
+	if _, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetDesired(ctx, "p1", process.DesiredRunning, "op-s", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetInstance(ctx, process.MakeInstanceID("p1", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Observed != process.ObservedBackoff {
+		t.Fatalf("observed=%s want BACKOFF %+v", got.Observed, got)
+	}
+	if got.LastError == "" {
+		t.Fatalf("last_error empty, instance=%+v logs=%s", got, logBuf.String())
+	}
+	low := strings.ToLower(got.LastError)
+	if !strings.Contains(low, "no such file") && !strings.Contains(low, "chdir") {
+		t.Fatalf("last_error=%q want missing working directory", got.LastError)
+	}
+	if !strings.Contains(logBuf.String(), got.LastError) {
+		t.Fatalf("agent log missing last_error %q: %s", got.LastError, logBuf.String())
+	}
+}
+
+func TestReconcile_SuccessfulStartClearsLastError(t *testing.T) {
+	ctx := context.Background()
+	m, st, _ := newTestManager(t)
+	spec := process.ProcessSpec{
+		ProcessID: "p1",
+		Name:      "sleep",
+		Command:   "/bin/sleep",
+		Args:      []string{"30"},
+		Instances: 1,
+	}
+	if _, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	id := process.MakeInstanceID("p1", 0)
+	inst, err := st.GetInstance(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst.LastError = "chdir /missing: no such file or directory"
+	if err := st.PutInstance(ctx, inst); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { killManaged(t, st, spec.ProcessID) })
+	if err := m.SetDesired(ctx, spec.ProcessID, process.DesiredRunning, "op-s", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetInstance(ctx, id)
+	if err != nil || got.PID <= 0 || got.Observed != process.ObservedRunning {
+		t.Fatalf("start %+v %v", got, err)
+	}
+	if got.LastError != "" {
+		t.Fatalf("last_error=%q want empty after successful start", got.LastError)
+	}
 }
 
 func TestReconcile_HealthHTTPMarksHealthy(t *testing.T) {

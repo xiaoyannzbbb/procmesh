@@ -21,6 +21,19 @@ func TestViewOf_StartedAtUnixMs(t *testing.T) {
 	}
 }
 
+func TestViewOf_LastError(t *testing.T) {
+	view := ViewOf(process.ProcessSpec{ProcessID: "p1"}, []process.Instance{{
+		InstanceID: "i1",
+		LastError:  "chdir /missing: no such file or directory",
+	}})
+	if len(view.Instances) != 1 {
+		t.Fatalf("instances=%d", len(view.Instances))
+	}
+	if got := view.Instances[0].GetLastError(); got != "chdir /missing: no such file or directory" {
+		t.Fatalf("last_error=%q", got)
+	}
+}
+
 func TestViewOf_NilStartedAtZero(t *testing.T) {
 	view := ViewOf(process.ProcessSpec{ProcessID: "p1"}, []process.Instance{{
 		InstanceID: "i1",

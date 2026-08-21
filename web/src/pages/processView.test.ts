@@ -6,6 +6,7 @@ import {
   flattenClusterProcesses,
   formatMetric,
   formatRemoteError,
+  mapProcessDetail,
   needsRestartBanner,
   RESTART_REQUIRED_BANNER,
   ownerDisplay,
@@ -101,6 +102,30 @@ describe("rowsFromProcessViews", () => {
     expect(rows[0].name).toBe("pay");
     expect(rows[0].group).toBe("finance");
     expect(rows[0].ownerNodeId).toBe("node-fin");
+  });
+});
+
+describe("mapProcessDetail", () => {
+  it("surfaces instance lastError on the process and instance row", () => {
+    const detail = mapProcessDetail(
+      {
+        processId: "p1",
+        spec: { name: "web", latestRevision: 1 },
+        instances: [
+          {
+            instanceId: "p1:0",
+            desired: "RUNNING",
+            observed: "BACKOFF",
+            lastError: "chdir /missing: no such file or directory",
+            activeRevision: 1,
+          },
+        ],
+      },
+      [],
+      nowMs,
+    );
+    expect(detail.lastError).toBe("chdir /missing: no such file or directory");
+    expect(detail.instanceRows[0]?.lastError).toBe("chdir /missing: no such file or directory");
   });
 });
 

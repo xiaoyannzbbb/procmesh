@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS process_instances (
     exit_code INTEGER,
     restart_count INTEGER NOT NULL,
     active_revision INTEGER NOT NULL,
-    boot_id TEXT NOT NULL
+    boot_id TEXT NOT NULL,
+    last_error TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS config_revisions (

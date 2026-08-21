@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -49,6 +50,68 @@ func TestP4_LoginRequiredAfterInit(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("process list after login exit=%d stderr=%q stdout=%q", code, errb, out)
 	}
+}
+
+// Cluster identity files can disappear while store.cluster_id and raft.db remain.
+// Auth then requires a session, but Raft never starts → Login returns UNAVAILABLE.
+func TestP4_LoginAfterRestartMissingClusterJSON(t *testing.T) {
+	root, err := os.MkdirTemp("", "pm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+
+	controlAddr := freeLocalAddr(t)
+	addr, stop := startClusterAgentAtOpts(t, root, Options{
+		ControlListen:    controlAddr,
+		ControlAdvertise: controlAddr,
+	})
+	code, out, errb := runP1CLI("--server", addr, "cluster", "init")
+	if code != 0 {
+		t.Fatalf("cluster init exit=%d stderr=%q stdout=%q", code, errb, out)
+	}
+	pw := parseKV(out, "admin_password")
+	if pw == "" {
+		t.Fatalf("missing admin_password in %q", out)
+	}
+	loginAdmin(t, addr, pw)
+	stop()
+
+	clusterDir := filepath.Join(root, "cluster")
+	entries, err := os.ReadDir(clusterDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name() == "secret" {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(clusterDir, e.Name())); err != nil {
+			t.Fatalf("remove %s: %v", e.Name(), err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "raft", "raft.db")); err != nil {
+		t.Fatalf("precondition: raft.db must remain: %v", err)
+	}
+
+	addr, _ = startClusterAgentAtOpts(t, root, Options{
+		ControlListen:    controlAddr,
+		ControlAdvertise: controlAddr,
+	})
+	loginAdmin(t, addr, pw)
+}
+
+func freeLocalAddr(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return addr
 }
 
 func TestP4_ViewerCannotRestart(t *testing.T) {

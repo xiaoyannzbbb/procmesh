@@ -99,6 +99,7 @@ message Instance {
   bool has_exit_code = 10;
   int64 started_unix_ms = 11;
   bool log_path_pending = 12;
+  string last_error = 13;
 }
 
 message ProcessView {

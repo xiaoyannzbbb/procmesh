@@ -640,6 +640,7 @@
       "uptime": "Uptime",
       "restartCount": "Restart Count",
       "exitCode": "Exit Code",
+      "lastError": "Last Error",
       "activeRevision": "Active Revision",
       "latestRevision": "Latest Revision",
       "cpu": "CPU",
@@ -656,6 +657,7 @@
         "uptime": "Uptime",
         "restarts": "Restarts",
         "exit": "Exit",
+        "lastError": "Last Error",
         "revision": "Revision",
         "cpu": "CPU",
         "memory": "Memory"

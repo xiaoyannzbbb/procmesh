@@ -157,6 +157,9 @@ func processGet(c *client, id string, stdout io.Writer) error {
 	for _, inst := range p.GetInstances() {
 		fmt.Fprintf(stdout, "instance\t%s\t%d\t%s\t%s\t%s\t%d\n",
 			inst.GetInstanceId(), inst.GetOrdinal(), inst.GetDesired(), inst.GetObserved(), inst.GetHealth(), inst.GetPid())
+		if errMsg := inst.GetLastError(); errMsg != "" {
+			fmt.Fprintf(stdout, "last_error\t%s\n", errMsg)
+		}
 	}
 	for _, inst := range p.GetInstances() {
 		if inst.GetLogPathPending() {

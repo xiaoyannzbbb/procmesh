@@ -31,6 +31,7 @@ export type ProcessInstanceRow = {
   uptime: string;
   restartCount: number;
   exitCode: string;
+  lastError: string;
   activeRevision: number;
   cpu: string;
   cpuNote: string;
@@ -51,6 +52,7 @@ export type ProcessDetailView = {
   uptime: string;
   restartCount: number;
   exitCode: string;
+  lastError: string;
   activeRevision: number;
   latestRevision: number;
   showRestartBanner: boolean;
@@ -361,6 +363,7 @@ export function mapProcessDetail(
       uptime: mUptime !== undefined ? formatUptimeSeconds(toNum(mUptime)) : uptimeFromStart(started, nowMs),
       restartCount: toNum(pick(row, "restartCount", "restart_count")),
       exitCode: exitText(toBool(pick(row, "hasExitCode", "has_exit_code")), toNum(pick(row, "exitCode", "exit_code"))),
+      lastError: toStr(pick(row, "lastError", "last_error")),
       activeRevision: toNum(pick(row, "activeRevision", "active_revision")),
       cpu: cpu.text,
       cpuNote: cpu.note,
@@ -389,6 +392,7 @@ export function mapProcessDetail(
     uptime,
     restartCount: toNum(pick(firstRec, "restartCount", "restart_count")),
     exitCode: exitText(toBool(pick(firstRec, "hasExitCode", "has_exit_code")), toNum(pick(firstRec, "exitCode", "exit_code"))),
+    lastError: instanceRows.find((row) => row.lastError)?.lastError || toStr(pick(firstRec, "lastError", "last_error")),
     activeRevision,
     latestRevision,
     showRestartBanner: showBanner,

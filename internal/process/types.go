@@ -133,6 +133,7 @@ type Instance struct {
 	RestartCount   int
 	ActiveRevision int64
 	BootID         string
+	LastError      string
 }
 
 func MakeInstanceID(processID string, ordinal int) string {

@@ -48,6 +48,7 @@ func TestPutGetListInstance(t *testing.T) {
 		RestartCount:   3,
 		ActiveRevision: 2,
 		BootID:         "boot-1",
+		LastError:      "chdir /missing: no such file or directory",
 	}
 	if err := s.PutInstance(ctx, inst); err != nil {
 		t.Fatal(err)
@@ -365,6 +366,9 @@ func assertInstanceEqual(t *testing.T, got, want process.Instance) {
 	}
 	if got.ActiveRevision != want.ActiveRevision || got.BootID != want.BootID {
 		t.Fatalf("rev/boot: %+v want %+v", got, want)
+	}
+	if got.LastError != want.LastError {
+		t.Fatalf("last_error: %q want %q", got.LastError, want.LastError)
 	}
 	assertTimePtr(t, "started", got.StartedAt, want.StartedAt)
 	assertTimePtr(t, "exit", got.ExitAt, want.ExitAt)

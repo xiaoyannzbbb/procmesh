@@ -248,6 +248,67 @@ func TestOpen_CreatesFileAndStubTables(t *testing.T) {
 	}
 }
 
+func TestOpen_MigratesInstanceLastError(t *testing.T) {
+	ctx := context.Background()
+	p := filepath.Join(t.TempDir(), "store.db")
+	db, err := sql.Open("sqlite", "file:"+p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`
+		CREATE TABLE process_instances (
+			instance_id TEXT PRIMARY KEY,
+			process_id TEXT NOT NULL,
+			ordinal INTEGER NOT NULL,
+			pid INTEGER NOT NULL,
+			shim_pid INTEGER NOT NULL,
+			desired TEXT NOT NULL,
+			observed TEXT NOT NULL,
+			health TEXT NOT NULL,
+			started_at TEXT,
+			exit_at TEXT,
+			exit_code INTEGER,
+			restart_count INTEGER NOT NULL,
+			active_revision INTEGER NOT NULL,
+			boot_id TEXT NOT NULL
+		);
+		INSERT INTO process_instances(
+			instance_id, process_id, ordinal, pid, shim_pid, desired, observed, health,
+			restart_count, active_revision, boot_id
+		) VALUES ('p1:0', 'p1', 0, 0, 0, 'RUNNING', 'BACKOFF', 'UNKNOWN', 0, 0, '');
+	`)
+	if err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := store.Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	got, err := s.GetInstance(ctx, "p1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LastError != "" {
+		t.Fatalf("migrated last_error=%q", got.LastError)
+	}
+	got.LastError = "chdir /missing: no such file or directory"
+	if err := s.PutInstance(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	again, err := s.GetInstance(ctx, "p1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.LastError != got.LastError {
+		t.Fatalf("last_error=%q", again.LastError)
+	}
+}
+
 func TestOpen_ErrorWhenParentMissing(t *testing.T) {
 	_, err := store.Open(filepath.Join(t.TempDir(), "missing", "store.db"))
 	if err == nil {
