@@ -3,6 +3,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import i18next from "i18next";
 import I18NextVue from "i18next-vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createMemoryHistory, createRouter } from "vue-router";
 import { session } from "../lib/session";
 import BackupPage from "./BackupPage.vue";
 
@@ -233,6 +234,7 @@ async function mountBackup(
     health?: unknown;
     policiesError?: Error;
     runsError?: Error;
+    query?: Record<string, string>;
   } = {},
 ) {
   session.value = {
@@ -302,9 +304,17 @@ async function mountBackup(
     restartProcess: vi.fn(),
     killProcess: vi.fn(),
   };
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: "/backup", component: BackupPage }],
+  });
+  const search = new URLSearchParams(opts.query ?? {}).toString();
+  await router.push(search ? `/backup?${search}` : "/backup");
+  await router.isReady();
   const wrapper = mount(BackupPage, {
     global: {
       plugins: [
+        router,
         [VueQueryPlugin, { queryClient }],
         [I18NextVue, { i18next: i18n }],
       ],
@@ -348,6 +358,16 @@ describe("BackupPage", () => {
     expect(wrapper.find('[data-action="restore"]').exists()).toBe(false);
     expect(wrapper.find('[data-action="delete"]').exists()).toBe(false);
     expect(wrapper.find("form.create-backup").exists()).toBe(false);
+  });
+
+  it("opens restore CAS dialog from owner and snapshot query", async () => {
+    const { wrapper } = await mountBackup({
+      query: { owner: "n1", snapshot: "snap-live", expectedRevision: "9" },
+    });
+    const dialog = wrapper.get("[data-restore-dialog]");
+    expect(dialog.text()).toContain("snap-live");
+    expect(wrapper.get("[data-restore-owner]").text()).toContain("n1");
+    expect((wrapper.get('input[name="expectedRevision"]').element as HTMLInputElement).value).toBe("9");
   });
 
   it("shows Owner text and expected revision input in restore dialog", async () => {

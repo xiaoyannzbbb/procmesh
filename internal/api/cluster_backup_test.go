@@ -304,7 +304,7 @@ func TestClusterBackupAPI_RetryFailedTasksMutatesRaftState(t *testing.T) {
 
 func TestClusterBackupAPI_GetRunAddsUnavailableTasks(t *testing.T) {
 	state := control.NewState()
-	state.BackupRuns["run-1"] = control.ClusterBackupRun{RunID: "run-1", PolicyID: "bp-1", TargetNodeIDs: []string{"node-a", "node-b"}, Status: "RUNNING"}
+	state.BackupRuns["run-1"] = control.ClusterBackupRun{RunID: "run-1", PolicyID: "bp-1", TargetNodeIDs: []string{"node-a", "node-b"}, Status: "PARTIAL"}
 	state.BackupTasks["run-1:task-node-a"] = control.ClusterBackupTask{RunID: "run-1", TaskID: "task-node-a", NodeID: "node-a", Status: "SUCCESS"}
 	client := newClusterBackupClient(t, &ClusterBackupAPI{StateFn: func() control.State { return *state }}, false)
 	resp, err := client.GetRun(context.Background(), connect.NewRequest(&procmeshv1.GetClusterBackupRunRequest{RunId: "run-1"}))
@@ -318,6 +318,44 @@ func TestClusterBackupAPI_GetRunAddsUnavailableTasks(t *testing.T) {
 		if task.GetNodeId() == "node-b" && task.GetStatus() != "UNAVAILABLE" {
 			t.Fatalf("task=%+v", task)
 		}
+	}
+}
+
+func TestClusterBackupAPI_GetRunReportsInFlightTasksAsPending(t *testing.T) {
+	state := control.NewState()
+	state.Members["node-a"] = control.Member{NodeID: "node-a", Status: control.MemberAdmitted}
+	state.Members["node-b"] = control.Member{NodeID: "node-b", Status: control.MemberAdmitted}
+	state.BackupPolicies["bp-1"] = control.BackupPolicy{PolicyID: "bp-1", Revision: 1, TargetSelector: "EXPLICIT_NODES", TargetIDs: []string{"node-a", "node-b"}}
+	client := newClusterBackupClient(t, &ClusterBackupAPI{
+		StateFn: func() control.State { return *state }, IsLeader: func() bool { return true },
+		ApplyFn: func(cmd control.Command, _ time.Duration) error { return state.Apply(cmd, time.Now()) },
+	}, false)
+	started, err := client.StartRun(context.Background(), connect.NewRequest(&procmeshv1.StartClusterBackupRunRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-inflight"}, PolicyId: "bp-1",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := started.Msg.GetRun().GetRunId()
+	state.BackupTasks[runID+":task-node-a"] = control.ClusterBackupTask{RunID: runID, TaskID: "task-node-a", NodeID: "node-a", Status: "RUNNING"}
+	resp, err := client.GetRun(context.Background(), connect.NewRequest(&procmeshv1.GetClusterBackupRunRequest{RunId: runID}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Msg.GetRun().GetTasks()) != 2 {
+		t.Fatalf("tasks=%d", len(resp.Msg.GetRun().GetTasks()))
+	}
+	var pending *procmeshv1.ClusterBackupTask
+	for _, task := range resp.Msg.GetRun().GetTasks() {
+		if task.GetStatus() == "UNAVAILABLE" {
+			t.Fatalf("in-flight task labeled unavailable: %+v", task)
+		}
+		if task.GetNodeId() == "node-b" {
+			pending = task
+		}
+	}
+	if pending == nil || pending.GetStatus() != "PENDING" || pending.GetErrorCode() != "" || pending.GetErrorSummary() != "" {
+		t.Fatalf("missing in-flight task=%+v", pending)
 	}
 }
 

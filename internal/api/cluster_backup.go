@@ -243,7 +243,7 @@ func (s *ClusterBackupAPI) GetRun(ctx context.Context, req *connect.Request[proc
 			}
 		}
 		if !found {
-			tasks = append(tasks, control.ClusterBackupTask{RunID: run.RunID, TaskID: "task-" + nodeID, NodeID: nodeID, Status: "UNAVAILABLE", ErrorCode: string(errcode.UNAVAILABLE), ErrorSummary: "agent unavailable"})
+			tasks = append(tasks, missingClusterBackupTask(run, nodeID))
 		}
 	}
 	return connect.NewResponse(&procmeshv1.GetClusterBackupRunResponse{Run: runToProto(run, tasks)}), nil
@@ -485,6 +485,19 @@ func policyBody(operationID string, p *procmeshv1.ClusterBackupPolicy) control.B
 func policyToProto(p control.BackupPolicy) *procmeshv1.ClusterBackupPolicy {
 	return &procmeshv1.ClusterBackupPolicy{PolicyId: p.PolicyID, Name: p.Name, Enabled: p.Enabled, ScheduleCron: p.ScheduleCron, Timezone: p.Timezone, TargetSelector: p.TargetSelector, TargetNodeIds: append([]string(nil), p.TargetIDs...), Sink: p.Sink, DestinationProfile: p.DestinationProfile, RetentionKeepLast: int32(p.RetentionKeepLast), RetentionKeepDays: int32(p.RetentionKeepDays), RetentionMaxBytes: p.RetentionMaxBytes, TimeoutSeconds: int32(p.TimeoutSeconds), MaxConcurrency: int32(p.MaxConcurrency), UnavailablePolicy: p.UnavailablePolicy, Revision: p.Revision}
 }
+
+// missingClusterBackupTask fills a target that has not reported yet.
+// UNAVAILABLE means the node was unreachable, not that dispatch is still in flight.
+func missingClusterBackupTask(run control.ClusterBackupRun, nodeID string) control.ClusterBackupTask {
+	task := control.ClusterBackupTask{RunID: run.RunID, TaskID: "task-" + nodeID, NodeID: nodeID, Status: "PENDING"}
+	if run.Status != "RUNNING" && run.Status != "PENDING" {
+		task.Status = "UNAVAILABLE"
+		task.ErrorCode = string(errcode.UNAVAILABLE)
+		task.ErrorSummary = "agent unavailable"
+	}
+	return task
+}
+
 func runToProto(r control.ClusterBackupRun, tasks []control.ClusterBackupTask) *procmeshv1.ClusterBackupRun {
 	out := &procmeshv1.ClusterBackupRun{RunId: r.RunID, PolicyId: r.PolicyID, PolicyRevision: r.PolicyRevision, TargetNodeIds: append([]string(nil), r.TargetNodeIDs...), Status: r.Status, Success: int32(r.Success), Failed: int32(r.Failed), Unavailable: int32(r.Unavailable), Timeout: int32(r.Timeout), CreatedUnix: r.CreatedUnix, StartedUnix: r.StartedUnix, FinishedUnix: r.FinishedUnix}
 	for _, t := range tasks {

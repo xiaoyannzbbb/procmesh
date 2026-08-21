@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
 import { Plus } from "lucide-vue-next";
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { useRoute } from "vue-router";
 import Drawer from "../components/Drawer.vue";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
 import { LIVE, STALE, UNKNOWN, formatAge, type Freshness } from "../lib/freshness";
@@ -77,6 +78,7 @@ type DestinationHealth = {
 };
 
 const { t } = useI18n();
+const route = useRoute();
 const POLL_MS = 5000;
 const client = useBackupClient();
 const clusterClient = useClusterBackupClient();
@@ -106,6 +108,7 @@ type RestoreSnapshot = {
 const restoreOpen = ref(false);
 const restoreSnapshot = ref<RestoreSnapshot | null>(null);
 const restoreTargets = ref<RestoreTargetForm[]>([]);
+const restoreQueryApplied = ref("");
 const lastPeerNodeIds = ref<string[]>([]);
 const nodesUnavailable = ref(false);
 
@@ -288,7 +291,9 @@ const policyReady = computed(() => {
   return true;
 });
 
-const restoreOwner = computed(() => restoreSnapshot.value?.nodeId ?? "");
+const restoreOwner = computed(
+  () => restoreSnapshot.value?.nodeId || restoreSnapshot.value?.sourceNodeId || "",
+);
 const restoreReady = computed(() => {
   if (!restoreOpen.value || !restoreOwner.value) {
     return false;
@@ -605,7 +610,7 @@ async function fetchLiveRevision(processId: string, ownerId: string, fallback: s
   }
 }
 
-async function openRestore(snapshot: RestoreSnapshot): Promise<void> {
+async function openRestore(snapshot: RestoreSnapshot, expectedRevisionOverride?: string): Promise<void> {
   if (!canManage.value || !snapshot.snapshotId) {
     return;
   }
@@ -615,17 +620,80 @@ async function openRestore(snapshot: RestoreSnapshot): Promise<void> {
   restoreTargets.value = [];
   restoreOpen.value = true;
   const processIds = snapshot.processIds.length ? snapshot.processIds : [];
+  const ownerId = snapshot.nodeId || snapshot.sourceNodeId;
+  const revisionOverride = expectedRevisionOverride?.trim() ?? "";
   restoreTargets.value = await Promise.all(
     processIds.map(async (processId) => ({
       processId,
-      expectedRevision: await fetchLiveRevision(
-        processId,
-        snapshot.nodeId,
-        prefillRevision(processId, snapshot.revisionRanges),
-      ),
+      expectedRevision:
+        revisionOverride ||
+        (await fetchLiveRevision(
+          processId,
+          ownerId,
+          prefillRevision(processId, snapshot.revisionRanges),
+        )),
     })),
   );
 }
+
+function queryParam(value: unknown): string {
+  if (Array.isArray(value)) {
+    return String(value[0] ?? "").trim();
+  }
+  if (value === undefined || value === null) {
+    return "";
+  }
+  return String(value).trim();
+}
+
+function snapshotMatchesRestoreQuery(
+  row: { snapshotId: string; node: string; snapshot: RestoreSnapshot | null },
+  owner: string,
+  snapshotId: string,
+): boolean {
+  if (!row.snapshot || row.snapshot.snapshotId !== snapshotId) {
+    return false;
+  }
+  return [row.snapshot.nodeId, row.snapshot.sourceNodeId, row.node].includes(owner);
+}
+
+// Disaster-replica deep links open Owner restore; peer replicas are not auto-applied
+// and Owner restore still reads FS/S3 (not a peer payload pull).
+async function applyRestoreQuery(): Promise<void> {
+  const owner = queryParam(route.query.owner);
+  const snapshotId = queryParam(route.query.snapshot);
+  const key = `${owner}\0${snapshotId}`;
+  if (!owner || !snapshotId || restoreQueryApplied.value === key) {
+    return;
+  }
+  if (!listQuery.isSuccess.value) {
+    return;
+  }
+  const row = rows.value.find((entry) => snapshotMatchesRestoreQuery(entry, owner, snapshotId));
+  if (!row?.snapshot) {
+    restoreQueryApplied.value = key;
+    return;
+  }
+  restoreQueryApplied.value = key;
+  await openRestore(
+    { ...row.snapshot, nodeId: row.snapshot.nodeId || owner },
+    queryParam(route.query.expectedRevision),
+  );
+}
+
+watch(
+  () => [
+    listQuery.isSuccess.value,
+    queryParam(route.query.owner),
+    queryParam(route.query.snapshot),
+    queryParam(route.query.expectedRevision),
+    rows.value.map((row) => row.key).join("|"),
+  ],
+  () => {
+    void applyRestoreQuery();
+  },
+  { immediate: true },
+);
 
 function closeRestore(): void {
   restoreOpen.value = false;

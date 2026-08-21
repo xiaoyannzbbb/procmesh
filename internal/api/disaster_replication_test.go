@@ -1509,6 +1509,85 @@ func TestDisasterReplicationAPI_VerifyReplica_ChecksumMismatch(t *testing.T) {
 	}
 }
 
+func TestDisasterReplicationAPI_VerifyReplica_FrozenChecksumMismatch(t *testing.T) {
+	api, state, authSvc := setupMinimalAPI(t)
+	_, st, _ := newTestManager(t)
+	api.Store = st
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := backup.Snapshot{
+		FormatVersion: 1, ClusterID: "test-cluster", NodeID: "node-1", SnapshotID: "snap-frozen",
+		CreatedAt: time.Now().UTC(), Processes: []backup.ProcessDump{{ProcessID: "proc-1", Name: "app1"}},
+	}
+	payload, sha, err := backup.Encode(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := api.PeerStore.ReceiveWithMetadata(context.Background(), backup.ReceiveParams{
+		SourceNodeID: "node-1", ClusterID: "test-cluster", SnapshotID: "snap-frozen", SHA256: sha, Payload: payload,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	state.ReplicationTasks["run:task"] = control.ClusterBackupTask{
+		RunID: "run", TaskID: "task", SourceNodeID: "node-1", NodeID: "node-2",
+		SnapshotID: "snap-frozen", SHA256: strings.Repeat("0", 64), Status: "SUCCEEDED",
+	}
+	client := newDisasterReplicationClient(t, api)
+	resp, err := client.VerifyReplica(context.Background(), bearerReq(sid, &procmeshv1.VerifyReplicaRequest{
+		SourceNodeId: "node-1", SnapshotId: "snap-frozen",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Msg.GetValid() {
+		t.Fatal("expected checksum mismatch to be invalid")
+	}
+	if !strings.Contains(strings.Join(resp.Msg.GetErrors(), " "), "checksum") {
+		t.Fatalf("errors=%v", resp.Msg.GetErrors())
+	}
+	assertControlAudit(t, st, "replication.verify", "FAILED", map[string]string{"snapshot_id": "snap-frozen"})
+}
+
+func TestDisasterReplicationAPI_VerifyReplica_FrozenChecksumMatch(t *testing.T) {
+	api, state, authSvc := setupMinimalAPI(t)
+	_, st, _ := newTestManager(t)
+	api.Store = st
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := backup.Snapshot{
+		FormatVersion: 1, ClusterID: "test-cluster", NodeID: "node-1", SnapshotID: "snap-match",
+		CreatedAt: time.Now().UTC(), Processes: []backup.ProcessDump{{ProcessID: "proc-1", Name: "app1"}},
+	}
+	payload, sha, err := backup.Encode(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := api.PeerStore.ReceiveWithMetadata(context.Background(), backup.ReceiveParams{
+		SourceNodeID: "node-1", ClusterID: "test-cluster", SnapshotID: "snap-match", SHA256: sha, Payload: payload,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	state.ReplicationTasks["run:task"] = control.ClusterBackupTask{
+		RunID: "run", TaskID: "task", SourceNodeID: "node-1", NodeID: "node-2",
+		SnapshotID: "snap-match", SHA256: sha, Status: "SUCCEEDED",
+	}
+	client := newDisasterReplicationClient(t, api)
+	resp, err := client.VerifyReplica(context.Background(), bearerReq(sid, &procmeshv1.VerifyReplicaRequest{
+		SourceNodeId: "node-1", SnapshotId: "snap-match",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Msg.GetValid() || resp.Msg.GetSha256() != sha {
+		t.Fatalf("resp=%+v", resp.Msg)
+	}
+	assertControlAudit(t, st, "replication.verify", "SUCCESS", map[string]string{"snapshot_id": "snap-match"})
+}
+
 func TestDisasterReplicationAPI_VerifyReplica_PeerStoreUnavailable(t *testing.T) {
 	api, _, authSvc := setupMinimalAPI(t)
 	// Override PeerStore to nil

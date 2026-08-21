@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -979,20 +980,54 @@ func (d *DisasterReplicationAPI) VerifyReplica(ctx context.Context, req *connect
 		return nil, ToConnect(err)
 	}
 
-	// Verify checksum is present
+	expected := d.frozenReplicaChecksum(ctx, req.Msg.SourceNodeId, req.Msg.SnapshotId)
 	valid := meta.SHA256 != ""
+	errs := make([]string, 0, 1)
+	if expected != "" && !strings.EqualFold(meta.SHA256, expected) {
+		valid = false
+		errs = append(errs, "checksum mismatch")
+	} else if meta.SHA256 == "" {
+		valid = false
+		errs = append(errs, "checksum missing")
+	}
 
-	d.audit(ctx, controlMutation{
+	rec := controlMutation{
 		Action: "replication.verify", Resource: "replication_snapshot:" + req.Msg.SnapshotId,
-		PolicyID: "", SnapshotID: req.Msg.SnapshotId, Result: "SUCCESS",
-	}, nil)
+		SnapshotID: req.Msg.SnapshotId,
+	}
+	if !valid {
+		d.audit(ctx, rec, errcode.E(errcode.INVALID, "replica checksum mismatch"))
+	} else {
+		d.audit(ctx, rec, nil)
+	}
 	return connect.NewResponse(&procmeshv1.VerifyReplicaResponse{
 		Valid:        valid,
 		Sha256:       meta.SHA256,
 		ProcessCount: int32(len(meta.ProcessIDs)),
 		ProcessIds:   meta.ProcessIDs,
-		Errors:       []string{}, // No errors if valid
+		Errors:       errs,
 	}), nil
+}
+
+func (d *DisasterReplicationAPI) frozenReplicaChecksum(ctx context.Context, sourceNodeID, snapshotID string) string {
+	state := d.state()
+	for _, task := range state.ReplicationTasks {
+		if task.SourceNodeID == sourceNodeID && task.SnapshotID == snapshotID && task.SHA256 != "" {
+			return task.SHA256
+		}
+	}
+	for _, task := range state.BackupTasks {
+		if task.NodeID == sourceNodeID && task.SnapshotID == snapshotID && task.SHA256 != "" {
+			return task.SHA256
+		}
+	}
+	if d.Store != nil && snapshotID != "" {
+		rec, err := d.Store.GetBackup(ctx, snapshotID)
+		if err == nil && rec.SHA256 != "" && (rec.NodeID == sourceNodeID || rec.SourceNodeID == sourceNodeID) {
+			return rec.SHA256
+		}
+	}
+	return ""
 }
 
 // ListRecoverableSnapshots lists snapshots available for recovery.
