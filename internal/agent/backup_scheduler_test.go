@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/api"
 	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
+	"github.com/qleelulu/procmesh/internal/errcode"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
@@ -84,6 +86,58 @@ func TestBackupDispatcherPreservesPersistedTerminalFailure(t *testing.T) {
 	}
 }
 
+func TestBackupDispatcherRemoteRunTaskUsesParentDeadline(t *testing.T) {
+	client := &fakeClusterBackupAgentClient{result: &procmeshv1.ClusterBackupTask{
+		RunId: "run-1", TaskId: "task-node-b", NodeId: "node-b", Status: "SUCCESS", LeaderTerm: 7,
+	}}
+	d := localBackupDispatcher{
+		runtime: &rpcRuntime{nodeID: "node-a"},
+		forward: fakeClusterBackupAgentForwarder{client: client},
+		members: func() []cluster.NodeSummary {
+			return []cluster.NodeSummary{{NodeID: "node-b", RPCAddress: "127.0.0.1:9001"}}
+		},
+		update: func(context.Context, backup.TaskUpdate) error { return nil },
+	}
+	parentDeadline := time.Now().Add(15 * time.Second)
+	ctx, cancel := context.WithDeadline(context.Background(), parentDeadline)
+	defer cancel()
+	if err := d.DispatchBackupTask(ctx, backup.BackupTaskRequest{
+		RunID: "run-1", TaskID: "task-node-b", PolicyID: "policy-1", NodeID: "node-b",
+		PolicyRevision: 3, Sink: "fs", LeaderTerm: 7, LeaseExpiresUnix: parentDeadline.Unix(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := client.ctx.Deadline()
+	if !ok {
+		t.Fatal("remote RunTask context has no deadline")
+	}
+	if d := got.Sub(parentDeadline); d > 50*time.Millisecond || d < -50*time.Millisecond {
+		t.Fatalf("RunTask deadline %s, want parent %s (delta %s)", got, parentDeadline, d)
+	}
+}
+
+func TestRetryableBackupDispatch(t *testing.T) {
+	t.Parallel()
+	if !retryableBackupDispatch(errcode.E(errcode.UNAVAILABLE, "raft leader unknown")) {
+		t.Fatal("raft leader unknown must retry")
+	}
+	if !retryableBackupDispatch(errcode.E(errcode.NOT_FOUND, "backup run not found")) {
+		t.Fatal("backup run not found must retry")
+	}
+	if !retryableBackupDispatch(errcode.E(errcode.UNAVAILABLE, "target agent rpc unavailable")) {
+		t.Fatal("rpc unavailable must retry")
+	}
+	if retryableBackupDispatch(errcode.E(errcode.CONFLICT, "stale leader term")) {
+		t.Fatal("stale leader term must not retry")
+	}
+	if retryableBackupDispatch(context.DeadlineExceeded) {
+		t.Fatal("parent deadline must not retry")
+	}
+	if retryableBackupDispatch(connect.NewError(connect.CodeDeadlineExceeded, errors.New("timeout"))) {
+		t.Fatal("deadline exceeded must not retry")
+	}
+}
+
 func TestUnfinishedBackupTargetsPreservesTerminalResults(t *testing.T) {
 	state := *control.NewState()
 	run := control.ClusterBackupRun{RunID: "run-1", TargetNodeIDs: []string{"a", "b", "c", "d"}}
@@ -107,9 +161,11 @@ func (f fakeClusterBackupAgentForwarder) ClusterBackupAgent(context.Context, api
 type fakeClusterBackupAgentClient struct {
 	request *procmeshv1.RunClusterBackupTaskRequest
 	result  *procmeshv1.ClusterBackupTask
+	ctx     context.Context
 }
 
-func (f *fakeClusterBackupAgentClient) RunTask(_ context.Context, req *connect.Request[procmeshv1.RunClusterBackupTaskRequest]) (*connect.Response[procmeshv1.RunClusterBackupTaskResponse], error) {
+func (f *fakeClusterBackupAgentClient) RunTask(ctx context.Context, req *connect.Request[procmeshv1.RunClusterBackupTaskRequest]) (*connect.Response[procmeshv1.RunClusterBackupTaskResponse], error) {
+	f.ctx = ctx
 	f.request = req.Msg
 	return connect.NewResponse(&procmeshv1.RunClusterBackupTaskResponse{Task: f.result}), nil
 }

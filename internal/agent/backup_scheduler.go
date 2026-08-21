@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -254,13 +255,11 @@ func (d localBackupDispatcher) DispatchBackupTask(ctx context.Context, task back
 			if err != nil {
 				last = err
 			} else {
-				attemptCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-				resp, err := client.RunTask(attemptCtx, connect.NewRequest(&procmeshv1.RunClusterBackupTaskRequest{
+				resp, err := client.RunTask(ctx, connect.NewRequest(&procmeshv1.RunClusterBackupTaskRequest{
 					RunId: task.RunID, TaskId: task.TaskID, PolicyId: task.PolicyID, NodeId: task.NodeID,
 					PolicyRevision: task.PolicyRevision, Sink: task.Sink, DestinationProfile: task.DestinationProfile,
 					LeaderTerm: task.LeaderTerm, LeaseExpiresUnix: task.LeaseExpiresUnix,
 				}))
-				cancel()
 				if err == nil {
 					return d.persistResult(ctx, task, taskResultUpdateFromProto(resp.Msg.GetTask(), task))
 				}
@@ -286,18 +285,25 @@ func retryableBackupDispatch(err error) bool {
 	if err == nil {
 		return false
 	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "stale leader term") || strings.Contains(msg, "stale replication lease") {
+		return false
+	}
 	if errcode.Is(err, errcode.NOT_FOUND) || errcode.Is(err, errcode.UNAVAILABLE) {
 		return true
 	}
 	switch connect.CodeOf(err) {
-	case connect.CodeNotFound, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
+	case connect.CodeNotFound, connect.CodeUnavailable:
 		return true
+	case connect.CodeDeadlineExceeded, connect.CodeCanceled:
+		return false
 	}
-	msg := err.Error()
 	return strings.Contains(msg, "backup run not found") || strings.Contains(msg, "rpc unavailable") || strings.Contains(msg, "target agent rpc unavailable") ||
 		strings.Contains(msg, "replication task changed") || strings.Contains(msg, "replication run changed") ||
-		strings.Contains(msg, "backup policy revision changed") || strings.Contains(msg, "stale leader term") ||
-		strings.Contains(msg, "raft leader unknown")
+		strings.Contains(msg, "backup policy revision changed") || strings.Contains(msg, "raft leader unknown")
 }
 
 func (d localBackupDispatcher) persistResult(ctx context.Context, task backup.BackupTaskRequest, update backup.TaskUpdate) error {
