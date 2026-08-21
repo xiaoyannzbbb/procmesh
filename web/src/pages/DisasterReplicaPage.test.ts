@@ -485,12 +485,32 @@ describe("DisasterReplicaPage", () => {
     expect(replicationClient.applyPolicyDraft).toHaveBeenCalledWith(
       expect.objectContaining({
         meta: expect.objectContaining({ operationId: expect.any(String), operator: "admin" }),
+        policyId: "rep-1",
+        expectedRevision: 2n,
         draftRevision: 7n,
         draftHash: "draft-hash-7",
         draft: expect.objectContaining({ draftRevision: 7n, draftHash: "draft-hash-7" }),
       }),
     );
     expect(wrapper.get("[data-policy-revision]").text()).toContain("3");
+  });
+
+  it("applies a first-time draft with expectedRevision -1 and a generated policyId", async () => {
+    const { wrapper, replicationClient } = await mountPage({ policies: [] });
+    await wrapper.get('[data-action="generate"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+    await wrapper.get('[data-action="apply-draft"]').trigger("click");
+    await flushPromises();
+    expect(replicationClient.applyPolicyDraft).toHaveBeenCalledTimes(1);
+    const arg = replicationClient.applyPolicyDraft.mock.calls[0][0] as {
+      policyId?: string;
+      expectedRevision?: bigint;
+    };
+    expect(arg.expectedRevision).toBe(-1n);
+    expect(arg.policyId).toEqual(expect.any(String));
+    expect(arg.policyId).toBeTruthy();
+    expect(arg.policyId).not.toBe("rep-1");
   });
 
   it("does not silently overwrite existing routes without an explicit replace choice", async () => {
@@ -591,6 +611,14 @@ describe("DisasterReplicaPage", () => {
       "Replica topology is unreachable. This is not an empty catalog.",
     );
     expect(wrapper.get('[data-section="config"]').text()).not.toContain("No replica routes");
+    expect(wrapper.get('[data-section="config"]').text()).toContain(
+      "Replica policies are unreachable. This is not an empty catalog.",
+    );
+    const overview = wrapper.get('[data-section="overview"]');
+    expect(overview.find(".freshness-unknown").exists()).toBe(true);
+    expect(overview.find(".freshness-live").exists()).toBe(false);
+    expect(overview.find("[data-route-count]").exists()).toBe(false);
+    expect(overview.text()).toMatch(/not an empty catalog/i);
     expect(wrapper.get('[data-section="runs"]').text()).toContain(
       "Replication runs are unreachable. This is not an empty catalog.",
     );
@@ -600,6 +628,54 @@ describe("DisasterReplicaPage", () => {
     );
     expect(wrapper.get('[data-section="recovery"]').text()).not.toContain("No recoverable snapshots");
     expect(wrapper.find(".freshness-unknown, .freshness-stale").exists()).toBe(true);
+  });
+
+  it("does not present a policy query error as an empty route catalog when topology is available", async () => {
+    const { wrapper } = await mountPage({
+      policiesError: new Error("leader unavailable"),
+    });
+    const config = wrapper.get('[data-section="config"]');
+    expect(config.text()).toContain("n1");
+    expect(config.text()).toContain("Replica policies are unreachable. This is not an empty catalog.");
+    expect(config.text()).not.toContain("No replica routes");
+    expect(config.find(".freshness-unknown, .freshness-stale").exists()).toBe(true);
+  });
+
+  it("keeps last successful replication after a later failed run", async () => {
+    const olderSuccess = {
+      ...replicaRun,
+      runId: "run-ok",
+      status: "SUCCEEDED",
+      startedAt: 1_700_000_000n,
+      finishedAt: 1_700_000_050n,
+      tasks: [
+        {
+          ...replicaTasks[0],
+          runId: "run-ok",
+          status: "SUCCEEDED",
+          finishedAt: 1_700_000_050n,
+        },
+      ],
+    };
+    const laterFailed = {
+      ...replicaRun,
+      runId: "run-fail",
+      status: "FAILED",
+      startedAt: 1_700_000_100n,
+      finishedAt: 1_700_000_120n,
+      tasks: [
+        {
+          ...replicaTasks[1],
+          runId: "run-fail",
+          sourceNodeId: "n1",
+          status: "FAILED",
+          finishedAt: 1_700_000_120n,
+        },
+      ],
+    };
+    const { wrapper } = await mountPage({ runs: [laterFailed, olderSuccess] });
+    expect(wrapper.get("[data-last-success]").text()).toContain(new Date(1_700_000_050 * 1000).toISOString());
+    expect(wrapper.get("[data-last-success]").text()).not.toBe("—");
   });
 
   it("keeps last successful topology, routes, and snapshots when a later fetch fails", async () => {

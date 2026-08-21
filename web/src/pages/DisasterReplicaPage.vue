@@ -200,6 +200,9 @@ const snapshotsPending = computed(() => snapshotQuery.isPending.value && !snapsh
 const topologyUnreachable = computed(
   () => Boolean(topologyQuery.error.value) && !topologyPending.value && !topologyNodes.value.length,
 );
+const policiesUnreachable = computed(
+  () => Boolean(policyQuery.error.value) && !policiesPending.value && !policies.value.length,
+);
 const runsUnreachable = computed(
   () => Boolean(runQuery.error.value) && !runsPending.value && !runs.value.length,
 );
@@ -213,11 +216,30 @@ const snapshotsStale = computed(() => Boolean(snapshotQuery.error.value) && snap
 const hasStale = computed(
   () => topologyStale.value || policiesStale.value || runsStale.value || snapshotsStale.value,
 );
+const overviewUnreachable = computed(
+  () =>
+    (topologyUnreachable.value ||
+      policiesUnreachable.value ||
+      runsUnreachable.value ||
+      snapshotsUnreachable.value) &&
+    !routes.value.length &&
+    !runs.value.length &&
+    !snapshots.value.length,
+);
 const hasPartialRun = computed(() => runs.value.some((run) => isPartial(run.status)));
 const offlineAdmitted = computed(() => topologyNodes.value.filter((node) => node.admitted && !node.alive));
 const shownRevision = computed(() => appliedRevision.value || currentPolicy.value?.revision || "");
+const overviewFreshness = computed<Freshness>(() => {
+  if (overviewUnreachable.value) {
+    return UNKNOWN;
+  }
+  if (hasStale.value) {
+    return STALE;
+  }
+  return LIVE;
+});
 const configFreshness = computed<Freshness>(() => {
-  if (topologyUnreachable.value && !policies.value.length) {
+  if (topologyUnreachable.value || policiesUnreachable.value) {
     return UNKNOWN;
   }
   if (topologyStale.value || policiesStale.value) {
@@ -249,12 +271,10 @@ const overview = computed(() => {
   let healthy = 0;
   let lag = 0;
   let failed = 0;
-  let lastSuccess = 0;
   for (const task of tasks) {
     const status = (task.status || "").toUpperCase();
     if (isSuccessStatus(status)) {
       healthy += 1;
-      lastSuccess = Math.max(lastSuccess, unixNumber(task.finishedAt));
       continue;
     }
     if (status === "FAILED") {
@@ -265,6 +285,7 @@ const overview = computed(() => {
       lag += 1;
     }
   }
+  const lastSuccess = lastSuccessfulUnix(runs.value);
   return {
     routeCount: routes.value.length,
     healthy,
@@ -304,11 +325,9 @@ const errorText = computed(() => {
 const routeRows = computed(() =>
   routes.value.map((route) => {
     const source = route.sourceNodeId || "";
-    const tasks = latestTasks.value.filter((task) => task.sourceNodeId === source);
-    const status = routeStatus(tasks);
-    const lastSuccess = tasks
-      .filter((task) => isSuccessStatus(task.status))
-      .reduce((max, task) => Math.max(max, unixNumber(task.finishedAt)), 0);
+    const latestForSource = latestTasks.value.filter((task) => task.sourceNodeId === source);
+    const status = routeStatus(latestForSource);
+    const lastSuccess = lastSuccessfulUnix(runs.value, source);
     return {
       source,
       targets: (route.targetNodeIds ?? []).join(", ") || "—",
@@ -337,6 +356,22 @@ function unixNumber(unix: bigint | number | undefined): number {
     return unix;
   }
   return 0;
+}
+
+function lastSuccessfulUnix(list: ReplicaRun[], sourceNodeId?: string): number {
+  let last = 0;
+  for (const run of list) {
+    for (const task of run.tasks ?? []) {
+      if (sourceNodeId && task.sourceNodeId !== sourceNodeId) {
+        continue;
+      }
+      if (!isSuccessStatus(task.status)) {
+        continue;
+      }
+      last = Math.max(last, unixNumber(task.finishedAt));
+    }
+  }
+  return last;
 }
 
 function latestRunOf(list: ReplicaRun[]): ReplicaRun | undefined {
@@ -536,7 +571,7 @@ const applyMut = useMutation({
       draft: current,
       draftRevision: asBigInt(current.draftRevision),
       draftHash: current.draftHash || "",
-      expectedRevision: asBigInt(currentPolicy.value?.revision),
+      expectedRevision: currentPolicy.value?.policyId ? asBigInt(currentPolicy.value.revision) : -1n,
       meta: mutationMeta(),
     });
   },
@@ -691,9 +726,17 @@ async function onStartRun(): Promise<void> {
       <section class="section" data-section="overview">
         <div class="section-header">
           <h2>{{ t("replica.overview") }}</h2>
-          <FreshnessBadge :status="hasStale ? STALE : LIVE" />
+          <FreshnessBadge :status="overviewFreshness" />
         </div>
-        <dl class="facts">
+        <div
+          v-if="overviewUnreachable"
+          class="banner warning-banner"
+          data-overview-unreachable
+          role="status"
+        >
+          {{ t("replica.staleBanner") }}
+        </div>
+        <dl v-else class="facts">
           <div>
             <dt>{{ t("replica.routeCount") }}</dt>
             <dd data-route-count>{{ overview.routeCount }}</dd>
@@ -751,76 +794,87 @@ async function onStartRun(): Promise<void> {
           {{ t("replica.offlineWarning", { id: node.nodeId }) }}
         </p>
         <p v-if="topologyPending || policiesPending" class="muted">{{ t("replica.loading") }}</p>
-        <div
-          v-else-if="topologyUnreachable"
-          class="banner warning-banner"
-          data-topology-unreachable
-          role="status"
-        >
-          <FreshnessBadge :status="UNKNOWN" />
-          {{ t("replica.topologyUnreachable") }}
-        </div>
         <template v-else>
-          <dl class="facts">
-            <div>
-              <dt>{{ t("replica.replicaFactor") }}</dt>
-              <dd>{{ currentPolicy?.replicaFactor ?? "—" }}</dd>
-            </div>
-            <div>
-              <dt>{{ t("replica.trigger") }}</dt>
-              <dd>{{ currentPolicy?.trigger || t("replica.none") }}</dd>
-            </div>
-            <div>
-              <dt>{{ t("replica.retention") }}</dt>
-              <dd>
-                {{
-                  t("replica.retentionSummary", {
-                    last: currentPolicy?.retentionKeepLast ?? 0,
-                    days: currentPolicy?.retentionKeepDays ?? 0,
-                  })
-                }}
-              </dd>
-            </div>
-            <div>
-              <dt>{{ t("replica.concurrency") }}</dt>
-              <dd>{{ currentPolicy?.maxConcurrency ?? "—" }}</dd>
-            </div>
-            <div>
-              <dt>{{ t("replica.topologyConstraints") }}</dt>
-              <dd>{{ constraintText(currentPolicy?.topologyConstraints) }}</dd>
-            </div>
-          </dl>
-          <div class="card">
-            <table class="table">
-              <thead>
-                <tr>
-                  <th>{{ t("replica.node") }}</th>
-                  <th>{{ t("replica.host") }}</th>
-                  <th>{{ t("replica.rack") }}</th>
-                  <th>{{ t("replica.zone") }}</th>
-                  <th>{{ t("replica.admitted") }}</th>
-                  <th>{{ t("replica.alive") }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="node in topologyNodes"
-                  :key="node.nodeId"
-                  :data-node-id="node.nodeId"
-                  :data-admitted="node.admitted ? 'true' : 'false'"
-                  :data-alive="node.alive ? 'true' : 'false'"
-                >
-                  <td class="mono">{{ node.nodeId }}</td>
-                  <td class="mono">{{ node.host || "—" }}</td>
-                  <td>{{ node.rack || "—" }}</td>
-                  <td>{{ node.zone || "—" }}</td>
-                  <td>{{ node.admitted ? t("replica.admitted") : t("replica.none") }}</td>
-                  <td>{{ node.alive ? t("replica.alive") : t("replica.none") }}</td>
-                </tr>
-              </tbody>
-            </table>
+          <div
+            v-if="topologyUnreachable"
+            class="banner warning-banner"
+            data-topology-unreachable
+            role="status"
+          >
+            <FreshnessBadge :status="UNKNOWN" />
+            {{ t("replica.topologyUnreachable") }}
           </div>
-          <div class="card">
+          <div
+            v-if="policiesUnreachable"
+            class="banner warning-banner"
+            data-policies-unreachable
+            role="status"
+          >
+            <FreshnessBadge :status="UNKNOWN" />
+            {{ t("replica.policiesUnreachable") }}
+          </div>
+          <template v-if="!topologyUnreachable">
+            <dl class="facts">
+              <div>
+                <dt>{{ t("replica.replicaFactor") }}</dt>
+                <dd>{{ currentPolicy?.replicaFactor ?? "—" }}</dd>
+              </div>
+              <div>
+                <dt>{{ t("replica.trigger") }}</dt>
+                <dd>{{ currentPolicy?.trigger || t("replica.none") }}</dd>
+              </div>
+              <div>
+                <dt>{{ t("replica.retention") }}</dt>
+                <dd>
+                  {{
+                    t("replica.retentionSummary", {
+                      last: currentPolicy?.retentionKeepLast ?? 0,
+                      days: currentPolicy?.retentionKeepDays ?? 0,
+                    })
+                  }}
+                </dd>
+              </div>
+              <div>
+                <dt>{{ t("replica.concurrency") }}</dt>
+                <dd>{{ currentPolicy?.maxConcurrency ?? "—" }}</dd>
+              </div>
+              <div>
+                <dt>{{ t("replica.topologyConstraints") }}</dt>
+                <dd>{{ constraintText(currentPolicy?.topologyConstraints) }}</dd>
+              </div>
+            </dl>
+            <div class="card">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>{{ t("replica.node") }}</th>
+                    <th>{{ t("replica.host") }}</th>
+                    <th>{{ t("replica.rack") }}</th>
+                    <th>{{ t("replica.zone") }}</th>
+                    <th>{{ t("replica.admitted") }}</th>
+                    <th>{{ t("replica.alive") }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="node in topologyNodes"
+                    :key="node.nodeId"
+                    :data-node-id="node.nodeId"
+                    :data-admitted="node.admitted ? 'true' : 'false'"
+                    :data-alive="node.alive ? 'true' : 'false'"
+                  >
+                    <td class="mono">{{ node.nodeId }}</td>
+                    <td class="mono">{{ node.host || "—" }}</td>
+                    <td>{{ node.rack || "—" }}</td>
+                    <td>{{ node.zone || "—" }}</td>
+                    <td>{{ node.admitted ? t("replica.admitted") : t("replica.none") }}</td>
+                    <td>{{ node.alive ? t("replica.alive") : t("replica.none") }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </template>
+          <div v-if="!policiesUnreachable" class="card">
             <table class="table">
               <thead>
                 <tr>
