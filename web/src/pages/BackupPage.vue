@@ -1,17 +1,29 @@
 <script setup lang="ts">
+/* eslint-disable i18next/no-literal-string -- Template enums, data-* hooks, and comparison literals are non-copy; visible copy uses t(). */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
-import { Plus } from "lucide-vue-next";
+import {
+  ChevronDown,
+  Database,
+  HardDrive,
+  LoaderCircle,
+  Plus,
+  Search,
+  TriangleAlert,
+  X,
+} from "lucide-vue-next";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
+import ConfirmDialog from "../components/ConfirmDialog.vue";
 import Drawer from "../components/Drawer.vue";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
+import Toast from "../components/Toast.vue";
 import { LIVE, STALE, UNKNOWN, formatAge, type Freshness } from "../lib/freshness";
 import { withTarget } from "../lib/headers";
 import { newOperationId } from "../lib/opid";
 import { useBackupClient, useClusterBackupClient, useNodeClient, useProcessClient } from "../lib/rpc";
 import { session } from "../lib/session";
 import { useI18n } from "../lib/useI18n";
-import { formatRemoteError } from "./processView";
+import { formatRemoteError, rowsFromProcessViews } from "./processView";
 
 const NUMERIC_INPUT_MODE = "numeric" as const;
 const SINKS = ["fs", "s3"] as const;
@@ -88,12 +100,25 @@ const queryClient = useQueryClient();
 const actionError = ref("");
 const actionNotice = ref("");
 const clusterError = ref("");
+const toastMessage = ref("");
+const toastType = ref<"success" | "error" | "info" | "warning">("success");
+const showToast = ref(false);
 
 const perms = computed(() => new Set(session.value?.permissions ?? []));
 const canManage = computed(() => perms.value.has("backup.manage"));
 
+const createOpen = ref(false);
 const createSink = ref<(typeof SINKS)[number]>("fs");
-const createProcessIds = ref("");
+const createScope = ref<"all" | "selected">("all");
+const createProcessIds = ref<string[]>([]);
+const createProcessSearch = ref("");
+const policyAdvancedOpen = ref(false);
+
+type PendingDelete =
+  | { kind: "snapshot"; snapshot: RestoreSnapshot }
+  | { kind: "policy"; policy: ClusterPolicy }
+  | null;
+const pendingDelete = ref<PendingDelete>(null);
 
 type RestoreTargetForm = { processId: string; expectedRevision: string };
 type RestoreSnapshot = {
@@ -212,6 +237,49 @@ const healthQuery = useQuery({
 });
 
 const healthRows = computed(() => healthQuery.data.value ?? []);
+
+const localProcessQuery = useQuery({
+  queryKey: ["backup-local-processes"],
+  queryFn: () => processClient.listProcesses({}),
+  enabled: createOpen,
+  refetchInterval: POLL_MS,
+});
+
+const localProcesses = computed(() =>
+  rowsFromProcessViews(localProcessQuery.data.value?.processes ?? [], Date.now())
+    .filter((row) => row.processId.length > 0)
+    .sort((a, b) => (a.name || a.processId).localeCompare(b.name || b.processId)),
+);
+
+const createSearchTerm = computed(() => createProcessSearch.value.trim().toLowerCase());
+const filteredLocalProcesses = computed(() => {
+  if (!createSearchTerm.value) {
+    return localProcesses.value;
+  }
+  return localProcesses.value.filter((row) => {
+    const haystack = [row.name, row.processId, row.group].join(" ").toLowerCase();
+    return haystack.includes(createSearchTerm.value);
+  });
+});
+const selectedProcessSet = computed(() => new Set(createProcessIds.value));
+const selectedProcessRows = computed(() =>
+  localProcesses.value.filter((row) => selectedProcessSet.value.has(row.processId)),
+);
+const visibleAllSelected = computed(() => {
+  const visible = filteredLocalProcesses.value;
+  return visible.length > 0 && visible.every((row) => selectedProcessSet.value.has(row.processId));
+});
+const localProcessesPending = computed(
+  () => localProcessQuery.isPending.value && !localProcessQuery.data.value,
+);
+const localProcessesError = computed(() => {
+  const err = localProcessQuery.error.value;
+  return err ? formatRemoteError(err) : "";
+});
+const createReady = computed(() => createScope.value === "all" || createProcessIds.value.length > 0);
+const showFsPageWarning = computed(() =>
+  policies.value.some((policy) => (policy.sink || "fs") === "fs"),
+);
 const selectedRun = computed(() => {
   const detailed = runDetailQuery.data.value?.run as ClusterRun | undefined;
   if (detailed?.runId === selectedRunId.value) {
@@ -401,7 +469,11 @@ function formatUnix(unix: bigint | number | undefined): string {
     return "—";
   }
   const ms = n > 1e12 ? n : n * 1000;
-  return new Date(ms).toISOString();
+  const date = new Date(ms);
+  if (Number.isNaN(date.getTime())) {
+    return "—";
+  }
+  return date.toLocaleString();
 }
 
 function formatBytes(bytes: bigint | number | undefined): string {
@@ -705,7 +777,10 @@ function openCreatePolicy(): void {
   if (!canManage.value) {
     return;
   }
+  createOpen.value = false;
+  selectedRunId.value = "";
   clusterError.value = "";
+  policyAdvancedOpen.value = false;
   resetPolicyForm();
   policyOpen.value = true;
 }
@@ -714,6 +789,8 @@ function openEditPolicy(policy: ClusterPolicy): void {
   if (!canManage.value || !policy.policyId) {
     return;
   }
+  createOpen.value = false;
+  selectedRunId.value = "";
   clusterError.value = "";
   fillPolicyForm(policy);
   policyOpen.value = true;
@@ -724,13 +801,85 @@ function closePolicy(): void {
     return;
   }
   policyOpen.value = false;
+  policyAdvancedOpen.value = false;
   resetPolicyForm();
+}
+
+function resetCreateForm(): void {
+  createSink.value = "fs";
+  createScope.value = "all";
+  createProcessIds.value = [];
+  createProcessSearch.value = "";
+}
+
+function openCreate(): void {
+  if (!canManage.value) {
+    return;
+  }
+  policyOpen.value = false;
+  selectedRunId.value = "";
+  actionError.value = "";
+  actionNotice.value = "";
+  resetCreateForm();
+  createOpen.value = true;
+}
+
+function closeCreate(): void {
+  createOpen.value = false;
+  resetCreateForm();
+}
+
+function onAdvancedToggle(event: Event): void {
+  const target = event.currentTarget;
+  policyAdvancedOpen.value = target instanceof HTMLDetailsElement && target.open;
+}
+
+function toggleCreateProcess(processId: string, checked: boolean): void {
+  const next = new Set(createProcessIds.value);
+  if (checked) {
+    next.add(processId);
+  } else {
+    next.delete(processId);
+  }
+  createProcessIds.value = [...next];
+}
+
+function onCreateProcessChange(processId: string, event: Event): void {
+  toggleCreateProcess(processId, (event.target as HTMLInputElement).checked);
+}
+
+function selectAllVisibleProcesses(): void {
+  const next = new Set(createProcessIds.value);
+  for (const row of filteredLocalProcesses.value) {
+    next.add(row.processId);
+  }
+  createProcessIds.value = [...next];
+}
+
+function processMeta(row: { group: string; observed: string; desired: string }): string {
+  const status = row.observed || row.desired || "—";
+  return row.group ? `${row.group} · ${status}` : status;
+}
+
+function onRunKeydown(event: KeyboardEvent, runId: string): void {
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    openRun(runId);
+  }
+}
+
+function notify(message: string, type: "success" | "error" | "info" | "warning" = "success"): void {
+  toastMessage.value = message;
+  toastType.value = type;
+  showToast.value = true;
 }
 
 function openRun(runId: string): void {
   if (!runId) {
     return;
   }
+  createOpen.value = false;
+  policyOpen.value = false;
   selectedRunId.value = runId;
 }
 
@@ -752,12 +901,15 @@ const createMut = useMutation({
     client.createBackup({
       meta: mutationMeta(),
       sink: createSink.value,
-      processIds: parseLines(createProcessIds.value),
+      processIds: createScope.value === "all" ? [] : [...createProcessIds.value],
       targetNodeIds: [],
     }),
   onSuccess: async () => {
-    createProcessIds.value = "";
+    actionError.value = "";
     actionNotice.value = "";
+    createOpen.value = false;
+    resetCreateForm();
+    notify(t("backup.createSuccess"));
     await queryClient.invalidateQueries({ queryKey: ["backups"] });
   },
   onError: (err: unknown) => {
@@ -838,7 +990,9 @@ const createPolicyMut = useMutation({
     }),
   onSuccess: async () => {
     policyOpen.value = false;
+    policyAdvancedOpen.value = false;
     resetPolicyForm();
+    notify(t("backup.createPolicy"));
     await invalidateCluster();
   },
   onError: (err: unknown) => {
@@ -854,7 +1008,9 @@ const updatePolicyMut = useMutation({
     }),
   onSuccess: async () => {
     policyOpen.value = false;
+    policyAdvancedOpen.value = false;
     resetPolicyForm();
+    notify(t("backup.savePolicy"));
     await invalidateCluster();
   },
   onError: (err: unknown) => {
@@ -926,7 +1082,7 @@ onMounted(() => document.addEventListener("keydown", onRestoreKeydown));
 onUnmounted(() => document.removeEventListener("keydown", onRestoreKeydown));
 
 async function onCreate(): Promise<void> {
-  if (!canManage.value || acting.value) {
+  if (!canManage.value || !createReady.value || acting.value) {
     return;
   }
   actionError.value = "";
@@ -938,24 +1094,18 @@ async function onCreate(): Promise<void> {
   }
 }
 
+function requestDeleteSnapshot(snapshot: RestoreSnapshot): void {
+  if (!canManage.value || acting.value) {
+    return;
+  }
+  pendingDelete.value = { kind: "snapshot", snapshot };
+}
+
 async function onDelete(row: { snapshot: RestoreSnapshot | null }): Promise<void> {
-  if (!canManage.value || !row.snapshot || acting.value) {
+  if (!row.snapshot) {
     return;
   }
-  if (!window.confirm(t("backup.deleteConfirm", { id: row.snapshot.snapshotId }))) {
-    return;
-  }
-  actionError.value = "";
-  actionNotice.value = "";
-  try {
-    await deleteMut.mutateAsync({
-      snapshotId: row.snapshot.snapshotId,
-      sink: row.snapshot.sink,
-      sourceNodeId: row.snapshot.sourceNodeId,
-    });
-  } catch {
-    // onError already recorded
-  }
+  requestDeleteSnapshot(row.snapshot);
 }
 
 async function onConfirmRestore(): Promise<void> {
@@ -991,14 +1141,68 @@ async function onDeletePolicy(policy: ClusterPolicy): Promise<void> {
   if (!canManage.value || !policy.policyId || acting.value) {
     return;
   }
-  if (!window.confirm(t("backup.deletePolicyConfirm", { name: policy.name ?? policy.policyId }))) {
+  pendingDelete.value = { kind: "policy", policy };
+}
+
+const deleteDialogTitle = computed(() => {
+  if (pendingDelete.value?.kind === "policy") {
+    return t("backup.deletePolicyTitle");
+  }
+  return t("backup.deleteSnapshotTitle");
+});
+
+const deleteDialogMessage = computed(() => {
+  const pending = pendingDelete.value;
+  if (pending?.kind === "policy") {
+    return t("backup.deletePolicyMessage", { name: pending.policy.name ?? pending.policy.policyId });
+  }
+  if (pending?.kind === "snapshot") {
+    return t("backup.deleteSnapshotMessage", { id: pending.snapshot.snapshotId });
+  }
+  return "";
+});
+
+const deleteDialogPending = computed(
+  () => deleteMut.isPending.value || deletePolicyMut.isPending.value,
+);
+
+function cancelPendingDelete(): void {
+  if (deleteDialogPending.value) {
+    return;
+  }
+  pendingDelete.value = null;
+}
+
+async function confirmPendingDelete(): Promise<void> {
+  const pending = pendingDelete.value;
+  if (!pending || acting.value) {
+    return;
+  }
+  if (pending.kind === "snapshot") {
+    actionError.value = "";
+    actionNotice.value = "";
+    try {
+      await deleteMut.mutateAsync({
+        snapshotId: pending.snapshot.snapshotId,
+        sink: pending.snapshot.sink,
+        sourceNodeId: pending.snapshot.sourceNodeId,
+      });
+      pendingDelete.value = null;
+    } catch {
+      pendingDelete.value = null;
+    }
+    return;
+  }
+  if (!pending.policy.policyId) {
+    pendingDelete.value = null;
     return;
   }
   clusterError.value = "";
   try {
-    await deletePolicyMut.mutateAsync(policy.policyId);
+    await deletePolicyMut.mutateAsync(pending.policy.policyId);
+    pendingDelete.value = null;
   } catch {
-    // onError already recorded
+    pendingDelete.value = null;
   }
 }
 
@@ -1030,18 +1234,23 @@ async function onRetryFailed(): Promise<void> {
 
 <template>
   <div class="page">
-    <h1>{{ t("backup.title") }}</h1>
-    <div class="banner warning-banner" data-fs-warning role="status">{{ t("backup.fsHostLossWarning") }}</div>
-    <div v-if="hasStale" class="banner backup-stale-banner" role="status">{{ t("backup.staleBanner") }}</div>
-    <p v-if="showPeerHint" class="muted">{{ t("backup.peerHint") }}</p>
-    <p v-if="clusterErrorText" class="error" role="alert">{{ clusterErrorText }}</p>
-
-    <section class="section" data-section="policies">
-      <div class="section-header">
-        <h2>{{ t("backup.policies") }}</h2>
-        <FreshnessBadge v-if="policiesStale" :status="STALE" />
+    <header class="page-header">
+      <div>
+        <h1>{{ t("backup.title") }}</h1>
+        <p class="subtitle">{{ t("backup.subtitle") }}</p>
+      </div>
+      <div v-if="canManage" class="header-actions">
         <button
-          v-if="canManage"
+          type="button"
+          class="btn"
+          data-action="open-create"
+          :disabled="acting"
+          @click="openCreate"
+        >
+          <Plus :size="18" aria-hidden="true" />
+          {{ t("backup.create") }}
+        </button>
+        <button
           type="button"
           class="btn btn-primary"
           data-action="create-policy"
@@ -1051,6 +1260,25 @@ async function onRetryFailed(): Promise<void> {
           <Plus :size="18" aria-hidden="true" />
           {{ t("backup.createPolicy") }}
         </button>
+      </div>
+    </header>
+
+    <div v-if="showFsPageWarning" class="banner warning-banner" data-fs-warning role="status">
+      <TriangleAlert :size="18" aria-hidden="true" />
+      <span>{{ t("backup.fsHostLossWarning") }}</span>
+    </div>
+    <div v-if="hasStale" class="banner backup-stale-banner" role="status">{{ t("backup.staleBanner") }}</div>
+    <p v-if="showPeerHint" class="muted">{{ t("backup.peerHint") }}</p>
+    <p v-if="clusterErrorText" class="error" role="alert">{{ clusterErrorText }}</p>
+    <p v-if="actionNotice" class="notice" role="status">{{ actionNotice }}</p>
+
+    <section class="section" data-section="policies">
+      <div class="section-header">
+        <div>
+          <h2>{{ t("backup.policies") }}</h2>
+          <p class="section-hint">{{ t("backup.policiesHint") }}</p>
+        </div>
+        <FreshnessBadge v-if="policiesStale" :status="STALE" />
       </div>
       <p v-if="policiesPending" class="muted">{{ t("backup.loading") }}</p>
       <div
@@ -1095,7 +1323,7 @@ async function onRetryFailed(): Promise<void> {
                 <div class="row-actions">
                   <button
                     type="button"
-                    class="btn"
+                    class="btn btn-sm"
                     data-action="start-run"
                     :disabled="acting"
                     @click="onStartRun(row.policy.policyId || '')"
@@ -1104,7 +1332,7 @@ async function onRetryFailed(): Promise<void> {
                   </button>
                   <button
                     type="button"
-                    class="btn"
+                    class="btn btn-sm"
                     data-action="edit-policy"
                     :disabled="acting"
                     @click="openEditPolicy(row.policy)"
@@ -1113,7 +1341,7 @@ async function onRetryFailed(): Promise<void> {
                   </button>
                   <button
                     type="button"
-                    class="btn btn-danger"
+                    class="btn btn-sm btn-danger"
                     data-action="delete-policy"
                     :disabled="acting"
                     @click="onDeletePolicy(row.policy)"
@@ -1124,7 +1352,23 @@ async function onRetryFailed(): Promise<void> {
               </td>
             </tr>
             <tr v-if="!policyRows.length">
-              <td :colspan="canManage ? 7 : 6" class="muted">{{ t("backup.noPolicies") }}</td>
+              <td :colspan="canManage ? 7 : 6">
+                <div class="empty-state">
+                  <HardDrive :size="28" aria-hidden="true" />
+                  <strong>{{ t("backup.noPolicies") }}</strong>
+                  <span>{{ t("backup.emptyPoliciesHint") }}</span>
+                  <button
+                    v-if="canManage"
+                    type="button"
+                    class="btn btn-primary"
+                    :disabled="acting"
+                    @click="openCreatePolicy"
+                  >
+                    <Plus :size="18" aria-hidden="true" />
+                    {{ t("backup.createPolicy") }}
+                  </button>
+                </div>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -1133,7 +1377,10 @@ async function onRetryFailed(): Promise<void> {
 
     <section class="section" data-section="runs">
       <div class="section-header">
-        <h2>{{ t("backup.runs") }}</h2>
+        <div>
+          <h2>{{ t("backup.runs") }}</h2>
+          <p class="section-hint">{{ t("backup.runsHint") }}</p>
+        </div>
         <FreshnessBadge v-if="runsStale" :status="STALE" />
       </div>
       <div v-if="hasPartialRun" class="banner warning-banner" data-partial-warning role="status">
@@ -1169,7 +1416,10 @@ async function onRetryFailed(): Promise<void> {
               :key="run.runId"
               class="clickable"
               :data-run-id="run.runId"
+              tabindex="0"
+              :aria-label="t('backup.openRun', { id: run.runId || '' })"
               @click="openRun(run.runId || '')"
+              @keydown="onRunKeydown($event, run.runId || '')"
             >
               <td class="mono">{{ run.runId }}</td>
               <td>{{ targetCount(run) }}</td>
@@ -1188,7 +1438,12 @@ async function onRetryFailed(): Promise<void> {
               </td>
             </tr>
             <tr v-if="!runs.length">
-              <td colspan="8" class="muted">{{ t("backup.noRuns") }}</td>
+              <td colspan="8">
+                <div class="empty-state">
+                  <strong>{{ t("backup.noRuns") }}</strong>
+                  <span>{{ t("backup.emptyRunsHint") }}</span>
+                </div>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -1197,7 +1452,10 @@ async function onRetryFailed(): Promise<void> {
 
     <section v-if="healthRows.length" class="section" data-section="destination-health">
       <div class="section-header">
-        <h2>{{ t("backup.destinationHealth") }}</h2>
+        <div>
+          <h2>{{ t("backup.destinationHealth") }}</h2>
+          <p class="section-hint">{{ t("backup.destinationHealthHint") }}</p>
+        </div>
       </div>
       <div class="card">
         <table class="table">
@@ -1232,10 +1490,12 @@ async function onRetryFailed(): Promise<void> {
     <p v-else-if="errorText && !listQuery.data" class="error" role="alert">{{ errorText }}</p>
     <template v-else>
       <p v-if="errorText" class="error" role="alert">{{ errorText }}</p>
-      <p v-else-if="actionNotice" class="notice" role="status">{{ actionNotice }}</p>
       <section class="section" data-section="snapshots">
         <div class="section-header">
-          <h2>{{ t("backup.snapshots") }}</h2>
+          <div>
+            <h2>{{ t("backup.snapshots") }}</h2>
+            <p class="section-hint">{{ t("backup.snapshotsHint") }}</p>
+          </div>
         </div>
         <div class="card">
           <table class="table">
@@ -1267,51 +1527,214 @@ async function onRetryFailed(): Promise<void> {
                 <td>{{ row.lastUpdated }}</td>
                 <td v-if="canManage">
                   <div v-if="row.canAct" class="row-actions">
-                    <button type="button" class="btn" data-action="restore" :disabled="acting" @click="openRestore(row.snapshot!)">
+                    <button type="button" class="btn btn-sm" data-action="restore" :disabled="acting" @click="openRestore(row.snapshot!)">
                       {{ t("backup.restore") }}
                     </button>
-                    <button type="button" class="btn btn-danger" data-action="delete" :disabled="acting" @click="onDelete(row)">
+                    <button type="button" class="btn btn-sm btn-danger" data-action="delete" :disabled="acting" @click="onDelete(row)">
                       {{ t("backup.delete") }}
                     </button>
                   </div>
                 </td>
               </tr>
               <tr v-if="showEmptyCatalog">
-                <td :colspan="canManage ? 8 : 7" class="muted empty-catalog">{{ t("backup.noBackups") }}</td>
+                <td :colspan="canManage ? 8 : 7" class="empty-catalog">
+                  <div class="empty-state">
+                    <HardDrive :size="28" aria-hidden="true" />
+                    <strong>{{ t("backup.noBackups") }}</strong>
+                    <span>{{ t("backup.emptySnapshotsHint") }}</span>
+                    <button
+                      v-if="canManage"
+                      type="button"
+                      class="btn btn-primary"
+                      :disabled="acting"
+                      @click="openCreate"
+                    >
+                      <Plus :size="18" aria-hidden="true" />
+                      {{ t("backup.create") }}
+                    </button>
+                  </div>
+                </td>
               </tr>
             </tbody>
           </table>
         </div>
       </section>
+    </template>
 
-      <form v-if="canManage" class="card form-card create-backup" @submit.prevent="onCreate">
-        <h2>{{ t("backup.create") }}</h2>
-        <label class="field">
-          {{ t("backup.sink") }}
-          <select v-model="createSink" class="input" name="sink">
+    <Drawer
+      :open="createOpen"
+      :title="t('backup.create')"
+      :close-label="t('actions.close')"
+      @close="closeCreate"
+    >
+      <form class="drawer-form create-backup" @submit.prevent="onCreate">
+        <p class="drawer-lead">{{ t("backup.createHint") }}</p>
+        <p v-if="actionError && createOpen" class="error" role="alert">{{ actionError }}</p>
+
+        <fieldset class="field">
+          <legend>
+            {{ t("backup.sink") }}
+            <span class="required" aria-hidden="true">{{ t("backup.requiredMarker") }}</span>
+          </legend>
+          <p class="field-hint">{{ t("backup.sinkHint") }}</p>
+          <select v-model="createSink" class="sr-only" name="sink" tabindex="-1" aria-hidden="true">
             <option v-for="sink in SINKS" :key="sink" :value="sink">{{ sink }}</option>
           </select>
-        </label>
-        <label class="field">
-          {{ t("backup.processIds") }}
-          <textarea
-            v-model="createProcessIds"
-            class="input textarea"
-            name="processIds"
-            rows="2"
-            :placeholder="t('backup.processIdsPlaceholder')"
-          />
-        </label>
-        <button
-          class="btn btn-primary"
-          type="submit"
-          data-action="create"
-          :disabled="acting"
-        >
-          {{ t("backup.create") }}
-        </button>
+          <div class="choice-grid" role="radiogroup" :aria-label="t('backup.sink')">
+            <button
+              type="button"
+              class="choice-card"
+              :class="{ selected: createSink === 'fs' }"
+              role="radio"
+              :aria-checked="createSink === 'fs'"
+              @click="createSink = 'fs'"
+            >
+              <HardDrive :size="18" aria-hidden="true" />
+              <span class="choice-copy">
+                <span class="choice-title">{{ t("backup.sinkFs") }}</span>
+                <span class="choice-hint">{{ t("backup.sinkFsHint") }}</span>
+              </span>
+            </button>
+            <button
+              type="button"
+              class="choice-card"
+              :class="{ selected: createSink === 's3' }"
+              role="radio"
+              :aria-checked="createSink === 's3'"
+              @click="createSink = 's3'"
+            >
+              <Database :size="18" aria-hidden="true" />
+              <span class="choice-copy">
+                <span class="choice-title">{{ t("backup.sinkS3") }}</span>
+                <span class="choice-hint">{{ t("backup.sinkS3Hint") }}</span>
+              </span>
+            </button>
+          </div>
+          <p v-if="createSink === 'fs'" class="field-warning" data-create-fs-warning role="status">
+            {{ t("backup.fsHostLossWarning") }}
+          </p>
+        </fieldset>
+
+        <fieldset class="field">
+          <legend>{{ t("backup.processScope") }}</legend>
+          <div class="choice-grid compact-grid" role="radiogroup" :aria-label="t('backup.processScope')">
+            <button
+              type="button"
+              class="choice-card compact"
+              :class="{ selected: createScope === 'all' }"
+              role="radio"
+              :aria-checked="createScope === 'all'"
+              @click="createScope = 'all'"
+            >
+              <span class="choice-title">{{ t("backup.allLocalProcesses") }}</span>
+              <span class="choice-hint">{{ t("backup.allLocalProcessesHint") }}</span>
+            </button>
+            <button
+              type="button"
+              class="choice-card compact"
+              :class="{ selected: createScope === 'selected' }"
+              role="radio"
+              :aria-checked="createScope === 'selected'"
+              @click="createScope = 'selected'"
+            >
+              <span class="choice-title">{{ t("backup.selectedProcesses") }}</span>
+              <span class="choice-hint">{{ t("backup.selectedProcessesHint") }}</span>
+            </button>
+          </div>
+        </fieldset>
+
+        <div v-if="createScope === 'selected'" class="process-picker">
+          <p v-if="localProcessesPending" class="picker-message">{{ t("backup.loading") }}</p>
+          <p v-else-if="localProcessesError" class="picker-message error" role="alert">
+            {{ t("backup.loadProcessesError", { error: localProcessesError }) }}
+          </p>
+          <template v-else>
+            <label class="search-field">
+              <span class="sr-only">{{ t("backup.searchProcesses") }}</span>
+              <span class="search-input-wrap">
+                <Search :size="16" aria-hidden="true" />
+                <input
+                  v-model="createProcessSearch"
+                  class="input search-input"
+                  name="processSearch"
+                  type="search"
+                  :placeholder="t('backup.searchProcesses')"
+                  :disabled="acting"
+                  autocomplete="off"
+                />
+              </span>
+            </label>
+            <div class="picker-toolbar">
+              <span>{{ t("backup.selectedCount", { count: createProcessIds.length }) }}</span>
+              <div class="picker-toolbar-actions">
+                <button
+                  type="button"
+                  class="link-btn"
+                  :disabled="acting || !filteredLocalProcesses.length || visibleAllSelected"
+                  @click="selectAllVisibleProcesses"
+                >
+                  {{ t("backup.selectAllVisible") }}
+                </button>
+                <button
+                  type="button"
+                  class="link-btn"
+                  :disabled="acting || !createProcessIds.length"
+                  @click="createProcessIds = []"
+                >
+                  {{ t("backup.clearSelection") }}
+                </button>
+              </div>
+            </div>
+            <div v-if="selectedProcessRows.length" class="chip-row">
+              <span v-for="row in selectedProcessRows" :key="row.processId" class="chip">
+                {{ row.name || row.processId }}
+                <button
+                  type="button"
+                  class="chip-remove"
+                  :disabled="acting"
+                  :aria-label="t('backup.clearSelection')"
+                  @click="toggleCreateProcess(row.processId, false)"
+                >
+                  <X :size="14" aria-hidden="true" />
+                </button>
+              </span>
+            </div>
+            <fieldset class="option-list" :aria-label="t('backup.processIds')">
+              <label
+                v-for="row in filteredLocalProcesses"
+                :key="row.processId"
+                class="option-row"
+                :class="{ selected: selectedProcessSet.has(row.processId) }"
+              >
+                <input
+                  type="checkbox"
+                  name="processId"
+                  :value="row.processId"
+                  :checked="selectedProcessSet.has(row.processId)"
+                  :disabled="acting"
+                  :data-process-id="row.processId"
+                  @change="onCreateProcessChange(row.processId, $event)"
+                />
+                <span class="option-copy">
+                  <strong>{{ row.name || row.processId }}</strong>
+                  <span>{{ processMeta(row) }}</span>
+                </span>
+              </label>
+              <p v-if="!localProcesses.length" class="picker-message">{{ t("backup.noLocalProcesses") }}</p>
+              <p v-else-if="!filteredLocalProcesses.length" class="picker-message">{{ t("backup.noProcessMatch") }}</p>
+            </fieldset>
+          </template>
+        </div>
+
+        <div class="drawer-actions">
+          <button type="button" class="btn" :disabled="acting" @click="closeCreate">{{ t("actions.cancel") }}</button>
+          <button class="btn btn-primary" type="submit" data-action="create" :disabled="!createReady || acting">
+            <LoaderCircle v-if="acting" class="spin" :size="16" aria-hidden="true" />
+            {{ t("backup.create") }}
+          </button>
+        </div>
       </form>
-    </template>
+    </Drawer>
 
     <div v-if="restoreOpen && restoreSnapshot" class="restore-backdrop" data-restore-dialog>
       <section class="restore-panel" role="dialog" :aria-modal="true">
@@ -1368,78 +1791,119 @@ async function onRetryFailed(): Promise<void> {
     >
       <form class="drawer-form policy-form" @submit.prevent="onSavePolicy">
         <p v-if="clusterError" class="error" role="alert">{{ clusterError }}</p>
-        <p v-if="policySink === 'fs'" class="field-warning">{{ t("backup.fsHostLossWarning") }}</p>
-        <label class="field">
-          {{ t("backup.policyName") }}
-          <input v-model="policyName" class="input" name="policyName" type="text" autocomplete="off" />
-        </label>
-        <label class="field checkbox">
-          <input v-model="policyEnabled" name="policyEnabled" type="checkbox" />
-          {{ t("backup.enabled") }}
-        </label>
-        <label class="field">
-          {{ t("backup.targetSelector") }}
-          <select v-model="policyTargetSelector" class="input" name="targetSelector">
-            <option v-for="selector in TARGET_SELECTORS" :key="selector" :value="selector">{{ selector }}</option>
-          </select>
-        </label>
-        <label v-if="policyTargetSelector !== 'ALL_ADMITTED'" class="field">
-          {{ t("backup.targetNodeIds") }}
-          <textarea
-            v-model="policyTargetIds"
-            class="input textarea"
-            name="targetNodeIds"
-            rows="3"
-            :placeholder="t('backup.targetNodeIdsPlaceholder')"
-          />
-        </label>
-        <label class="field">
-          {{ t("backup.sink") }}
-          <select v-model="policySink" class="input" name="policySink">
-            <option v-for="sink in POLICY_SINKS" :key="sink" :value="sink">{{ sink }}</option>
-          </select>
-        </label>
-        <label v-if="policySink === 's3'" class="field">
-          {{ t("backup.destinationProfile") }}
-          <input v-model="policyProfile" class="input" name="destinationProfile" type="text" autocomplete="off" />
-        </label>
-        <label class="field">
-          {{ t("backup.scheduleCron") }}
-          <input v-model="policyCron" class="input" name="scheduleCron" type="text" autocomplete="off" />
-        </label>
-        <label class="field">
-          {{ t("backup.timezone") }}
-          <input v-model="policyTimezone" class="input" name="timezone" type="text" autocomplete="off" />
-        </label>
-        <label class="field">
-          {{ t("backup.retentionKeepLast") }}
-          <input v-model="policyKeepLast" class="input" name="retentionKeepLast" type="number" min="0" />
-        </label>
-        <label class="field">
-          {{ t("backup.retentionKeepDays") }}
-          <input v-model="policyKeepDays" class="input" name="retentionKeepDays" type="number" min="0" />
-        </label>
-        <label class="field">
-          {{ t("backup.retentionMaxBytes") }}
-          <input v-model="policyMaxBytes" class="input" name="retentionMaxBytes" type="number" min="0" />
-        </label>
-        <label class="field">
-          {{ t("backup.timeoutSeconds") }}
-          <input v-model="policyTimeout" class="input" name="timeoutSeconds" type="number" min="0" />
-        </label>
-        <label class="field">
-          {{ t("backup.maxConcurrency") }}
-          <input v-model="policyConcurrency" class="input" name="maxConcurrency" type="number" min="0" />
-        </label>
-        <label class="field">
-          {{ t("backup.unavailablePolicy") }}
-          <select v-model="policyUnavailable" class="input" name="unavailablePolicy">
-            <option v-for="policy in UNAVAILABLE_POLICIES" :key="policy" :value="policy">{{ policy }}</option>
-          </select>
-        </label>
+
+        <fieldset class="form-section">
+          <legend>{{ t("backup.basics") }}</legend>
+          <label class="field">
+            <span>
+              {{ t("backup.policyName") }}
+              <span class="required" aria-hidden="true">{{ t("backup.requiredMarker") }}</span>
+            </span>
+            <input v-model="policyName" class="input" name="policyName" type="text" autocomplete="off" />
+          </label>
+          <label class="field checkbox">
+            <input v-model="policyEnabled" name="policyEnabled" type="checkbox" />
+            {{ t("backup.enabled") }}
+          </label>
+        </fieldset>
+
+        <fieldset class="form-section">
+          <legend>{{ t("backup.targetSet") }}</legend>
+          <p class="field-hint">{{ t("backup.targetSelectorHint") }}</p>
+          <label class="field">
+            {{ t("backup.targetSelector") }}
+            <select v-model="policyTargetSelector" class="input" name="targetSelector">
+              <option value="ALL_ADMITTED">{{ t("backup.targetAllAdmitted") }}</option>
+              <option value="AGENT_GROUP">{{ t("backup.targetAgentGroup") }}</option>
+              <option value="EXPLICIT_NODES">{{ t("backup.targetExplicitNodes") }}</option>
+            </select>
+          </label>
+          <label v-if="policyTargetSelector !== 'ALL_ADMITTED'" class="field">
+            {{ t("backup.targetNodeIds") }}
+            <textarea
+              v-model="policyTargetIds"
+              class="input textarea"
+              name="targetNodeIds"
+              rows="3"
+              :placeholder="t('backup.targetNodeIdsPlaceholder')"
+            />
+          </label>
+        </fieldset>
+
+        <fieldset class="form-section">
+          <legend>{{ t("backup.destination") }}</legend>
+          <p class="field-hint">{{ t("backup.sinkHint") }}</p>
+          <label class="field">
+            {{ t("backup.sink") }}
+            <select v-model="policySink" class="input" name="policySink">
+              <option v-for="sink in POLICY_SINKS" :key="sink" :value="sink">{{ sink }}</option>
+            </select>
+          </label>
+          <p v-if="policySink === 'fs'" class="field-warning">{{ t("backup.fsHostLossWarning") }}</p>
+          <label v-if="policySink === 's3'" class="field">
+            {{ t("backup.destinationProfile") }}
+            <input v-model="policyProfile" class="input" name="destinationProfile" type="text" autocomplete="off" />
+            <span class="field-hint">{{ t("backup.profileHint") }}</span>
+          </label>
+        </fieldset>
+
+        <fieldset class="form-section">
+          <legend>{{ t("backup.schedule") }}</legend>
+          <label class="field">
+            {{ t("backup.scheduleCron") }}
+            <input v-model="policyCron" class="input" name="scheduleCron" type="text" autocomplete="off" />
+            <span class="field-hint">{{ t("backup.scheduleHint") }}</span>
+          </label>
+          <label class="field">
+            {{ t("backup.timezone") }}
+            <input v-model="policyTimezone" class="input" name="timezone" type="text" autocomplete="off" />
+            <span class="field-hint">{{ t("backup.timezoneHint") }}</span>
+          </label>
+        </fieldset>
+
+        <fieldset class="form-section">
+          <legend>{{ t("backup.retention") }}</legend>
+          <p class="field-hint">{{ t("backup.retentionHint") }}</p>
+          <label class="field">
+            {{ t("backup.retentionKeepLast") }}
+            <input v-model="policyKeepLast" class="input" name="retentionKeepLast" type="number" min="0" />
+          </label>
+          <label class="field">
+            {{ t("backup.retentionKeepDays") }}
+            <input v-model="policyKeepDays" class="input" name="retentionKeepDays" type="number" min="0" />
+          </label>
+          <label class="field">
+            {{ t("backup.retentionMaxBytes") }}
+            <input v-model="policyMaxBytes" class="input" name="retentionMaxBytes" type="number" min="0" />
+          </label>
+        </fieldset>
+
+        <details class="advanced" :open="policyAdvancedOpen" @toggle="onAdvancedToggle">
+          <summary>
+            <ChevronDown :size="16" aria-hidden="true" />
+            {{ t("backup.advanced") }}
+          </summary>
+          <label class="field">
+            {{ t("backup.timeoutSeconds") }}
+            <input v-model="policyTimeout" class="input" name="timeoutSeconds" type="number" min="0" />
+          </label>
+          <label class="field">
+            {{ t("backup.maxConcurrency") }}
+            <input v-model="policyConcurrency" class="input" name="maxConcurrency" type="number" min="0" />
+          </label>
+          <label class="field">
+            {{ t("backup.unavailablePolicy") }}
+            <select v-model="policyUnavailable" class="input" name="unavailablePolicy">
+              <option value="RECORD_AND_CONTINUE">{{ t("backup.unavailableRecordContinue") }}</option>
+              <option value="FAIL_FAST">{{ t("backup.unavailableFailFast") }}</option>
+            </select>
+          </label>
+        </details>
+
         <div class="drawer-actions">
           <button type="button" class="btn" :disabled="acting" @click="closePolicy">{{ t("actions.cancel") }}</button>
           <button class="btn btn-primary" type="submit" :disabled="!policyReady || acting">
+            <LoaderCircle v-if="acting" class="spin" :size="16" aria-hidden="true" />
             {{ editingPolicyId ? t("backup.savePolicy") : t("backup.createPolicy") }}
           </button>
         </div>
@@ -1537,6 +2001,19 @@ async function onRetryFailed(): Promise<void> {
         </div>
       </div>
     </Drawer>
+
+    <ConfirmDialog
+      :open="Boolean(pendingDelete)"
+      :title="deleteDialogTitle"
+      :message="deleteDialogMessage"
+      :confirm-label="t('actions.delete')"
+      :cancel-label="t('actions.cancel')"
+      :pending="deleteDialogPending"
+      @cancel="cancelPendingDelete"
+      @confirm="confirmPendingDelete"
+    />
+
+    <Toast :show="showToast" :message="toastMessage" :type="toastType" @close="showToast = false" />
   </div>
 </template>
 
@@ -1544,27 +2021,49 @@ async function onRetryFailed(): Promise<void> {
 .page {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 1.25rem;
+}
+.page-header,
+.header-actions,
+.section-header,
+.drawer-actions,
+.row-actions,
+.picker-toolbar,
+.picker-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.page-header,
+.section-header,
+.picker-toolbar {
+  justify-content: space-between;
+}
+.page-header,
+.section-header {
+  align-items: flex-start;
+}
+.header-actions,
+.row-actions,
+.drawer-actions,
+.picker-toolbar-actions {
+  flex-wrap: wrap;
+}
+.drawer-actions {
+  justify-content: flex-end;
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin-top: auto;
+  padding: 1rem 0 0;
+  background: var(--color-card);
+  border-top: 1px solid var(--color-border);
 }
 .section {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
   min-width: 0;
-}
-.section-header,
-.drawer-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-.drawer-actions {
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  margin-top: auto;
-  padding-top: 1rem;
-  border-top: 1px solid var(--color-border);
 }
 h1 {
   margin: 0;
@@ -1581,8 +2080,24 @@ h3 {
   font-size: 0.95rem;
   font-weight: 600;
 }
-.section-header h2 {
+.section-header h2,
+.subtitle,
+.section-hint,
+.drawer-lead,
+.field-hint {
   margin: 0;
+}
+.subtitle,
+.section-hint,
+.drawer-lead,
+.field-hint {
+  color: var(--color-muted);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+.subtitle {
+  max-width: 48rem;
+  margin-top: 0.35rem;
 }
 .muted {
   color: var(--color-muted);
@@ -1599,6 +2114,9 @@ h3 {
   font-size: 0.875rem;
 }
 .banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
   border-radius: 10px;
   padding: 0.75rem 1rem;
   font-size: 0.875rem;
@@ -1606,9 +2124,13 @@ h3 {
   background: var(--color-stale);
   color: var(--color-stale-fg);
 }
+.banner svg {
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
 .warning-banner {
-  background: #fef3c7;
-  color: #92400e;
+  background: var(--color-stale);
+  color: var(--color-stale-fg);
 }
 .card {
   border: 1px solid var(--color-border);
@@ -1616,28 +2138,256 @@ h3 {
   background: var(--color-card);
   overflow: auto;
 }
+.table th,
+.table td {
+  padding: 0.75rem 1rem;
+  vertical-align: middle;
+}
 .form-card,
 .drawer-form {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 1rem;
   padding: 1.25rem;
 }
 .drawer-form {
   padding: 0;
   min-height: 100%;
 }
-.field {
+.field,
+.form-section,
+.choice-copy,
+.option-copy,
+.search-field,
+.process-picker {
   display: flex;
   flex-direction: column;
   gap: 0.375rem;
+}
+.field,
+.form-section {
   font-size: 0.875rem;
   color: var(--color-muted);
+}
+.form-section,
+.advanced {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.form-section legend,
+.advanced summary {
+  margin-bottom: 0.5rem;
+  color: var(--color-text);
+  font-size: 0.8125rem;
+  font-weight: 650;
 }
 .checkbox {
   flex-direction: row;
   align-items: center;
   gap: 0.5rem;
+}
+.required {
+  color: var(--color-danger);
+}
+.choice-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.5rem;
+}
+.choice-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  min-height: 44px;
+  padding: 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-card);
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 150ms, background 150ms, box-shadow 150ms;
+}
+.choice-card:hover,
+.choice-card.selected {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 8%, var(--color-card));
+}
+.choice-card.selected {
+  box-shadow: 0 0 0 1px var(--color-accent);
+}
+.choice-card svg {
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+  color: var(--color-accent);
+}
+.choice-title {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.choice-hint {
+  display: block;
+  color: var(--color-muted);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+.search-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.search-input-wrap > svg {
+  position: absolute;
+  left: 0.75rem;
+  color: var(--color-muted);
+  pointer-events: none;
+}
+.search-input {
+  width: 100%;
+  padding-left: 2.25rem;
+}
+.picker-toolbar {
+  color: var(--color-muted);
+  font-size: 0.75rem;
+}
+.link-btn {
+  border: none;
+  padding: 0.25rem 0;
+  background: transparent;
+  color: var(--color-accent);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.link-btn:hover:not(:disabled) {
+  text-decoration: underline;
+}
+.link-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  max-width: 100%;
+  padding: 0.25rem 0.375rem 0.25rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-accent) 8%, var(--color-card));
+  color: var(--color-text);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+.chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+.option-list {
+  max-height: 16rem;
+  margin: 0;
+  padding: 0.25rem;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+.option-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  min-height: 44px;
+  padding: 0.625rem 0.75rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.option-row:hover,
+.option-row.selected {
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+}
+.option-copy strong {
+  color: var(--color-text);
+}
+.picker-message {
+  margin: 0;
+  padding: 0.5rem 0.25rem;
+  color: var(--color-muted);
+  font-size: 0.8125rem;
+}
+.advanced {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.advanced summary {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-height: 44px;
+  cursor: pointer;
+  list-style: none;
+}
+.advanced summary::-webkit-details-marker {
+  display: none;
+}
+.advanced[open] summary svg {
+  transform: rotate(180deg);
+}
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1.75rem 1rem;
+  color: var(--color-muted);
+  text-align: center;
+}
+.empty-state strong {
+  color: var(--color-text);
+}
+.empty-state span {
+  max-width: 28rem;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+.btn-sm {
+  min-height: 2.25rem;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.8125rem;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.spin {
+  animation: backup-spin 0.8s linear infinite;
+}
+@keyframes backup-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 .textarea {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -1663,6 +2413,10 @@ tr[data-freshness="STALE"] {
 }
 .clickable {
   cursor: pointer;
+}
+.clickable:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
 }
 .status-badge {
   display: inline-flex;
@@ -1745,5 +2499,29 @@ tr[data-freshness="STALE"] {
   display: flex;
   justify-content: flex-end;
   gap: 0.75rem;
+}
+@media (min-width: 640px) {
+  .choice-grid:not(.compact-grid) {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+@media (max-width: 640px) {
+  .page-header,
+  .section-header,
+  .picker-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .header-actions .btn,
+  .empty-state .btn {
+    min-height: 2.75rem;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spin,
+  .choice-card {
+    animation: none;
+    transition: none;
+  }
 }
 </style>

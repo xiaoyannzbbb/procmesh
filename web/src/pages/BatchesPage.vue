@@ -731,9 +731,6 @@ h2 {
   text-align: center;
   color: var(--color-muted);
 }
-.empty-state svg {
-  color: var(--color-accent);
-}
 .empty-state strong {
   color: var(--color-text);
   font-size: 1rem;

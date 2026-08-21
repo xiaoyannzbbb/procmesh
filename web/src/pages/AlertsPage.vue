@@ -1671,11 +1671,6 @@ h3 {
   text-align: center;
 }
 
-.empty-state svg,
-.settings-empty svg {
-  color: var(--color-live-fg);
-}
-
 .empty-state strong,
 .settings-empty strong {
   color: var(--color-text);

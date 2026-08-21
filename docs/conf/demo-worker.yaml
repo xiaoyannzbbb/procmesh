@@ -1,4 +1,4 @@
-name: demo-worker
+name: demo-worker22
 command: /bin/sh
 args:
   - -c

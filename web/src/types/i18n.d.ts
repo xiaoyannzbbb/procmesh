@@ -763,14 +763,23 @@ declare module "i18next" {
         'batch.processIdsPlaceholder': string
         'batch.configUpdateCli': string
         'backup.title': string
+        'backup.subtitle': string
         'backup.staleBanner': string
         'backup.noBackups': string
+        'backup.emptySnapshotsHint': string
         'backup.create': string
+        'backup.createHint': string
+        'backup.createSuccess': string
         'backup.restore': string
         'backup.restoreConfirm': string
         'backup.owner': string
         'backup.expectedRevision': string
         'backup.sink': string
+        'backup.sinkHint': string
+        'backup.sinkFs': string
+        'backup.sinkFsHint': string
+        'backup.sinkS3': string
+        'backup.sinkS3Hint': string
         'backup.delete': string
         'backup.loading': string
         'backup.snapshotId': string
@@ -781,6 +790,18 @@ declare module "i18next" {
         'backup.lastUpdated': string
         'backup.processIds': string
         'backup.processIdsPlaceholder': string
+        'backup.processScope': string
+        'backup.allLocalProcesses': string
+        'backup.allLocalProcessesHint': string
+        'backup.selectedProcesses': string
+        'backup.selectedProcessesHint': string
+        'backup.searchProcesses': string
+        'backup.selectedCount': string
+        'backup.selectAllVisible': string
+        'backup.clearSelection': string
+        'backup.noLocalProcesses': string
+        'backup.noProcessMatch': string
+        'backup.loadProcessesError': string
         'backup.peerNodeIds': string
         'backup.peerNodeIdsPlaceholder': string
         'backup.peerRequired': string
@@ -791,39 +812,62 @@ declare module "i18next" {
         'backup.restoreFailed': string
         'backup.restoreSuccess': string
         'backup.deleteConfirm': string
+        'backup.deleteSnapshotTitle': string
+        'backup.deleteSnapshotMessage': string
         'backup.process': string
         'backup.snapshots': string
+        'backup.snapshotsHint': string
         'backup.policies': string
+        'backup.policiesHint': string
         'backup.runs': string
+        'backup.runsHint': string
         'backup.noPolicies': string
+        'backup.emptyPoliciesHint': string
         'backup.noRuns': string
+        'backup.emptyRunsHint': string
         'backup.policiesUnreachable': string
         'backup.runsUnreachable': string
         'backup.createPolicy': string
         'backup.editPolicy': string
         'backup.savePolicy': string
         'backup.deletePolicy': string
+        'backup.deletePolicyTitle': string
         'backup.deletePolicyConfirm': string
+        'backup.deletePolicyMessage': string
+        'backup.basics': string
         'backup.policyName': string
         'backup.enabled': string
         'backup.disabled': string
         'backup.nextRun': string
         'backup.latestRun': string
         'backup.retention': string
+        'backup.retentionHint': string
         'backup.retentionSummary': string
         'backup.retentionKeepLast': string
         'backup.retentionKeepDays': string
         'backup.retentionMaxBytes': string
+        'backup.schedule': string
         'backup.scheduleCron': string
+        'backup.scheduleHint': string
         'backup.timezone': string
+        'backup.timezoneHint': string
         'backup.targetSet': string
         'backup.targetSelector': string
+        'backup.targetSelectorHint': string
+        'backup.targetAllAdmitted': string
+        'backup.targetAgentGroup': string
+        'backup.targetExplicitNodes': string
         'backup.targetNodeIds': string
         'backup.targetNodeIdsPlaceholder': string
+        'backup.destination': string
         'backup.destinationProfile': string
+        'backup.profileHint': string
+        'backup.advanced': string
         'backup.timeoutSeconds': string
         'backup.maxConcurrency': string
         'backup.unavailablePolicy': string
+        'backup.unavailableRecordContinue': string
+        'backup.unavailableFailFast': string
         'backup.manualOnly': string
         'backup.fsHostLossWarning': string
         'backup.partialWarning': string
@@ -837,6 +881,7 @@ declare module "i18next" {
         'backup.started': string
         'backup.finished': string
         'backup.destinationHealth': string
+        'backup.destinationHealthHint': string
         'backup.endpointHost': string
         'backup.healthStatus': string
         'backup.bytes': string
@@ -844,6 +889,8 @@ declare module "i18next" {
         'backup.errorSummary': string
         'backup.agentStatus': string
         'backup.runDetail': string
+        'backup.requiredMarker': string
+        'backup.openRun': string
         'replica.overview': string
         'replica.config': string
         'replica.runs': string

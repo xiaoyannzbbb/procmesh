@@ -293,7 +293,7 @@ async function mountBackup(
     removeNode: vi.fn(),
   };
   const processClient = {
-    listProcesses: vi.fn(),
+    listProcesses: vi.fn().mockResolvedValue({ processes: [] }),
     getProcess:
       opts.getProcess ??
       vi.fn().mockResolvedValue({
@@ -458,16 +458,21 @@ describe("BackupPage", () => {
 
   it("does not offer peer as a primary create-backup sink", async () => {
     const { wrapper } = await mountBackup();
+    await wrapper.get('[data-action="open-create"]').trigger("click");
+    await wrapper.vm.$nextTick();
     const sinks = wrapper
       .findAll("form.create-backup select[name='sink'] option")
       .map((option) => (option.element as HTMLOptionElement).value);
     expect(sinks).toEqual(["fs", "s3"]);
     expect(sinks).not.toContain("peer");
     expect(wrapper.find('textarea[name="peerNodeIds"]').exists()).toBe(false);
+    expect(wrapper.find('textarea[name="processIds"]').exists()).toBe(false);
   });
 
   it("create backup sends operationId", async () => {
     const { wrapper, backupClient } = await mountBackup();
+    await wrapper.get('[data-action="open-create"]').trigger("click");
+    await wrapper.vm.$nextTick();
     await wrapper.get("form.create-backup").trigger("submit");
     await flushPromises();
     expect(backupClient.createBackup).toHaveBeenCalled();
@@ -567,8 +572,9 @@ describe("BackupPage", () => {
       }),
     );
 
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     await wrapper.get('[data-action="delete-policy"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    await wrapper.get(".confirm-panel .btn-danger").trigger("click");
     await flushPromises();
     expect(clusterBackupClient.deletePolicy).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -576,7 +582,6 @@ describe("BackupPage", () => {
         policyId: "pol-1",
       }),
     );
-    confirm.mockRestore();
   });
 
   it("shows destination health profile, endpoint host, and status without secrets", async () => {
