@@ -11,6 +11,8 @@ declare module "i18next" {
         'action.PROCESS_START': string
         'action.PROCESS_STOP': string
         'action.PROCESS_RESTART': string
+        'action.PROCESS_CREATE': string
+        'action.PROCESS_UPDATE': string
         'action.PROCESS_DELETE': string
         'action.CONFIG_UPDATE': string
         'action.CONFIG_CREATE': string
@@ -23,6 +25,9 @@ declare module "i18next" {
         'result.FAILED': string
         'result.TIMEOUT': string
         'result.PARTIAL': string
+        'result.UNAVAILABLE': string
+        'result.ERROR': string
+        'result.DENIED': string
         'labels.timestamp': string
         'labels.user': string
         'labels.action': string
@@ -91,19 +96,69 @@ declare module "i18next" {
         'login.rateLimited': string
         'login.userLocked': string
         'audit.title': string
+        'audit.eyebrow': string
         'audit.notice': string
+        'audit.refresh': string
+        'audit.refreshing': string
+        'audit.lastRefresh': string
+        'audit.incompleteTitle': string
+        'audit.incompleteMessage': string
+        'audit.logTitle': string
+        'audit.logHint': string
+        'audit.resultCount': string
+        'audit.filters': string
         'audit.resourceLabel': string
         'audit.resourcePlaceholder': string
+        'audit.applyFilters': string
+        'audit.searchLabel': string
+        'audit.searchPlaceholder': string
+        'audit.nodeLabel': string
+        'audit.allNodes': string
+        'audit.actionLabel': string
+        'audit.allActions': string
+        'audit.resultLabel': string
+        'audit.allResults': string
+        'audit.clearFilters': string
         'audit.loading': string
+        'audit.loadFailed': string
+        'audit.retry': string
         'audit.noEntries': string
+        'audit.noEntriesHint': string
+        'audit.noMatches': string
+        'audit.noMatchesHint': string
+        'audit.viewDetails': string
+        'audit.detailsTitle': string
+        'audit.tableCaption': string
+        'audit.copyOperationId': string
+        'audit.copied': string
+        'audit.copyFailed': string
+        'audit.summary.label': string
+        'audit.summary.loaded': string
+        'audit.summary.problems': string
+        'audit.summary.actors': string
+        'audit.summary.dataIssues': string
+        'audit.summary.sources': string
         'audit.table.time': string
         'audit.table.user': string
         'audit.table.action': string
         'audit.table.resource': string
+        'audit.table.scope': string
         'audit.table.sourceNode': string
         'audit.table.targetAgent': string
         'audit.table.result': string
         'audit.table.freshness': string
+        'audit.table.details': string
+        'audit.detail.timestamp': string
+        'audit.detail.actor': string
+        'audit.detail.action': string
+        'audit.detail.resource': string
+        'audit.detail.sourceNode': string
+        'audit.detail.sourceAgent': string
+        'audit.detail.targetAgent': string
+        'audit.detail.sourceIp': string
+        'audit.detail.auditId': string
+        'audit.detail.operationId': string
+        'audit.detail.metadata': string
         'overview.title': string
         'overview.loading': string
         'overview.cluster': string

@@ -4,12 +4,13 @@ export function useAudit() {
   const { t } = useI18n()
 
   const formatAuditAction = (action: string, metadata: Record<string, unknown>): string => {
-    const key = `audit:action.${action}`
+    const normalized = action.replace(/[^a-zA-Z0-9]+/g, '_').toUpperCase()
+    const key = `audit:action.${normalized}`
     return t(key, { ...metadata, defaultValue: action })
   }
 
   const formatAuditResult = (result: string): string => {
-    const key = `audit:result.${result}`
+    const key = `audit:result.${result.toUpperCase()}`
     return t(key, { defaultValue: result })
   }
 

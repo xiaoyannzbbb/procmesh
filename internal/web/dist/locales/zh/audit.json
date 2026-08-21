@@ -5,6 +5,8 @@
     "PROCESS_START": "启动进程 {{name}}",
     "PROCESS_STOP": "停止进程 {{name}}",
     "PROCESS_RESTART": "重启进程 {{name}}",
+    "PROCESS_CREATE": "创建进程 {{name}}",
+    "PROCESS_UPDATE": "更新进程 {{name}}",
     "PROCESS_DELETE": "删除进程 {{name}}",
     "CONFIG_UPDATE": "更新 {{name}} 配置（版本 {{revision}}）",
     "CONFIG_CREATE": "创建 {{name}} 配置",
@@ -18,7 +20,10 @@
     "SUCCESS": "成功",
     "FAILED": "失败",
     "TIMEOUT": "超时",
-    "PARTIAL": "部分成功"
+    "PARTIAL": "部分成功",
+    "UNAVAILABLE": "不可用",
+    "ERROR": "错误",
+    "DENIED": "已拒绝"
   },
   "labels": {
     "timestamp": "时间",
