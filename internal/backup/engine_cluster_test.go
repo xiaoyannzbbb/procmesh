@@ -178,6 +178,40 @@ func TestEngine_CreateCluster_Idempotency(t *testing.T) {
 	}
 }
 
+func TestRestore_ClusterSnapshotReadsNamespacedPath(t *testing.T) {
+	ctx := context.Background()
+	mgr, st, spec := seedManagedProcess(t)
+	fsRoot := filepath.Join(t.TempDir(), "fs")
+	e := &backup.Engine{
+		Store: st, NodeID: "n1", ClusterID: "c1", Apply: mgr,
+		Sinks: map[string]backup.Sink{"fs": backup.NewFSSink(fsRoot)},
+		NewID: func() (string, error) { return "snap-cluster", nil },
+	}
+	meta, err := e.CreateCluster(ctx, backup.ClusterCreateOpts{RunID: "run-1", TaskID: "task-a", PolicyID: "policy-1", ClusterID: "c1", NodeID: "n1", Sink: "fs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(fsRoot, "c1", "n1", "snap-cluster.json")); err != nil {
+		t.Fatalf("namespaced snapshot missing: %v", err)
+	}
+	spec.Command = "/bin/changed"
+	if _, err := mgr.ApplySpec(ctx, spec, spec.LatestRevision, "op-change", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	latest, _ := mgr.GetSpec(ctx, spec.ProcessID)
+	results, err := e.Restore(ctx, meta.SnapshotID, "fs", "op-restore", "t", []backup.RestoreTarget{{ProcessID: spec.ProcessID, ExpectedRevision: latest.LatestRevision}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Status != "SUCCESS" {
+		t.Fatalf("%+v", results)
+	}
+	got, _ := mgr.GetSpec(ctx, spec.ProcessID)
+	if got.Command != "/bin/true" {
+		t.Fatalf("command %q", got.Command)
+	}
+}
+
 func TestEngine_RunClusterTaskReportsRetryableRetentionFailure(t *testing.T) {
 	ctx := context.Background()
 	st, _ := seedProcess(t)

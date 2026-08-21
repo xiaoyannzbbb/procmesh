@@ -59,6 +59,7 @@ type Options struct {
 	BootID           string // empty = paths.CurrentBootID(); tests may override
 	Backup           agentcfg.Backup
 	DiskPercent      func() float64 // optional override for backup disk protection (tests)
+	Now              func() time.Time
 }
 
 // Run owns the agent lifecycle and blocks until ctx is cancelled.
@@ -282,7 +283,7 @@ func Run(ctx context.Context, opt Options) error {
 		return nil
 	}
 	batchEng := newBatchEngine(st, cfg, nodeID)
-	opt.Backup = cfg.Backup
+	opt.Backup = mergeBackupConfig(cfg.Backup, opt.Backup)
 	return serveHTTP(ctx, opt, mgr, logs, st, degraded, ready, mesh, src, collector, api.ClusterDeps{
 		Dir:        layout.ClusterDir,
 		Store:      st,
@@ -318,6 +319,23 @@ func listProcessRefs(mgr *process.Manager) []metrics.ProcessRef {
 				PID:       inst.PID,
 			})
 		}
+	}
+	return out
+}
+
+func mergeBackupConfig(file, override agentcfg.Backup) agentcfg.Backup {
+	out := file
+	if override.FSDir != "" {
+		out.FSDir = override.FSDir
+	}
+	if override.Schedule != "" {
+		out.Schedule = override.Schedule
+	}
+	if override.S3.Bucket != "" || override.S3.Endpoint != "" {
+		out.S3 = override.S3
+	}
+	if len(override.S3Profiles) > 0 {
+		out.S3Profiles = override.S3Profiles
 	}
 	return out
 }
@@ -594,6 +612,7 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 			}
 			return n.CurrentTerm()
 		},
+		Now: opt.Now,
 	})
 	rt.replicationCoord = backup.NewReplicationCoordinator(backup.ReplicationCoordinatorConfig{
 		Control: raftReplicationControl{runtime: rt}, Dispatcher: localReplicationDispatcher{runtime: rt},
@@ -605,6 +624,7 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 			}
 			return n.CurrentTerm()
 		},
+		Now: opt.Now,
 	})
 	if control.AlreadyInited(clusterDeps.Dir) {
 		if err := rt.startRaft(false); err != nil {
@@ -687,6 +707,9 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		BackupDispatch: func(run backup.FrozenRun) {
 			go rt.backupCoord.DispatchRun(ctx, run)
 		},
+		ReplicationDispatch: func(run backup.FrozenReplicationRun) {
+			go rt.replicationCoord.DispatchRun(ctx, run)
+		},
 	})
 	if err != nil {
 		_ = ln.Close()
@@ -732,23 +755,25 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 						mesh.Update()
 					}
 					if bak := rt.backup; bak != nil {
+						if rt.backupCoord != nil {
+							if err := rt.backupCoord.Tick(ctx); err != nil && ctx.Err() == nil {
+								opt.Logger.Warn("cluster backup schedule tick failed", "error", err)
+							}
+						}
+						if rt.replicationCoord != nil {
+							if err := rt.replicationCoord.Tick(ctx); err != nil && ctx.Err() == nil {
+								opt.Logger.Warn("replication schedule tick failed", "error", err)
+							}
+						}
 						min := time.Now().Truncate(time.Minute)
 						if lastBackupMin.IsZero() || !min.Equal(lastBackupMin) {
 							lastBackupMin = min
 							clusterEnabled := false
 							clusterPolicyReadOK := false
 							if rt.backupCoord != nil {
-								if err := rt.backupCoord.Tick(ctx); err != nil && ctx.Err() == nil {
-									opt.Logger.Warn("cluster backup schedule tick failed", "error", err)
-								}
 								if policies, err := (raftBackupControl{runtime: rt}).ListEnabledBackupPolicies(ctx); err == nil {
 									clusterPolicyReadOK = true
 									clusterEnabled = len(policies) > 0
-								}
-							}
-							if rt.replicationCoord != nil {
-								if err := rt.replicationCoord.Tick(ctx); err != nil && ctx.Err() == nil {
-									opt.Logger.Warn("replication schedule tick failed", "error", err)
 								}
 							}
 							if clusterPolicyReadOK && !clusterEnabled {

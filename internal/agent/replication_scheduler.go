@@ -33,6 +33,7 @@ func (a raftReplicationControl) ClaimReplicationRuns(_ context.Context, term uin
 	if err != nil {
 		return nil, err
 	}
+	created := make([]backup.FrozenReplicationRun, 0, len(plans))
 	for _, plan := range plans {
 		cmd, err := control.EncodeCommand(control.CmdBackupRunCreate, plan.Create)
 		if err != nil {
@@ -45,6 +46,9 @@ func (a raftReplicationControl) ClaimReplicationRuns(_ context.Context, term uin
 			if err := applyMissingReplicationTask(n, plan.task(taskID), term, now); err != nil {
 				return nil, err
 			}
+		}
+		if frozen := frozenReplicationRunFromPlan(plan, term); len(frozen.Tasks) > 0 {
+			created = append(created, frozen)
 		}
 	}
 	state = n.View()
@@ -66,7 +70,19 @@ func (a raftReplicationControl) ClaimReplicationRuns(_ context.Context, term uin
 			runnable = append(runnable, backup.FrozenReplicationRun{RunID: claimed.RunID, PolicyID: claimed.PolicyID, PolicyRevision: claimed.PolicyRevision, LeaderTerm: term, LeaseExpiresUnix: claimed.LeaseUntilUnix, MaxConcurrency: claimed.MaxConcurrency, Tasks: tasks})
 		}
 	}
-	return runnable, nil
+	return append(created, runnable...), nil
+}
+
+func frozenReplicationRunFromPlan(plan automaticReplicationPlan, term uint64) backup.FrozenReplicationRun {
+	run := plan.Create.Run
+	tasks := make([]backup.FrozenReplicationTask, 0, len(plan.Create.Tasks))
+	for _, task := range plan.Create.Tasks {
+		if task.SnapshotID == "" || task.SHA256 == "" {
+			continue
+		}
+		tasks = append(tasks, backup.FrozenReplicationTask{TaskID: task.TaskID, SourceNodeID: task.SourceNodeID, TargetNodeID: task.NodeID, SnapshotID: task.SnapshotID, SHA256: task.SHA256, Status: task.Status})
+	}
+	return backup.FrozenReplicationRun{RunID: run.RunID, PolicyID: run.PolicyID, PolicyRevision: run.PolicyRevision, LeaderTerm: term, LeaseExpiresUnix: run.LeaseUntilUnix, MaxConcurrency: run.MaxConcurrency, Tasks: tasks}
 }
 
 func applyMissingReplicationTask(n replicationCommandApplier, task control.ClusterBackupTask, term uint64, now time.Time) error {
@@ -133,10 +149,6 @@ func runnableReplicationRuns(state control.State, term uint64, now time.Time) ([
 		}
 		owner := state.ReplicationRunTerms[id]
 		if owner == term && run.LeaseUntilUnix > now.Unix() {
-			tasks := replicationFrozenTasks(state, run)
-			if len(tasks) > 0 {
-				runs = append(runs, backup.FrozenReplicationRun{RunID: run.RunID, PolicyID: run.PolicyID, PolicyRevision: run.PolicyRevision, LeaderTerm: term, LeaseExpiresUnix: run.LeaseUntilUnix, MaxConcurrency: run.MaxConcurrency, Tasks: tasks})
-			}
 			continue
 		}
 		if owner < term || run.LeaseUntilUnix <= now.Unix() {
@@ -367,25 +379,42 @@ func (d localReplicationDispatcher) DispatchReplicationTask(ctx context.Context,
 		}
 		return (raftReplicationControl{runtime: d.runtime}).UpdateReplicationTask(ctx, backup.ReplicationTaskUpdate{RunID: task.RunID, TaskID: task.TaskID, SourceNodeID: task.SourceNodeID, TargetNodeID: task.TargetNodeID, SnapshotID: task.SnapshotID, SHA256: task.SHA256, Status: "SUCCEEDED", Bytes: bytes, LeaderTerm: task.LeaderTerm})
 	}
-	addr := ""
-	for _, member := range d.runtime.memberList() {
-		if member.NodeID == task.SourceNodeID {
-			addr = member.RPCAddress
-			break
+	var last error
+	for range 80 {
+		addr := ""
+		for _, member := range d.runtime.memberList() {
+			if member.NodeID == task.SourceNodeID {
+				addr = member.RPCAddress
+				break
+			}
+		}
+		if addr == "" || d.runtime.fwd == nil {
+			last = errcode.E(errcode.UNAVAILABLE, "source agent rpc unavailable")
+		} else {
+			client, err := d.runtime.fwd.PeerReplication(ctx, api.Route{NodeID: task.SourceNodeID, RPC: addr})
+			if err != nil {
+				last = err
+			} else {
+				resp, err := client.ReplicateSnapshot(ctx, connect.NewRequest(&procmeshv1.ReplicateSnapshotRequest{RunId: task.RunID, TaskId: task.TaskID, PolicyId: task.PolicyID, PolicyRevision: task.PolicyRevision, SourceNodeId: task.SourceNodeID, TargetNodeId: task.TargetNodeID, SnapshotId: task.SnapshotID, Sha256: task.SHA256, LeaderTerm: task.LeaderTerm, LeaseExpiresUnix: task.LeaseExpiresUnix}))
+				if err == nil {
+					return (raftReplicationControl{runtime: d.runtime}).UpdateReplicationTask(ctx, backup.ReplicationTaskUpdate{RunID: task.RunID, TaskID: task.TaskID, SourceNodeID: task.SourceNodeID, TargetNodeID: task.TargetNodeID, SnapshotID: task.SnapshotID, SHA256: task.SHA256, Status: "SUCCEEDED", Bytes: resp.Msg.GetBytes(), LeaderTerm: task.LeaderTerm})
+				}
+				last = err
+				if !retryableBackupDispatch(err) {
+					return err
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			if last != nil {
+				return last
+			}
+			return ctx.Err()
+		case <-time.After(50 * time.Millisecond):
 		}
 	}
-	if addr == "" || d.runtime.fwd == nil {
-		return errcode.E(errcode.UNAVAILABLE, "source agent rpc unavailable")
-	}
-	client, err := d.runtime.fwd.PeerReplication(ctx, api.Route{NodeID: task.SourceNodeID, RPC: addr})
-	if err != nil {
-		return err
-	}
-	resp, err := client.ReplicateSnapshot(ctx, connect.NewRequest(&procmeshv1.ReplicateSnapshotRequest{RunId: task.RunID, TaskId: task.TaskID, PolicyId: task.PolicyID, PolicyRevision: task.PolicyRevision, SourceNodeId: task.SourceNodeID, TargetNodeId: task.TargetNodeID, SnapshotId: task.SnapshotID, Sha256: task.SHA256, LeaderTerm: task.LeaderTerm, LeaseExpiresUnix: task.LeaseExpiresUnix}))
-	if err != nil {
-		return err
-	}
-	return (raftReplicationControl{runtime: d.runtime}).UpdateReplicationTask(ctx, backup.ReplicationTaskUpdate{RunID: task.RunID, TaskID: task.TaskID, SourceNodeID: task.SourceNodeID, TargetNodeID: task.TargetNodeID, SnapshotID: task.SnapshotID, SHA256: task.SHA256, Status: "SUCCEEDED", Bytes: resp.Msg.GetBytes(), LeaderTerm: task.LeaderTerm})
+	return last
 }
 
 func (r *rpcRuntime) authorizeReplicationTask(leaderNodeID string, msg *procmeshv1.ReplicateSnapshotRequest) error {
@@ -413,7 +442,7 @@ func (r *rpcRuntime) authorizeReplicationTask(leaderNodeID string, msg *procmesh
 }
 
 func replicationTaskMatchesDispatch(task control.ClusterBackupTask, msg *procmeshv1.ReplicateSnapshotRequest, sourceNodeID string) bool {
-	return msg != nil && task.Status == "RUNNING" && task.RunID == msg.GetRunId() && task.TaskID == msg.GetTaskId() &&
+	return msg != nil && (task.Status == "PENDING" || task.Status == "RUNNING") && task.RunID == msg.GetRunId() && task.TaskID == msg.GetTaskId() &&
 		task.SourceNodeID == sourceNodeID && task.SourceNodeID == msg.GetSourceNodeId() && task.NodeID == msg.GetTargetNodeId() &&
 		task.SnapshotID == msg.GetSnapshotId() && task.SHA256 == msg.GetSha256()
 }

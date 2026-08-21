@@ -227,40 +227,74 @@ func (d localBackupDispatcher) DispatchBackupTask(ctx context.Context, task back
 		return d.persistResult(ctx, task, taskResultUpdate(result, task))
 	}
 
-	addr := ""
-	members := d.members
-	if members == nil {
-		members = d.runtime.memberList
-	}
-	for _, member := range members() {
-		if member.NodeID == task.NodeID {
-			addr = member.RPCAddress
-			break
+	var last error
+	for range 80 {
+		addr := ""
+		members := d.members
+		if members == nil {
+			members = d.runtime.memberList
+		}
+		for _, member := range members() {
+			if member.NodeID == task.NodeID {
+				addr = member.RPCAddress
+				break
+			}
+		}
+		if addr == "" {
+			last = fmt.Errorf("target agent rpc unavailable")
+		} else {
+			forward := d.forward
+			if forward == nil {
+				forward = d.runtime.fwd
+			}
+			if forward == nil {
+				return fmt.Errorf("agent forwarder unavailable")
+			}
+			client, err := forward.ClusterBackupAgent(ctx, api.Route{NodeID: task.NodeID, RPC: addr})
+			if err != nil {
+				last = err
+			} else {
+				resp, err := client.RunTask(ctx, connect.NewRequest(&procmeshv1.RunClusterBackupTaskRequest{
+					RunId: task.RunID, TaskId: task.TaskID, PolicyId: task.PolicyID, NodeId: task.NodeID,
+					PolicyRevision: task.PolicyRevision, Sink: task.Sink, DestinationProfile: task.DestinationProfile,
+					LeaderTerm: task.LeaderTerm, LeaseExpiresUnix: task.LeaseExpiresUnix,
+				}))
+				if err == nil {
+					return d.persistResult(ctx, task, taskResultUpdateFromProto(resp.Msg.GetTask(), task))
+				}
+				last = err
+				if !retryableBackupDispatch(err) {
+					return err
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			if last != nil {
+				return last
+			}
+			return ctx.Err()
+		case <-time.After(50 * time.Millisecond):
 		}
 	}
-	if addr == "" {
-		return fmt.Errorf("target agent rpc unavailable")
+	return last
+}
+
+func retryableBackupDispatch(err error) bool {
+	if err == nil {
+		return false
 	}
-	forward := d.forward
-	if forward == nil {
-		forward = d.runtime.fwd
+	if errcode.Is(err, errcode.NOT_FOUND) || errcode.Is(err, errcode.UNAVAILABLE) {
+		return true
 	}
-	if forward == nil {
-		return fmt.Errorf("agent forwarder unavailable")
+	switch connect.CodeOf(err) {
+	case connect.CodeNotFound, connect.CodeUnavailable:
+		return true
 	}
-	client, err := forward.ClusterBackupAgent(ctx, api.Route{NodeID: task.NodeID, RPC: addr})
-	if err != nil {
-		return err
-	}
-	resp, err := client.RunTask(ctx, connect.NewRequest(&procmeshv1.RunClusterBackupTaskRequest{
-		RunId: task.RunID, TaskId: task.TaskID, PolicyId: task.PolicyID, NodeId: task.NodeID,
-		PolicyRevision: task.PolicyRevision, Sink: task.Sink, DestinationProfile: task.DestinationProfile,
-		LeaderTerm: task.LeaderTerm, LeaseExpiresUnix: task.LeaseExpiresUnix,
-	}))
-	if err != nil {
-		return err
-	}
-	return d.persistResult(ctx, task, taskResultUpdateFromProto(resp.Msg.GetTask(), task))
+	msg := err.Error()
+	return strings.Contains(msg, "backup run not found") || strings.Contains(msg, "rpc unavailable") || strings.Contains(msg, "target agent rpc unavailable") ||
+		strings.Contains(msg, "replication task changed") || strings.Contains(msg, "replication run changed") ||
+		strings.Contains(msg, "backup policy revision changed")
 }
 
 func (d localBackupDispatcher) persistResult(ctx context.Context, task backup.BackupTaskRequest, update backup.TaskUpdate) error {

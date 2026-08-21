@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -87,6 +88,9 @@ func (r *rpcRuntime) startRPCLocked() error {
 		return fmt.Errorf("cluster id required for rpc")
 	}
 	r.clusterID = clusterID
+	if r.backup != nil && clusterID != "" {
+		r.backup.ClusterID = clusterID
+	}
 	listen := r.opt.RPCListen
 	if listen == "" {
 		listen = defaultRPCListen
@@ -134,6 +138,13 @@ func (r *rpcRuntime) serialRevoked(s string) bool {
 		return false
 	}
 	return n.View().SerialRevoked(s)
+}
+
+func peerStoreRoot(dir string) string {
+	if filepath.Base(dir) == "cluster" {
+		return filepath.Dir(dir)
+	}
+	return dir
 }
 
 func (r *rpcRuntime) lookupClusterID(creds control.AgentCreds) string {
@@ -264,8 +275,10 @@ func (r *rpcRuntime) localHandler() http.Handler {
 
 	// Internal Agent-to-Agent backup task RPC (no user auth, mTLS only)
 	var peerStore *backup.PeerStore
-	if r.backup != nil {
-		peerStore = &backup.PeerStore{Root: r.dir}
+	if r.backup != nil && r.backup.PeerStore != nil {
+		peerStore = r.backup.PeerStore
+	} else if r.dir != "" {
+		peerStore = &backup.PeerStore{Root: peerStoreRoot(r.dir)}
 	}
 
 	// Disaster Replication Service (control plane)

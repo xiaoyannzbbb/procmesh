@@ -794,12 +794,15 @@ func (d *DisasterReplicationAPI) RetryFailedRoutes(ctx context.Context, req *con
 	}
 
 	// Apply retry command to Raft
+	now := d.now()
+	leaseUntil := now.Add(30 * time.Second).Unix()
 	cmd, err := control.EncodeCommand(control.CmdBackupRetryFailedTasks, control.RetryFailedTasksBody{
-		OperationID: operationID,
-		RunID:       run.RunID,
-		LeaderTerm:  term,
-		UpdatedUnix: d.now().Unix(),
-		Replication: true,
+		OperationID:    operationID,
+		RunID:          run.RunID,
+		LeaderTerm:     term,
+		UpdatedUnix:    now.Unix(),
+		LeaseUntilUnix: leaseUntil,
+		Replication:    true,
 	})
 	if err != nil {
 		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "failed to encode command"))
@@ -812,6 +815,19 @@ func (d *DisasterReplicationAPI) RetryFailedRoutes(ctx context.Context, req *con
 	}
 
 	d.audit(ctx, rec, nil)
+	if d.DispatchRun != nil {
+		st = d.state()
+		run = st.ReplicationRuns[run.RunID]
+		frozen := make([]backup.FrozenReplicationTask, 0)
+		for _, task := range st.ReplicationTasks {
+			if task.RunID == run.RunID && task.Status == "PENDING" && task.SnapshotID != "" && task.SHA256 != "" {
+				frozen = append(frozen, backup.FrozenReplicationTask{TaskID: task.TaskID, SourceNodeID: task.SourceNodeID, TargetNodeID: task.NodeID, SnapshotID: task.SnapshotID, SHA256: task.SHA256, Status: task.Status})
+			}
+		}
+		if len(frozen) > 0 {
+			d.DispatchRun(backup.FrozenReplicationRun{RunID: run.RunID, PolicyID: run.PolicyID, PolicyRevision: run.PolicyRevision, LeaderTerm: term, LeaseExpiresUnix: run.LeaseUntilUnix, MaxConcurrency: run.MaxConcurrency, Tasks: frozen})
+		}
+	}
 	return connect.NewResponse(&procmeshv1.RetryFailedRoutesResponse{
 		RetriedCount: int32(retriedCount),
 	}), nil

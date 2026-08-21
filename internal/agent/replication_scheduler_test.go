@@ -17,7 +17,7 @@ import (
 
 const replicationTestSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-func TestRunnableReplicationRunsIncludesCurrentTermLiveRun(t *testing.T) {
+func TestRunnableReplicationRunsSkipsCurrentTermLiveRun(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	state := control.NewState()
 	state.ReplicationRuns["run-current"] = control.ClusterBackupRun{
@@ -31,8 +31,8 @@ func TestRunnableReplicationRunsIncludesCurrentTermLiveRun(t *testing.T) {
 	}
 
 	runs, takeovers := runnableReplicationRuns(*state, 7, now)
-	if len(takeovers) != 0 || len(runs) != 1 || runs[0].RunID != "run-current" || len(runs[0].Tasks) != 1 {
-		t.Fatalf("runs=%+v takeovers=%v, want current-term live run ready now", runs, takeovers)
+	if len(takeovers) != 0 || len(runs) != 0 {
+		t.Fatalf("runs=%+v takeovers=%v, want StartRun to dispatch current-term live work", runs, takeovers)
 	}
 }
 

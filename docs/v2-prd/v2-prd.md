@@ -3049,7 +3049,7 @@ V1.0 必须包含：
 * Advanced Audit Search
 * Upgrade Management
 * Agent Certificate Rotation
-* Disaster Recovery Tool
+* Disaster Recovery Tool（整集群配置备份与 Peer 灾备副本已作为 Q5 之后的增量交付，见 `docs/superpowers/specs/2026-08-19-cluster-backup-disaster-replication-design.md`；不包含自动故障迁移或跨节点 Placement）
 * Alert Dedup Optimization
 * Large Cluster Optimization
 

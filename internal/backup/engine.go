@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -86,6 +87,7 @@ type ClusterCreateOpts struct {
 	Sink               string
 	DestinationProfile string
 	ProcessIDs         []string
+	SnapshotID         string
 }
 
 type DestinationHealth struct {
@@ -136,7 +138,7 @@ func (e *Engine) ReplicateSnapshot(ctx context.Context, req ReplicationTaskReque
 	if err != nil {
 		return 0, err
 	}
-	if rec.NodeID != e.NodeID || rec.ClusterID != e.ClusterID || rec.SHA256 != req.SHA256 {
+	if rec.NodeID != e.NodeID || rec.SHA256 != req.SHA256 {
 		return 0, errcode.E(errcode.CONFLICT, "frozen snapshot checksum mismatch")
 	}
 	sink, err := e.clusterSink(rec.Sink, rec.DestinationProfile)
@@ -157,7 +159,7 @@ func (e *Engine) ReplicateSnapshot(ctx context.Context, req ReplicationTaskReque
 		return 0, errcode.E(errcode.CONFLICT, "frozen snapshot checksum mismatch")
 	}
 	snapshot, err := Decode(payload)
-	if err != nil || snapshot.SnapshotID != req.SnapshotID || snapshot.ClusterID != e.ClusterID || snapshot.NodeID != e.NodeID {
+	if err != nil || snapshot.SnapshotID != req.SnapshotID || snapshot.NodeID != e.NodeID {
 		return 0, errcode.E(errcode.CONFLICT, "frozen snapshot payload mismatch")
 	}
 	if err := e.ReplicationPush.PutReplicationSnapshot(ctx, ReplicationPushRequest{RunID: req.RunID, TaskID: req.TaskID, PolicyID: req.PolicyID, PolicyRevision: req.PolicyRevision, TargetNodeID: req.TargetNodeID, SnapshotID: req.SnapshotID, SHA256: req.SHA256}, payload); err != nil {
@@ -324,9 +326,13 @@ func (e *Engine) CreateCluster(ctx context.Context, opts ClusterCreateOpts) (Met
 		return Meta{}, err
 	}
 
-	id, err := e.newID()
-	if err != nil {
-		return Meta{}, err
+	id := opts.SnapshotID
+	if id == "" {
+		var genErr error
+		id, genErr = e.newID()
+		if genErr != nil {
+			return Meta{}, genErr
+		}
 	}
 	created := e.now()
 
@@ -560,11 +566,28 @@ func (e *Engine) readPayload(ctx context.Context, rec store.BackupRecord, snapsh
 		if e.PeerStore == nil {
 			return nil, errcode.E(errcode.UNAVAILABLE, "peer store not configured")
 		}
+		if rec.ClusterID != "" {
+			data, err := os.ReadFile(e.PeerStore.pathFor(rec.SourceNodeID, rec.ClusterID, snapshotID))
+			if err == nil {
+				return data, nil
+			}
+			if !os.IsNotExist(err) {
+				return nil, fmt.Errorf("read cluster peer backup: %w", err)
+			}
+		}
 		return e.PeerStore.Get(ctx, rec.SourceNodeID, snapshotID)
 	}
-	sink, err := e.sink(sinkName)
+	sink, err := e.clusterSink(sinkName, rec.DestinationProfile)
+	if err != nil {
+		sink, err = e.sink(sinkName)
+	}
 	if err != nil {
 		return nil, err
+	}
+	if rec.ClusterID != "" && rec.PolicyID != "" && rec.NodeID != "" {
+		if cs, ok := sink.(ClusterSink); ok {
+			return cs.GetCluster(ctx, rec.ClusterID, rec.PolicyID, rec.NodeID, snapshotID)
+		}
 	}
 	return sink.Get(ctx, snapshotID)
 }
@@ -937,6 +960,36 @@ func metaFromRecord(rec store.BackupRecord) (Meta, error) {
 	return m, nil
 }
 
+func (e *Engine) resolvedClusterID() string {
+	if e == nil {
+		return ""
+	}
+	if e.ClusterID != "" {
+		return e.ClusterID
+	}
+	if e.Store != nil {
+		id, err := e.Store.GetClusterID(context.Background())
+		if err == nil && id != "" {
+			e.ClusterID = id
+			return id
+		}
+	}
+	return ""
+}
+
+// StableClusterSnapshotID is the idempotent object name for a cluster task.
+func StableClusterSnapshotID(runID, taskID string) string {
+	sum := sha256.Sum256([]byte(runID + ":" + taskID))
+	return "snap-" + hex.EncodeToString(sum[:12])
+}
+
+func (e *Engine) stableTaskSnapshotID(runID, taskID string) string {
+	if e != nil && e.NewID != nil {
+		return ""
+	}
+	return StableClusterSnapshotID(runID, taskID)
+}
+
 func newUUID() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -956,7 +1009,8 @@ func (e *Engine) RunClusterTask(ctx context.Context, req ClusterTaskRequest) (*T
 	if req.NodeID == "" {
 		return nil, errcode.E(errcode.INVALID, "node_id required")
 	}
-	if e.ClusterID == "" || e.NodeID == "" {
+	clusterID := e.resolvedClusterID()
+	if clusterID == "" || e.NodeID == "" {
 		return nil, errcode.E(errcode.INVALID, "cluster_id and node_id not configured")
 	}
 
@@ -965,11 +1019,12 @@ func (e *Engine) RunClusterTask(ctx context.Context, req ClusterTaskRequest) (*T
 		RunID:              req.RunID,
 		TaskID:             req.TaskID,
 		PolicyID:           req.PolicyID,
-		ClusterID:          e.ClusterID,
+		ClusterID:          clusterID,
 		NodeID:             e.NodeID,
 		Sink:               req.Sink,
 		DestinationProfile: req.DestinationProfile,
 		ProcessIDs:         req.ProcessIDs,
+		SnapshotID:         e.stableTaskSnapshotID(req.RunID, req.TaskID),
 	})
 
 	result := &TaskResult{
