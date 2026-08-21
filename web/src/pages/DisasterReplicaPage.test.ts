@@ -1,11 +1,13 @@
-import { mount } from "@vue/test-utils";
+import { QueryClient, VueQueryPlugin } from "@tanstack/vue-query";
+import { flushPromises, mount } from "@vue/test-utils";
 import i18next from "i18next";
 import I18NextVue from "i18next-vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, h } from "vue";
+import { createMemoryHistory, createRouter } from "vue-router";
 import { useClusterBackupClient, useReplicationClient } from "../lib/rpc";
 import { session } from "../lib/session";
-import { router } from "../router";
+import { router as appRouter } from "../router";
 import DisasterReplicaPage from "./DisasterReplicaPage.vue";
 
 let i18n: typeof i18next;
@@ -39,6 +41,79 @@ const replicationMethods = [
   "listRecoverableSnapshots",
 ] as const;
 
+const replicaI18n = {
+  overview: "Overview",
+  config: "Replica config",
+  runs: "Runs and recovery",
+  recovery: "Recoverable snapshots",
+  routeCount: "Routes",
+  healthyCount: "Healthy",
+  lagCount: "Lag",
+  failedCount: "Failed",
+  lastSuccess: "Last successful replication",
+  recoverableCount: "Recoverable snapshots",
+  generate: "Generate cluster replica config",
+  preview: "Preview replica config",
+  apply: "Apply draft",
+  replaceCurrent: "Replace current configuration",
+  replaceHint: "Existing routes will not be overwritten unless you choose replace.",
+  generationRules: "Generation rules",
+  routeTable: "Route table",
+  warnings: "Failure-domain warnings",
+  costEstimate: "Cost estimate",
+  inboundLoad: "Inbound load",
+  n1Warning: "Single-node cluster: no replica target is available.",
+  offlineWarning: "Admitted node {{id}} is offline and remains in topology.",
+  policyRevision: "Policy revision",
+  replicaFactor: "Replica factor",
+  trigger: "Trigger",
+  retention: "Retention",
+  retentionSummary: "keep last {{last}}, {{days}} days",
+  concurrency: "Concurrency",
+  topologyConstraints: "Topology constraints",
+  source: "Source",
+  targets: "Targets",
+  health: "Health",
+  lag: "Lag",
+  freshness: "Freshness",
+  retryFailed: "Retry failed routes",
+  verify: "Verify checksum",
+  restoreOwner: "Restore on Owner",
+  owner: "Owner",
+  snapshotId: "Snapshot ID",
+  checksum: "Checksum",
+  noRoutes: "No replica routes",
+  noRuns: "No replication runs",
+  noSnapshots: "No recoverable snapshots",
+  policiesUnreachable: "Replica policies are unreachable. This is not an empty catalog.",
+  runsUnreachable: "Replication runs are unreachable. This is not an empty catalog.",
+  snapshotsUnreachable: "Recoverable snapshots are unreachable. This is not an empty catalog.",
+  topologyUnreachable: "Replica topology is unreachable. This is not an empty catalog.",
+  staleBanner: "Some replica sources are unreachable. This is not an empty catalog.",
+  partialWarning: "This run is PARTIAL: some routes succeeded and others did not. This is not a successful replication.",
+  loading: "Loading…",
+  startRun: "Start run",
+  primaryRunId: "Primary backup run ID",
+  runId: "Run ID",
+  runDetail: "Run detail",
+  status: "Status",
+  bytes: "Bytes",
+  errorSummary: "Error",
+  applied: "Applied policy revision {{revision}}",
+  cancel: "Cancel",
+  node: "Node",
+  alive: "Alive",
+  admitted: "Admitted",
+  host: "Host",
+  rack: "Rack",
+  zone: "Zone",
+  none: "None",
+  restoreHint: "Peer copies cannot be applied directly. Restore on the source Owner.",
+  verifyValid: "Replica checksum matches",
+  verifyInvalid: "Replica checksum mismatch",
+  sourceSelector: "Source selector",
+};
+
 beforeEach(async () => {
   i18n = i18next.createInstance();
   await i18n.init({
@@ -49,29 +124,233 @@ beforeEach(async () => {
         common: {
           nav: { disasterReplica: "Disaster replica" },
           common: { noData: "No data available" },
+          replica: replicaI18n,
+          status: { live: "LIVE", stale: "STALE", unknown: "UNKNOWN" },
+          actions: { cancel: "Cancel", confirm: "Confirm", close: "Close" },
         },
       },
     },
   });
 });
 
+const topologyNodes = [
+  { nodeId: "n1", host: "host-1", rack: "r1", zone: "z1", capacityWeight: 1, admitted: true, alive: true },
+  { nodeId: "n2", host: "host-2", rack: "r2", zone: "z1", capacityWeight: 1, admitted: true, alive: false },
+  { nodeId: "n3", host: "host-3", rack: "r1", zone: "z2", capacityWeight: 1, admitted: true, alive: true },
+];
+
+const replicaPolicy = {
+  policyId: "rep-1",
+  name: "cluster-replica",
+  enabled: true,
+  sourceSelector: "ALL_ADMITTED",
+  sourceIds: [] as string[],
+  replicaFactor: 1,
+  routes: [
+    { sourceNodeId: "n1", targetNodeIds: ["n3"], warnings: [] as string[] },
+    { sourceNodeId: "n2", targetNodeIds: ["n1"], warnings: ["admitted-node-offline:n2"] },
+    { sourceNodeId: "n3", targetNodeIds: ["n1"], warnings: [] as string[] },
+  ],
+  trigger: "MANUAL",
+  primaryPolicyIds: [] as string[],
+  scheduleCron: "",
+  timezone: "UTC",
+  retentionKeepLast: 7,
+  retentionKeepDays: 30,
+  retentionMaxBytes: 0n,
+  maxConcurrency: 2,
+  verifyAfterCopy: true,
+  bandwidthLimit: 0n,
+  topologyConstraints: { minZoneDiversity: "1" } as Record<string, string>,
+  revision: 2n,
+};
+
+const replicaTasks = [
+  {
+    taskId: "task-ok",
+    runId: "run-partial",
+    sourceNodeId: "n1",
+    targetNodeIds: ["n3"],
+    snapshotId: "snap-n1",
+    sha256: "abc123def4567890",
+    status: "SUCCEEDED",
+    bytes: 2048n,
+    errorCode: "",
+    errorSummary: "",
+    startedAt: 1_700_000_000n,
+    finishedAt: 1_700_000_050n,
+  },
+  {
+    taskId: "task-fail",
+    runId: "run-partial",
+    sourceNodeId: "n2",
+    targetNodeIds: ["n1"],
+    snapshotId: "snap-n2",
+    sha256: "def456abc1237890",
+    status: "FAILED",
+    bytes: 0n,
+    errorCode: "CHECKSUM",
+    errorSummary: "checksum mismatch",
+    startedAt: 1_700_000_000n,
+    finishedAt: 1_700_000_040n,
+  },
+  {
+    taskId: "task-lag",
+    runId: "run-partial",
+    sourceNodeId: "n3",
+    targetNodeIds: ["n1"],
+    snapshotId: "",
+    sha256: "",
+    status: "UNAVAILABLE",
+    bytes: 0n,
+    errorCode: "UNAVAILABLE",
+    errorSummary: "target offline",
+    startedAt: 0n,
+    finishedAt: 0n,
+  },
+];
+
+const replicaRun = {
+  runId: "run-partial",
+  policyId: "rep-1",
+  policyRevision: 2n,
+  status: "PARTIAL",
+  tasks: replicaTasks,
+  startedAt: 1_700_000_000n,
+  finishedAt: 1_700_000_050n,
+};
+
+const policyDraft = {
+  name: "cluster-replica",
+  enabled: true,
+  sourceSelector: "ALL_ADMITTED",
+  sourceIds: [] as string[],
+  replicaFactor: 1,
+  routes: [
+    { sourceNodeId: "n1", targetNodeIds: ["n3"], warnings: [] as string[] },
+    { sourceNodeId: "n3", targetNodeIds: ["n1"], warnings: [] as string[] },
+  ],
+  trigger: "MANUAL",
+  primaryPolicyIds: [] as string[],
+  scheduleCron: "",
+  timezone: "UTC",
+  retentionKeepLast: 7,
+  retentionKeepDays: 30,
+  retentionMaxBytes: 0n,
+  maxConcurrency: 2,
+  verifyAfterCopy: true,
+  bandwidthLimit: 0n,
+  topologyConstraints: { minZoneDiversity: "1" } as Record<string, string>,
+  draftRevision: 7n,
+  draftHash: "draft-hash-7",
+  globalWarnings: ["admitted-node-offline:n2"],
+  inboundLoad: { n1: 1, n3: 1 } as Record<string, number>,
+  topologyHealth: "DEGRADED",
+};
+
+const n1Draft = {
+  ...policyDraft,
+  routes: [] as typeof policyDraft.routes,
+  globalWarnings: ["single-node-no-replica"],
+  inboundLoad: {} as Record<string, number>,
+  topologyHealth: "DEGRADED",
+};
+
+const recoverableSnapshot = {
+  snapshotId: "snap-n1",
+  clusterId: "c1",
+  sourceNodeId: "n1",
+  sha256: "abc123def4567890",
+  createdAt: 1_700_000_000n,
+  processCount: 1,
+  processIds: ["web"],
+};
+
 const mounted: Array<{ unmount: () => void }> = [];
 
-async function mountPage(permissions: string[] = ["replication.read"]) {
+async function mountPage(
+  opts: {
+    permissions?: string[];
+    topology?: unknown[];
+    policies?: unknown[];
+    runs?: unknown[];
+    run?: unknown;
+    snapshots?: unknown[];
+    draft?: unknown;
+    topologyError?: Error;
+    policiesError?: Error;
+    runsError?: Error;
+    snapshotsError?: Error;
+  } = {},
+) {
   session.value = {
     userId: "u1",
     username: "admin",
     csrfToken: "csrf",
-    permissions,
+    permissions: opts.permissions ?? ["replication.read", "replication.manage"],
   };
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  const topology = opts.topology ?? topologyNodes;
+  const policies = opts.policies ?? [replicaPolicy];
+  const runs = opts.runs ?? [{ ...replicaRun, tasks: replicaTasks }];
+  const run = opts.run ?? replicaRun;
+  const snapshots = opts.snapshots ?? [recoverableSnapshot];
+  const draft = opts.draft ?? policyDraft;
+  const replicationClient = {
+    getTopology: opts.topologyError
+      ? vi.fn().mockRejectedValue(opts.topologyError)
+      : vi.fn().mockResolvedValue({ nodes: topology, clusterId: "c1" }),
+    generatePolicyDraft: vi.fn().mockResolvedValue({ draft }),
+    applyPolicyDraft: vi.fn().mockResolvedValue({ policyId: "rep-1", revision: 3n }),
+    listPolicies: opts.policiesError
+      ? vi.fn().mockRejectedValue(opts.policiesError)
+      : vi.fn().mockResolvedValue({ policies }),
+    getPolicy: vi.fn().mockResolvedValue({ policy: replicaPolicy }),
+    updatePolicy: vi.fn().mockResolvedValue({ policyId: "rep-1", revision: 3n }),
+    deletePolicy: vi.fn().mockResolvedValue({ deleted: true }),
+    startRun: vi.fn().mockResolvedValue({ runId: "run-2", policyId: "rep-1", policyRevision: 2n, startedAt: 1n }),
+    listRuns: opts.runsError
+      ? vi.fn().mockRejectedValue(opts.runsError)
+      : vi.fn().mockResolvedValue({ runs }),
+    getRun: vi.fn().mockResolvedValue({ run }),
+    retryFailedRoutes: vi.fn().mockResolvedValue({ retriedCount: 1 }),
+    verifyReplica: vi.fn().mockResolvedValue({
+      valid: true,
+      sha256: recoverableSnapshot.sha256,
+      processCount: 1,
+      processIds: ["web"],
+      errors: [],
+    }),
+    listRecoverableSnapshots: opts.snapshotsError
+      ? vi.fn().mockRejectedValue(opts.snapshotsError)
+      : vi.fn().mockResolvedValue({ snapshots }),
+  };
+  const memoryRouter = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: "/disaster-replica", component: DisasterReplicaPage },
+      { path: "/backup", component: defineComponent({ setup: () => () => h("div") }) },
+    ],
+  });
+  await memoryRouter.push("/disaster-replica");
+  await memoryRouter.isReady();
   const wrapper = mount(DisasterReplicaPage, {
     global: {
-      plugins: [[I18NextVue, { i18next: i18n }]],
+      plugins: [
+        [VueQueryPlugin, { queryClient }],
+        [I18NextVue, { i18next: i18n }],
+        memoryRouter,
+      ],
+      provide: { replicationClient },
+      stubs: { Teleport: true },
     },
   });
   mounted.push(wrapper);
+  await flushPromises();
   await wrapper.vm.$nextTick();
-  return wrapper;
+  return { wrapper, replicationClient, queryClient, memoryRouter };
 }
 
 afterEach(() => {
@@ -115,22 +394,261 @@ describe("cluster backup and replication clients", () => {
 
 describe("DisasterReplicaPage", () => {
   it("registers the /disaster-replica route", () => {
-    const resolved = router.resolve("/disaster-replica");
+    const resolved = appRouter.resolve("/disaster-replica");
     expect(resolved.matched.some((record) => record.path === "/disaster-replica")).toBe(true);
     expect(resolved.matched.some((record) => record.components?.default === DisasterReplicaPage)).toBe(true);
   });
 
-  it("mounts a permission-gated shell when replication.read is present", async () => {
-    const wrapper = await mountPage(["replication.read"]);
+  it("mounts a permission-gated workflow when replication.read is present", async () => {
+    const { wrapper } = await mountPage({ permissions: ["replication.read"] });
     expect(wrapper.text()).toContain("Disaster replica");
     expect(wrapper.attributes("data-permission")).toBe("granted");
-    expect(wrapper.text()).toContain("No data available");
+    expect(wrapper.find('[data-section="overview"]').exists()).toBe(true);
+    expect(wrapper.find('[data-section="config"]').exists()).toBe(true);
+    expect(wrapper.find('[data-section="runs"]').exists()).toBe(true);
   });
 
   it("shows a denied shell without replication.read", async () => {
-    const wrapper = await mountPage(["backup.read"]);
+    const { wrapper, replicationClient } = await mountPage({ permissions: ["backup.read"] });
     expect(wrapper.text()).toContain("Disaster replica");
     expect(wrapper.attributes("data-permission")).toBe("denied");
-    expect(wrapper.text()).not.toContain("No data available");
+    expect(wrapper.find('[data-section="overview"]').exists()).toBe(false);
+    expect(wrapper.find('[data-action="generate"]').exists()).toBe(false);
+    expect(replicationClient.getTopology).not.toHaveBeenCalled();
+  });
+
+  it("shows overview route counts, healthy/lag/failed, last success, and recoverable snapshots", async () => {
+    const { wrapper } = await mountPage();
+    const overview = wrapper.get('[data-section="overview"]');
+    expect(overview.get("[data-route-count]").text()).toContain("3");
+    expect(overview.get("[data-healthy-count]").text()).toContain("1");
+    expect(overview.get("[data-lag-count]").text()).toContain("1");
+    expect(overview.get("[data-failed-count]").text()).toContain("1");
+    expect(overview.get("[data-recoverable-count]").text()).toContain("1");
+    expect(overview.get("[data-last-success]").text()).not.toBe("—");
+  });
+
+  it("keeps offline admitted nodes in topology as warnings, not exclusions", async () => {
+    const { wrapper } = await mountPage();
+    const config = wrapper.get('[data-section="config"]');
+    expect(config.text()).toContain("n2");
+    expect(config.get('[data-node-id="n2"]').attributes("data-alive")).toBe("false");
+    expect(config.get('[data-node-id="n2"]').attributes("data-admitted")).toBe("true");
+    expect(config.get("[data-offline-warning]").text()).toContain("n2");
+    expect(config.get("[data-offline-warning]").text()).toMatch(/offline|topology/i);
+  });
+
+  it("opens a generate preview with rules, routes, warnings, and inbound load", async () => {
+    const { wrapper, replicationClient } = await mountPage();
+    await wrapper.get('[data-action="generate"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+    expect(replicationClient.generatePolicyDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceSelector: "ALL_ADMITTED",
+        replicaFactor: 1,
+      }),
+    );
+    const preview = wrapper.get("[data-preview-dialog]");
+    expect(preview.text()).toContain("Generation rules");
+    expect(preview.text()).toContain("ALL_ADMITTED");
+    expect(preview.text()).toContain("n1");
+    expect(preview.text()).toContain("n3");
+    expect(preview.text()).toContain("Inbound load");
+    expect(preview.text()).toContain("n2");
+    expect(preview.find('input[name="draftHash"]').exists()).toBe(false);
+    expect(preview.find('input[name="draftRevision"]').exists()).toBe(false);
+  });
+
+  it("shows the N=1 warning in the generate preview", async () => {
+    const { wrapper } = await mountPage({
+      topology: [topologyNodes[0]],
+      policies: [],
+      draft: n1Draft,
+    });
+    await wrapper.get('[data-action="generate"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+    const preview = wrapper.get("[data-preview-dialog]");
+    expect(preview.get("[data-n1-warning]").text()).toMatch(/single-node|no replica/i);
+  });
+
+  it("applies the server draft revision and hash, then shows the policy revision", async () => {
+    const { wrapper, replicationClient } = await mountPage({
+      policies: [{ ...replicaPolicy, routes: [] }],
+    });
+    await wrapper.get('[data-action="generate"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+    await wrapper.get('[data-action="apply-draft"]').trigger("click");
+    await flushPromises();
+    expect(replicationClient.applyPolicyDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
+        meta: expect.objectContaining({ operationId: expect.any(String), operator: "admin" }),
+        draftRevision: 7n,
+        draftHash: "draft-hash-7",
+        draft: expect.objectContaining({ draftRevision: 7n, draftHash: "draft-hash-7" }),
+      }),
+    );
+    expect(wrapper.get("[data-policy-revision]").text()).toContain("3");
+  });
+
+  it("does not silently overwrite existing routes without an explicit replace choice", async () => {
+    const { wrapper, replicationClient } = await mountPage();
+    await wrapper.get('[data-action="generate"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+    const apply = wrapper.get('[data-action="apply-draft"]');
+    expect((apply.element as HTMLButtonElement).disabled).toBe(true);
+    expect(wrapper.get("[data-replace-current]").text()).toMatch(/replace/i);
+    await wrapper.get('input[name="replaceCurrent"]').setValue(true);
+    await wrapper.vm.$nextTick();
+    expect((wrapper.get('[data-action="apply-draft"]').element as HTMLButtonElement).disabled).toBe(false);
+    await wrapper.get('[data-action="apply-draft"]').trigger("click");
+    await flushPromises();
+    expect(replicationClient.applyPolicyDraft).toHaveBeenCalledTimes(1);
+    expect(replicationClient.applyPolicyDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
+        policyId: "rep-1",
+        expectedRevision: 2n,
+        draftRevision: 7n,
+        draftHash: "draft-hash-7",
+      }),
+    );
+  });
+
+  it("lists runs, shows per-route detail, and retries failed routes with operationId", async () => {
+    const { wrapper, replicationClient } = await mountPage();
+    const runs = wrapper.get('[data-section="runs"]');
+    expect(runs.text()).toContain("run-partial");
+    expect(runs.get('[data-status="PARTIAL"]').exists()).toBe(true);
+    await wrapper.get('[data-run-id="run-partial"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+    expect(replicationClient.getRun).toHaveBeenCalledWith({ runId: "run-partial" });
+    const detail = wrapper.get("[data-run-detail]");
+    expect(detail.text()).toContain("n1");
+    expect(detail.text()).toContain("n2");
+    expect(detail.text()).toContain("checksum mismatch");
+    await wrapper.get('[data-action="retry-failed"]').trigger("click");
+    await flushPromises();
+    expect(replicationClient.retryFailedRoutes).toHaveBeenCalledWith(
+      expect.objectContaining({
+        meta: expect.objectContaining({ operationId: expect.any(String) }),
+        runId: "run-partial",
+      }),
+    );
+  });
+
+  it("renders PARTIAL and failed routes as warnings, not success green", async () => {
+    const { wrapper } = await mountPage();
+    const badge = wrapper.get('[data-status="PARTIAL"]');
+    expect(badge.classes()).not.toContain("status-success");
+    const style = (badge.attributes("style") ?? "").toLowerCase();
+    expect(style).not.toMatch(/#d1fae5|#065f46|rgb\(209,\s*250,\s*229\)/);
+    expect(style).toMatch(/#fef3c7|#92400e|rgb\(254,\s*243,\s*199\)/);
+    expect(wrapper.get("[data-partial-warning]").text()).toContain("PARTIAL");
+    await wrapper.get('[data-run-id="run-partial"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+    const failed = wrapper.get('[data-route-status="FAILED"]');
+    expect(failed.classes()).not.toContain("status-success");
+    const failedStyle = (failed.attributes("style") ?? "").toLowerCase();
+    expect(failedStyle).not.toMatch(/#d1fae5|#065f46/);
+  });
+
+  it("verifies a replica checksum without applying peer files", async () => {
+    const { wrapper, replicationClient } = await mountPage();
+    const recovery = wrapper.get('[data-section="recovery"]');
+    expect(recovery.text()).toContain("snap-n1");
+    expect(recovery.get("[data-snapshot-owner]").text()).toContain("n1");
+    await wrapper.get('[data-action="verify"]').trigger("click");
+    await flushPromises();
+    expect(replicationClient.verifyReplica).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceNodeId: "n1", snapshotId: "snap-n1" }),
+    );
+    expect(wrapper.text()).toMatch(/checksum matches/i);
+  });
+
+  it("exposes an Owner restore entry that keeps source identity and links to Backup", async () => {
+    const { wrapper } = await mountPage();
+    const recovery = wrapper.get('[data-section="recovery"]');
+    expect(recovery.get("[data-snapshot-owner]").text()).toContain("n1");
+    expect(recovery.text()).toMatch(/cannot be applied directly|Restore on the source Owner/i);
+    const link = wrapper.get('[data-action="restore-owner"]');
+    expect(link.attributes("href") ?? link.attributes("to") ?? link.html()).toMatch(/\/backup/);
+    expect(link.text()).toMatch(/Owner/i);
+  });
+
+  it("does not present topology, policy, run, or snapshot errors as an empty catalog", async () => {
+    const { wrapper } = await mountPage({
+      topologyError: new Error("leader unavailable"),
+      policiesError: new Error("leader unavailable"),
+      runsError: new Error("leader unavailable"),
+      snapshotsError: new Error("leader unavailable"),
+    });
+    expect(wrapper.get('[data-section="config"]').text()).toContain(
+      "Replica topology is unreachable. This is not an empty catalog.",
+    );
+    expect(wrapper.get('[data-section="config"]').text()).not.toContain("No replica routes");
+    expect(wrapper.get('[data-section="runs"]').text()).toContain(
+      "Replication runs are unreachable. This is not an empty catalog.",
+    );
+    expect(wrapper.get('[data-section="runs"]').text()).not.toContain("No replication runs");
+    expect(wrapper.get('[data-section="recovery"]').text()).toContain(
+      "Recoverable snapshots are unreachable. This is not an empty catalog.",
+    );
+    expect(wrapper.get('[data-section="recovery"]').text()).not.toContain("No recoverable snapshots");
+    expect(wrapper.find(".freshness-unknown, .freshness-stale").exists()).toBe(true);
+  });
+
+  it("keeps last successful topology, routes, and snapshots when a later fetch fails", async () => {
+    const { wrapper, replicationClient, queryClient } = await mountPage();
+    expect(wrapper.get('[data-section="config"]').text()).toContain("n1");
+    expect(wrapper.get('[data-section="runs"]').text()).toContain("run-partial");
+    expect(wrapper.get('[data-section="recovery"]').text()).toContain("snap-n1");
+    replicationClient.getTopology.mockRejectedValue(new Error("leader unavailable"));
+    replicationClient.listPolicies.mockRejectedValue(new Error("leader unavailable"));
+    replicationClient.listRuns.mockRejectedValue(new Error("leader unavailable"));
+    replicationClient.listRecoverableSnapshots.mockRejectedValue(new Error("leader unavailable"));
+    await queryClient.invalidateQueries({ queryKey: ["replica-topology"] });
+    await queryClient.invalidateQueries({ queryKey: ["replica-policies"] });
+    await queryClient.invalidateQueries({ queryKey: ["replica-runs"] });
+    await queryClient.invalidateQueries({ queryKey: ["replica-snapshots"] });
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+    expect(wrapper.get('[data-section="config"]').text()).toContain("n1");
+    expect(wrapper.get('[data-section="runs"]').text()).toContain("run-partial");
+    expect(wrapper.get('[data-section="recovery"]').text()).toContain("snap-n1");
+    expect(wrapper.text()).not.toContain("No replica routes");
+    expect(wrapper.find(".freshness-stale").exists()).toBe(true);
+  });
+
+  it("hides generate, apply, retry, and verify without replication.manage", async () => {
+    const { wrapper } = await mountPage({ permissions: ["replication.read"] });
+    expect(wrapper.find('[data-action="generate"]').exists()).toBe(false);
+    expect(wrapper.find('[data-action="apply-draft"]').exists()).toBe(false);
+    expect(wrapper.find('[data-action="verify"]').exists()).toBe(false);
+    expect(wrapper.get('[data-section="overview"]').exists()).toBe(true);
+    expect(wrapper.get('[data-section="runs"]').text()).toContain("run-partial");
+    await wrapper.get('[data-run-id="run-partial"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+    expect(wrapper.get("[data-run-detail]").exists()).toBe(true);
+    expect(wrapper.find('[data-action="retry-failed"]').exists()).toBe(false);
+  });
+
+  it("keeps the preview dialog usable on small viewports", async () => {
+    const { wrapper } = await mountPage({ policies: [{ ...replicaPolicy, routes: [] }] });
+    await wrapper.get('[data-action="generate"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+    const dialog = wrapper.get("[data-preview-dialog]");
+    expect(dialog.attributes("role")).toBe("dialog");
+    expect(dialog.attributes("data-responsive")).toBe("true");
+    expect(dialog.classes().join(" ")).toMatch(/preview-panel/);
+    const style = (dialog.attributes("style") ?? "").toLowerCase();
+    expect(style).toMatch(/min\(100%/);
+    expect(style).toMatch(/overflow:\s*auto/);
   });
 });

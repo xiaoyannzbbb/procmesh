@@ -436,6 +436,16 @@ describe("BackupPage", () => {
     expect(arg.peerNodeIds).toEqual(["n1", "n3"]);
   });
 
+  it("does not offer peer as a primary create-backup sink", async () => {
+    const { wrapper } = await mountBackup();
+    const sinks = wrapper
+      .findAll("form.create-backup select[name='sink'] option")
+      .map((option) => (option.element as HTMLOptionElement).value);
+    expect(sinks).toEqual(["fs", "s3"]);
+    expect(sinks).not.toContain("peer");
+    expect(wrapper.find('textarea[name="peerNodeIds"]').exists()).toBe(false);
+  });
+
   it("create backup sends operationId", async () => {
     const { wrapper, backupClient } = await mountBackup();
     await wrapper.get("form.create-backup").trigger("submit");

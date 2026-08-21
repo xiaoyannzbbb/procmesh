@@ -12,9 +12,8 @@ import { session } from "../lib/session";
 import { useI18n } from "../lib/useI18n";
 import { formatRemoteError } from "./processView";
 
-const PEER_SINK = "peer" as const;
 const NUMERIC_INPUT_MODE = "numeric" as const;
-const SINKS = ["fs", "s3", PEER_SINK] as const;
+const SINKS = ["fs", "s3"] as const;
 const POLICY_SINKS = ["fs", "s3"] as const;
 const TARGET_SELECTORS = ["ALL_ADMITTED", "AGENT_GROUP", "EXPLICIT_NODES"] as const;
 const UNAVAILABLE_POLICIES = ["RECORD_AND_CONTINUE", "FAIL_FAST"] as const;
@@ -93,7 +92,6 @@ const canManage = computed(() => perms.value.has("backup.manage"));
 
 const createSink = ref<(typeof SINKS)[number]>("fs");
 const createProcessIds = ref("");
-const createPeerNodeIds = ref("");
 
 type RestoreTargetForm = { processId: string; expectedRevision: string };
 type RestoreSnapshot = {
@@ -276,13 +274,6 @@ const showEmptyCatalog = computed(() => !listPending.value && !hasStale.value &&
 const showPeerHint = computed(
   () => !listPending.value && (nodesUnavailable.value || lastPeerNodeIds.value.length === 0),
 );
-
-const createReady = computed(() => {
-  if (createSink.value !== PEER_SINK) {
-    return true;
-  }
-  return parseLines(createPeerNodeIds.value).length > 0;
-});
 
 const policyReady = computed(() => {
   if (!policyName.value.trim()) {
@@ -694,11 +685,10 @@ const createMut = useMutation({
       meta: mutationMeta(),
       sink: createSink.value,
       processIds: parseLines(createProcessIds.value),
-      targetNodeIds: createSink.value === "peer" ? parseLines(createPeerNodeIds.value) : [],
+      targetNodeIds: [],
     }),
   onSuccess: async () => {
     createProcessIds.value = "";
-    createPeerNodeIds.value = "";
     actionNotice.value = "";
     await queryClient.invalidateQueries({ queryKey: ["backups"] });
   },
@@ -868,7 +858,7 @@ onMounted(() => document.addEventListener("keydown", onRestoreKeydown));
 onUnmounted(() => document.removeEventListener("keydown", onRestoreKeydown));
 
 async function onCreate(): Promise<void> {
-  if (!canManage.value || !createReady.value || acting.value) {
+  if (!canManage.value || acting.value) {
     return;
   }
   actionError.value = "";
@@ -1244,22 +1234,11 @@ async function onRetryFailed(): Promise<void> {
             :placeholder="t('backup.processIdsPlaceholder')"
           />
         </label>
-        <label v-if="createSink === PEER_SINK" class="field">
-          {{ t("backup.peerNodeIds") }}
-          <textarea
-            v-model="createPeerNodeIds"
-            class="input textarea"
-            name="peerNodeIds"
-            rows="3"
-            :placeholder="t('backup.peerNodeIdsPlaceholder')"
-          />
-        </label>
-        <p v-if="createSink === PEER_SINK && !createReady" class="muted">{{ t("backup.peerRequired") }}</p>
         <button
           class="btn btn-primary"
           type="submit"
           data-action="create"
-          :disabled="!createReady || acting"
+          :disabled="acting"
         >
           {{ t("backup.create") }}
         </button>
