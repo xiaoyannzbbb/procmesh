@@ -162,7 +162,12 @@ func (a raftBackupControl) UpdateTask(ctx context.Context, u backup.TaskUpdate) 
 	if err != nil {
 		return err
 	}
-	return n.Apply(cmd, 5*time.Second)
+	before := n.View()
+	if err := n.Apply(cmd, 5*time.Second); err != nil {
+		return err
+	}
+	api.ObserveControlTransition(before, n.View(), u.RunID, false)
+	return nil
 }
 
 type raftBackupRunCreator struct{ runtime *rpcRuntime }

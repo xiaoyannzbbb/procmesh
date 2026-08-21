@@ -376,6 +376,9 @@ func newBackupEngine(opt Options, mgr *process.Manager, st *store.Store, collect
 		ClusterID: clusterID,
 		Apply:     mgr,
 		Sinks:     sinks,
+		OnRetentionDelete: func(ctx context.Context, ev backup.RetentionDeleteEvent) {
+			api.ObserveRetentionDelete(ctx, st, rt.nodeID, ev)
+		},
 		ResolveDestination: func(profile string) (backup.Sink, error) {
 			sink, ok := destinations[profile]
 			if !ok {

@@ -133,6 +133,54 @@ func TestBackupRunRetryAudit(t *testing.T) {
 	assertControlAudit(t, st, "backup.run.retry", "SUCCESS", map[string]string{"policy_id": "bp", "run_id": "run-retry"})
 }
 
+func TestBackupRunStartAuditsApplyFailure(t *testing.T) {
+	_, st, _ := newTestManager(t)
+	state := control.NewState()
+	state.Members["node-a"] = control.Member{NodeID: "node-a", Status: control.MemberAdmitted}
+	state.BackupPolicies["bp-fail"] = control.BackupPolicy{
+		PolicyID: "bp-fail", Revision: 1, TargetSelector: "ALL_ADMITTED", Sink: "fs",
+		Timezone: "UTC", UnavailablePolicy: "RECORD_AND_CONTINUE", Name: "fail",
+	}
+	api := &ClusterBackupAPI{
+		Store: st, LocalID: "node-a",
+		StateFn:  func() control.State { return *state },
+		IsLeader: func() bool { return true },
+		ApplyFn:  func(control.Command, time.Duration) error { return errors.New("raft apply failed secret_key=wJalr") },
+	}
+	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-admin", Username: "admin"})
+	_, err := api.StartRun(ctx, connect.NewRequest(&procmeshv1.StartClusterBackupRunRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-start-fail"}, PolicyId: "bp-fail", TargetNodeIds: []string{"node-a"},
+	}))
+	if err == nil {
+		t.Fatal("expected apply failure")
+	}
+	assertControlAudit(t, st, "backup.run.start", "FAILED", map[string]string{"policy_id": "bp-fail"})
+}
+
+func TestBackupRunRetryAuditsApplyFailure(t *testing.T) {
+	_, st, _ := newTestManager(t)
+	state := control.NewState()
+	state.Members["node-a"] = control.Member{NodeID: "node-a", Status: control.MemberAdmitted}
+	state.BackupPolicies["bp"] = control.BackupPolicy{PolicyID: "bp", Revision: 1, TargetSelector: "EXPLICIT_NODES", TargetIDs: []string{"node-a"}}
+	if err := state.CreateRun(control.CreateRunBody{OperationID: "op-run", LeaderTerm: 1, Run: control.ClusterBackupRun{RunID: "run-retry-fail", PolicyID: "bp", PolicyRevision: 1, TargetNodeIDs: []string{"node-a"}, Status: "PARTIAL"}}); err != nil {
+		t.Fatal(err)
+	}
+	api := &ClusterBackupAPI{
+		Store: st, LocalID: "node-a",
+		StateFn: func() control.State { return *state }, IsLeader: func() bool { return true },
+		LeaderTerm: func() uint64 { return 2 }, Now: func() time.Time { return time.Unix(100, 0) },
+		ApplyFn: func(control.Command, time.Duration) error { return errors.New("retry apply failed access_key=AKIA") },
+	}
+	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-admin", Username: "admin"})
+	_, err := api.RetryFailedTasks(ctx, connect.NewRequest(&procmeshv1.RetryFailedClusterBackupTasksRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-retry-fail"}, RunId: "run-retry-fail",
+	}))
+	if err == nil {
+		t.Fatal("expected apply failure")
+	}
+	assertControlAudit(t, st, "backup.run.retry", "FAILED", map[string]string{"policy_id": "bp", "run_id": "run-retry-fail"})
+}
+
 func TestClusterBackupAPI_RequiresManagePermission(t *testing.T) {
 	_, svc := newBootstrappedAuth(t)
 	putViewerUser(t, svc)

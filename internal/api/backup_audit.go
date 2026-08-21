@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/store"
 )
 
@@ -15,7 +16,24 @@ import (
 type controlMutation struct {
 	Action, Resource, OperationID       string
 	PolicyID, RunID, TaskID, SnapshotID string
-	Result, Error                       string
+	Result, Error, Sink                 string
+}
+
+func ObserveRetentionDelete(ctx context.Context, st *store.Store, localID string, ev backup.RetentionDeleteEvent) {
+	result := "SUCCESS"
+	if ev.Status != "SUCCESS" {
+		result = "FAILED"
+	}
+	auditControlMutation(ctx, st, localID, controlMutation{
+		Action: "backup.retention.delete", Resource: "backup_policy:" + ev.PolicyID,
+		PolicyID: ev.PolicyID, RunID: ev.RunID, TaskID: ev.TaskID, SnapshotID: ev.SnapshotID,
+		Result: result, Error: ev.Error, Sink: ev.Sink,
+	})
+	metric := "success"
+	if result != "SUCCESS" {
+		metric = "error"
+	}
+	recordBackupRetentionDelete(boundedSink(ev.Sink), metric)
 }
 
 func auditControlMutation(ctx context.Context, st *store.Store, localID string, rec controlMutation) {
@@ -24,13 +42,6 @@ func auditControlMutation(ctx context.Context, st *store.Store, localID string, 
 	}
 	if rec.Result == "" {
 		rec.Result = "SUCCESS"
-	}
-	if rec.Action == "backup.retention.delete" {
-		result := "success"
-		if rec.Result != "SUCCESS" {
-			result = "error"
-		}
-		recordBackupRetentionDelete("fs", result)
 	}
 	meta := make(map[string]string, 5)
 	if rec.PolicyID != "" {

@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"errors"
+
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/backup"
@@ -1729,7 +1731,79 @@ func TestReplicationDraftAudit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertControlAudit(t, st, "replication.draft.generate", "SUCCESS", map[string]string{})
+	assertControlAudit(t, st, "replication.draft.generate", "SUCCESS", map[string]string{"policy_id": "audit-draft"})
+}
+
+func TestReplicationDraftAuditOnFailure(t *testing.T) {
+	_, st, _ := newTestManager(t)
+	api, _, _ := setupMinimalAPI(t)
+	api.Store = st
+	api.Members = nil
+	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-admin", Username: "admin"})
+	_, err := api.GeneratePolicyDraft(ctx, connect.NewRequest(&procmeshv1.GeneratePolicyDraftRequest{
+		Name: "draft-fail", SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1, Trigger: "MANUAL",
+	}))
+	if err == nil {
+		t.Fatal("expected generate failure")
+	}
+	assertControlAudit(t, st, "replication.draft.generate", "FAILED", map[string]string{"policy_id": "draft-fail"})
+}
+
+func TestReplicationStartAuditExistingAndApplyFailure(t *testing.T) {
+	_, st, _ := newTestManager(t)
+	api, state, authSvc := setupMinimalAPI(t)
+	api.Store = st
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.ReplicationPolicies["rp-start"] = control.ReplicationPolicy{
+		PolicyID: "rp-start", Name: "start", Enabled: true, Trigger: "MANUAL",
+		SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"node-1"}, ReplicaFactor: 1,
+		Routes:   []control.ReplicationRoute{{SourceNodeID: "node-1", TargetNodeIDs: []string{"node-2"}}},
+		Revision: 1,
+	}
+	api.LeaderTerm = func() uint64 { return 3 }
+	api.Now = func() time.Time { return time.Unix(1_800_000_000, 0) }
+	api.ApplyFn = func(cmd control.Command, _ time.Duration) error { return state.Apply(cmd, api.Now()) }
+	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-admin", Username: "admin"})
+	refs := []*procmeshv1.ReplicationSnapshotRef{{SourceNodeId: "node-1", SnapshotId: "snap-1", Sha256: strings.Repeat("a", 64)}}
+	first, err := api.StartRun(ctx, bearerReq(sid, &procmeshv1.StartRunRequest{
+		PolicyId: "rp-start", Meta: &procmeshv1.MutationMeta{OperationId: "op-repl-start"}, SnapshotRefs: refs,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertControlAudit(t, st, "replication.run.start", "SUCCESS", map[string]string{"policy_id": "rp-start", "run_id": first.Msg.GetRunId()})
+
+	_, err = api.StartRun(ctx, bearerReq(sid, &procmeshv1.StartRunRequest{
+		PolicyId: "rp-start", Meta: &procmeshv1.MutationMeta{OperationId: "op-repl-start"}, SnapshotRefs: refs,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := st.ListAuditAll(context.Background(), "", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	success := 0
+	for _, ev := range events {
+		if ev.Action == "replication.run.start" && ev.Result == "SUCCESS" {
+			success++
+		}
+	}
+	if success < 2 {
+		t.Fatalf("existing-run StartRun must audit, got %d success events in %s", success, auditBodies(events))
+	}
+
+	api.ApplyFn = func(control.Command, time.Duration) error { return errors.New("raft apply failed secret_key=wJalr") }
+	_, err = api.StartRun(ctx, bearerReq(sid, &procmeshv1.StartRunRequest{
+		PolicyId: "rp-start", Meta: &procmeshv1.MutationMeta{OperationId: "op-repl-start-fail"}, SnapshotRefs: refs,
+	}))
+	if err == nil {
+		t.Fatal("expected apply failure")
+	}
+	assertControlAudit(t, st, "replication.run.start", "FAILED", map[string]string{"policy_id": "rp-start"})
 }
 
 func TestReplicationApplyAudit(t *testing.T) {

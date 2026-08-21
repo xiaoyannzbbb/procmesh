@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -263,82 +264,167 @@ type clusterBackupMetricSnapshot struct {
 	LastSuccess map[string]int64   // policy\x00node
 }
 
-func collectClusterBackupMetrics(d ClusterDeps) clusterBackupMetricSnapshot {
-	n := d.controlNode()
-	if n == nil {
-		return clusterBackupMetricSnapshot{}
-	}
-	return clusterBackupMetricsFromState(n.View(), time.Now())
+type backupObservationState struct {
+	mu        sync.Mutex
+	runs      map[string]uint64
+	tasks     map[string]uint64
+	bytes     map[string]uint64
+	duration  map[string]float64
+	replRuns  map[string]uint64
+	replTasks map[string]uint64
+	replBytes map[string]uint64
 }
 
-func clusterBackupMetricsFromState(st control.State, now time.Time) clusterBackupMetricSnapshot {
+var backupObservations backupObservationState
+
+func collectClusterBackupMetrics(d ClusterDeps) clusterBackupMetricSnapshot {
+	snap := observationSnapshot()
+	n := d.controlNode()
+	if n == nil {
+		return snap
+	}
+	gauges := clusterBackupGaugesFromState(n.View(), time.Now())
+	snap.LastSuccess = gauges.LastSuccess
+	snap.Lag = gauges.Lag
+	return snap
+}
+
+func observationSnapshot() clusterBackupMetricSnapshot {
+	backupObservations.mu.Lock()
+	defer backupObservations.mu.Unlock()
+	return clusterBackupMetricSnapshot{
+		Runs: cloneUint64Map(backupObservations.runs), Tasks: cloneUint64Map(backupObservations.tasks),
+		Duration: cloneFloat64Map(backupObservations.duration), Bytes: cloneUint64Map(backupObservations.bytes),
+		ReplRuns: cloneUint64Map(backupObservations.replRuns), ReplTasks: cloneUint64Map(backupObservations.replTasks),
+		ReplBytes: cloneUint64Map(backupObservations.replBytes),
+		Lag:       map[string]float64{}, LastSuccess: map[string]int64{},
+	}
+}
+
+func ObserveBackupRun(policy, sink, status string) {
+	if policy == "" || !isTerminalRunStatus(status) {
+		return
+	}
+	incObserved(&backupObservations.runs, policy+"\x00"+boundedSink(sink)+"\x00"+boundedStatus(status))
+}
+
+func ObserveBackupTask(sink, status string, bytes int64, duration float64) {
+	if !isTerminalTaskStatus(status) {
+		return
+	}
+	sink = boundedSink(sink)
+	incObserved(&backupObservations.tasks, sink+"\x00"+boundedStatus(status))
+	if result := metricResult(status); result != "" {
+		addObserved(&backupObservations.bytes, sink+"\x00"+result, uint64(max64(bytes, 0)))
+	}
+	backupObservations.mu.Lock()
+	if backupObservations.duration == nil {
+		backupObservations.duration = map[string]float64{}
+	}
+	backupObservations.duration[sink] = duration
+	backupObservations.mu.Unlock()
+}
+
+func ObserveReplicationRun(policy, status string) {
+	if policy == "" || !isTerminalRunStatus(status) {
+		return
+	}
+	incObserved(&backupObservations.replRuns, policy+"\x00"+boundedStatus(status))
+}
+
+func ObserveReplicationTask(status string, bytes int64) {
+	if !isTerminalTaskStatus(status) {
+		return
+	}
+	incObserved(&backupObservations.replTasks, boundedStatus(status))
+	if result := metricResult(status); result != "" {
+		addObserved(&backupObservations.replBytes, result, uint64(max64(bytes, 0)))
+	}
+}
+
+// ObserveControlTransition increments backup/replication counters for tasks and
+// runs that newly reached a terminal status between before and after.
+func ObserveControlTransition(before, after control.State, runID string, replication bool) {
+	if runID == "" {
+		return
+	}
+	beforeRuns, beforeTasks := observationRunMaps(before, replication)
+	afterRuns, afterTasks := observationRunMaps(after, replication)
+	run := afterRuns[runID]
+	sink := boundedSink(run.Sink)
+	for key, task := range afterTasks {
+		if task.RunID != runID {
+			continue
+		}
+		prev := beforeTasks[key]
+		if isTerminalTaskStatus(prev.Status) || !isTerminalTaskStatus(task.Status) {
+			continue
+		}
+		duration := 0.0
+		if run.StartedUnix > 0 && task.UpdatedUnix > run.StartedUnix {
+			duration = float64(task.UpdatedUnix - run.StartedUnix)
+		}
+		if replication {
+			ObserveReplicationTask(task.Status, task.Bytes)
+		} else {
+			ObserveBackupTask(sink, task.Status, task.Bytes, duration)
+		}
+	}
+	prevRun := beforeRuns[runID]
+	if !isTerminalRunStatus(prevRun.Status) && isTerminalRunStatus(run.Status) {
+		if replication {
+			ObserveReplicationRun(run.PolicyID, run.Status)
+		} else {
+			ObserveBackupRun(run.PolicyID, sink, run.Status)
+		}
+	}
+}
+
+func observationRunMaps(st control.State, replication bool) (map[string]control.ClusterBackupRun, map[string]control.ClusterBackupTask) {
+	if replication {
+		return st.ReplicationRuns, st.ReplicationTasks
+	}
+	return st.BackupRuns, st.BackupTasks
+}
+
+func clusterBackupGaugesFromState(st control.State, now time.Time) clusterBackupMetricSnapshot {
 	snap := clusterBackupMetricSnapshot{
-		Runs:        map[string]uint64{},
-		Tasks:       map[string]uint64{},
-		Duration:    map[string]float64{},
-		Bytes:       map[string]uint64{},
-		ReplRuns:    map[string]uint64{},
-		ReplTasks:   map[string]uint64{},
-		Lag:         map[string]float64{},
-		ReplBytes:   map[string]uint64{},
 		LastSuccess: map[string]int64{},
+		Lag:         map[string]float64{},
 	}
 	backupRuns := st.BackupRuns
 	if backupRuns == nil {
 		backupRuns = map[string]control.ClusterBackupRun{}
 	}
-	for _, run := range backupRuns {
-		sink := boundedSink(run.Sink)
-		status := boundedStatus(run.Status)
-		if run.PolicyID == "" || status == "" {
-			continue
-		}
-		snap.Runs[run.PolicyID+"\x00"+sink+"\x00"+status]++
-		if run.FinishedUnix > run.StartedUnix && run.StartedUnix > 0 {
-			snap.Duration[sink] = float64(run.FinishedUnix - run.StartedUnix)
-		}
-	}
 	for _, task := range st.BackupTasks {
+		if metricResult(task.Status) != "success" {
+			continue
+		}
 		run := backupRuns[task.RunID]
-		sink := boundedSink(run.Sink)
-		status := boundedStatus(task.Status)
-		if status == "" {
+		if run.PolicyID == "" || task.NodeID == "" {
 			continue
 		}
-		snap.Tasks[sink+"\x00"+status]++
-		snap.Bytes[sink+"\x00"+metricResult(status)] += uint64(max64(task.Bytes, 0))
-		if metricResult(status) == "success" && run.PolicyID != "" && task.NodeID != "" {
-			key := run.PolicyID + "\x00" + task.NodeID
-			if task.UpdatedUnix >= snap.LastSuccess[key] {
-				snap.LastSuccess[key] = task.UpdatedUnix
-			}
+		key := run.PolicyID + "\x00" + task.NodeID
+		if task.UpdatedUnix >= snap.LastSuccess[key] {
+			snap.LastSuccess[key] = task.UpdatedUnix
 		}
 	}
-	replRuns := st.ReplicationRuns
-	if replRuns == nil {
-		replRuns = map[string]control.ClusterBackupRun{}
-	}
-	for _, run := range replRuns {
-		status := boundedStatus(run.Status)
-		if run.PolicyID == "" || status == "" {
-			continue
-		}
-		snap.ReplRuns[run.PolicyID+"\x00"+status]++
-	}
+	maxUpdated := map[string]int64{}
 	for _, task := range st.ReplicationTasks {
-		status := boundedStatus(task.Status)
-		if status == "" {
+		if metricResult(task.Status) != "success" || task.SourceNodeID == "" || task.NodeID == "" || task.UpdatedUnix <= 0 {
 			continue
 		}
-		snap.ReplTasks[status]++
-		snap.ReplBytes[metricResult(status)] += uint64(max64(task.Bytes, 0))
-		if metricResult(status) == "success" && task.SourceNodeID != "" && task.NodeID != "" && task.UpdatedUnix > 0 {
-			lag := float64(now.Unix() - task.UpdatedUnix)
-			if lag < 0 {
-				lag = 0
-			}
-			snap.Lag[task.SourceNodeID+"\x00"+task.NodeID] = lag
+		key := task.SourceNodeID + "\x00" + task.NodeID
+		if task.UpdatedUnix > maxUpdated[key] {
+			maxUpdated[key] = task.UpdatedUnix
 		}
+	}
+	for key, updated := range maxUpdated {
+		lag := float64(now.Unix() - updated)
+		if lag < 0 {
+			lag = 0
+		}
+		snap.Lag[key] = lag
 	}
 	return snap
 }
@@ -369,7 +455,7 @@ func writeRetentionFamily(b *strings.Builder) {
 }
 
 func writeDurationFamily(b *strings.Builder, duration map[string]float64) {
-	b.WriteString("# HELP procmesh_backup_task_duration_seconds Last completed cluster backup run duration by sink.\n")
+	b.WriteString("# HELP procmesh_backup_task_duration_seconds Last completed cluster backup task duration by sink.\n")
 	b.WriteString("# TYPE procmesh_backup_task_duration_seconds gauge\n")
 	keys := sortedMapKeys(duration)
 	for _, sink := range keys {
@@ -460,10 +546,61 @@ func boundedStatus(status string) string {
 }
 
 func metricResult(status string) string {
-	if status == "SUCCESS" || status == "SUCCEEDED" {
+	switch status {
+	case "SUCCESS", "SUCCEEDED":
 		return "success"
+	case "FAILED", "TIMEOUT", "UNAVAILABLE", "CONFIG_MISSING", "RETENTION_FAILED":
+		return "error"
+	default:
+		return ""
 	}
-	return "error"
+}
+
+func isTerminalRunStatus(status string) bool {
+	switch status {
+	case "SUCCEEDED", "SUCCESS", "PARTIAL", "FAILED", "CANCELED":
+		return true
+	default:
+		return false
+	}
+}
+
+func isTerminalTaskStatus(status string) bool {
+	switch status {
+	case "SUCCEEDED", "SUCCESS", "FAILED", "TIMEOUT", "UNAVAILABLE", "CONFIG_MISSING", "RETENTION_FAILED", "SKIPPED":
+		return true
+	default:
+		return false
+	}
+}
+
+func incObserved(dst *map[string]uint64, key string) {
+	addObserved(dst, key, 1)
+}
+
+func addObserved(dst *map[string]uint64, key string, n uint64) {
+	backupObservations.mu.Lock()
+	defer backupObservations.mu.Unlock()
+	if *dst == nil {
+		*dst = map[string]uint64{}
+	}
+	(*dst)[key] += n
+}
+
+func cloneUint64Map(in map[string]uint64) map[string]uint64 {
+	out := map[string]uint64{}
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func cloneFloat64Map(in map[string]float64) map[string]float64 {
+	out := map[string]float64{}
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 func max64(v int64, floor int64) int64 {

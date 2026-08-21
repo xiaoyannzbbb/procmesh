@@ -165,6 +165,11 @@ type RetentionResult struct {
 	Retryable  bool
 }
 
+// RetentionDeleteEvent is the ID-only record emitted after each cluster retention delete attempt.
+type RetentionDeleteEvent struct {
+	PolicyID, RunID, TaskID, SnapshotID, Sink, Status, Error string
+}
+
 // Run executes retention policy on snapshots within the policy's namespace/prefix.
 // It skips snapshots that are running, restoring, or are the only available replica.
 // Returns deletion results for each removed snapshot.
@@ -253,24 +258,36 @@ func (e *Engine) ApplyRetention(ctx context.Context, policy Policy) ([]Retention
 		record := byID[snapshot.SnapshotID]
 		sink, sinkErr := e.clusterSink(record.Sink, record.DestinationProfile)
 		if sinkErr != nil {
-			results = append(results, RetentionResult{SnapshotID: record.SnapshotID, Status: "RETENTION_FAILED", Error: sinkErr.Error(), ErrorCode: "RETENTION_SINK_FAILED", Retryable: true})
+			results = e.appendRetentionResult(ctx, policy, record, results, RetentionResult{SnapshotID: record.SnapshotID, Status: "RETENTION_FAILED", Error: sinkErr.Error(), ErrorCode: "RETENTION_SINK_FAILED", Retryable: true})
 			continue
 		}
 		clusterSink, ok := sink.(ClusterSink)
 		if !ok {
-			results = append(results, RetentionResult{SnapshotID: record.SnapshotID, Status: "RETENTION_FAILED", Error: "sink does not support cluster retention", ErrorCode: "RETENTION_SINK_FAILED", Retryable: true})
+			results = e.appendRetentionResult(ctx, policy, record, results, RetentionResult{SnapshotID: record.SnapshotID, Status: "RETENTION_FAILED", Error: "sink does not support cluster retention", ErrorCode: "RETENTION_SINK_FAILED", Retryable: true})
 			continue
 		}
 		deleteErr := clusterSink.DeleteCluster(ctx, record.ClusterID, record.PolicyID, record.NodeID, record.SnapshotID)
 		if deleteErr != nil && !errcode.Is(deleteErr, errcode.NOT_FOUND) {
-			results = append(results, RetentionResult{SnapshotID: record.SnapshotID, Status: "RETENTION_FAILED", Error: deleteErr.Error(), ErrorCode: "RETENTION_DELETE_FAILED", Retryable: true})
+			results = e.appendRetentionResult(ctx, policy, record, results, RetentionResult{SnapshotID: record.SnapshotID, Status: "RETENTION_FAILED", Error: deleteErr.Error(), ErrorCode: "RETENTION_DELETE_FAILED", Retryable: true})
 			continue
 		}
 		if err := e.Store.DeleteBackup(ctx, record.SnapshotID); err != nil && !errcode.Is(err, errcode.NOT_FOUND) {
-			results = append(results, RetentionResult{SnapshotID: record.SnapshotID, Status: "RETENTION_FAILED", Error: err.Error(), ErrorCode: "RETENTION_INDEX_FAILED", Retryable: true})
+			results = e.appendRetentionResult(ctx, policy, record, results, RetentionResult{SnapshotID: record.SnapshotID, Status: "RETENTION_FAILED", Error: err.Error(), ErrorCode: "RETENTION_INDEX_FAILED", Retryable: true})
 			continue
 		}
-		results = append(results, RetentionResult{SnapshotID: record.SnapshotID, Status: "SUCCESS"})
+		results = e.appendRetentionResult(ctx, policy, record, results, RetentionResult{SnapshotID: record.SnapshotID, Status: "SUCCESS"})
 	}
 	return results, nil
+}
+
+func (e *Engine) appendRetentionResult(ctx context.Context, policy Policy, record store.BackupRecord, results []RetentionResult, result RetentionResult) []RetentionResult {
+	results = append(results, result)
+	if e == nil || e.OnRetentionDelete == nil {
+		return results
+	}
+	e.OnRetentionDelete(ctx, RetentionDeleteEvent{
+		PolicyID: policy.PolicyID, RunID: record.RunID, TaskID: record.TaskID,
+		SnapshotID: result.SnapshotID, Sink: record.Sink, Status: result.Status, Error: result.Error,
+	})
+	return results
 }

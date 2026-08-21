@@ -100,6 +100,40 @@ func TestRetentionPlan_RejectsInvalidTimezone(t *testing.T) {
 	}
 }
 
+func TestEngineApplyRetentionReportsDelete(t *testing.T) {
+	ctx := context.Background()
+	e := seededEngine(t)
+	ids := []string{"snap-1", "snap-2", "snap-3"}
+	times := []time.Time{
+		time.Date(2026, 8, 17, 8, 0, 0, 0, time.UTC),
+		time.Date(2026, 8, 18, 8, 0, 0, 0, time.UTC),
+		time.Date(2026, 8, 19, 8, 0, 0, 0, time.UTC),
+	}
+	index := 0
+	e.NewID = func() (string, error) { id := ids[index]; return id, nil }
+	e.Now = func() time.Time { return times[index] }
+	for index < len(ids) {
+		if _, err := e.CreateCluster(ctx, backup.ClusterCreateOpts{RunID: "run-" + ids[index], TaskID: "task-" + ids[index], PolicyID: "bp", ClusterID: "c1", NodeID: "n1", Sink: "fs"}); err != nil {
+			t.Fatal(err)
+		}
+		index++
+	}
+	var got []backup.RetentionDeleteEvent
+	e.OnRetentionDelete = func(_ context.Context, ev backup.RetentionDeleteEvent) {
+		got = append(got, ev)
+	}
+	e.Now = func() time.Time { return time.Date(2026, 8, 20, 8, 0, 0, 0, time.UTC) }
+	if _, err := e.ApplyRetention(ctx, backup.Policy{PolicyID: "bp", Sink: "fs", Timezone: "UTC", RetentionKeepLast: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].SnapshotID != "snap-1" || got[0].Sink != "fs" || got[0].PolicyID != "bp" || got[0].Status != "SUCCESS" {
+		t.Fatalf("retention events=%+v", got)
+	}
+	if got[0].RunID != "run-snap-1" || got[0].TaskID != "task-snap-1" {
+		t.Fatalf("expected run/task IDs, got %+v", got[0])
+	}
+}
+
 func TestEngineApplyRetentionDeletesClusterObjectAndIndex(t *testing.T) {
 	ctx := context.Background()
 	e := seededEngine(t)

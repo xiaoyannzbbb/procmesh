@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/qleelulu/procmesh/internal/auth"
+	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/store"
 )
 
@@ -27,20 +28,17 @@ func TestBackupAuditRedactsSecrets(t *testing.T) {
 func TestBackupRetentionAudit(t *testing.T) {
 	_, st, _ := newTestManager(t)
 	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-admin", Username: "admin"})
-	auditControlMutation(ctx, st, "node-a", controlMutation{
-		Action:      "backup.retention.delete",
-		Resource:    "backup_policy:bp-1",
-		OperationID: "op-retention",
-		PolicyID:    "bp-1",
-		RunID:       "run-1",
-		TaskID:      "task-1",
-		SnapshotID:  "snap-1",
-		Result:      "SUCCESS",
-		Error:       "s3://AKIAIOSFODNN7EXAMPLE:wJalrXUtnFEMI@bucket/key",
+	ObserveRetentionDelete(ctx, st, "node-a", backup.RetentionDeleteEvent{
+		PolicyID: "bp-1", RunID: "run-1", TaskID: "task-1", SnapshotID: "snap-1",
+		Sink: "s3", Status: "SUCCESS", Error: "s3://AKIAIOSFODNN7EXAMPLE:wJalrXUtnFEMI@bucket/key",
 	})
 	assertControlAudit(t, st, "backup.retention.delete", "SUCCESS", map[string]string{
 		"policy_id": "bp-1", "run_id": "run-1", "task_id": "task-1", "snapshot_id": "snap-1",
 	})
+	totals := retentionDeleteTotals()
+	if totals["s3"]["success"] == 0 {
+		t.Fatalf("s3 retention success must increment, got %+v", totals)
+	}
 }
 
 func assertControlAudit(t *testing.T, st *store.Store, action, result string, ids map[string]string) {

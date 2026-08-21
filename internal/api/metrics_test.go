@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -210,6 +211,54 @@ func TestBackupMetricFamilies(t *testing.T) {
 	assertNoSecretMetricLabels(t, body)
 }
 
+func TestBackupMetricCountersAreCumulative(t *testing.T) {
+	policy := "bp-counter-unique"
+	ObserveBackupRun(policy, "s3", "RUNNING")
+	ObserveBackupTask("s3", "RUNNING", 99, 1)
+	ObserveBackupTask("s3", "PENDING", 5, 0)
+	ObserveBackupTask("s3", "SKIPPED", 8, 0)
+	first := renderBackupMetrics(0, observationSnapshot())
+	if strings.Contains(first, `procmesh_backup_runs_total{policy="`+policy+`"`) {
+		t.Fatalf("non-terminal run must not increment counter:\n%s", first)
+	}
+	if strings.Contains(first, `procmesh_backup_bytes_total{sink="s3",result="error"}`) && strings.Contains(first, `result="error"} 99`) {
+		t.Fatalf("in-flight bytes must not count as error:\n%s", first)
+	}
+	ObserveBackupRun(policy, "s3", "SUCCESS")
+	ObserveBackupTask("s3", "SUCCESS", 42, 12)
+	ObserveBackupTask("s3", "FAILED", 7, 3)
+	second := renderBackupMetrics(0, observationSnapshot())
+	if !strings.Contains(second, `procmesh_backup_runs_total{policy="`+policy+`",sink="s3",status="SUCCESS"}`) {
+		t.Fatalf("missing cumulative run series:\n%s", second)
+	}
+	if !strings.Contains(second, `procmesh_backup_task_duration_seconds{sink="s3"}`) {
+		t.Fatalf("duration must come from tasks:\n%s", second)
+	}
+	ObserveBackupRun(policy, "s3", "SUCCESS")
+	third := renderBackupMetrics(0, observationSnapshot())
+	want1 := `procmesh_backup_runs_total{policy="` + policy + `",sink="s3",status="SUCCESS"}`
+	n1 := metricValue(second, want1)
+	n2 := metricValue(third, want1)
+	if n2 != n1+1 {
+		t.Fatalf("counter must be monotonic: first=%g second=%g in\n%s", n1, n2, third)
+	}
+}
+
+func TestBackupMetricLagUsesMaxUpdatedUnix(t *testing.T) {
+	state := control.NewState()
+	state.ReplicationTasks["rr-1:old"] = control.ClusterBackupTask{
+		RunID: "rr-1", TaskID: "old", SourceNodeID: "node-a", NodeID: "node-b", Status: "SUCCESS", UpdatedUnix: 10,
+	}
+	state.ReplicationTasks["rr-1:new"] = control.ClusterBackupTask{
+		RunID: "rr-1", TaskID: "new", SourceNodeID: "node-a", NodeID: "node-b", Status: "SUCCESS", UpdatedUnix: 90,
+	}
+	snap := clusterBackupGaugesFromState(*state, time.Unix(100, 0))
+	got := snap.Lag["node-a\x00node-b"]
+	if got != 10 {
+		t.Fatalf("lag=%g want 10 (now-max UpdatedUnix)", got)
+	}
+}
+
 func TestBackupMetricRedactsSecrets(t *testing.T) {
 	state := control.NewState()
 	state.BackupPolicies["bp-1"] = control.BackupPolicy{
@@ -226,7 +275,15 @@ func TestBackupMetricRedactsSecrets(t *testing.T) {
 	state.ReplicationTasks["rr-1:task-b"] = control.ClusterBackupTask{
 		RunID: "rr-1", TaskID: "task-b", SourceNodeID: "node-a", NodeID: "node-b", Status: "SUCCESS", Bytes: 9, UpdatedUnix: 1_700_000_010,
 	}
-	body := renderBackupMetrics(0, clusterBackupMetricsFromState(*state, time.Unix(1_700_000_100, 0)))
+	ObserveBackupRun("bp-1", "s3", "SUCCESS")
+	ObserveBackupTask("s3", "SUCCESS", 42, 30)
+	ObserveReplicationRun("rp-1", "SUCCESS")
+	ObserveReplicationTask("SUCCESS", 9)
+	snap := clusterBackupGaugesFromState(*state, time.Unix(1_700_000_100, 0))
+	obs := observationSnapshot()
+	obs.LastSuccess = snap.LastSuccess
+	obs.Lag = snap.Lag
+	body := renderBackupMetrics(0, obs)
 	if !strings.Contains(body, `procmesh_backup_runs_total{policy="bp-1",sink="s3",status="SUCCESS"}`) {
 		t.Fatalf("missing labeled run series:\n%s", body)
 	}
@@ -240,6 +297,22 @@ func TestBackupMetricRedactsSecrets(t *testing.T) {
 	if strings.Contains(body, "s3.example.com") || strings.Contains(body, "/var/lib/procmesh") || strings.Contains(body, "snap-1") || strings.Contains(body, "deadbeef") {
 		t.Fatalf("unbounded or secret label leaked:\n%s", body)
 	}
+}
+
+func metricValue(body, series string) float64 {
+	for _, line := range strings.Split(body, "\n") {
+		if !strings.HasPrefix(line, series) {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		var n float64
+		fmt.Sscanf(fields[len(fields)-1], "%f", &n)
+		return n
+	}
+	return 0
 }
 
 func assertNoSecretMetricLabels(t *testing.T, body string) {

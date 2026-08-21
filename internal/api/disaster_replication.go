@@ -98,7 +98,9 @@ func (d *DisasterReplicationAPI) GeneratePolicyDraft(ctx context.Context, req *c
 		return cli.GeneratePolicyDraft(ctx, req)
 	}
 
+	rec := controlMutation{Action: "replication.draft.generate", Resource: "replication_draft:" + req.Msg.Name, PolicyID: req.Msg.Name}
 	if d.Members == nil {
+		d.audit(ctx, rec, errcode.E(errcode.UNAVAILABLE, "cluster membership unavailable"))
 		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "cluster membership unavailable"))
 	}
 
@@ -106,12 +108,14 @@ func (d *DisasterReplicationAPI) GeneratePolicyDraft(ctx context.Context, req *c
 	draftRevision := topologyDraftRevision(topologyNodes)
 	sources, err := d.state().ResolveReplicationSources(req.Msg.SourceSelector, req.Msg.SourceIds)
 	if err != nil {
+		d.audit(ctx, rec, err)
 		return nil, ToConnect(err)
 	}
 
 	// Generate routes
 	result, err := backup.GenerateRoutesForSources(topologyNodes, sources, int(req.Msg.ReplicaFactor), backup.TopologyConstraints{})
 	if err != nil {
+		d.audit(ctx, rec, err)
 		return nil, ToConnect(err)
 	}
 
@@ -163,7 +167,7 @@ func (d *DisasterReplicationAPI) GeneratePolicyDraft(ctx context.Context, req *c
 		TopologyHealth:      topologyHealth,
 	}
 
-	d.audit(ctx, controlMutation{Action: "replication.draft.generate", Resource: "replication_draft"}, nil)
+	d.audit(ctx, rec, nil)
 	return connect.NewResponse(&procmeshv1.GeneratePolicyDraftResponse{
 		Draft: draft,
 	}), nil
@@ -498,10 +502,13 @@ func (d *DisasterReplicationAPI) StartRun(ctx context.Context, req *connect.Requ
 
 	st := d.state()
 	runID := replicationRunID(operationID)
+	rec := controlMutation{Action: "replication.run.start", Resource: "replication_run:" + runID, OperationID: operationID, PolicyID: req.Msg.GetPolicyId(), RunID: runID}
 	if existing, ok := st.ReplicationRuns[runID]; ok {
 		if existing.PolicyID != req.Msg.GetPolicyId() {
+			d.audit(ctx, rec, errcode.E(errcode.CONFLICT, "operation already used for another replication policy"))
 			return nil, ToConnect(errcode.E(errcode.CONFLICT, "operation already used for another replication policy"))
 		}
+		d.audit(ctx, rec, nil)
 		return startRunResponse(existing), nil
 	}
 
@@ -561,12 +568,15 @@ func (d *DisasterReplicationAPI) StartRun(ctx context.Context, req *connect.Requ
 		Replication: true,
 	})
 	if err != nil {
+		d.audit(ctx, rec, err)
 		return nil, ToConnect(err)
 	}
 	if err := d.ApplyFn(cmd, 5*time.Second); err != nil {
 		if existing, ok := d.state().ReplicationRuns[runID]; ok && existing.PolicyID == policy.PolicyID {
+			d.audit(ctx, rec, nil)
 			return startRunResponse(existing), nil
 		}
+		d.audit(ctx, rec, err)
 		return nil, ToConnect(err)
 	}
 	if d.DispatchRun != nil && len(refs) != 0 {
@@ -576,7 +586,7 @@ func (d *DisasterReplicationAPI) StartRun(ctx context.Context, req *connect.Requ
 		}
 		d.DispatchRun(backup.FrozenReplicationRun{RunID: run.RunID, PolicyID: run.PolicyID, PolicyRevision: run.PolicyRevision, LeaderTerm: term, LeaseExpiresUnix: run.LeaseUntilUnix, MaxConcurrency: run.MaxConcurrency, Tasks: frozen})
 	}
-	d.audit(ctx, controlMutation{Action: "replication.run.start", Resource: "replication_run:" + run.RunID, OperationID: operationID, PolicyID: run.PolicyID, RunID: run.RunID}, nil)
+	d.audit(ctx, rec, nil)
 	return startRunResponse(run), nil
 }
 

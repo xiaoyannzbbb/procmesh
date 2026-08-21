@@ -201,11 +201,14 @@ func (s *ClusterBackupAPI) StartRun(ctx context.Context, req *connect.Request[pr
 	leaseUntil := now.Add(time.Duration(timeout) * time.Second).Unix()
 	run := control.ClusterBackupRun{RunID: runID, PolicyID: policy.PolicyID, PolicyRevision: policy.Revision, TargetNodeIDs: targets, Status: "RUNNING", CreatedUnix: now.Unix(), StartedUnix: now.Unix(), Sink: policy.Sink, DestinationProfile: policy.DestinationProfile, MaxConcurrency: policy.MaxConcurrency, TimeoutSeconds: timeout, UnavailablePolicy: policy.UnavailablePolicy, LeaseUntilUnix: leaseUntil}
 	term := s.leaderTerm()
+	rec := controlMutation{Action: "backup.run.start", Resource: "backup_run:" + runID, OperationID: operationID, PolicyID: policy.PolicyID, RunID: runID}
 	cmd, err := control.EncodeCommand(control.CmdBackupRunCreate, control.CreateRunBody{OperationID: operationID, LeaderTerm: term, Run: run})
 	if err != nil {
+		s.audit(ctx, rec, err)
 		return nil, ToConnect(err)
 	}
 	if err := s.applyCommand(cmd); err != nil {
+		s.audit(ctx, rec, err)
 		return nil, ToConnect(err)
 	}
 	if s.DispatchRun != nil {
@@ -216,7 +219,7 @@ func (s *ClusterBackupAPI) StartRun(ctx context.Context, req *connect.Request[pr
 			LeaderTerm: term, LeaseExpiresUnix: leaseUntil, TimeoutSeconds: timeout, UnavailablePolicy: policy.UnavailablePolicy,
 		})
 	}
-	s.audit(ctx, controlMutation{Action: "backup.run.start", Resource: "backup_run:" + runID, OperationID: operationID, PolicyID: policy.PolicyID, RunID: runID}, nil)
+	s.audit(ctx, rec, nil)
 	return connect.NewResponse(&procmeshv1.StartClusterBackupRunResponse{Run: runToProto(run, nil)}), nil
 }
 
@@ -306,11 +309,14 @@ func (s *ClusterBackupAPI) RetryFailedTasks(ctx context.Context, req *connect.Re
 	}
 	term := s.leaderTerm()
 	leaseUntil := now.Add(time.Duration(timeout) * time.Second).Unix()
+	rec := controlMutation{Action: "backup.run.retry", Resource: "backup_run:" + run.RunID, OperationID: operationID, PolicyID: run.PolicyID, RunID: run.RunID}
 	cmd, err := control.EncodeCommand(control.CmdBackupRetryFailedTasks, control.RetryFailedTasksBody{OperationID: operationID, RunID: run.RunID, LeaderTerm: term, UpdatedUnix: now.Unix(), LeaseUntilUnix: leaseUntil})
 	if err != nil {
+		s.audit(ctx, rec, err)
 		return nil, ToConnect(err)
 	}
 	if err := s.applyCommand(cmd); err != nil {
+		s.audit(ctx, rec, err)
 		return nil, ToConnect(err)
 	}
 	state = s.state()
@@ -332,7 +338,7 @@ func (s *ClusterBackupAPI) RetryFailedTasks(ctx context.Context, req *connect.Re
 			s.DispatchRun(backup.FrozenRun{RunID: run.RunID, PolicyID: run.PolicyID, PolicyRevision: run.PolicyRevision, TargetNodeIDs: targets, Sink: run.Sink, DestinationProfile: run.DestinationProfile, MaxConcurrency: run.MaxConcurrency, LeaderTerm: term, LeaseExpiresUnix: leaseUntil, TimeoutSeconds: timeout, UnavailablePolicy: run.UnavailablePolicy})
 		}
 	}
-	s.audit(ctx, controlMutation{Action: "backup.run.retry", Resource: "backup_run:" + run.RunID, OperationID: operationID, PolicyID: run.PolicyID, RunID: run.RunID}, nil)
+	s.audit(ctx, rec, nil)
 	return connect.NewResponse(&procmeshv1.RetryFailedClusterBackupTasksResponse{Run: runToProto(run, nil)}), nil
 }
 

@@ -74,7 +74,17 @@ func applyMissingReplicationTask(n replicationCommandApplier, task control.Clust
 	if err != nil {
 		return err
 	}
-	return n.Apply(cmd, 5*time.Second)
+	var before control.State
+	if viewer, ok := n.(interface{ View() control.State }); ok {
+		before = viewer.View()
+	}
+	if err := n.Apply(cmd, 5*time.Second); err != nil {
+		return err
+	}
+	if viewer, ok := n.(interface{ View() control.State }); ok {
+		api.ObserveControlTransition(before, viewer.View(), task.RunID, true)
+	}
+	return nil
 }
 
 func reconcileMissingReplicationTasks(n replicationCommandApplier, state control.State, term uint64, now time.Time) error {
@@ -332,7 +342,12 @@ func (a raftReplicationControl) UpdateReplicationTask(_ context.Context, update 
 	if err != nil {
 		return err
 	}
-	return n.Apply(cmd, 5*time.Second)
+	before := n.View()
+	if err := n.Apply(cmd, 5*time.Second); err != nil {
+		return err
+	}
+	api.ObserveControlTransition(before, n.View(), update.RunID, true)
+	return nil
 }
 
 type peerReplicationForwarder interface {

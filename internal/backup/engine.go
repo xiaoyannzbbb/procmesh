@@ -114,6 +114,7 @@ type Engine struct {
 	RetentionActive    func(snapshotID string) bool
 	LastUsableReplica  func(snapshotID string) bool
 	RetentionPolicy    func(policyID string) (Policy, bool)
+	OnRetentionDelete  func(context.Context, RetentionDeleteEvent)
 	LastSuccessUnix    atomic.Int64
 	Schedule           string // 空 = 关；五字段 cron
 	activeMu           sync.Mutex
