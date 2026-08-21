@@ -1525,7 +1525,13 @@ func applyBeginReplicationTask(b UpdateTaskBody, now time.Time, runs map[string]
 	}
 	key := taskMapKey(b.Task)
 	current, ok := tasks[key]
-	if !ok || current.RunID != b.Task.RunID || current.TaskID != b.Task.TaskID || current.SourceNodeID != b.Task.SourceNodeID || current.NodeID != b.Task.NodeID || current.SnapshotID != b.Task.SnapshotID || current.SHA256 != b.Task.SHA256 || (current.Status != "PENDING" && !retryableTaskStatus(current.Status)) {
+	if !ok || current.RunID != b.Task.RunID || current.TaskID != b.Task.TaskID || current.SourceNodeID != b.Task.SourceNodeID || current.NodeID != b.Task.NodeID || current.SnapshotID != b.Task.SnapshotID || current.SHA256 != b.Task.SHA256 {
+		return errcode.E(errcode.CONFLICT, "replication task changed")
+	}
+	if current.Status == "RUNNING" {
+		return nil
+	}
+	if current.Status != "PENDING" && !retryableTaskStatus(current.Status) {
 		return errcode.E(errcode.CONFLICT, "replication task changed")
 	}
 	current.Status = "RUNNING"

@@ -169,6 +169,12 @@ func (c *ReplicationCoordinator) DispatchRun(ctx context.Context, run FrozenRepl
 				return
 			}
 			if leaseCtx.Err() != nil || c.now().Unix() >= req.LeaseExpiresUnix {
+				abortErr := leaseCtx.Err()
+				if abortErr == nil {
+					abortErr = context.DeadlineExceeded
+				}
+				status, code, summary := classifyReplicationFailure(abortErr, abortErr)
+				_ = c.Control.UpdateReplicationTask(ctx, ReplicationTaskUpdate{RunID: req.RunID, TaskID: req.TaskID, SourceNodeID: req.SourceNodeID, TargetNodeID: req.TargetNodeID, SnapshotID: req.SnapshotID, SHA256: req.SHA256, Status: status, ErrorCode: code, ErrorSummary: summary, LeaderTerm: req.LeaderTerm})
 				return
 			}
 			if err := c.Dispatcher.DispatchReplicationTask(leaseCtx, req); err != nil {

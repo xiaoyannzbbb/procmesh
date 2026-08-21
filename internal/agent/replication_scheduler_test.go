@@ -217,8 +217,9 @@ func TestReconcileMissingReplicationTasksDoesNotDependOnMutablePolicy(t *testing
 }
 
 type recordingReplicationApplier struct {
-	commands []control.Command
-	err      error
+	commands   []control.Command
+	err        error
+	afterApply func()
 }
 
 func TestReplicationRetryBeginCommandContainsOnlySafeFrozenMetadata(t *testing.T) {
@@ -263,6 +264,22 @@ func TestReplicationRetryBeginHonorsCanceledContextBeforeRaftApply(t *testing.T)
 	}
 	if len(applier.commands) != 0 {
 		t.Fatalf("raft apply after canceled begin: %+v", applier.commands)
+	}
+}
+
+func TestReplicationRetryBeginTreatsCommittedApplyAsSuccess(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	applier := &recordingReplicationApplier{afterApply: cancel}
+	err := applyBeginReplicationTask(ctx, applier, backup.ReplicationTaskUpdate{
+		RunID: "run", TaskID: "task", SourceNodeID: "source", TargetNodeID: "target",
+		SnapshotID: "snapshot", SHA256: replicationTestSHA, LeaderTerm: 7,
+	}, time.Unix(1_800_000_000, 0))
+	if err != nil {
+		t.Fatalf("begin after committed apply error=%v, want nil", err)
+	}
+	if len(applier.commands) != 1 {
+		t.Fatalf("committed begin commands=%+v", applier.commands)
 	}
 }
 
@@ -578,6 +595,9 @@ func TestAuthorizePeerOperationPutFencing(t *testing.T) {
 
 func (a *recordingReplicationApplier) Apply(command control.Command, _ time.Duration) error {
 	a.commands = append(a.commands, command)
+	if a.afterApply != nil {
+		a.afterApply()
+	}
 	return a.err
 }
 

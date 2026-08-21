@@ -44,6 +44,28 @@ func (c *replicationFSMControl) UpdateReplicationTask(_ context.Context, update 
 	return c.apply(update)
 }
 
+type beginThenExpireControl struct {
+	inner *replicationFSMControl
+	now   *time.Time
+}
+
+func (c *beginThenExpireControl) ClaimReplicationRuns(ctx context.Context, term uint64, now time.Time) ([]backup.FrozenReplicationRun, error) {
+	return c.inner.ClaimReplicationRuns(ctx, term, now)
+}
+
+func (c *beginThenExpireControl) BeginReplicationTask(ctx context.Context, update backup.ReplicationTaskUpdate) error {
+	if err := c.inner.BeginReplicationTask(ctx, update); err != nil {
+		return err
+	}
+	*c.now = c.now.Add(2 * time.Second)
+	c.inner.now = *c.now
+	return nil
+}
+
+func (c *beginThenExpireControl) UpdateReplicationTask(ctx context.Context, update backup.ReplicationTaskUpdate) error {
+	return c.inner.UpdateReplicationTask(ctx, update)
+}
+
 func (c *replicationFSMControl) apply(update backup.ReplicationTaskUpdate) error {
 	cmd, err := control.EncodeCommand(control.CmdBackupTaskUpdate, control.UpdateTaskBody{
 		OperationID: "test-replication-" + update.RunID + ":" + update.TaskID,
@@ -154,19 +176,47 @@ func TestReplicationCoordinator_BeginRejectionPreventsDispatch(t *testing.T) {
 
 func TestReplicationCoordinator_LeaseExpiryDuringBeginPreventsDispatch(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
-	controlPlane := &replicationControlFake{}
-	controlPlane.begin = func(context.Context, backup.ReplicationTaskUpdate) error {
-		now = now.Add(2 * time.Second)
-		return nil
+	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	fsm := control.NewFSM()
+	for _, nodeID := range []string{"source", "target", "other-target"} {
+		applyReplicationFSMCommand(t, fsm, now, control.CmdMemberPut, control.MemberPutBody{NodeID: nodeID, Status: control.MemberAdmitted})
 	}
+	applyReplicationFSMCommand(t, fsm, now, control.CmdReplicationPolicyPut, control.ReplicationPolicyPutBody{
+		OperationID: "policy", PolicyID: "policy", Name: "policy", Enabled: true,
+		SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"source"}, ReplicaFactor: 2,
+		Routes:  []control.ReplicationRoute{{SourceNodeID: "source", TargetNodeIDs: []string{"target", "other-target"}}},
+		Trigger: "MANUAL", ExpectedRevision: -1,
+	})
+	run := control.ClusterBackupRun{
+		RunID: "run", PolicyID: "policy", PolicyRevision: 1, TargetNodeIDs: []string{"source"}, Status: "RUNNING",
+		CreatedUnix: now.Unix(), StartedUnix: now.Unix(), LeaseUntilUnix: now.Add(time.Second).Unix(),
+	}
+	task := control.ClusterBackupTask{RunID: run.RunID, TaskID: "task", SourceNodeID: "source", NodeID: "target", SnapshotID: "snapshot", SHA256: sha, Status: "PENDING"}
+	other := control.ClusterBackupTask{RunID: run.RunID, TaskID: "other", SourceNodeID: "source", NodeID: "other-target", SnapshotID: "other-snapshot", SHA256: sha, Status: "PENDING"}
+	applyReplicationFSMCommand(t, fsm, now, control.CmdBackupRunCreate, control.CreateRunBody{OperationID: "create", Run: run, Tasks: []control.ClusterBackupTask{task, other}, LeaderTerm: 7, Replication: true})
+	task.Status, task.ErrorCode, task.ErrorSummary = "UNAVAILABLE", "UNAVAILABLE", "safe summary"
+	applyReplicationFSMCommand(t, fsm, now, control.CmdBackupTaskUpdate, control.UpdateTaskBody{OperationID: "fail", Task: task, LeaderTerm: 7, Replication: true})
+
+	controlPlane := &beginThenExpireControl{inner: &replicationFSMControl{fsm: fsm, now: now}, now: &now}
 	dispatcher := &replicationDispatcherFake{}
 	coordinator := backup.NewReplicationCoordinator(backup.ReplicationCoordinatorConfig{Control: controlPlane, Dispatcher: dispatcher, Now: func() time.Time { return now }})
 	coordinator.DispatchRun(context.Background(), backup.FrozenReplicationRun{
-		RunID: "run", PolicyID: "policy", LeaderTerm: 7, LeaseExpiresUnix: now.Add(time.Second).Unix(),
-		Tasks: []backup.FrozenReplicationTask{{TaskID: "task", SourceNodeID: "source", TargetNodeID: "target", SnapshotID: "snapshot", SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Status: "UNAVAILABLE"}},
+		RunID: run.RunID, PolicyID: run.PolicyID, PolicyRevision: run.PolicyRevision, LeaderTerm: 7,
+		LeaseExpiresUnix: run.LeaseUntilUnix,
+		Tasks:            []backup.FrozenReplicationTask{{TaskID: task.TaskID, SourceNodeID: task.SourceNodeID, TargetNodeID: task.NodeID, SnapshotID: task.SnapshotID, SHA256: task.SHA256, Status: task.Status}},
 	})
 	if len(dispatcher.dispatch) != 0 {
 		t.Fatalf("dispatch after lease expired during begin: %+v", dispatcher.dispatch)
+	}
+	got := fsm.View().ReplicationTasks[run.RunID+":"+task.TaskID]
+	if got.Status == "RUNNING" {
+		t.Fatalf("begin abort left task stuck running: %+v", got)
+	}
+	if got.Status != "TIMEOUT" && got.Status != "UNAVAILABLE" {
+		t.Fatalf("post-abort status=%s, want retryable TIMEOUT or UNAVAILABLE", got.Status)
+	}
+	if got.RunID != run.RunID || got.TaskID != task.TaskID || got.SourceNodeID != "source" || got.NodeID != "target" || got.SnapshotID != "snapshot" || got.SHA256 != sha {
+		t.Fatalf("immutable identity changed after begin abort: %+v", got)
 	}
 }
 

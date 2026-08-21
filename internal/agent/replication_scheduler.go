@@ -312,7 +312,7 @@ func applyBeginReplicationTask(ctx context.Context, n replicationCommandApplier,
 	if err := n.Apply(cmd, timeout); err != nil {
 		return err
 	}
-	return ctx.Err()
+	return nil
 }
 
 func (a raftReplicationControl) BeginReplicationTask(ctx context.Context, update backup.ReplicationTaskUpdate) error {

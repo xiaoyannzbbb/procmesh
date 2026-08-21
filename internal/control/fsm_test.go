@@ -503,6 +503,20 @@ func TestFSM_BeginReplicationTask(t *testing.T) {
 		}
 	})
 
+	t.Run("same identity already running begin is idempotent", func(t *testing.T) {
+		state := newState()
+		if err := begin(state, 7, state.ReplicationTasks["run:task"]); err != nil {
+			t.Fatal(err)
+		}
+		if err := begin(state, 7, state.ReplicationTasks["run:task"]); err != nil {
+			t.Fatalf("same-identity running begin error=%v, want nil", err)
+		}
+		got := state.ReplicationTasks["run:task"]
+		if got.Status != "RUNNING" || got.SnapshotID != "snapshot" || got.SHA256 != sha {
+			t.Fatalf("idempotent begin changed task=%+v", got)
+		}
+	})
+
 	for _, tc := range []struct {
 		name   string
 		mutate func(*control.State, *control.ClusterBackupTask)
@@ -518,6 +532,12 @@ func TestFSM_BeginReplicationTask(t *testing.T) {
 			task.Status = "SUCCEEDED"
 			state.ReplicationTasks["run:task"] = *task
 		}},
+		{name: "changed identity on running task", mutate: func(state *control.State, task *control.ClusterBackupTask) {
+			running := *task
+			running.Status = "RUNNING"
+			state.ReplicationTasks["run:task"] = running
+			task.SnapshotID = "changed"
+		}},
 	} {
 		t.Run("rejects "+tc.name, func(t *testing.T) {
 			state := newState()
@@ -531,11 +551,15 @@ func TestFSM_BeginReplicationTask(t *testing.T) {
 				t.Fatalf("begin error=%v, want CONFLICT", err)
 			}
 			got := state.ReplicationTasks["run:task"]
-			if tc.name != "succeeded task" && got.Status != "UNAVAILABLE" {
-				t.Fatalf("task changed after rejected begin: %+v", got)
+			wantStatus := "UNAVAILABLE"
+			switch tc.name {
+			case "succeeded task":
+				wantStatus = "SUCCEEDED"
+			case "changed identity on running task":
+				wantStatus = "RUNNING"
 			}
-			if tc.name == "succeeded task" && got.Status != "SUCCEEDED" {
-				t.Fatalf("succeeded task changed after rejected begin: %+v", got)
+			if got.Status != wantStatus {
+				t.Fatalf("task changed after rejected begin: %+v want %s", got, wantStatus)
 			}
 		})
 	}
