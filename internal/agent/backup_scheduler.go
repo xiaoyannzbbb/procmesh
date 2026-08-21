@@ -254,11 +254,13 @@ func (d localBackupDispatcher) DispatchBackupTask(ctx context.Context, task back
 			if err != nil {
 				last = err
 			} else {
-				resp, err := client.RunTask(ctx, connect.NewRequest(&procmeshv1.RunClusterBackupTaskRequest{
+				attemptCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+				resp, err := client.RunTask(attemptCtx, connect.NewRequest(&procmeshv1.RunClusterBackupTaskRequest{
 					RunId: task.RunID, TaskId: task.TaskID, PolicyId: task.PolicyID, NodeId: task.NodeID,
 					PolicyRevision: task.PolicyRevision, Sink: task.Sink, DestinationProfile: task.DestinationProfile,
 					LeaderTerm: task.LeaderTerm, LeaseExpiresUnix: task.LeaseExpiresUnix,
 				}))
+				cancel()
 				if err == nil {
 					return d.persistResult(ctx, task, taskResultUpdateFromProto(resp.Msg.GetTask(), task))
 				}
@@ -288,13 +290,14 @@ func retryableBackupDispatch(err error) bool {
 		return true
 	}
 	switch connect.CodeOf(err) {
-	case connect.CodeNotFound, connect.CodeUnavailable:
+	case connect.CodeNotFound, connect.CodeUnavailable, connect.CodeDeadlineExceeded:
 		return true
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "backup run not found") || strings.Contains(msg, "rpc unavailable") || strings.Contains(msg, "target agent rpc unavailable") ||
 		strings.Contains(msg, "replication task changed") || strings.Contains(msg, "replication run changed") ||
-		strings.Contains(msg, "backup policy revision changed")
+		strings.Contains(msg, "backup policy revision changed") || strings.Contains(msg, "stale leader term") ||
+		strings.Contains(msg, "raft leader unknown")
 }
 
 func (d localBackupDispatcher) persistResult(ctx context.Context, task backup.BackupTaskRequest, update backup.TaskUpdate) error {
@@ -401,6 +404,9 @@ func (r *rpcRuntime) authorizeClusterBackupTask(sourceNodeID string, msg *procme
 		return errcode.E(errcode.TIMEOUT, "task lease expired")
 	}
 	state := n.View()
+	if n.LeaderAddr() == "" {
+		return errcode.E(errcode.UNAVAILABLE, "raft leader unknown")
+	}
 	source, ok := state.Members[sourceNodeID]
 	if !ok || source.Status != control.MemberAdmitted || source.RaftAddr == "" || source.RaftAddr != n.LeaderAddr() {
 		return errcode.E(errcode.DENIED, "task source is not current leader")

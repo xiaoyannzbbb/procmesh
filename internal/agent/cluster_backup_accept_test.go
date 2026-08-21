@@ -25,8 +25,8 @@ import (
 )
 
 type backupAcceptNode struct {
-	addr, root, id string
-	stop           context.CancelFunc
+	addr, root, id, rpc, control string
+	stop                         context.CancelFunc
 }
 
 func TestClusterBackup_FS_ThreeAgentNamespace(t *testing.T) {
@@ -52,10 +52,15 @@ func TestClusterBackup_FS_ThreeAgentNamespace(t *testing.T) {
 }
 
 func TestClusterBackup_PartialUnavailable(t *testing.T) {
-	nodes := startThreeBackupAgents(t, agentcfg.Backup{})
+	cfg := agentcfg.Backup{}
+	nodes := startThreeBackupAgents(t, cfg)
 	joinThree(t, nodes[0].addr, nodes[1].addr, nodes[2].addr)
 	seedOwnerSpecs(t, nodes)
 
+	offline := nodes[2]
+	if offline.rpc == "" || offline.control == "" {
+		t.Fatalf("missing listen addrs for offline node rpc=%q control=%q", offline.rpc, offline.control)
+	}
 	nodes[2].stop()
 	policyID := uniqueID("bp-partial")
 	createClusterBackupPolicy(t, nodes[0].addr, &procmeshv1.ClusterBackupPolicy{
@@ -67,6 +72,23 @@ func TestClusterBackup_PartialUnavailable(t *testing.T) {
 	got := waitClusterBackupRun(t, nodes[0].addr, run.GetRunId(), "PARTIAL", 45*time.Second)
 	if got.GetSuccess() != 2 || got.GetUnavailable() < 1 {
 		t.Fatalf("want PARTIAL 2 success + unavailable, got status=%s success=%d unavailable=%d failed=%d tasks=%v", got.GetStatus(), got.GetSuccess(), got.GetUnavailable(), got.GetFailed(), taskStatuses(got))
+	}
+
+	addr, stop := startClusterAgentAtOpts(t, offline.root, Options{
+		Backup:          cfg,
+		DiskPercent:     func() float64 { return 10 },
+		RPCListen:       offline.rpc,
+		ControlListen:   offline.control,
+		OnRPCListen:     func(a string) { nodes[2].rpc = a },
+		OnControlListen: func(a string) { nodes[2].control = a },
+	})
+	nodes[2].addr = addr
+	nodes[2].stop = stop
+	waitBackupAgentRPC(t, nodes[0].addr, offline.id)
+
+	got = retryUnavailableUntilTerminal(t, nodes[0].addr, run.GetRunId())
+	if got.GetStatus() != "SUCCEEDED" || got.GetSuccess() != 3 {
+		t.Fatalf("after retry want 3 success, got status=%s success=%d unavailable=%d tasks=%v", got.GetStatus(), got.GetSuccess(), got.GetUnavailable(), taskStatuses(got))
 	}
 }
 
@@ -392,11 +414,17 @@ func startThreeBackupAgents(t *testing.T, cfg agentcfg.Backup) []backupAcceptNod
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = os.RemoveAll(root) })
+		n := &nodes[i]
+		n.root = root
 		addr, stop := startClusterAgentAtOpts(t, root, Options{
-			Backup:      cfg,
-			DiskPercent: func() float64 { return 10 },
+			Backup:          cfg,
+			DiskPercent:     func() float64 { return 10 },
+			OnRPCListen:     func(a string) { n.rpc = a },
+			OnControlListen: func(a string) { n.control = a },
 		})
-		nodes[i] = backupAcceptNode{addr: addr, root: root, stop: stop, id: readNodeID(t, root)}
+		n.addr = addr
+		n.stop = stop
+		n.id = readNodeID(t, root)
 	}
 	return nodes
 }
@@ -532,6 +560,87 @@ func waitReplicationRun(t *testing.T, addr, runID, want string, d time.Duration)
 	}
 	t.Fatalf("replication run %s did not reach %s: %+v", runID, want, last)
 	return last
+}
+
+func waitBackupAgentRPC(t *testing.T, addr, nodeID string) string {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	var last string
+	for time.Now().Before(deadline) {
+		code, out, errb := runP1CLI("--server", addr, "node", "list")
+		if code == 0 {
+			if rpc := rpcAddrForNode(out, nodeID); rpc != "" {
+				return rpc
+			}
+			last = out
+		} else {
+			last = errb
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("agent %s rpc not visible on %s: %q", nodeID, addr, last)
+	return ""
+}
+
+func retryUnavailableUntilTerminal(t *testing.T, addr, runID string) *procmeshv1.ClusterBackupRun {
+	t.Helper()
+	cli := clusterBackupClient(t, addr)
+	deadline := time.Now().Add(45 * time.Second)
+	var last *procmeshv1.ClusterBackupRun
+	for time.Now().Before(deadline) {
+		resp, err := cli.GetRun(context.Background(), connect.NewRequest(&procmeshv1.GetClusterBackupRunRequest{RunId: runID}))
+		if err != nil {
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		last = resp.Msg.GetRun()
+		if last.GetStatus() == "SUCCEEDED" && last.GetSuccess() == 3 {
+			return last
+		}
+		if last.GetStatus() == "PARTIAL" || last.GetStatus() == "FAILED" {
+			if _, rerr := cli.RetryFailedTasks(context.Background(), connect.NewRequest(&procmeshv1.RetryFailedClusterBackupTasksRequest{
+				Meta: &procmeshv1.MutationMeta{OperationId: uniqueID("op-retry")}, RunId: runID,
+			})); rerr != nil {
+				t.Fatalf("retry failed tasks: %v", rerr)
+			}
+		}
+		wait := time.Now().Add(20 * time.Second)
+		for time.Now().Before(wait) && time.Now().Before(deadline) {
+			resp, err = cli.GetRun(context.Background(), connect.NewRequest(&procmeshv1.GetClusterBackupRunRequest{RunId: runID}))
+			if err == nil {
+				last = resp.Msg.GetRun()
+				if last.GetStatus() == "SUCCEEDED" && last.GetSuccess() == 3 {
+					return last
+				}
+				if terminalRunStatus(last.GetStatus()) {
+					break
+				}
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
+	t.Fatalf("retry did not reach SUCCEEDED: %+v tasks=%v", last, taskStatuses(last))
+	return last
+}
+
+func waitBackupAgentRPCChanged(t *testing.T, addr, nodeID, staleRPC string) string {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	var last string
+	for time.Now().Before(deadline) {
+		code, out, errb := runP1CLI("--server", addr, "node", "list")
+		if code == 0 {
+			if rpc := rpcAddrForNode(out, nodeID); rpc != "" && rpc != staleRPC {
+				return rpc
+			}
+			last = out
+		} else {
+			last = errb
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("restarted agent %s rpc did not change from %s on %s: %q", nodeID, staleRPC, addr, last)
+	return ""
 }
 
 func waitClusterID(t *testing.T, addr string) string {

@@ -138,7 +138,8 @@ func (e *Engine) ReplicateSnapshot(ctx context.Context, req ReplicationTaskReque
 	if err != nil {
 		return 0, err
 	}
-	if rec.NodeID != e.NodeID || rec.SHA256 != req.SHA256 {
+	clusterID := e.resolvedClusterID()
+	if rec.NodeID != e.NodeID || rec.SHA256 != req.SHA256 || rec.ClusterID != clusterID {
 		return 0, errcode.E(errcode.CONFLICT, "frozen snapshot checksum mismatch")
 	}
 	sink, err := e.clusterSink(rec.Sink, rec.DestinationProfile)
@@ -159,7 +160,7 @@ func (e *Engine) ReplicateSnapshot(ctx context.Context, req ReplicationTaskReque
 		return 0, errcode.E(errcode.CONFLICT, "frozen snapshot checksum mismatch")
 	}
 	snapshot, err := Decode(payload)
-	if err != nil || snapshot.SnapshotID != req.SnapshotID || snapshot.NodeID != e.NodeID {
+	if err != nil || snapshot.SnapshotID != req.SnapshotID || snapshot.NodeID != e.NodeID || snapshot.ClusterID != clusterID {
 		return 0, errcode.E(errcode.CONFLICT, "frozen snapshot payload mismatch")
 	}
 	if err := e.ReplicationPush.PutReplicationSnapshot(ctx, ReplicationPushRequest{RunID: req.RunID, TaskID: req.TaskID, PolicyID: req.PolicyID, PolicyRevision: req.PolicyRevision, TargetNodeID: req.TargetNodeID, SnapshotID: req.SnapshotID, SHA256: req.SHA256}, payload); err != nil {

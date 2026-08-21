@@ -221,7 +221,7 @@ func (r *rpcRuntime) waitCatchup(d time.Duration) error {
 	}
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
-		if n.View().ClusterID != "" {
+		if n.View().ClusterID != "" && (n.IsLeader() || n.LeaderAddr() != "") {
 			return nil
 		}
 		time.Sleep(raftPollEvery)

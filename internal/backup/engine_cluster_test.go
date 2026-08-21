@@ -86,6 +86,66 @@ func TestEngine_ReplicateSnapshotReloadsFrozenPrimaryPayload(t *testing.T) {
 	}
 }
 
+func TestDisasterReplication_ReplicateSnapshotUsesResolvedClusterID(t *testing.T) {
+	ctx := context.Background()
+	st, _ := seedProcess(t)
+	if err := st.SetClusterID(ctx, "cluster-abc"); err != nil {
+		t.Fatal(err)
+	}
+	fsRoot := filepath.Join(t.TempDir(), "fs")
+	var pushed int
+	e := &backup.Engine{
+		Store: st, NodeID: "node-1", Sinks: map[string]backup.Sink{"fs": backup.NewFSSink(fsRoot)},
+		NewID: func() (string, error) { return "snap-resolved", nil },
+		ReplicationPush: backup.ReplicationPeerPushFunc(func(context.Context, backup.ReplicationPushRequest, []byte) error {
+			pushed++
+			return nil
+		}),
+	}
+	meta, err := e.CreateCluster(ctx, backup.ClusterCreateOpts{RunID: "run-1", TaskID: "task-a", PolicyID: "policy-1", ClusterID: "cluster-abc", NodeID: "node-1", Sink: "fs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.ClusterID = ""
+	if _, err := e.ReplicateSnapshot(ctx, backup.ReplicationTaskRequest{RunID: "rep", TaskID: "t", SourceNodeID: "node-1", TargetNodeID: "node-2", SnapshotID: meta.SnapshotID, SHA256: meta.SHA256}); err != nil || pushed != 1 {
+		t.Fatalf("resolved cluster id should replicate, pushed=%d err=%v", pushed, err)
+	}
+}
+
+func TestDisasterReplication_ReplicateSnapshotRejectsClusterMismatch(t *testing.T) {
+	ctx := context.Background()
+	st, _ := seedProcess(t)
+	fsRoot := filepath.Join(t.TempDir(), "fs")
+	e := &backup.Engine{
+		Store: st, NodeID: "node-1", ClusterID: "cluster-abc", Sinks: map[string]backup.Sink{"fs": backup.NewFSSink(fsRoot)},
+		NewID:           func() (string, error) { return "snap-mismatch", nil },
+		ReplicationPush: backup.ReplicationPeerPushFunc(func(context.Context, backup.ReplicationPushRequest, []byte) error { return nil }),
+	}
+	meta, err := e.CreateCluster(ctx, backup.ClusterCreateOpts{RunID: "run-1", TaskID: "task-a", PolicyID: "policy-1", ClusterID: "cluster-abc", NodeID: "node-1", Sink: "fs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	e.ClusterID = "cluster-other"
+	_, err = e.ReplicateSnapshot(ctx, backup.ReplicationTaskRequest{RunID: "rep", TaskID: "t", SourceNodeID: "node-1", TargetNodeID: "node-2", SnapshotID: meta.SnapshotID, SHA256: meta.SHA256})
+	if !errcode.Is(err, errcode.CONFLICT) {
+		t.Fatalf("index cluster mismatch err=%v", err)
+	}
+
+	e.ClusterID = "cluster-abc"
+	payload, _, err := backup.Encode(backup.Snapshot{FormatVersion: 1, SnapshotID: meta.SnapshotID, ClusterID: "cluster-other", NodeID: "node-1", PolicyID: "policy-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backup.NewFSSink(fsRoot).PutCluster(ctx, "cluster-abc", "policy-1", "node-1", meta.SnapshotID, payload); err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.ReplicateSnapshot(ctx, backup.ReplicationTaskRequest{RunID: "rep", TaskID: "t", SourceNodeID: "node-1", TargetNodeID: "node-2", SnapshotID: meta.SnapshotID, SHA256: meta.SHA256})
+	if !errcode.Is(err, errcode.CONFLICT) {
+		t.Fatalf("payload cluster mismatch err=%v", err)
+	}
+}
+
 // TestClusterPath_S3 tests that CreateCluster uses namespaced S3 keys.
 func TestClusterPath_S3(t *testing.T) {
 	ctx := context.Background()

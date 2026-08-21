@@ -184,19 +184,33 @@ func startClusterAgentAtOpts(t *testing.T, root string, extra Options) (string, 
 
 	got := make(chan string, 1)
 	errCh := make(chan error, 1)
+	rpcListen, gossipListen, controlListen := extra.RPCListen, extra.GossipListen, extra.ControlListen
+	if rpcListen == "" {
+		rpcListen = "127.0.0.1:0"
+	}
+	if gossipListen == "" {
+		gossipListen = "127.0.0.1:0"
+	}
+	if controlListen == "" {
+		controlListen = "127.0.0.1:0"
+	}
 	go func() {
 		ensureTestSession(t)
 		errCh <- Run(ctx, Options{
-			DataDir:       root,
-			Listen:        "127.0.0.1:0",
-			GossipListen:  "127.0.0.1:0",
-			RPCListen:     "127.0.0.1:0",
-			ControlListen: "127.0.0.1:0",
-			ShimBin:       testShimBin,
-			BootID:        extra.BootID,
-			OnListen:      func(addr string) { got <- addr },
-			DiskPercent:   extra.DiskPercent,
-			Backup:        extra.Backup,
+			DataDir:          root,
+			Listen:           "127.0.0.1:0",
+			GossipListen:     gossipListen,
+			RPCListen:        rpcListen,
+			ControlListen:    controlListen,
+			RPCAdvertise:     extra.RPCAdvertise,
+			ControlAdvertise: extra.ControlAdvertise,
+			ShimBin:          testShimBin,
+			BootID:           extra.BootID,
+			OnListen:         func(addr string) { got <- addr },
+			OnRPCListen:      extra.OnRPCListen,
+			OnControlListen:  extra.OnControlListen,
+			DiskPercent:      extra.DiskPercent,
+			Backup:           extra.Backup,
 		})
 	}()
 	var addr string
