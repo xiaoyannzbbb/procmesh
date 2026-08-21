@@ -1,0 +1,208 @@
+# ProcMesh
+
+ProcMesh 是一个 Local-First、Agent-Owned、Peer-Managed 的分布式进程管理平台。它在不部署独立中心管理服务器的前提下，为服务器集群提供进程生命周期管理、Web 管理界面、命令行、远程操作和可观测性能力。
+
+每个节点运行一个 ProcMesh Agent。业务进程的配置、状态和日志由所在节点持有权威数据；集群成员与进程摘要通过 Gossip 汇聚，用户、RBAC 与节点准入等控制数据通过内嵌 Raft 保持强一致。
+
+## 特性
+
+- 本地进程生命周期管理：启动、停止、重启、强制终止、健康检查和重启策略。
+- Shim 保护：Agent 重启或异常退出时，已托管的业务进程可继续运行并在 Agent 恢复后重新接管。
+- 无中心管理节点：任意健康 Agent 都可提供 Web UI、API 和 CLI 入口。
+- 跨节点管理：通过 mTLS RPC 将写操作路由到进程所属的 Owner Agent。
+- 配置版本控制：使用乐观锁更新配置，支持历史查看与回滚。
+- 集群控制：节点发现、加入令牌、Raft 成员管理、用户、角色与 RBAC。
+- 运行可观测性：进程日志、节点与进程资源指标、告警、磁盘保护和审计。
+- 数据保护：支持本地文件系统、S3 和节点间备份及恢复。
+- 内嵌 Vue Web UI，支持中文和英文界面。
+
+## 架构
+
+```text
+                       Web UI / CLI / ConnectRPC
+                                  |
+                             任意 Agent :9000
+                                  |
+                     mTLS RPC 写入所属 Owner Agent
+                                  |
+  +-------------------------------+-------------------------------+
+  |                                                               |
+本地 SQLite + 日志 + 进程状态                                  Gossip 摘要同步
+  |                                                               |
+ProcMesh Agent -- Unix socket -- ProcMesh Shim -- 业务进程      Raft 控制数据
+```
+
+ProcMesh 包含三个二进制程序：
+
+| 程序 | 用途 |
+| --- | --- |
+| `procmesh-agent` | 常驻 Agent，管理本机进程，提供 Web、API、RPC 与集群通信。 |
+| `procmesh-shim` | 业务进程包装器，帮助业务进程跨 Agent 重启继续运行。 |
+| `procmesh` | 管理集群和进程的命令行客户端。 |
+
+## 环境要求
+
+- Go 1.25 或更高版本。
+- Node.js 18 或更高版本，推荐 Node.js 20 LTS；仅构建或开发 Web UI 时需要。
+- GNU Make。
+- Linux 用于生产部署。macOS 可用于本地开发与功能验证，但不具备 systemd、cgroup 等完整生产能力。
+- 修改 Protocol Buffers 定义时，还需要 `protoc` 及相应 Go/TypeScript 插件。
+
+## 快速开始
+
+以下步骤以本机单节点体验为例。生产环境请先阅读[部署与集群快速开始](docs/QUICKSTART_ZH.md)。
+
+### 1. 构建
+
+```bash
+make web
+make bin
+```
+
+构建产物位于 `bin/`：
+
+```text
+bin/procmesh
+bin/procmesh-agent
+bin/procmesh-shim
+```
+
+### 2. 启动 Agent
+
+在第一个终端中执行：
+
+```bash
+mkdir -p /tmp/procmesh-quickstart
+./bin/procmesh-agent \
+  --data-dir /tmp/procmesh-quickstart \
+  --listen 127.0.0.1:9000 \
+  --rpc 127.0.0.1:9001 \
+  --control 127.0.0.1:9002 \
+  --gossip 127.0.0.1:7946 \
+  --shim-bin ./bin/procmesh-shim
+```
+
+在第二个终端中检查服务状态并初始化集群：
+
+```bash
+curl -fsS http://127.0.0.1:9000/healthz
+curl -fsS http://127.0.0.1:9000/readyz
+./bin/procmesh --server 127.0.0.1:9000 cluster init --admin-user admin
+```
+
+初始化命令只可成功执行一次，并会输出一次性管理员密码。请立即将其保存到密码管理器，然后登录：
+
+```bash
+./bin/procmesh --server 127.0.0.1:9000 login --user admin
+```
+
+访问 <http://127.0.0.1:9000/> 可打开 Web UI。Web UI 需要单独使用管理员账户登录。
+
+### 3. 创建并启动第一个进程
+
+创建 `demo-worker.yaml`：
+
+```yaml
+name: demo-worker
+command: /bin/sh
+args:
+  - -c
+  - while true; do date; sleep 5; done
+working_directory: /tmp
+instances: 1
+autostart: true
+
+restart:
+  mode: always
+  max_retries: 10
+  retry_window_ms: 60000
+
+health:
+  type: alive
+  interval_ms: 5000
+
+log:
+  max_size: 10485760
+  max_files: 5
+  compress: true
+```
+
+应用配置、启动进程并查看日志：
+
+```bash
+./bin/procmesh --server 127.0.0.1:9000 process apply \
+  --file demo-worker.yaml \
+  --expected-revision 0 \
+  --comment 'initial deployment'
+
+./bin/procmesh --server 127.0.0.1:9000 process start demo-worker
+./bin/procmesh --server 127.0.0.1:9000 process list
+./bin/procmesh --server 127.0.0.1:9000 process logs demo-worker --lines 20 --stream stdout
+```
+
+`autostart` 用于主机或 Agent 恢复后的运行意图，不会在首次创建配置时自动启动进程，因此首次部署仍需执行 `process start`。
+
+## 常用命令
+
+```bash
+# 测试与构建
+make test
+make test-e2e       # Linux 环境的端到端测试
+make web
+make bin
+
+# 前端开发和测试
+cd web && npm ci && npm run dev
+cd web && npm test
+cd web && npm run test:e2e
+cd web && npm run i18n:check
+
+# Protocol Buffers 代码生成
+make proto
+make proto-ts
+```
+
+常用 CLI 操作：
+
+```bash
+# 查看、停止和重启进程
+procmesh --server 127.0.0.1:9000 process get demo-worker
+procmesh --server 127.0.0.1:9000 process stop demo-worker
+procmesh --server 127.0.0.1:9000 process restart demo-worker
+
+# 查询配置历史并回滚
+procmesh --server 127.0.0.1:9000 process history demo-worker
+procmesh --server 127.0.0.1:9000 process rollback demo-worker \
+  --to 1 --expected-revision 3 --comment 'rollback configuration'
+
+# 管理节点与远程 Owner 上的进程
+procmesh --server 127.0.0.1:9000 node list
+procmesh --server 127.0.0.1:9000 --node <NODE_ID> process list
+```
+
+运行 `procmesh` 可查看完整命令列表和参数说明。
+
+## 端口与安全
+
+| 端口 | 协议 | 用途 |
+| --- | --- | --- |
+| `9000` | TCP/HTTP | Web UI、CLI 和 ConnectRPC API。 |
+| `9001` | TCP/mTLS | Agent 间远程进程操作。 |
+| `9002` | TCP | Raft 控制面。 |
+| `7946` | TCP/UDP | Gossip 成员发现与状态传播。 |
+
+生产环境中不要将这些端口直接暴露到公网。使用防火墙或安全组限制访问范围；跨不可信网络访问 `9000` 时，请使用 HTTPS 反向代理、VPN 或堡垒机。`--insecure-listen` 仅允许 Agent 监听非回环地址，不会启用 HTTPS。
+
+## 文档
+
+- [部署与集群快速开始](docs/QUICKSTART_ZH.md)：systemd 安装、三节点集群初始化、扩容、进程配置与排障。
+- [UI 优化说明](docs/UI_OPTIMIZATION.md)：Web UI 设计与优化记录。
+- [变更日志](CHANGELOG.md)：已发布和开发中的功能变更。
+- [产品需求文档](docs/v2-prd/v2-prd.md)：产品范围、架构原则与非目标。
+- [架构设计与实施计划](docs/superpowers/)：各阶段的设计决策与实施记录。
+
+## 开发说明
+
+前端构建结果会嵌入 `procmesh-agent`。修改 Web UI 后执行 `make web`，再执行 `make bin` 以生成包含最新 UI 的 Agent 二进制。
+
+核心数据模型遵循以下边界：进程配置、实例状态、详细指标和日志由 Owner Agent 本地管理；Gossip 只用于成员与摘要同步；所有远程修改均通过 mTLS RPC 转发至 Owner Agent。
