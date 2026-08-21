@@ -1,4 +1,6 @@
 package version
 
 const Protocol int = 1
-const Agent = "0.0.0-dev"
+
+// Agent is replaced with the release tag by scripts/release.sh.
+var Agent = "0.1.0"

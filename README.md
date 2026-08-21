@@ -182,6 +182,17 @@ procmesh --server 127.0.0.1:9000 --node <NODE_ID> process list
 
 运行 `procmesh` 可查看完整命令列表和参数说明。
 
+## 发布 GitHub Release
+
+使用 GitHub CLI 登录，并确保 `main` 工作区没有未提交改动后执行：
+
+```bash
+gh auth login
+scripts/release.sh v1.2.3
+```
+
+脚本会构建 Web UI，并为 Linux、macOS 的 amd64、arm64 目标生成包含三个二进制程序的压缩包及 `checksums.txt`；随后推送 `main`、创建带注释的版本标签并发布 GitHub Release。可先用 `scripts/release.sh v1.2.3 --dry-run` 只生成和检查产物。Linux 是生产目标；macOS 仅用于开发和评估。Windows 暂不发布，因为 Agent 和 Shim 依赖 Unix 进程及文件系统 API。
+
 ## 端口与安全
 
 | 端口 | 协议 | 用途 |
