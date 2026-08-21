@@ -138,6 +138,13 @@ declare module "i18next" {
         'audit.summary.actors': string
         'audit.summary.dataIssues': string
         'audit.summary.sources': string
+        'audit.pagination.label': string
+        'audit.pagination.rowsPerPage': string
+        'audit.pagination.previous': string
+        'audit.pagination.next': string
+        'audit.pagination.pages': string
+        'audit.pagination.goToPage': string
+        'audit.pagination.status': string
         'audit.table.time': string
         'audit.table.user': string
         'audit.table.action': string

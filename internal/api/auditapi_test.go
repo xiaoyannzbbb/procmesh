@@ -253,6 +253,131 @@ func TestAuditAPI_PlaceholderSurvivesLimitTruncation(t *testing.T) {
 	}
 }
 
+func TestAuditAPI_LocalPaginationMetadata(t *testing.T) {
+	ctx := context.Background()
+	st := openStoreAt(t, t.TempDir()+"/audit-page.db")
+	now := time.Date(2026, 8, 21, 11, 0, 0, 0, time.UTC)
+	for i := 0; i < 5; i++ {
+		if err := st.AppendAudit(ctx, store.AuditEvent{
+			AuditID:   fmt.Sprintf("local-%d", i),
+			Timestamp: now.Add(time.Duration(i) * time.Second),
+			Resource:  "process/api",
+			Action:    "process.start",
+			Result:    "SUCCESS",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	api := &AuditAPI{Store: st, LocalID: "node-a", Now: func() time.Time { return now }}
+	resp, err := api.ListAudit(ctx, connect.NewRequest(&procmeshv1.ListAuditRequest{
+		Resource: "process/api", Limit: 2, Page: 2,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Msg.GetTotal() != 5 || resp.Msg.GetPage() != 2 || resp.Msg.GetPageSize() != 2 || !resp.Msg.GetHasMore() {
+		t.Fatalf("pagination=%+v", resp.Msg)
+	}
+	entries := resp.Msg.GetEntries()
+	if len(entries) != 2 || entries[0].GetEvent().GetAuditId() != "local-2" || entries[1].GetEvent().GetAuditId() != "local-1" {
+		t.Fatalf("entries=%+v", entries)
+	}
+}
+
+func TestAuditAPI_AggregatePaginationUsesGlobalOrder(t *testing.T) {
+	ctx := context.Background()
+	st := openStoreAt(t, t.TempDir()+"/audit-global-page.db")
+	base := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	for _, item := range []struct {
+		id     string
+		second int
+	}{
+		{id: "local-10", second: 10},
+		{id: "local-08", second: 8},
+		{id: "local-06", second: 6},
+	} {
+		if err := st.AppendAudit(ctx, store.AuditEvent{
+			AuditID: item.id, Timestamp: base.Add(time.Duration(item.second) * time.Second),
+			Resource: "process/api", Action: "process.start", Result: "SUCCESS",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	remote := []*procmeshv1.AuditEntry{
+		auditTestEntry("remote-09", "node-b", base.Add(9*time.Second)),
+		auditTestEntry("remote-07", "node-b", base.Add(7*time.Second)),
+		auditTestEntry("remote-05", "node-b", base.Add(5*time.Second)),
+	}
+	api := &AuditAPI{
+		Store: st, LocalID: "node-a", Now: func() time.Time { return base.Add(20 * time.Second) },
+		Forward: &blockingAuditForwarder{client: &pagedAuditClient{entries: remote}},
+		Members: func() []cluster.NodeSummary {
+			return []cluster.NodeSummary{
+				{NodeID: "node-a", State: cluster.StateAlive},
+				{NodeID: "node-b", State: cluster.StateAlive, RPCAddress: "127.0.0.1:9003"},
+			}
+		},
+	}
+	resp, err := api.ListAudit(ctx, connect.NewRequest(&procmeshv1.ListAuditRequest{
+		Resource: "process/api", Limit: 2, Page: 2,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := resp.Msg.GetEntries()
+	if resp.Msg.GetTotal() != 6 || len(entries) != 2 {
+		t.Fatalf("total=%d entries=%+v", resp.Msg.GetTotal(), entries)
+	}
+	if entries[0].GetEvent().GetAuditId() != "local-08" || entries[1].GetEvent().GetAuditId() != "remote-07" {
+		t.Fatalf("global page=%+v want local-08,remote-07", entries)
+	}
+}
+
+func TestAuditAPI_AggregatePaginationFetchesRemoteChunks(t *testing.T) {
+	ctx := context.Background()
+	remote := make([]*procmeshv1.AuditEntry, 250)
+	base := time.Date(2026, 8, 21, 13, 0, 0, 0, time.UTC)
+	for i := range remote {
+		remote[i] = auditTestEntry(fmt.Sprintf("remote-%03d", i), "node-b", base.Add(-time.Duration(i)*time.Second))
+	}
+	remoteClient := &pagedAuditClient{entries: remote}
+	api := &AuditAPI{
+		LocalID: "node-a", Now: func() time.Time { return base },
+		Forward: &blockingAuditForwarder{client: remoteClient},
+		Members: func() []cluster.NodeSummary {
+			return []cluster.NodeSummary{
+				{NodeID: "node-a", State: cluster.StateAlive},
+				{NodeID: "node-b", State: cluster.StateAlive, RPCAddress: "127.0.0.1:9003"},
+			}
+		},
+	}
+	resp, err := api.ListAudit(ctx, connect.NewRequest(&procmeshv1.ListAuditRequest{Limit: 100, Page: 3}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Msg.GetTotal() != 250 || len(resp.Msg.GetEntries()) != 50 || resp.Msg.GetHasMore() {
+		t.Fatalf("response=%+v", resp.Msg)
+	}
+	if got := resp.Msg.GetEntries()[0].GetEvent().GetAuditId(); got != "remote-200" {
+		t.Fatalf("first audit=%q want remote-200", got)
+	}
+	if len(remoteClient.requests) != 2 || remoteClient.requests[0] != [2]int{1, 200} || remoteClient.requests[1] != [2]int{2, 200} {
+		t.Fatalf("remote requests=%v want [[1 200] [2 200]]", remoteClient.requests)
+	}
+}
+
+func auditTestEntry(id, node string, timestamp time.Time) *procmeshv1.AuditEntry {
+	return &procmeshv1.AuditEntry{
+		Event: &procmeshv1.AuditEvent{
+			AuditId: id, TimestampUnixMs: timestamp.UnixMilli(), Resource: "process/api",
+			Action: "process.start", Result: "SUCCESS",
+		},
+		SourceNode: node, Freshness: freshness.LIVE, LastUpdatedUnixMs: timestamp.UnixMilli(),
+	}
+}
+
 func TestAuditAPI_ViewerDenied(t *testing.T) {
 	_, svc := newBootstrappedAuth(t)
 	putViewerUser(t, svc)
@@ -266,6 +391,30 @@ type blockingAuditForwarder struct {
 	started chan struct{}
 	release chan struct{}
 	err     error
+	client  procmeshv1connect.AuditServiceClient
+}
+
+type pagedAuditClient struct {
+	entries  []*procmeshv1.AuditEntry
+	requests [][2]int
+}
+
+func (c *pagedAuditClient) ListAudit(_ context.Context, req *connect.Request[procmeshv1.ListAuditRequest]) (*connect.Response[procmeshv1.ListAuditResponse], error) {
+	limit := normalizeAuditLimit(req.Msg.GetLimit())
+	page := normalizeAuditPage(req.Msg.GetPage())
+	c.requests = append(c.requests, [2]int{page, limit})
+	start := (page - 1) * limit
+	end := start + limit
+	if start > len(c.entries) {
+		start = len(c.entries)
+	}
+	if end > len(c.entries) {
+		end = len(c.entries)
+	}
+	return connect.NewResponse(&procmeshv1.ListAuditResponse{
+		Entries: c.entries[start:end], Total: int64(len(c.entries)), Page: int32(page),
+		PageSize: int32(limit), HasMore: end < len(c.entries),
+	}), nil
 }
 
 func (f *blockingAuditForwarder) Process(context.Context, Route) (procmeshv1connect.ProcessServiceClient, error) {
@@ -317,6 +466,9 @@ func (f *blockingAuditForwarder) Audit(ctx context.Context, _ Route) (procmeshv1
 	}
 	if f.err != nil {
 		return nil, f.err
+	}
+	if f.client != nil {
+		return f.client, nil
 	}
 	return nil, errors.New("unavailable")
 }

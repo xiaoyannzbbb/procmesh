@@ -21,6 +21,11 @@ var _ procmeshv1connect.AuditServiceHandler = (*AuditAPI)(nil)
 
 const auditHopTimeout = 2 * time.Second
 
+type auditPageResult struct {
+	entries []*procmeshv1.AuditEntry
+	total   int64
+}
+
 type AuditAPI struct {
 	Store     *store.Store
 	Auth      *auth.Service
@@ -37,49 +42,70 @@ func (s *AuditAPI) ListAudit(ctx context.Context, req *connect.Request[procmeshv
 		return nil, err
 	}
 	limit := normalizeAuditLimit(req.Msg.GetLimit())
+	page := normalizeAuditPage(req.Msg.GetPage())
+	offset := (page - 1) * limit
 	now := s.now()
 	resource := req.Msg.GetResource()
 	target := req.Msg.GetTargetNode()
 
 	if !s.LocalOnly && target != "" && !s.isLocalNode(target) {
-		entries := s.listTarget(ctx, req, target, resource, limit, now)
-		return connect.NewResponse(&procmeshv1.ListAuditResponse{Entries: entries}), nil
+		result := s.listTarget(ctx, req, target, resource, limit, page, now)
+		return auditPageResponse(result, page, limit), nil
 	}
 
-	entries, err := s.listLocal(ctx, resource, limit, now)
+	if !s.LocalOnly && target == "" {
+		result, err := s.listAggregate(ctx, req, resource, limit, page, now)
+		if err != nil {
+			return nil, ToConnect(err)
+		}
+		return auditPageResponse(result, page, limit), nil
+	}
+
+	result, err := s.listLocal(ctx, resource, limit, offset, now)
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	if !s.LocalOnly && target == "" {
-		entries = append(entries, s.aggregateRemotes(ctx, req, resource, limit, now)...)
-		sortAuditEntries(entries)
-		entries = applyAuditLimit(entries, limit)
-	}
-	return connect.NewResponse(&procmeshv1.ListAuditResponse{Entries: entries}), nil
+	return auditPageResponse(result, page, limit), nil
 }
 
-func (s *AuditAPI) listTarget(ctx context.Context, req *connect.Request[procmeshv1.ListAuditRequest], target, resource string, limit int, now time.Time) []*procmeshv1.AuditEntry {
+func (s *AuditAPI) listTarget(ctx context.Context, req *connect.Request[procmeshv1.ListAuditRequest], target, resource string, limit, page int, now time.Time) auditPageResult {
 	h := req.Header().Clone()
 	rpc.SetTarget(h, target)
 	local, rt, err := hopRoute(s.LocalOnly, s.LocalID, s.Router, ctx, h, "", "")
 	if err != nil || local {
 		// target is already known non-local; local here means no router to hop.
-		return []*procmeshv1.AuditEntry{s.placeholder(target, now)}
+		return placeholderPage(s.placeholder(target, now), page)
 	}
-	entries, herr := s.hopNode(ctx, req, rt, resource, limit)
+	result, herr := s.hopNode(ctx, req, rt, resource, limit, page)
 	if herr != nil {
 		nodeID := rt.NodeID
 		if nodeID == "" {
 			nodeID = target
 		}
-		return []*procmeshv1.AuditEntry{s.placeholder(nodeID, now)}
+		return placeholderPage(s.placeholder(nodeID, now), page)
 	}
-	return entries
+	return result
 }
 
-func (s *AuditAPI) aggregateRemotes(ctx context.Context, req *connect.Request[procmeshv1.ListAuditRequest], resource string, limit int, now time.Time) []*procmeshv1.AuditEntry {
+func (s *AuditAPI) listAggregate(ctx context.Context, req *connect.Request[procmeshv1.ListAuditRequest], resource string, limit, page int, now time.Time) (auditPageResult, error) {
+	needed := page * limit
+	local, err := s.listLocal(ctx, resource, needed, 0, now)
+	if err != nil {
+		return auditPageResult{}, err
+	}
+	remote := s.aggregateRemotes(ctx, req, resource, needed, now)
+	entries := append(local.entries, remote.entries...)
+	sortAuditEntries(entries)
+	offset := (page - 1) * limit
+	return auditPageResult{
+		entries: sliceAuditPage(entries, offset, limit),
+		total:   local.total + remote.total,
+	}, nil
+}
+
+func (s *AuditAPI) aggregateRemotes(ctx context.Context, req *connect.Request[procmeshv1.ListAuditRequest], resource string, needed int, now time.Time) auditPageResult {
 	var (
-		out   []*procmeshv1.AuditEntry
+		out   auditPageResult
 		alive []cluster.NodeSummary
 		mu    sync.Mutex
 		g     errgroup.Group
@@ -90,7 +116,8 @@ func (s *AuditAPI) aggregateRemotes(ctx context.Context, req *connect.Request[pr
 		}
 		switch m.State {
 		case cluster.StateFailed, cluster.StateSuspect:
-			out = append(out, unavailableEntry(m, now))
+			out.entries = append(out.entries, unavailableEntry(m, now))
+			out.total++
 		case cluster.StateAlive:
 			alive = append(alive, m)
 		}
@@ -101,14 +128,16 @@ func (s *AuditAPI) aggregateRemotes(ctx context.Context, req *connect.Request[pr
 			hopCtx, cancel := context.WithTimeout(ctx, auditHopTimeout)
 			defer cancel()
 			rt := Route{NodeID: m.NodeID, RPC: m.RPCAddress}
-			ents, err := s.hopNode(hopCtx, req, rt, resource, limit)
+			result, err := s.hopNodePrefix(hopCtx, req, rt, resource, needed)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
-				out = append(out, unavailableEntry(m, now))
+				out.entries = append(out.entries, unavailableEntry(m, now))
+				out.total++
 				return nil
 			}
-			out = append(out, ents...)
+			out.entries = append(out.entries, result.entries...)
+			out.total += result.total
 			return nil
 		})
 	}
@@ -116,13 +145,40 @@ func (s *AuditAPI) aggregateRemotes(ctx context.Context, req *connect.Request[pr
 	return out
 }
 
-func (s *AuditAPI) hopNode(ctx context.Context, req *connect.Request[procmeshv1.ListAuditRequest], rt Route, resource string, limit int) ([]*procmeshv1.AuditEntry, error) {
+func (s *AuditAPI) hopNodePrefix(ctx context.Context, req *connect.Request[procmeshv1.ListAuditRequest], rt Route, resource string, needed int) (auditPageResult, error) {
+	chunkSize := needed
+	if chunkSize > 200 {
+		chunkSize = 200
+	}
+	result := auditPageResult{entries: []*procmeshv1.AuditEntry{}}
+	for page := 1; len(result.entries) < needed; page++ {
+		chunk, err := s.hopNode(ctx, req, rt, resource, chunkSize, page)
+		if err != nil {
+			return auditPageResult{}, err
+		}
+		result.entries = append(result.entries, chunk.entries...)
+		result.total = chunk.total
+		if len(chunk.entries) < chunkSize || int64(len(result.entries)) >= chunk.total || page >= 100 {
+			break
+		}
+	}
+	if len(result.entries) > needed {
+		result.entries = result.entries[:needed]
+	}
+	if result.total == 0 && len(result.entries) > 0 {
+		result.total = int64(len(result.entries))
+	}
+	return result, nil
+}
+
+func (s *AuditAPI) hopNode(ctx context.Context, req *connect.Request[procmeshv1.ListAuditRequest], rt Route, resource string, limit, page int) (auditPageResult, error) {
 	if s.Forward == nil || rt.RPC == "" {
-		return nil, unavailableOwner()
+		return auditPageResult{}, unavailableOwner()
 	}
 	fwd := connect.NewRequest(&procmeshv1.ListAuditRequest{
 		Resource: resource,
 		Limit:    int32(limit),
+		Page:     int32(page),
 	})
 	for k, vs := range req.Header() {
 		for _, v := range vs {
@@ -133,25 +189,25 @@ func (s *AuditAPI) hopNode(ctx context.Context, req *connect.Request[procmeshv1.
 	stampIdentity(fwd.Header(), ctx)
 	cli, err := s.Forward.Audit(ctx, rt)
 	if err != nil {
-		return nil, err
+		return auditPageResult{}, err
 	}
 	out, err := cli.ListAudit(ctx, fwd)
 	if err != nil {
-		return nil, err
+		return auditPageResult{}, err
 	}
 	if out == nil || out.Msg == nil {
-		return []*procmeshv1.AuditEntry{}, nil
+		return auditPageResult{entries: []*procmeshv1.AuditEntry{}}, nil
 	}
-	return out.Msg.GetEntries(), nil
+	return auditPageResult{entries: out.Msg.GetEntries(), total: out.Msg.GetTotal()}, nil
 }
 
-func (s *AuditAPI) listLocal(ctx context.Context, resource string, limit int, now time.Time) ([]*procmeshv1.AuditEntry, error) {
+func (s *AuditAPI) listLocal(ctx context.Context, resource string, limit, offset int, now time.Time) (auditPageResult, error) {
 	if s.Store == nil {
-		return []*procmeshv1.AuditEntry{}, nil
+		return auditPageResult{entries: []*procmeshv1.AuditEntry{}}, nil
 	}
-	evs, err := s.Store.ListAuditAll(ctx, resource, limit)
+	evs, total, err := s.Store.ListAuditPage(ctx, resource, limit, offset)
 	if err != nil {
-		return nil, err
+		return auditPageResult{}, err
 	}
 	out := make([]*procmeshv1.AuditEntry, 0, len(evs))
 	nowMs := now.UnixMilli()
@@ -163,7 +219,7 @@ func (s *AuditAPI) listLocal(ctx context.Context, resource string, limit int, no
 			LastUpdatedUnixMs: nowMs,
 		})
 	}
-	return out, nil
+	return auditPageResult{entries: out, total: total}, nil
 }
 
 func (s *AuditAPI) placeholder(nodeID string, now time.Time) *procmeshv1.AuditEntry {
@@ -246,35 +302,57 @@ func normalizeAuditLimit(limit int32) int {
 	return int(limit)
 }
 
-func sortAuditEntries(entries []*procmeshv1.AuditEntry) {
-	sort.SliceStable(entries, func(i, j int) bool {
-		return auditTimestamp(entries[i]) > auditTimestamp(entries[j])
+func normalizeAuditPage(page int32) int {
+	if page <= 0 {
+		return 1
+	}
+	if page > 100 {
+		return 100
+	}
+	return int(page)
+}
+
+func auditPageResponse(result auditPageResult, page, limit int) *connect.Response[procmeshv1.ListAuditResponse] {
+	offset := (page - 1) * limit
+	return connect.NewResponse(&procmeshv1.ListAuditResponse{
+		Entries:  result.entries,
+		Total:    result.total,
+		Page:     int32(page),
+		PageSize: int32(limit),
+		HasMore:  int64(offset+len(result.entries)) < result.total,
 	})
 }
 
-func applyAuditLimit(entries []*procmeshv1.AuditEntry, limit int) []*procmeshv1.AuditEntry {
-	if limit <= 0 || len(entries) <= limit {
-		return entries
+func placeholderPage(entry *procmeshv1.AuditEntry, page int) auditPageResult {
+	result := auditPageResult{total: 1, entries: []*procmeshv1.AuditEntry{}}
+	if page == 1 {
+		result.entries = append(result.entries, entry)
 	}
-	var placeholders, rest []*procmeshv1.AuditEntry
-	for _, e := range entries {
-		if isUnavailablePlaceholder(e) {
-			placeholders = append(placeholders, e)
-			continue
+	return result
+}
+
+func sortAuditEntries(entries []*procmeshv1.AuditEntry) {
+	sort.Slice(entries, func(i, j int) bool {
+		left, right := entries[i], entries[j]
+		if auditTimestamp(left) != auditTimestamp(right) {
+			return auditTimestamp(left) > auditTimestamp(right)
 		}
-		rest = append(rest, e)
+		if left.GetSourceNode() != right.GetSourceNode() {
+			return left.GetSourceNode() < right.GetSourceNode()
+		}
+		return left.GetEvent().GetAuditId() < right.GetEvent().GetAuditId()
+	})
+}
+
+func sliceAuditPage(entries []*procmeshv1.AuditEntry, offset, limit int) []*procmeshv1.AuditEntry {
+	if offset >= len(entries) {
+		return []*procmeshv1.AuditEntry{}
 	}
-	keep := limit - len(placeholders)
-	if keep < 0 {
-		return placeholders[:limit]
+	end := offset + limit
+	if end > len(entries) {
+		end = len(entries)
 	}
-	if keep > len(rest) {
-		keep = len(rest)
-	}
-	out := make([]*procmeshv1.AuditEntry, 0, keep+len(placeholders))
-	out = append(out, rest[:keep]...)
-	out = append(out, placeholders...)
-	return out
+	return entries[offset:end]
 }
 
 func isUnavailablePlaceholder(e *procmeshv1.AuditEntry) bool {

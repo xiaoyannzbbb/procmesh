@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/vue-query";
 import {
   AlertCircle,
   CheckCircle2,
+  ChevronLeft,
   ChevronRight,
   Clipboard,
   FilterX,
@@ -12,7 +13,7 @@ import {
   Search,
   ShieldCheck,
 } from "lucide-vue-next";
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import Drawer from "../components/Drawer.vue";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
 import { LIVE, STALE, UNKNOWN, type Freshness } from "../lib/freshness";
@@ -21,8 +22,7 @@ import { useAudit } from "../lib/useAudit";
 import { useI18n } from "../lib/useI18n";
 import { formatRemoteError } from "./processView";
 
-const POLL_MS = 5000;
-const PAGE_LIMIT = 200;
+const PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
 const SUCCESS_RESULTS = new Set(["OK", "SUCCESS"]);
 
 type AuditEntryInput = {
@@ -79,22 +79,29 @@ const targetNode = ref("");
 const searchQuery = ref("");
 const actionFilter = ref("ALL");
 const resultFilter = ref("ALL");
+const currentPage = ref(1);
+const pageSize = ref<number>(PAGE_SIZE_OPTIONS[0]);
 const knownNodes = ref<string[]>([]);
 const detailRow = ref<AuditRow | null>(null);
 const copyState = ref<"idle" | "copied" | "failed">("idle");
+const workspaceRef = ref<HTMLElement | null>(null);
+const pendingPageFocus = ref(false);
 
 const query = useQuery({
-  queryKey: computed(() => ["audit", appliedResource.value, targetNode.value]),
+  queryKey: computed(() => ["audit", appliedResource.value, targetNode.value, currentPage.value, pageSize.value]),
   queryFn: () =>
     client.listAudit({
       resource: appliedResource.value,
-      limit: PAGE_LIMIT,
+      limit: pageSize.value,
       targetNode: targetNode.value,
+      page: currentPage.value,
     }),
-  refetchInterval: POLL_MS,
 });
 
 const rawRows = computed(() => (query.data.value?.entries ?? []).map(mapEntry));
+const hasServerPagination = computed(() => Boolean(query.data.value?.pageSize));
+const serverTotal = computed(() => hasServerPagination.value ? toNumber(query.data.value?.total) : rawRows.value.length);
+const responsePageSize = computed(() => query.data.value?.pageSize || pageSize.value);
 
 watch(
   rawRows,
@@ -110,12 +117,20 @@ watch(
   { immediate: true },
 );
 
-const actionOptions = computed(() =>
-  Array.from(new Set(rawRows.value.map((row) => row.actionCode).filter(Boolean))).sort(),
-);
-const resultOptions = computed(() =>
-  Array.from(new Set(rawRows.value.map((row) => row.resultCode).filter(Boolean))).sort(),
-);
+const actionOptions = computed(() => {
+  const options = new Set(rawRows.value.map((row) => row.actionCode).filter(Boolean));
+  if (actionFilter.value !== "ALL") {
+    options.add(actionFilter.value);
+  }
+  return Array.from(options).sort();
+});
+const resultOptions = computed(() => {
+  const options = new Set(rawRows.value.map((row) => row.resultCode).filter(Boolean));
+  if (resultFilter.value !== "ALL") {
+    options.add(resultFilter.value);
+  }
+  return Array.from(options).sort();
+});
 
 const entries = computed(() => {
   const needle = searchQuery.value.trim().toLocaleLowerCase();
@@ -143,6 +158,57 @@ const entries = computed(() => {
     ].some((value) => value.toLocaleLowerCase().includes(needle));
   });
 });
+
+const pageCount = computed(() => Math.max(1, Math.ceil(serverTotal.value / responsePageSize.value)));
+const hasMore = computed(() => hasServerPagination.value && Boolean(query.data.value?.hasMore));
+const pageStart = computed(() => rawRows.value.length ? (currentPage.value - 1) * responsePageSize.value + 1 : 0);
+const pageEnd = computed(() => rawRows.value.length ? pageStart.value + rawRows.value.length - 1 : 0);
+const visiblePages = computed<Array<number | string>>(() => {
+  const count = pageCount.value;
+  const current = currentPage.value;
+  if (count <= 7) {
+    return Array.from({ length: count }, (_, index) => index + 1);
+  }
+  if (current <= 4) {
+    return [1, 2, 3, 4, 5, "end-gap", count];
+  }
+  if (current >= count - 3) {
+    return [1, "start-gap", count - 4, count - 3, count - 2, count - 1, count];
+  }
+  return [1, "start-gap", current - 1, current, current + 1, "end-gap", count];
+});
+
+watch(
+  [appliedResource, targetNode, pageSize],
+  () => {
+    currentPage.value = 1;
+  },
+);
+
+watch(
+  [pageCount, hasServerPagination, () => query.isFetching.value],
+  ([count, paginated, fetching]) => {
+    if (paginated && !fetching && currentPage.value > count) {
+      currentPage.value = count;
+    }
+  },
+);
+
+watch(
+  () => query.dataUpdatedAt.value,
+  async () => {
+    const responsePage = query.data.value?.page || currentPage.value;
+    if (responsePage !== currentPage.value || !pendingPageFocus.value) {
+      return;
+    }
+    pendingPageFocus.value = false;
+    await nextTick();
+    const firstVisibleEntry = Array.from(
+      workspaceRef.value?.querySelectorAll<HTMLElement>("[data-page-entry]") ?? [],
+    ).find((element) => element.offsetParent !== null);
+    firstVisibleEntry?.focus();
+  },
+);
 
 const problemCount = computed(
   () => rawRows.value.filter((row) => !row.unavailable && row.resultCode && !SUCCESS_RESULTS.has(row.resultCode)).length,
@@ -196,6 +262,15 @@ function closeDetail(): void {
 
 async function refresh(): Promise<void> {
   await query.refetch();
+}
+
+function goToPage(page: number): void {
+  const next = Math.min(Math.max(page, 1), pageCount.value);
+  if (next === currentPage.value) {
+    return;
+  }
+  pendingPageFocus.value = true;
+  currentPage.value = next;
 }
 
 async function copyOperationId(): Promise<void> {
@@ -361,13 +436,13 @@ function resultTone(code: string): string {
       </div>
     </div>
 
-    <section class="workspace-panel" aria-labelledby="audit-log-title">
+    <section ref="workspaceRef" class="workspace-panel" aria-labelledby="audit-log-title">
       <div class="section-heading">
         <div>
           <h2 id="audit-log-title">{{ t("audit.logTitle") }}</h2>
-          <p>{{ t("audit.logHint", { count: PAGE_LIMIT }) }}</p>
+          <p>{{ t("audit.logHint") }}</p>
         </div>
-        <span class="result-count">{{ t("audit.resultCount", { shown: entries.length, loaded: rawRows.length }) }}</span>
+        <span class="result-count">{{ t("audit.resultCount", { start: pageStart, end: pageEnd, total: serverTotal, shown: entries.length }) }}</span>
       </div>
 
       <form class="filter-toolbar" :aria-label="t('audit.filters')" @submit.prevent="applyResource">
@@ -445,7 +520,7 @@ function resultTone(code: string): string {
                 <td class="time-cell">{{ row.time }}</td>
                 <td><div class="primary-secondary"><strong>{{ row.user }}</strong><span class="mono" :title="row.userId">{{ shortId(row.userId) }}</span></div></td>
                 <td class="action-cell">
-                  <button type="button" class="action-button" data-action="view-audit" @click="openDetail(row)">
+                  <button type="button" class="action-button" data-action="view-audit" data-page-entry @click="openDetail(row)">
                     <strong>{{ row.action }}</strong><span class="mono" :title="row.actionCode">{{ row.actionCode }}</span>
                   </button>
                 </td>
@@ -462,7 +537,7 @@ function resultTone(code: string): string {
         </div>
 
         <div class="mobile-audit-list">
-          <button v-for="row in entries" :key="row.key" type="button" class="mobile-audit-item" @click="openDetail(row)">
+          <button v-for="row in entries" :key="row.key" type="button" class="mobile-audit-item" data-page-entry @click="openDetail(row)">
             <span class="mobile-topline"><strong>{{ row.action }}</strong><span class="result-badge" :class="`result-${resultTone(row.resultCode)}`"><span class="status-dot" aria-hidden="true" />{{ row.result }}</span></span>
             <span class="resource-value">{{ row.resource }}</span>
             <span class="mobile-meta"><span>{{ row.user }}</span><span>{{ shortId(row.sourceNode) }}</span><span>{{ row.time }}</span></span>
@@ -470,6 +545,52 @@ function resultTone(code: string): string {
           </button>
           <div v-if="!entries.length" class="empty-state mobile-empty-state"><CheckCircle2 :size="28" aria-hidden="true" /><strong>{{ isFiltered ? t("audit.noMatches") : t("audit.noEntries") }}</strong><span>{{ isFiltered ? t("audit.noMatchesHint") : t("audit.noEntriesHint") }}</span><button v-if="isFiltered" type="button" class="btn" @click="resetFilters">{{ t("audit.clearFilters") }}</button></div>
         </div>
+
+        <nav v-if="serverTotal || rawRows.length" class="pagination" :aria-label="t('audit.pagination.label')">
+          <label class="page-size-control">
+            <span>{{ t("audit.pagination.rowsPerPage") }}</span>
+            <select v-model.number="pageSize">
+              <option v-for="size in PAGE_SIZE_OPTIONS" :key="size" :value="size">{{ size }}</option>
+            </select>
+          </label>
+          <div class="pagination-controls">
+            <button
+              type="button"
+              class="pagination-arrow"
+              :disabled="currentPage === 1"
+              :aria-label="t('audit.pagination.previous')"
+              :title="t('audit.pagination.previous')"
+              @click="goToPage(currentPage - 1)"
+            >
+              <ChevronLeft :size="18" aria-hidden="true" />
+            </button>
+            <div class="page-numbers" :aria-label="t('audit.pagination.pages')">
+              <template v-for="item in visiblePages" :key="item">
+                <button
+                  v-if="typeof item === 'number'"
+                  type="button"
+                  class="page-number"
+                  :class="{ active: item === currentPage }"
+                  :aria-current="item === currentPage ? 'page' : undefined"
+                  :aria-label="t('audit.pagination.goToPage', { page: item })"
+                  @click="goToPage(item)"
+                >{{ item }}</button>
+                <span v-else class="page-gap" aria-hidden="true">…</span>
+              </template>
+            </div>
+            <span class="mobile-page-status">{{ t("audit.pagination.status", { page: currentPage, total: pageCount }) }}</span>
+            <button
+              type="button"
+              class="pagination-arrow"
+              :disabled="!hasMore"
+              :aria-label="t('audit.pagination.next')"
+              :title="t('audit.pagination.next')"
+              @click="goToPage(currentPage + 1)"
+            >
+              <ChevronRight :size="18" aria-hidden="true" />
+            </button>
+          </div>
+        </nav>
       </template>
     </section>
 
@@ -563,6 +684,17 @@ h1 { margin-bottom: 0.35rem; font-size: 1.55rem; font-weight: 700; }
 .empty-state strong { color: var(--color-text); }
 .empty-state span { font-size: 0.8rem; }
 .mobile-audit-list { display: none; }
+.pagination { display: flex; min-height: 4.5rem; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.75rem 1.25rem; border-top: 1px solid var(--color-border); background: color-mix(in srgb, var(--color-bg) 35%, var(--color-card)); }
+.page-size-control { display: flex; align-items: center; gap: 0.55rem; color: var(--color-muted); font-size: 0.78rem; font-weight: 600; }
+.page-size-control select { min-width: 4.5rem; min-height: 2.75rem; border: 1px solid var(--color-border); border-radius: 7px; background: var(--color-card); color: var(--color-text); padding: 0.45rem 1.8rem 0.45rem 0.65rem; font: inherit; }
+.pagination-controls, .page-numbers { display: flex; align-items: center; gap: 0.35rem; }
+.pagination-arrow, .page-number { display: inline-flex; width: 2.75rem; height: 2.75rem; align-items: center; justify-content: center; border: 1px solid var(--color-border); border-radius: 7px; background: var(--color-card); color: var(--color-text); font-size: 0.8rem; font-weight: 650; cursor: pointer; }
+.page-gap { display: inline-flex; width: 2.75rem; height: 2.75rem; align-items: center; justify-content: center; color: var(--color-muted); }
+.pagination-arrow:hover:not(:disabled), .page-number:hover:not(.active) { border-color: color-mix(in srgb, var(--color-text) 25%, var(--color-border)); background: color-mix(in srgb, var(--color-text) 5%, var(--color-card)); }
+.page-number.active { border-color: var(--color-text); background: var(--color-text); color: var(--color-card); }
+.pagination-arrow:disabled { opacity: 0.42; cursor: not-allowed; }
+.pagination-arrow:focus-visible, .page-number:focus-visible, .page-size-control select:focus-visible { outline: 3px solid color-mix(in srgb, var(--color-accent) 55%, transparent); outline-offset: 2px; }
+.mobile-page-status { display: none; min-width: 5.5rem; color: var(--color-muted); font-size: 0.78rem; text-align: center; }
 .detail-content { display: flex; flex-direction: column; gap: 1.25rem; }
 .detail-lead { align-items: flex-start; padding-bottom: 1rem; border-bottom: 1px solid var(--color-border); }
 .detail-lead h3 { margin: 0.2rem 0 0.35rem; font-size: 1.05rem; }
@@ -605,6 +737,11 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .mobile-meta span + span::before { margin-right: 0.6rem; content: "·"; }
   .mobile-bottomline .mono { max-width: 65%; overflow: hidden; color: var(--color-muted); font-size: 0.72rem; text-overflow: ellipsis; white-space: nowrap; }
   .mobile-empty-state { min-height: 14rem; padding: 2rem 1rem; }
+  .pagination { align-items: stretch; flex-direction: column; }
+  .page-size-control { justify-content: space-between; }
+  .pagination-controls { justify-content: space-between; }
+  .page-numbers { display: none; }
+  .mobile-page-status { display: inline; }
   .evidence-grid { grid-template-columns: 1fr; }
   .evidence-grid > div, .evidence-grid > div:nth-child(2n), .evidence-grid > div:nth-last-child(-n + 2) { border-right: 0; border-bottom: 1px solid var(--color-border); }
   .evidence-grid > div:last-child { border-bottom: 0; }

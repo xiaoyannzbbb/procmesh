@@ -6064,8 +6064,9 @@ func (x *AuditEntry) GetLastUpdatedUnixMs() int64 {
 type ListAuditRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Resource      string                 `protobuf:"bytes,1,opt,name=resource,proto3" json:"resource,omitempty"`                       // 空 = 全部
-	Limit         int32                  `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`                            // 0 = 50；封顶 200
+	Limit         int32                  `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`                            // 每页数量：0 = 50；封顶 200
 	TargetNode    string                 `protobuf:"bytes,3,opt,name=target_node,json=targetNode,proto3" json:"target_node,omitempty"` // 空 = 聚合；非空 = 只查该 node
+	Page          int32                  `protobuf:"varint,4,opt,name=page,proto3" json:"page,omitempty"`                              // 1-based；0 = 1；封顶 100
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -6121,9 +6122,20 @@ func (x *ListAuditRequest) GetTargetNode() string {
 	return ""
 }
 
+func (x *ListAuditRequest) GetPage() int32 {
+	if x != nil {
+		return x.Page
+	}
+	return 0
+}
+
 type ListAuditResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Entries       []*AuditEntry          `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
+	Total         int64                  `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
+	Page          int32                  `protobuf:"varint,3,opt,name=page,proto3" json:"page,omitempty"`
+	PageSize      int32                  `protobuf:"varint,4,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	HasMore       bool                   `protobuf:"varint,5,opt,name=has_more,json=hasMore,proto3" json:"has_more,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -6163,6 +6175,34 @@ func (x *ListAuditResponse) GetEntries() []*AuditEntry {
 		return x.Entries
 	}
 	return nil
+}
+
+func (x *ListAuditResponse) GetTotal() int64 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+func (x *ListAuditResponse) GetPage() int32 {
+	if x != nil {
+		return x.Page
+	}
+	return 0
+}
+
+func (x *ListAuditResponse) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+func (x *ListAuditResponse) GetHasMore() bool {
+	if x != nil {
+		return x.HasMore
+	}
+	return false
 }
 
 type GetAgentMetricsRequest struct {
@@ -15453,14 +15493,19 @@ const file_proto_procmesh_v1_api_proto_rawDesc = "" +
 	"\vsource_node\x18\x02 \x01(\tR\n" +
 	"sourceNode\x12\x1c\n" +
 	"\tfreshness\x18\x03 \x01(\tR\tfreshness\x12/\n" +
-	"\x14last_updated_unix_ms\x18\x04 \x01(\x03R\x11lastUpdatedUnixMs\"e\n" +
+	"\x14last_updated_unix_ms\x18\x04 \x01(\x03R\x11lastUpdatedUnixMs\"y\n" +
 	"\x10ListAuditRequest\x12\x1a\n" +
 	"\bresource\x18\x01 \x01(\tR\bresource\x12\x14\n" +
 	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12\x1f\n" +
 	"\vtarget_node\x18\x03 \x01(\tR\n" +
-	"targetNode\"F\n" +
+	"targetNode\x12\x12\n" +
+	"\x04page\x18\x04 \x01(\x05R\x04page\"\xa8\x01\n" +
 	"\x11ListAuditResponse\x121\n" +
-	"\aentries\x18\x01 \x03(\v2\x17.procmesh.v1.AuditEntryR\aentries\"\x18\n" +
+	"\aentries\x18\x01 \x03(\v2\x17.procmesh.v1.AuditEntryR\aentries\x12\x14\n" +
+	"\x05total\x18\x02 \x01(\x03R\x05total\x12\x12\n" +
+	"\x04page\x18\x03 \x01(\x05R\x04page\x12\x1b\n" +
+	"\tpage_size\x18\x04 \x01(\x05R\bpageSize\x12\x19\n" +
+	"\bhas_more\x18\x05 \x01(\bR\ahasMore\"\x18\n" +
 	"\x16GetAgentMetricsRequest\"\xf1\x01\n" +
 	"\fAgentMetrics\x12%\n" +
 	"\x0euptime_seconds\x18\x01 \x01(\x01R\ruptimeSeconds\x12'\n" +

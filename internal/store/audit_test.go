@@ -316,6 +316,40 @@ func TestListAuditAll_ResourceFilter(t *testing.T) {
 	}
 }
 
+func TestListAuditPage_ReturnsPageAndFilteredTotal(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	base := time.Date(2026, 8, 21, 10, 0, 0, 0, time.UTC)
+	for i := 0; i < 5; i++ {
+		if err := s.AppendAudit(ctx, store.AuditEvent{
+			AuditID:   "page-" + string(rune('0'+i)),
+			Timestamp: base.Add(time.Duration(i) * time.Second),
+			Resource:  "process/api",
+			Action:    "process.start",
+			Result:    "SUCCESS",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.AppendAudit(ctx, store.AuditEvent{
+		AuditID: "other", Timestamp: base.Add(10 * time.Second), Resource: "process/other",
+		Action: "process.stop", Result: "SUCCESS",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	events, total, err := s.ListAuditPage(ctx, "process/api", 2, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 5 {
+		t.Fatalf("total=%d want 5", total)
+	}
+	if len(events) != 2 || events[0].AuditID != "page-2" || events[1].AuditID != "page-1" {
+		t.Fatalf("events=%+v want page-2,page-1", events)
+	}
+}
+
 func TestAudit_ErrorAfterClose(t *testing.T) {
 	ctx := context.Background()
 	s := openStore(t)
@@ -330,6 +364,9 @@ func TestAudit_ErrorAfterClose(t *testing.T) {
 	}
 	if _, err := s.ListAuditAll(ctx, "", 10); err == nil {
 		t.Fatal("ListAuditAll")
+	}
+	if _, _, err := s.ListAuditPage(ctx, "", 10, 0); err == nil {
+		t.Fatal("ListAuditPage")
 	}
 }
 

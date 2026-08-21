@@ -575,10 +575,17 @@ message AuditEntry {
 
 message ListAuditRequest {
   string resource = 1;     // 空 = 全部
-  int32 limit = 2;         // 0 = 50；封顶 200
+  int32 limit = 2;         // 每页数量：0 = 50；封顶 200
   string target_node = 3;  // 空 = 聚合；非空 = 只查该 node
+  int32 page = 4;          // 1-based；0 = 1；封顶 100
 }
-message ListAuditResponse { repeated AuditEntry entries = 1; }
+message ListAuditResponse {
+  repeated AuditEntry entries = 1;
+  int64 total = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+  bool has_more = 5;
+}
 
 service AuditService {
   rpc ListAudit(ListAuditRequest) returns (ListAuditResponse);

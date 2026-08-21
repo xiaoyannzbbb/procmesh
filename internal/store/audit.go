@@ -112,36 +112,69 @@ func (s *Store) ListAuditAll(ctx context.Context, resource string, limit int) ([
 	if limit > 200 {
 		limit = 200
 	}
-	q := `SELECT ` + auditCols + ` FROM audit_events`
-	args := make([]any, 0, 2)
-	if resource != "" {
-		q += ` WHERE resource = ?`
-		args = append(args, resource)
-	}
-	q += ` ORDER BY timestamp DESC, rowid DESC LIMIT ?`
-	args = append(args, limit)
+	events, _, err := s.ListAuditPage(ctx, resource, limit, 0)
+	return events, err
+}
 
-	rows, err := s.db.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("list audit: %w", err)
+// ListAuditPage returns one page of events and the matching total from the
+// same read transaction. Empty resource skips the resource filter.
+func (s *Store) ListAuditPage(ctx context.Context, resource string, limit, offset int) ([]AuditEvent, int64, error) {
+	if limit <= 0 {
+		limit = 50
 	}
-	defer rows.Close()
+	if offset < 0 {
+		offset = 0
+	}
+
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, 0, fmt.Errorf("begin list audit: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	where := ""
+	filterArgs := make([]any, 0, 1)
+	if resource != "" {
+		where = ` WHERE resource = ?`
+		filterArgs = append(filterArgs, resource)
+	}
+
+	var total int64
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_events`+where, filterArgs...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count audit: %w", err)
+	}
+
+	q := `SELECT ` + auditCols + ` FROM audit_events` + where + ` ORDER BY timestamp DESC, rowid DESC LIMIT ? OFFSET ?`
+	args := append(filterArgs, limit, offset)
+
+	rows, err := tx.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list audit: %w", err)
+	}
 
 	var out []AuditEvent
 	for rows.Next() {
 		ev, err := scanAuditRow(rows)
 		if err != nil {
-			return nil, err
+			_ = rows.Close()
+			return nil, 0, err
 		}
 		out = append(out, ev)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list audit: %w", err)
+		_ = rows.Close()
+		return nil, 0, fmt.Errorf("list audit: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, 0, fmt.Errorf("close audit rows: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, 0, fmt.Errorf("commit list audit: %w", err)
 	}
 	if out == nil {
 		out = []AuditEvent{}
 	}
-	return out, nil
+	return out, total, nil
 }
 
 func scanAuditRow(rows *sql.Rows) (AuditEvent, error) {
