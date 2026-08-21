@@ -9,6 +9,7 @@ import {
   ListTodo,
   Bell,
   Archive,
+  Copy,
   Users,
   ShieldCheck,
   FileSearch,
@@ -77,6 +78,9 @@ const navItems = computed(() => {
   }
   if (perms.value.has("backup.read")) {
     items.push({ to: "/backup", label: t("nav.backup"), icon: Archive });
+  }
+  if (perms.value.has("replication.read")) {
+    items.push({ to: "/disaster-replica", label: t("nav.disasterReplica"), icon: Copy });
   }
   if (perms.value.has("user.read")) {
     items.push({ to: "/users", label: t("nav.users"), icon: Users });

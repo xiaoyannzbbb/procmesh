@@ -5,8 +5,10 @@ import {
   AuditService,
   BackupService,
   BatchService,
+  ClusterBackupService,
   ClusterService,
   ConfigService,
+  DisasterReplicationService,
   GroupService,
   LogService,
   MetricsService,
@@ -57,6 +59,35 @@ export type AlertClient = Pick<
 export type BackupClient = Pick<
   Client<typeof BackupService>,
   "listBackups" | "createBackup" | "deleteBackup" | "restoreBackup" | "getBackup"
+>;
+export type ClusterBackupClient = Pick<
+  Client<typeof ClusterBackupService>,
+  | "createPolicy"
+  | "updatePolicy"
+  | "deletePolicy"
+  | "listPolicies"
+  | "validatePolicy"
+  | "startRun"
+  | "getRun"
+  | "listRuns"
+  | "retryFailedTasks"
+  | "getDestinationHealth"
+>;
+export type ReplicationClient = Pick<
+  Client<typeof DisasterReplicationService>,
+  | "getTopology"
+  | "generatePolicyDraft"
+  | "applyPolicyDraft"
+  | "listPolicies"
+  | "getPolicy"
+  | "updatePolicy"
+  | "deletePolicy"
+  | "startRun"
+  | "getRun"
+  | "listRuns"
+  | "retryFailedRoutes"
+  | "verifyReplica"
+  | "listRecoverableSnapshots"
 >;
 
 export function useClusterClient(): ClusterClient {
@@ -109,4 +140,18 @@ export function useAlertClient(): AlertClient {
 
 export function useBackupClient(): BackupClient {
   return inject<BackupClient | null>("backupClient", null) ?? createClient(BackupService, transport);
+}
+
+export function useClusterBackupClient(): ClusterBackupClient {
+  return (
+    inject<ClusterBackupClient | null>("clusterBackupClient", null) ??
+    createClient(ClusterBackupService, transport)
+  );
+}
+
+export function useReplicationClient(): ReplicationClient {
+  return (
+    inject<ReplicationClient | null>("replicationClient", null) ??
+    createClient(DisasterReplicationService, transport)
+  );
 }

@@ -12,6 +12,7 @@
     "batches": "Batches",
     "alerts": "Alerts",
     "backup": "Backup",
+    "disasterReplica": "Disaster replica",
     "users": "Users",
     "roles": "Roles",
     "audit": "Audit"

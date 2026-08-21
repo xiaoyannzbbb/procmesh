@@ -12,6 +12,7 @@
     "batches": "批次",
     "alerts": "告警",
     "backup": "备份",
+    "disasterReplica": "灾备副本",
     "users": "用户",
     "roles": "角色",
     "audit": "审计"

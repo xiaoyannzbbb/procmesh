@@ -3,7 +3,11 @@ import { flushPromises, mount } from "@vue/test-utils";
 import i18next from "i18next";
 import I18NextVue from "i18next-vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { defineComponent, h } from "vue";
+import { createMemoryHistory, createRouter } from "vue-router";
 import ProcessesPage from "./ProcessesPage.vue";
+
+const Blank = defineComponent({ setup: () => () => h("div") });
 
 let i18n: typeof i18next;
 
@@ -30,19 +34,24 @@ async function mountProcessesPage(nodes: unknown[] = [], processes: unknown[] = 
   });
   const nodeClient = { listNodes: vi.fn().mockResolvedValue({ nodes }) };
   const processClient = { listProcesses: vi.fn().mockResolvedValue({ processes }) };
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: "/processes", component: ProcessesPage },
+      { path: "/processes/:idOrName", component: Blank },
+      { path: "/nodes/:id", component: Blank },
+    ],
+  });
+  await router.push("/processes");
+  await router.isReady();
   const wrapper = mount(ProcessesPage, {
     global: {
       plugins: [
         [VueQueryPlugin, { queryClient }],
         [I18NextVue, { i18next: i18n }],
+        router,
       ],
       provide: { nodeClient, processClient },
-      stubs: {
-        RouterLink: {
-          props: ["to"],
-          template: `<a :href="typeof to === 'string' ? to : to?.path"><slot /></a>`,
-        },
-      },
     },
   });
   mounted.push(wrapper);

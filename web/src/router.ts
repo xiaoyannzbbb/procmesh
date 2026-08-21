@@ -11,6 +11,7 @@ import ProcessDetailPage from "./pages/ProcessDetailPage.vue";
 import ProcessesPage from "./pages/ProcessesPage.vue";
 import AlertsPage from "./pages/AlertsPage.vue";
 import BackupPage from "./pages/BackupPage.vue";
+import DisasterReplicaPage from "./pages/DisasterReplicaPage.vue";
 import BatchesPage from "./pages/BatchesPage.vue";
 import GroupsPage from "./pages/GroupsPage.vue";
 import RolesPage from "./pages/RolesPage.vue";
@@ -32,6 +33,7 @@ const routes: RouteRecordRaw[] = [
       { path: "batches/:id", component: BatchesPage },
       { path: "alerts", component: AlertsPage },
       { path: "backup", component: BackupPage },
+      { path: "disaster-replica", component: DisasterReplicaPage },
       { path: "users", component: UsersPage },
       { path: "roles", component: RolesPage },
       { path: "audit", component: AuditPage, meta: { i18nNamespaces: ['audit'] } },

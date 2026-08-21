@@ -30,6 +30,7 @@ testI18n.init({
           batches: 'Batches',
           alerts: 'Alerts',
           backup: 'Backup',
+          disasterReplica: 'Disaster replica',
         },
         actions: {
           logout: 'Logout'
@@ -49,6 +50,7 @@ testI18n.init({
           batches: '批次',
           alerts: '告警',
           backup: '备份',
+          disasterReplica: '灾备副本',
         },
         actions: {
           logout: '退出登录'
@@ -87,6 +89,7 @@ async function mountShell(current: Me, provide: Record<string, unknown> = {}) {
           { path: "batches", component: Blank },
           { path: "alerts", component: Blank },
           { path: "backup", component: Blank },
+          { path: "disaster-replica", component: Blank },
           { path: "users", component: Blank },
           { path: "roles", component: Blank },
           { path: "audit", component: Blank },
@@ -193,6 +196,25 @@ describe("AppShell", () => {
     const labels = wrapper.findAll(".nav-label").map((n) => n.text());
     expect(labels.indexOf("Backup")).toBeGreaterThan(labels.indexOf("Alerts"));
     expect(labels.indexOf("Users")).toBeGreaterThan(labels.indexOf("Backup"));
+  });
+
+  it("shows Disaster replica nav when replication.read", async () => {
+    const wrapper = await mountShell(me({ permissions: ["replication.read"] }));
+    expect(wrapper.text()).toContain("Disaster replica");
+  });
+
+  it("hides Disaster replica nav without replication.read", async () => {
+    const wrapper = await mountShell(me({ permissions: ["node.read", "backup.read", "user.read"] }));
+    expect(wrapper.text()).not.toContain("Disaster replica");
+  });
+
+  it("places Disaster replica after Backup and before Users", async () => {
+    const wrapper = await mountShell(
+      me({ permissions: ["node.read", "backup.read", "replication.read", "user.read"] }),
+    );
+    const labels = wrapper.findAll(".nav-label").map((n) => n.text());
+    expect(labels.indexOf("Disaster replica")).toBeGreaterThan(labels.indexOf("Backup"));
+    expect(labels.indexOf("Users")).toBeGreaterThan(labels.indexOf("Disaster replica"));
   });
 
   it("shows Users, Roles, and Audit when permitted", async () => {
