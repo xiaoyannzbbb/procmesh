@@ -306,6 +306,43 @@ func TestBackupAPI_PutPeerSnapshotDoesNotCreateProcess(t *testing.T) {
 	}
 }
 
+func TestBackupRestoreAudit(t *testing.T) {
+	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-admin", Username: "admin"})
+	e, _ := testBackupEngine(t, "node-a")
+	api := &BackupAPI{Engine: e, Store: e.Store, LocalID: "node-a"}
+	if _, err := api.CreateBackup(ctx, connect.NewRequest(&procmeshv1.CreateBackupRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-bak-audit", Operator: "admin"},
+		Sink: "fs",
+	})); err != nil {
+		t.Fatal(err)
+	}
+	got, err := api.GetBackup(ctx, connect.NewRequest(&procmeshv1.GetBackupRequest{
+		SnapshotId: "snap-1", Sink: "fs", IncludePayload: true,
+	}))
+	if err != nil || len(got.Msg.GetPayload()) == 0 {
+		t.Fatalf("payload required for redaction fixture: %+v %v", got, err)
+	}
+	payloadSnippet := string(got.Msg.GetPayload())
+	_, err = api.RestoreBackup(ctx, connect.NewRequest(&procmeshv1.RestoreBackupRequest{
+		Meta:       &procmeshv1.MutationMeta{OperationId: "op-restore-audit", Operator: "admin"},
+		SnapshotId: "snap-1",
+		Sink:       "fs",
+		Targets:    []*procmeshv1.RestoreTarget{{ProcessId: "p1", ExpectedRevision: 1}},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertControlAudit(t, e.Store, "backup.restore", "SUCCESS", map[string]string{"snapshot_id": "snap-1"})
+	events, err := e.Store.ListAuditAll(ctx, "", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := auditBodies(events)
+	if strings.Contains(raw, payloadSnippet) || strings.Contains(raw, "secret_key") || strings.Contains(raw, "access_key") {
+		t.Fatalf("restore audit leaked payload or secret: %s", raw)
+	}
+}
+
 func TestBackupAPI_DeniedWithoutPerm(t *testing.T) {
 	_, svc := newBootstrappedAuth(t)
 	putViewerUser(t, svc)

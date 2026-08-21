@@ -11,6 +11,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/freshness"
 	"github.com/qleelulu/procmesh/internal/rpc"
+	"github.com/qleelulu/procmesh/internal/store"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
@@ -20,6 +21,7 @@ var _ procmeshv1connect.BackupServiceHandler = (*BackupAPI)(nil)
 type BackupAPI struct {
 	Engine    *backup.Engine
 	Auth      *auth.Service
+	Store     *store.Store
 	LocalOnly bool
 	LocalID   string
 	Router    *Router
@@ -182,9 +184,12 @@ func (s *BackupAPI) RestoreBackup(ctx context.Context, req *connect.Request[proc
 		sink = "fs"
 	}
 	results, err := s.Engine.Restore(ctx, req.Msg.GetSnapshotId(), sink, opID, operator, protoRestoreTargets(req.Msg.GetTargets()))
+	rec := controlMutation{Action: "backup.restore", Resource: "backup:" + req.Msg.GetSnapshotId(), OperationID: opID, SnapshotID: req.Msg.GetSnapshotId()}
 	if err != nil {
+		auditControlMutation(ctx, s.Store, s.LocalID, mergeMutation(rec, mutationResult(err)))
 		return nil, ToConnect(err)
 	}
+	auditControlMutation(ctx, s.Store, s.LocalID, mergeMutation(rec, mutationResult(nil)))
 	return connect.NewResponse(&procmeshv1.RestoreBackupResponse{Results: protoRestoreResults(results)}), nil
 }
 

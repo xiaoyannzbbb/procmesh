@@ -145,7 +145,7 @@ func NewServer(opts Options) (*Server, error) {
 	bpkup, bkh := procmeshv1connect.NewBackupServiceHandler(newBackupAPI(opts), intercept)
 	mountConnect(engine, bpkup, bkh)
 	cbp, cbh := procmeshv1connect.NewClusterBackupServiceHandler(&ClusterBackupAPI{
-		Auth: opts.Auth, ControlFn: opts.Cluster.ControlFn, Router: opts.Router,
+		Auth: opts.Auth, Store: batchAuditStore(opts), ControlFn: opts.Cluster.ControlFn, Router: opts.Router,
 		Forward: opts.Forward, LocalOnly: opts.LocalOnly, LocalID: opts.LocalID,
 		IsLeader: func() bool { n := opts.Cluster.controlNode(); return n == nil || n.IsLeader() },
 		LeaderAddr: func() string {
@@ -336,6 +336,7 @@ func (s *Server) metrics(c *gin.Context) {
 		collectBatchMetrics(s.opts.Batch),
 		countMetricSampleRows(s.opts.Store),
 		backupLastSuccessUnix(s.opts.Backup),
+		collectClusterBackupMetrics(s.opts.Cluster),
 	))
 }
 
@@ -386,6 +387,7 @@ func newBackupAPI(opts Options) *BackupAPI {
 	return &BackupAPI{
 		Engine:    opts.Backup,
 		Auth:      opts.Auth,
+		Store:     batchAuditStore(opts),
 		LocalOnly: opts.LocalOnly,
 		LocalID:   opts.LocalID,
 		Router:    opts.Router,
@@ -410,6 +412,7 @@ func newDisasterReplicationAPI(opts Options) *DisasterReplicationAPI {
 		NodeID:      opts.LocalID,
 		LocalID:     opts.LocalID,
 		Auth:        opts.Auth,
+		Store:       batchAuditStore(opts),
 		StateFn: func() control.State {
 			node := opts.Cluster.controlNode()
 			if node == nil {

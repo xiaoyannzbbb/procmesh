@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/qleelulu/procmesh/internal/alert"
 	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/batch"
+	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/store"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
@@ -144,7 +148,7 @@ func collectBatchMetrics(eng *batch.Engine) batchMetricSnapshot {
 	return out
 }
 
-func renderMetrics(uptimeSeconds float64, running, members, alive int, rpcForward uint64, quorum int, batchStats batchMetricSnapshot, sampleRows int64, backupLastSuccess int64) []byte {
+func renderMetrics(uptimeSeconds float64, running, members, alive int, rpcForward uint64, quorum int, batchStats batchMetricSnapshot, sampleRows int64, backupLastSuccess int64, clusterSnap clusterBackupMetricSnapshot) []byte {
 	body := fmt.Sprintf(
 		"# HELP procmesh_agent_uptime Agent uptime in seconds.\n"+
 			"# TYPE procmesh_agent_uptime gauge\n"+
@@ -184,7 +188,7 @@ func renderMetrics(uptimeSeconds float64, running, members, alive int, rpcForwar
 		batchStats.Denied, batchStats.Conflict, batchStats.Unavailable, batchStats.Invalid,
 		sampleRows,
 	)
-	return []byte(body + renderAlertSendMetrics() + renderBackupMetrics(backupLastSuccess))
+	return []byte(body + renderAlertSendMetrics() + renderBackupMetrics(backupLastSuccess, clusterSnap))
 }
 
 func backupLastSuccessUnix(eng *backup.Engine) int64 {
@@ -194,10 +198,22 @@ func backupLastSuccessUnix(eng *backup.Engine) int64 {
 	return eng.LastSuccessUnix.Load()
 }
 
-func renderBackupMetrics(lastSuccess int64) string {
-	return "# HELP procmesh_backup_last_success_unix Unix time of last successful local backup create.\n" +
-		"# TYPE procmesh_backup_last_success_unix gauge\n" +
-		fmt.Sprintf("procmesh_backup_last_success_unix %d\n", lastSuccess)
+func renderBackupMetrics(lastSuccess int64, snap clusterBackupMetricSnapshot) string {
+	var b strings.Builder
+	b.WriteString("# HELP procmesh_backup_last_success_unix Unix time of last successful local backup create.\n")
+	b.WriteString("# TYPE procmesh_backup_last_success_unix gauge\n")
+	fmt.Fprintf(&b, "procmesh_backup_last_success_unix %d\n", lastSuccess)
+	keys := make([]string, 0, len(snap.LastSuccess))
+	for key := range snap.LastSuccess {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		policy, node, _ := strings.Cut(key, "\x00")
+		fmt.Fprintf(&b, "procmesh_backup_last_success_unix{policy=%q,node=%q} %d\n", policy, node, snap.LastSuccess[key])
+	}
+	b.WriteString(renderClusterBackupAndReplicationMetrics(snap))
+	return b.String()
 }
 
 func renderAlertSendMetrics() string {
@@ -233,4 +249,226 @@ func countMetricSampleRows(st RevisionStore) int64 {
 		return 0
 	}
 	return n
+}
+
+type clusterBackupMetricSnapshot struct {
+	Runs        map[string]uint64 // policy\x00sink\x00status
+	Tasks       map[string]uint64 // sink\x00status
+	Duration    map[string]float64
+	Bytes       map[string]uint64  // sink\x00result
+	ReplRuns    map[string]uint64  // policy\x00status
+	ReplTasks   map[string]uint64  // status
+	Lag         map[string]float64 // source\x00target
+	ReplBytes   map[string]uint64  // result
+	LastSuccess map[string]int64   // policy\x00node
+}
+
+func collectClusterBackupMetrics(d ClusterDeps) clusterBackupMetricSnapshot {
+	n := d.controlNode()
+	if n == nil {
+		return clusterBackupMetricSnapshot{}
+	}
+	return clusterBackupMetricsFromState(n.View(), time.Now())
+}
+
+func clusterBackupMetricsFromState(st control.State, now time.Time) clusterBackupMetricSnapshot {
+	snap := clusterBackupMetricSnapshot{
+		Runs:        map[string]uint64{},
+		Tasks:       map[string]uint64{},
+		Duration:    map[string]float64{},
+		Bytes:       map[string]uint64{},
+		ReplRuns:    map[string]uint64{},
+		ReplTasks:   map[string]uint64{},
+		Lag:         map[string]float64{},
+		ReplBytes:   map[string]uint64{},
+		LastSuccess: map[string]int64{},
+	}
+	backupRuns := st.BackupRuns
+	if backupRuns == nil {
+		backupRuns = map[string]control.ClusterBackupRun{}
+	}
+	for _, run := range backupRuns {
+		sink := boundedSink(run.Sink)
+		status := boundedStatus(run.Status)
+		if run.PolicyID == "" || status == "" {
+			continue
+		}
+		snap.Runs[run.PolicyID+"\x00"+sink+"\x00"+status]++
+		if run.FinishedUnix > run.StartedUnix && run.StartedUnix > 0 {
+			snap.Duration[sink] = float64(run.FinishedUnix - run.StartedUnix)
+		}
+	}
+	for _, task := range st.BackupTasks {
+		run := backupRuns[task.RunID]
+		sink := boundedSink(run.Sink)
+		status := boundedStatus(task.Status)
+		if status == "" {
+			continue
+		}
+		snap.Tasks[sink+"\x00"+status]++
+		snap.Bytes[sink+"\x00"+metricResult(status)] += uint64(max64(task.Bytes, 0))
+		if metricResult(status) == "success" && run.PolicyID != "" && task.NodeID != "" {
+			key := run.PolicyID + "\x00" + task.NodeID
+			if task.UpdatedUnix >= snap.LastSuccess[key] {
+				snap.LastSuccess[key] = task.UpdatedUnix
+			}
+		}
+	}
+	replRuns := st.ReplicationRuns
+	if replRuns == nil {
+		replRuns = map[string]control.ClusterBackupRun{}
+	}
+	for _, run := range replRuns {
+		status := boundedStatus(run.Status)
+		if run.PolicyID == "" || status == "" {
+			continue
+		}
+		snap.ReplRuns[run.PolicyID+"\x00"+status]++
+	}
+	for _, task := range st.ReplicationTasks {
+		status := boundedStatus(task.Status)
+		if status == "" {
+			continue
+		}
+		snap.ReplTasks[status]++
+		snap.ReplBytes[metricResult(status)] += uint64(max64(task.Bytes, 0))
+		if metricResult(status) == "success" && task.SourceNodeID != "" && task.NodeID != "" && task.UpdatedUnix > 0 {
+			lag := float64(now.Unix() - task.UpdatedUnix)
+			if lag < 0 {
+				lag = 0
+			}
+			snap.Lag[task.SourceNodeID+"\x00"+task.NodeID] = lag
+		}
+	}
+	return snap
+}
+
+func renderClusterBackupAndReplicationMetrics(snap clusterBackupMetricSnapshot) string {
+	var b strings.Builder
+	writeMetricFamily(&b, "procmesh_backup_runs_total", "Cluster backup runs by policy, sink, and status.", "counter", labeledCounts(snap.Runs, "policy", "sink", "status"))
+	writeMetricFamily(&b, "procmesh_backup_tasks_total", "Cluster backup tasks by sink and status.", "counter", labeledCounts(snap.Tasks, "sink", "status"))
+	writeDurationFamily(&b, snap.Duration)
+	writeMetricFamily(&b, "procmesh_backup_bytes_total", "Cluster backup bytes by sink and result.", "counter", labeledCounts(snap.Bytes, "sink", "result"))
+	writeRetentionFamily(&b)
+	writeMetricFamily(&b, "procmesh_replication_runs_total", "Disaster replication runs by policy and status.", "counter", labeledCounts(snap.ReplRuns, "policy", "status"))
+	writeMetricFamily(&b, "procmesh_replication_tasks_total", "Disaster replication tasks by status.", "counter", labeledCounts(snap.ReplTasks, "status"))
+	writeLagFamily(&b, snap.Lag)
+	writeMetricFamily(&b, "procmesh_replication_bytes_total", "Disaster replication bytes by result.", "counter", labeledCounts(snap.ReplBytes, "result"))
+	return b.String()
+}
+
+func writeRetentionFamily(b *strings.Builder) {
+	b.WriteString("# HELP procmesh_backup_retention_delete_total Cluster backup retention deletions by sink and result.\n")
+	b.WriteString("# TYPE procmesh_backup_retention_delete_total counter\n")
+	totals := retentionDeleteTotals()
+	for _, sink := range []string{"fs", "s3"} {
+		for _, result := range []string{"success", "error"} {
+			fmt.Fprintf(b, "procmesh_backup_retention_delete_total{sink=%q,result=%q} %d\n", sink, result, totals[sink][result])
+		}
+	}
+}
+
+func writeDurationFamily(b *strings.Builder, duration map[string]float64) {
+	b.WriteString("# HELP procmesh_backup_task_duration_seconds Last completed cluster backup run duration by sink.\n")
+	b.WriteString("# TYPE procmesh_backup_task_duration_seconds gauge\n")
+	keys := sortedMapKeys(duration)
+	for _, sink := range keys {
+		fmt.Fprintf(b, "procmesh_backup_task_duration_seconds{sink=%q} %g\n", sink, duration[sink])
+	}
+}
+
+func writeLagFamily(b *strings.Builder, lag map[string]float64) {
+	b.WriteString("# HELP procmesh_replication_lag_seconds Age of last successful replica copy from source to target.\n")
+	b.WriteString("# TYPE procmesh_replication_lag_seconds gauge\n")
+	keys := make([]string, 0, len(lag))
+	for key := range lag {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		source, target, _ := strings.Cut(key, "\x00")
+		fmt.Fprintf(b, "procmesh_replication_lag_seconds{source=%q,target=%q} %g\n", source, target, lag[key])
+	}
+}
+
+func writeMetricFamily(b *strings.Builder, name, help, typ string, series []metricSeries) {
+	fmt.Fprintf(b, "# HELP %s %s\n# TYPE %s %s\n", name, help, name, typ)
+	for _, s := range series {
+		b.WriteString(name)
+		if s.Labels != "" {
+			b.WriteByte('{')
+			b.WriteString(s.Labels)
+			b.WriteByte('}')
+		}
+		fmt.Fprintf(b, " %d\n", s.Value)
+	}
+}
+
+type metricSeries struct {
+	Labels string
+	Value  uint64
+}
+
+func labeledCounts(values map[string]uint64, names ...string) []metricSeries {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]metricSeries, 0, len(keys))
+	for _, key := range keys {
+		parts := strings.Split(key, "\x00")
+		if len(parts) != len(names) {
+			continue
+		}
+		labels := make([]string, 0, len(names))
+		for i, name := range names {
+			labels = append(labels, fmt.Sprintf("%s=%q", name, parts[i]))
+		}
+		out = append(out, metricSeries{Labels: strings.Join(labels, ","), Value: values[key]})
+	}
+	return out
+}
+
+func sortedMapKeys(m map[string]float64) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func boundedSink(sink string) string {
+	switch sink {
+	case "fs", "s3":
+		return sink
+	default:
+		return "fs"
+	}
+}
+
+func boundedStatus(status string) string {
+	switch status {
+	case "PENDING", "RUNNING", "SUCCESS", "SUCCEEDED", "FAILED", "PARTIAL", "TIMEOUT", "UNAVAILABLE", "CONFIG_MISSING", "RETENTION_FAILED", "SKIPPED":
+		return status
+	case "":
+		return ""
+	default:
+		return "FAILED"
+	}
+}
+
+func metricResult(status string) string {
+	if status == "SUCCESS" || status == "SUCCEEDED" {
+		return "success"
+	}
+	return "error"
+}
+
+func max64(v int64, floor int64) int64 {
+	if v < floor {
+		return floor
+	}
+	return v
 }

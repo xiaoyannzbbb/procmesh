@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/qleelulu/procmesh/internal/backup"
+	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/store"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
@@ -166,6 +168,85 @@ func assertBatchMetricsPresent(t *testing.T, body string) {
 		want := `procmesh_batch_targets_total{status="` + status + `"}`
 		if !strings.Contains(body, want) {
 			t.Fatalf("missing %s:\n%s", want, body)
+		}
+	}
+}
+
+func TestBackupMetricFamilies(t *testing.T) {
+	m, st, _ := newTestManager(t)
+	eng := &backup.Engine{}
+	eng.LastSuccessUnix.Store(1_700_000_000)
+	srv, err := NewServer(Options{Mgr: m, Store: st, Started: time.Now(), Backup: eng})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	srv.Engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("metrics %d %q", rec.Code, body)
+	}
+	if !strings.Contains(body, "procmesh_backup_last_success_unix 1700000000") {
+		t.Fatalf("legacy unlabeled last success missing:\n%s", body)
+	}
+	for _, family := range []string{
+		"procmesh_backup_runs_total",
+		"procmesh_backup_tasks_total",
+		"procmesh_backup_task_duration_seconds",
+		"procmesh_backup_bytes_total",
+		"procmesh_backup_retention_delete_total",
+		"procmesh_replication_runs_total",
+		"procmesh_replication_tasks_total",
+		"procmesh_replication_lag_seconds",
+		"procmesh_replication_bytes_total",
+	} {
+		if !strings.Contains(body, "# TYPE "+family+" ") {
+			t.Errorf("missing TYPE %s:\n%s", family, body)
+		}
+	}
+	if !strings.Contains(body, `procmesh_backup_retention_delete_total{sink="fs",result="success"}`) {
+		t.Fatalf("missing bounded retention series:\n%s", body)
+	}
+	assertNoSecretMetricLabels(t, body)
+}
+
+func TestBackupMetricRedactsSecrets(t *testing.T) {
+	state := control.NewState()
+	state.BackupPolicies["bp-1"] = control.BackupPolicy{
+		PolicyID: "bp-1", Sink: "s3", DestinationProfile: "https://AKIAIOSFODNN7EXAMPLE:wJalrXUtnFEMI@s3.example.com/bucket",
+	}
+	state.BackupRuns["run-1"] = control.ClusterBackupRun{
+		RunID: "run-1", PolicyID: "bp-1", Sink: "s3", Status: "SUCCESS", StartedUnix: 100, FinishedUnix: 130,
+	}
+	state.BackupTasks["run-1:task-a"] = control.ClusterBackupTask{
+		RunID: "run-1", TaskID: "task-a", NodeID: "node-a", Status: "SUCCESS", Bytes: 42, UpdatedUnix: 1_700_000_000,
+		SnapshotID: "snap-1", SHA256: "deadbeef", ErrorSummary: "secret_key=wJalr path=/var/lib/procmesh/backup/index.json",
+	}
+	state.ReplicationRuns["rr-1"] = control.ClusterBackupRun{RunID: "rr-1", PolicyID: "rp-1", Status: "SUCCESS"}
+	state.ReplicationTasks["rr-1:task-b"] = control.ClusterBackupTask{
+		RunID: "rr-1", TaskID: "task-b", SourceNodeID: "node-a", NodeID: "node-b", Status: "SUCCESS", Bytes: 9, UpdatedUnix: 1_700_000_010,
+	}
+	body := renderBackupMetrics(0, clusterBackupMetricsFromState(*state, time.Unix(1_700_000_100, 0)))
+	if !strings.Contains(body, `procmesh_backup_runs_total{policy="bp-1",sink="s3",status="SUCCESS"}`) {
+		t.Fatalf("missing labeled run series:\n%s", body)
+	}
+	if !strings.Contains(body, `procmesh_backup_last_success_unix{policy="bp-1",node="node-a"}`) {
+		t.Fatalf("missing labeled last success:\n%s", body)
+	}
+	if !strings.Contains(body, `procmesh_replication_lag_seconds{source="node-a",target="node-b"}`) {
+		t.Fatalf("missing replication lag:\n%s", body)
+	}
+	assertNoSecretMetricLabels(t, body)
+	if strings.Contains(body, "s3.example.com") || strings.Contains(body, "/var/lib/procmesh") || strings.Contains(body, "snap-1") || strings.Contains(body, "deadbeef") {
+		t.Fatalf("unbounded or secret label leaked:\n%s", body)
+	}
+}
+
+func assertNoSecretMetricLabels(t *testing.T, body string) {
+	t.Helper()
+	for _, leaked := range []string{"secret_key", "access_key", "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI", "http://", "https://"} {
+		if strings.Contains(body, leaked) {
+			t.Fatalf("metric output leaked %q:\n%s", leaked, body)
 		}
 	}
 }

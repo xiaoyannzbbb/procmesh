@@ -17,6 +17,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/rpc"
+	"github.com/qleelulu/procmesh/internal/store"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
@@ -34,6 +35,7 @@ type DisasterReplicationAPI struct {
 	NodeID         string
 	LocalID        string
 	Auth           *auth.Service
+	Store          *store.Store
 	StateFn        func() control.State
 	ApplyFn        func(control.Command, time.Duration) error
 	IsLeader       func() bool
@@ -161,6 +163,7 @@ func (d *DisasterReplicationAPI) GeneratePolicyDraft(ctx context.Context, req *c
 		TopologyHealth:      topologyHealth,
 	}
 
+	d.audit(ctx, controlMutation{Action: "replication.draft.generate", Resource: "replication_draft"}, nil)
 	return connect.NewResponse(&procmeshv1.GeneratePolicyDraftResponse{
 		Draft: draft,
 	}), nil
@@ -277,7 +280,9 @@ func (d *DisasterReplicationAPI) ApplyPolicyDraft(ctx context.Context, req *conn
 		return nil, ToConnect(err)
 	}
 
+	rec := controlMutation{Action: "replication.draft.apply", Resource: "replication_policy:" + req.Msg.PolicyId, OperationID: req.Msg.Meta.OperationId, PolicyID: req.Msg.PolicyId}
 	if err := d.ApplyFn(cmd, 5*time.Second); err != nil {
+		d.audit(ctx, rec, err)
 		return nil, ToConnect(err)
 	}
 
@@ -285,9 +290,11 @@ func (d *DisasterReplicationAPI) ApplyPolicyDraft(ctx context.Context, req *conn
 	st := d.StateFn()
 	policy, ok := st.ReplicationPolicies[req.Msg.PolicyId]
 	if !ok {
+		d.audit(ctx, rec, errcode.E(errcode.NOT_FOUND, "policy not found after apply"))
 		return nil, ToConnect(errcode.E(errcode.NOT_FOUND, "policy not found after apply"))
 	}
 
+	d.audit(ctx, rec, nil)
 	return connect.NewResponse(&procmeshv1.ApplyPolicyDraftResponse{
 		PolicyId: req.Msg.PolicyId,
 		Revision: policy.Revision,
@@ -403,7 +410,9 @@ func (d *DisasterReplicationAPI) UpdatePolicy(ctx context.Context, req *connect.
 		return nil, ToConnect(err)
 	}
 
+	rec := controlMutation{Action: "replication.route.replace", Resource: "replication_policy:" + req.Msg.PolicyId, OperationID: req.Msg.Meta.OperationId, PolicyID: req.Msg.PolicyId}
 	if err := d.ApplyFn(cmd, 5*time.Second); err != nil {
+		d.audit(ctx, rec, err)
 		return nil, ToConnect(err)
 	}
 
@@ -411,9 +420,11 @@ func (d *DisasterReplicationAPI) UpdatePolicy(ctx context.Context, req *connect.
 	st := d.StateFn()
 	policy, ok := st.ReplicationPolicies[req.Msg.PolicyId]
 	if !ok {
+		d.audit(ctx, rec, errcode.E(errcode.NOT_FOUND, "policy not found after apply"))
 		return nil, ToConnect(errcode.E(errcode.NOT_FOUND, "policy not found after apply"))
 	}
 
+	d.audit(ctx, rec, nil)
 	return connect.NewResponse(&procmeshv1.UpdatePolicyResponse{
 		PolicyId: req.Msg.PolicyId,
 		Revision: policy.Revision,
@@ -449,10 +460,13 @@ func (d *DisasterReplicationAPI) DeletePolicy(ctx context.Context, req *connect.
 		return nil, ToConnect(err)
 	}
 
+	rec := controlMutation{Action: "replication.policy.delete", Resource: "replication_policy:" + req.Msg.PolicyId, OperationID: req.Msg.Meta.OperationId, PolicyID: req.Msg.PolicyId}
 	if err := d.ApplyFn(cmd, 5*time.Second); err != nil {
+		d.audit(ctx, rec, err)
 		return nil, ToConnect(err)
 	}
 
+	d.audit(ctx, rec, nil)
 	return connect.NewResponse(&procmeshv1.DeletePolicyResponse{
 		Deleted: true,
 	}), nil
@@ -562,6 +576,7 @@ func (d *DisasterReplicationAPI) StartRun(ctx context.Context, req *connect.Requ
 		}
 		d.DispatchRun(backup.FrozenReplicationRun{RunID: run.RunID, PolicyID: run.PolicyID, PolicyRevision: run.PolicyRevision, LeaderTerm: term, LeaseExpiresUnix: run.LeaseUntilUnix, MaxConcurrency: run.MaxConcurrency, Tasks: frozen})
 	}
+	d.audit(ctx, controlMutation{Action: "replication.run.start", Resource: "replication_run:" + run.RunID, OperationID: operationID, PolicyID: run.PolicyID, RunID: run.RunID}, nil)
 	return startRunResponse(run), nil
 }
 
@@ -780,13 +795,30 @@ func (d *DisasterReplicationAPI) RetryFailedRoutes(ctx context.Context, req *con
 		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "failed to encode command"))
 	}
 
+	rec := controlMutation{Action: "replication.route.retry", Resource: "replication_run:" + run.RunID, OperationID: operationID, PolicyID: run.PolicyID, RunID: run.RunID}
 	if err := d.ApplyFn(cmd, 5*time.Second); err != nil {
+		d.audit(ctx, rec, err)
 		return nil, ToConnect(err)
 	}
 
+	d.audit(ctx, rec, nil)
 	return connect.NewResponse(&procmeshv1.RetryFailedRoutesResponse{
 		RetriedCount: int32(retriedCount),
 	}), nil
+}
+
+func (d *DisasterReplicationAPI) audit(ctx context.Context, rec controlMutation, err error) {
+	if err != nil {
+		rec.Result = "FAILED"
+		rec.Error = err.Error()
+	} else if rec.Result == "" {
+		rec.Result = "SUCCESS"
+	}
+	localID := d.LocalID
+	if localID == "" {
+		localID = d.NodeID
+	}
+	auditControlMutation(ctx, d.Store, localID, rec)
 }
 
 func (d *DisasterReplicationAPI) state() control.State {
@@ -924,6 +956,10 @@ func (d *DisasterReplicationAPI) VerifyReplica(ctx context.Context, req *connect
 	// Verify checksum is present
 	valid := meta.SHA256 != ""
 
+	d.audit(ctx, controlMutation{
+		Action: "replication.verify", Resource: "replication_snapshot:" + req.Msg.SnapshotId,
+		PolicyID: "", SnapshotID: req.Msg.SnapshotId, Result: "SUCCESS",
+	}, nil)
 	return connect.NewResponse(&procmeshv1.VerifyReplicaResponse{
 		Valid:        valid,
 		Sha256:       meta.SHA256,

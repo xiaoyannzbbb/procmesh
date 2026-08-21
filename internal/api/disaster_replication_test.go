@@ -1608,6 +1608,162 @@ func TestDisasterReplicationAPI_ListRecoverableSnapshots_Unauthorized(t *testing
 	}
 }
 
+func TestReplicationRoleCanCallDocumentedRPCs(t *testing.T) {
+	api, _, authSvc := setupMinimalAPI(t)
+	sid := createCustomRoleUser(t, authSvc, "replicator", "user-repl", auth.PermReplicationRead, auth.PermReplicationManage)
+	client := newDisasterReplicationClient(t, api)
+
+	if _, err := client.GetTopology(context.Background(), bearerReq(sid, &procmeshv1.GetTopologyRequest{})); err != nil {
+		t.Fatalf("replication.read GetTopology: %v", err)
+	}
+	if _, err := client.ListPolicies(context.Background(), bearerReq(sid, &procmeshv1.ListPoliciesRequest{})); err != nil {
+		t.Fatalf("replication.read ListPolicies: %v", err)
+	}
+	draft, err := client.GeneratePolicyDraft(context.Background(), bearerReq(sid, &procmeshv1.GeneratePolicyDraftRequest{
+		Name: "role-draft", SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1, Trigger: "MANUAL",
+	}))
+	if err != nil {
+		t.Fatalf("replication.manage GeneratePolicyDraft: %v", err)
+	}
+	if draft.Msg.GetDraft() == nil {
+		t.Fatal("expected draft")
+	}
+
+	backupClient := newClusterBackupClient(t, &ClusterBackupAPI{Auth: authSvc, StateFn: api.StateFn}, true)
+	_, err = backupClient.CreatePolicy(context.Background(), bearerReq(sid, &procmeshv1.CreateClusterBackupPolicyRequest{
+		Meta:   &procmeshv1.MutationMeta{OperationId: "op-backup-denied"},
+		Policy: &procmeshv1.ClusterBackupPolicy{PolicyId: "bp-denied", Name: "denied", Sink: "fs", Timezone: "UTC", TargetSelector: "ALL_ADMITTED"},
+	}))
+	assertDenied(t, err)
+}
+
+func TestReplicationReadRoleCannotManage(t *testing.T) {
+	api, _, authSvc := setupMinimalAPI(t)
+	sid := createCustomRoleUser(t, authSvc, "repl-reader", "user-repl-read", auth.PermReplicationRead)
+	client := newDisasterReplicationClient(t, api)
+
+	if _, err := client.GetTopology(context.Background(), bearerReq(sid, &procmeshv1.GetTopologyRequest{})); err != nil {
+		t.Fatalf("replication.read GetTopology: %v", err)
+	}
+	_, err := client.GeneratePolicyDraft(context.Background(), bearerReq(sid, &procmeshv1.GeneratePolicyDraftRequest{
+		Name: "denied-draft", SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1,
+	}))
+	assertDenied(t, err)
+	_, err = client.ApplyPolicyDraft(context.Background(), bearerReq(sid, &procmeshv1.ApplyPolicyDraftRequest{
+		Meta:     &procmeshv1.MutationMeta{OperationId: "op-denied-apply"},
+		PolicyId: "rp-denied",
+		Draft:    &procmeshv1.PolicyDraft{Name: "denied"},
+	}))
+	assertDenied(t, err)
+}
+
+func TestReplicationRoleHopPerms(t *testing.T) {
+	perm, write, ok := hopRPCPerm(procmeshv1connect.DisasterReplicationServiceListPoliciesProcedure)
+	if !ok || perm != auth.PermReplicationRead || write {
+		t.Fatalf("replication ListPolicies: perm=%s write=%v ok=%v", perm, write, ok)
+	}
+	perm, write, ok = hopRPCPerm(procmeshv1connect.DisasterReplicationServiceGeneratePolicyDraftProcedure)
+	if !ok || perm != auth.PermReplicationManage || write {
+		t.Fatalf("GeneratePolicyDraft should be manage without cluster-write: perm=%s write=%v ok=%v", perm, write, ok)
+	}
+	perm, write, ok = hopRPCPerm(procmeshv1connect.DisasterReplicationServiceApplyPolicyDraftProcedure)
+	if !ok || perm != auth.PermReplicationManage || !write {
+		t.Fatalf("ApplyPolicyDraft: perm=%s write=%v ok=%v", perm, write, ok)
+	}
+	perm, write, ok = hopRPCPerm(procmeshv1connect.ClusterBackupServiceListPoliciesProcedure)
+	if !ok || perm != auth.PermBackupRead || write {
+		t.Fatalf("backup ListPolicies: perm=%s write=%v ok=%v", perm, write, ok)
+	}
+	perm, write, ok = hopRPCPerm(procmeshv1connect.ClusterBackupServiceCreatePolicyProcedure)
+	if !ok || perm != auth.PermBackupManage || !write {
+		t.Fatalf("backup CreatePolicy: perm=%s write=%v ok=%v", perm, write, ok)
+	}
+	perm, write, ok = hopRPCPerm(procmeshv1connect.ClusterBackupServiceStartRunProcedure)
+	if !ok || perm != auth.PermBackupManage || !write {
+		t.Fatalf("backup StartRun: perm=%s write=%v ok=%v", perm, write, ok)
+	}
+}
+
+func createCustomRoleUser(t *testing.T, svc *auth.Service, username, userID string, perms ...string) string {
+	t.Helper()
+	roles := &RoleAPI{Auth: svc}
+	created, err := roles.CreateRole(context.Background(), connect.NewRequest(&procmeshv1.CreateRoleRequest{
+		Meta:        &procmeshv1.MutationMeta{OperationId: "op-role-" + username, Operator: "t"},
+		Name:        username + "-role",
+		Permissions: append([]string(nil), perms...),
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyAuthCmd(t, svc, control.CmdUserPut, control.UserPutBody{
+		ID: userID, Username: username, PasswordHash: testAdminHash(t),
+	})
+	_, err = roles.GrantRole(context.Background(), connect.NewRequest(&procmeshv1.GrantRoleRequest{
+		Meta:      &procmeshv1.MutationMeta{OperationId: "op-grant-" + username, Operator: "t"},
+		UserId:    userID,
+		RoleId:    created.Msg.GetRole().GetRoleId(),
+		ScopeType: string(control.ScopeCluster),
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid, _, _, _, err := svc.Login(username, testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sid
+}
+
+func TestReplicationDraftAudit(t *testing.T) {
+	_, st, _ := newTestManager(t)
+	api, _, authSvc := setupMinimalAPI(t)
+	api.Store = st
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-admin", Username: "admin"})
+	_, err = api.GeneratePolicyDraft(ctx, bearerReq(sid, &procmeshv1.GeneratePolicyDraftRequest{
+		Name: "audit-draft", SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1, Trigger: "MANUAL",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertControlAudit(t, st, "replication.draft.generate", "SUCCESS", map[string]string{})
+}
+
+func TestReplicationApplyAudit(t *testing.T) {
+	_, st, _ := newTestManager(t)
+	api, state, authSvc := setupMinimalAPI(t)
+	api.Store = st
+	api.ApplyFn = func(cmd control.Command, timeout time.Duration) error {
+		return state.Apply(cmd, time.Now())
+	}
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-admin", Username: "admin"})
+	gen, err := api.GeneratePolicyDraft(ctx, bearerReq(sid, &procmeshv1.GeneratePolicyDraftRequest{
+		Name: "audit-apply", SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1, Trigger: "MANUAL",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = api.ApplyPolicyDraft(ctx, bearerReq(sid, &procmeshv1.ApplyPolicyDraftRequest{
+		Meta:             &procmeshv1.MutationMeta{OperationId: "op-audit-apply"},
+		PolicyId:         "rp-audit",
+		Draft:            gen.Msg.Draft,
+		DraftRevision:    gen.Msg.Draft.DraftRevision,
+		DraftHash:        gen.Msg.Draft.DraftHash,
+		ExpectedRevision: -1,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertControlAudit(t, st, "replication.draft.apply", "SUCCESS", map[string]string{"policy_id": "rp-audit"})
+}
+
 func TestDisasterReplicationAPI_ListRecoverableSnapshots_PeerStoreUnavailable(t *testing.T) {
 	api, _, authSvc := setupMinimalAPI(t)
 	// Override PeerStore to nil

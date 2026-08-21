@@ -166,6 +166,25 @@ func TestRoleAPI_GrantGroupScopes(t *testing.T) {
 	assertInvalidMsg(t, err, "scope_id")
 }
 
+func TestReplicationRoleAllowlist(t *testing.T) {
+	ctx := context.Background()
+	_, svc := newBootstrappedAuth(t)
+	api := &RoleAPI{Auth: svc}
+
+	created, err := api.CreateRole(ctx, connect.NewRequest(&procmeshv1.CreateRoleRequest{
+		Meta:        &procmeshv1.MutationMeta{OperationId: "op-repl-role", Operator: "t"},
+		Name:        "replicator",
+		Permissions: []string{auth.PermReplicationRead, auth.PermReplicationManage},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	role := created.Msg.GetRole()
+	if !hasAllPerms(role.GetPermissions(), auth.PermReplicationRead, auth.PermReplicationManage) {
+		t.Fatalf("perms=%v", role.GetPermissions())
+	}
+}
+
 func TestRoleAPI_GrantProcessGroupTrimsScopeID(t *testing.T) {
 	ctx := context.Background()
 	st, svc := newBootstrappedAuth(t)

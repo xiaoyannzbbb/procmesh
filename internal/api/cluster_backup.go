@@ -14,6 +14,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/rpc"
+	"github.com/qleelulu/procmesh/internal/store"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
@@ -28,6 +29,7 @@ type ClusterBackupForwarder interface {
 
 type ClusterBackupAPI struct {
 	Auth              *auth.Service
+	Store             *store.Store
 	Control           *control.Node
 	ControlFn         func() *control.Node
 	StateFn           func() control.State
@@ -64,9 +66,12 @@ func (s *ClusterBackupAPI) CreatePolicy(ctx context.Context, req *connect.Reques
 	if policy == nil {
 		return nil, ToConnect(errcode.E(errcode.INVALID, "policy required"))
 	}
+	rec := controlMutation{Action: "backup.policy.create", Resource: "backup_policy:" + policy.GetPolicyId(), OperationID: operationID, PolicyID: policy.GetPolicyId()}
 	if err := s.apply(ctx, control.CmdBackupPolicyPut, policyBody(operationID, policy)); err != nil {
+		s.audit(ctx, rec, err)
 		return nil, ToConnect(err)
 	}
+	s.audit(ctx, rec, nil)
 	return connect.NewResponse(&procmeshv1.CreateClusterBackupPolicyResponse{Policy: s.policyByID(policy.GetPolicyId())}), nil
 }
 
@@ -88,9 +93,12 @@ func (s *ClusterBackupAPI) UpdatePolicy(ctx context.Context, req *connect.Reques
 	if policy == nil {
 		return nil, ToConnect(errcode.E(errcode.INVALID, "policy required"))
 	}
+	rec := controlMutation{Action: "backup.policy.update", Resource: "backup_policy:" + policy.GetPolicyId(), OperationID: operationID, PolicyID: policy.GetPolicyId()}
 	if err := s.apply(ctx, control.CmdBackupPolicyPut, policyBody(operationID, policy)); err != nil {
+		s.audit(ctx, rec, err)
 		return nil, ToConnect(err)
 	}
+	s.audit(ctx, rec, nil)
 	return connect.NewResponse(&procmeshv1.UpdateClusterBackupPolicyResponse{Policy: s.policyByID(policy.GetPolicyId())}), nil
 }
 
@@ -108,9 +116,12 @@ func (s *ClusterBackupAPI) DeletePolicy(ctx context.Context, req *connect.Reques
 		}
 		return cli.DeletePolicy(ctx, req)
 	}
+	rec := controlMutation{Action: "backup.policy.delete", Resource: "backup_policy:" + req.Msg.GetPolicyId(), OperationID: operationID, PolicyID: req.Msg.GetPolicyId()}
 	if err := s.apply(ctx, control.CmdBackupPolicyDelete, control.BackupPolicyDeleteBody{OperationID: operationID, PolicyID: req.Msg.GetPolicyId()}); err != nil {
+		s.audit(ctx, rec, err)
 		return nil, ToConnect(err)
 	}
+	s.audit(ctx, rec, nil)
 	return connect.NewResponse(&procmeshv1.DeleteClusterBackupPolicyResponse{}), nil
 }
 
@@ -205,6 +216,7 @@ func (s *ClusterBackupAPI) StartRun(ctx context.Context, req *connect.Request[pr
 			LeaderTerm: term, LeaseExpiresUnix: leaseUntil, TimeoutSeconds: timeout, UnavailablePolicy: policy.UnavailablePolicy,
 		})
 	}
+	s.audit(ctx, controlMutation{Action: "backup.run.start", Resource: "backup_run:" + runID, OperationID: operationID, PolicyID: policy.PolicyID, RunID: runID}, nil)
 	return connect.NewResponse(&procmeshv1.StartClusterBackupRunResponse{Run: runToProto(run, nil)}), nil
 }
 
@@ -320,6 +332,7 @@ func (s *ClusterBackupAPI) RetryFailedTasks(ctx context.Context, req *connect.Re
 			s.DispatchRun(backup.FrozenRun{RunID: run.RunID, PolicyID: run.PolicyID, PolicyRevision: run.PolicyRevision, TargetNodeIDs: targets, Sink: run.Sink, DestinationProfile: run.DestinationProfile, MaxConcurrency: run.MaxConcurrency, LeaderTerm: term, LeaseExpiresUnix: leaseUntil, TimeoutSeconds: timeout, UnavailablePolicy: run.UnavailablePolicy})
 		}
 	}
+	s.audit(ctx, controlMutation{Action: "backup.run.retry", Resource: "backup_run:" + run.RunID, OperationID: operationID, PolicyID: run.PolicyID, RunID: run.RunID}, nil)
 	return connect.NewResponse(&procmeshv1.RetryFailedClusterBackupTasksResponse{Run: runToProto(run, nil)}), nil
 }
 
@@ -335,6 +348,16 @@ func (s *ClusterBackupAPI) GetDestinationHealth(ctx context.Context, req *connec
 		Sink: health.Sink, DestinationProfile: health.DestinationProfile, EndpointHost: health.EndpointHost,
 		Status: health.Status, ErrorSummary: health.ErrorSummary, CheckedUnix: s.now().Unix(), NodeId: s.LocalID,
 	}}), nil
+}
+
+func (s *ClusterBackupAPI) audit(ctx context.Context, rec controlMutation, err error) {
+	if err != nil {
+		rec.Result = "FAILED"
+		rec.Error = err.Error()
+	} else if rec.Result == "" {
+		rec.Result = "SUCCESS"
+	}
+	auditControlMutation(ctx, s.Store, s.LocalID, rec)
 }
 
 func (s *ClusterBackupAPI) requireWrite(ctx context.Context) error {

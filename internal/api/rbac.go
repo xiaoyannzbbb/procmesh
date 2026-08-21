@@ -88,9 +88,12 @@ func requireHopPerm(ctx context.Context, svc *auth.Service, procedure, localID s
 }
 
 func hopRPCPerm(procedure string) (perm string, write bool, ok bool) {
-	name := procedure
-	if i := strings.LastIndex(procedure, "/"); i >= 0 {
-		name = procedure[i+1:]
+	name := rpcName(procedure)
+	switch {
+	case strings.Contains(procedure, "ClusterBackupService"):
+		return clusterBackupHopPerm(name)
+	case strings.Contains(procedure, "DisasterReplicationService"):
+		return replicationHopPerm(name)
 	}
 	switch name {
 	case "ListProcesses", "GetProcess":
@@ -135,6 +138,37 @@ func hopRPCPerm(procedure string) (perm string, write bool, ok bool) {
 		return auth.PermReplicationManage, true, true
 	default:
 		// ApplyProcess 的 create/update 由 handler 判定
+		return "", false, false
+	}
+}
+
+func rpcName(procedure string) string {
+	if i := strings.LastIndex(procedure, "/"); i >= 0 {
+		return procedure[i+1:]
+	}
+	return procedure
+}
+
+func clusterBackupHopPerm(name string) (string, bool, bool) {
+	switch name {
+	case "ListPolicies", "ValidatePolicy", "GetRun", "ListRuns", "GetDestinationHealth":
+		return auth.PermBackupRead, false, true
+	case "CreatePolicy", "UpdatePolicy", "DeletePolicy", "StartRun", "RetryFailedTasks":
+		return auth.PermBackupManage, true, true
+	default:
+		return "", false, false
+	}
+}
+
+func replicationHopPerm(name string) (string, bool, bool) {
+	switch name {
+	case "GetTopology", "ListPolicies", "GetPolicy", "ListRuns", "GetRun", "ListRecoverableSnapshots":
+		return auth.PermReplicationRead, false, true
+	case "GeneratePolicyDraft":
+		return auth.PermReplicationManage, false, true
+	case "ApplyPolicyDraft", "UpdatePolicy", "DeletePolicy", "StartRun", "RetryFailedRoutes", "VerifyReplica":
+		return auth.PermReplicationManage, true, true
+	default:
 		return "", false, false
 	}
 }

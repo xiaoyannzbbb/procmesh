@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
@@ -35,6 +37,100 @@ func newClusterBackupClient(t *testing.T, api *ClusterBackupAPI, authn bool) pro
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return procmeshv1connect.NewClusterBackupServiceClient(srv.Client(), srv.URL)
+}
+
+func TestBackupPolicyAudit(t *testing.T) {
+	_, st, _ := newTestManager(t)
+	state := control.NewState()
+	state.Members["node-a"] = control.Member{NodeID: "node-a", Status: control.MemberAdmitted}
+	api := &ClusterBackupAPI{
+		Store: st, LocalID: "node-a",
+		StateFn:  func() control.State { return *state },
+		IsLeader: func() bool { return true },
+		ApplyFn: func(cmd control.Command, _ time.Duration) error {
+			return errors.New("upload failed secret_key=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY access_key=AKIAIOSFODNN7EXAMPLE payload=deadbeef")
+		},
+	}
+	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-admin", Username: "admin"})
+	_, err := api.CreatePolicy(ctx, connect.NewRequest(&procmeshv1.CreateClusterBackupPolicyRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-audit-fail"},
+		Policy: &procmeshv1.ClusterBackupPolicy{
+			PolicyId: "bp-secret", Name: "nightly", Sink: "s3", DestinationProfile: "archive",
+			Timezone: "UTC", TargetSelector: "ALL_ADMITTED", UnavailablePolicy: "RECORD_AND_CONTINUE",
+		},
+	}))
+	if err == nil {
+		t.Fatal("expected apply error")
+	}
+	assertControlAudit(t, st, "backup.policy.create", "FAILED", map[string]string{"policy_id": "bp-secret"})
+
+	api.ApplyFn = func(cmd control.Command, _ time.Duration) error { return state.Apply(cmd, time.Now()) }
+	_, err = api.CreatePolicy(ctx, connect.NewRequest(&procmeshv1.CreateClusterBackupPolicyRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-audit-create"},
+		Policy: &procmeshv1.ClusterBackupPolicy{
+			PolicyId: "bp-audit", Name: "nightly", Sink: "s3", DestinationProfile: "archive",
+			Timezone: "UTC", TargetSelector: "ALL_ADMITTED", UnavailablePolicy: "RECORD_AND_CONTINUE",
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertControlAudit(t, st, "backup.policy.create", "SUCCESS", map[string]string{"policy_id": "bp-audit"})
+
+	_, err = api.UpdatePolicy(ctx, connect.NewRequest(&procmeshv1.UpdateClusterBackupPolicyRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-audit-update"},
+		Policy: &procmeshv1.ClusterBackupPolicy{
+			PolicyId: "bp-audit", Name: "nightly-2", Sink: "s3", DestinationProfile: "archive",
+			Timezone: "UTC", TargetSelector: "ALL_ADMITTED", UnavailablePolicy: "RECORD_AND_CONTINUE",
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertControlAudit(t, st, "backup.policy.update", "SUCCESS", map[string]string{"policy_id": "bp-audit"})
+
+	_, err = api.StartRun(ctx, connect.NewRequest(&procmeshv1.StartClusterBackupRunRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-audit-run"}, PolicyId: "bp-audit", TargetNodeIds: []string{"node-a"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertControlAudit(t, st, "backup.run.start", "SUCCESS", map[string]string{"policy_id": "bp-audit"})
+
+	_, err = api.DeletePolicy(ctx, connect.NewRequest(&procmeshv1.DeleteClusterBackupPolicyRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-audit-delete"}, PolicyId: "bp-audit",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertControlAudit(t, st, "backup.policy.delete", "SUCCESS", map[string]string{"policy_id": "bp-audit"})
+}
+
+func TestBackupRunRetryAudit(t *testing.T) {
+	_, st, _ := newTestManager(t)
+	state := control.NewState()
+	state.Members["node-a"] = control.Member{NodeID: "node-a", Status: control.MemberAdmitted}
+	state.BackupPolicies["bp"] = control.BackupPolicy{PolicyID: "bp", Revision: 1, TargetSelector: "EXPLICIT_NODES", TargetIDs: []string{"node-a"}}
+	if err := state.CreateRun(control.CreateRunBody{OperationID: "op-run", LeaderTerm: 1, Run: control.ClusterBackupRun{RunID: "run-retry", PolicyID: "bp", PolicyRevision: 1, TargetNodeIDs: []string{"node-a"}, Status: "PARTIAL"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.UpdateTask(control.UpdateTaskBody{OperationID: "op-task", LeaderTerm: 1, Task: control.ClusterBackupTask{RunID: "run-retry", TaskID: "task-node-a", NodeID: "node-a", Status: "FAILED"}}); err != nil {
+		t.Fatal(err)
+	}
+	api := &ClusterBackupAPI{
+		Store: st, LocalID: "node-a",
+		StateFn: func() control.State { return *state }, IsLeader: func() bool { return true },
+		LeaderTerm: func() uint64 { return 2 }, Now: func() time.Time { return time.Unix(100, 0) },
+		ApplyFn: func(cmd control.Command, _ time.Duration) error { return state.Apply(cmd, time.Unix(100, 0)) },
+	}
+	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-admin", Username: "admin"})
+	_, err := api.RetryFailedTasks(ctx, connect.NewRequest(&procmeshv1.RetryFailedClusterBackupTasksRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-audit-retry"}, RunId: "run-retry",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertControlAudit(t, st, "backup.run.retry", "SUCCESS", map[string]string{"policy_id": "bp", "run_id": "run-retry"})
 }
 
 func TestClusterBackupAPI_RequiresManagePermission(t *testing.T) {
