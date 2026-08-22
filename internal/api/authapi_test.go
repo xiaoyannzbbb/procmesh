@@ -684,6 +684,36 @@ func TestAuthAPI_LeaderWithoutQuorumRejectsBeforeCreatingSession(t *testing.T) {
 	}
 }
 
+func TestAuthAPI_FollowerWithoutQuorumDoesNotCreateAuthState(t *testing.T) {
+	store, svc := newBootstrappedAuth(t)
+	api := &AuthAPI{
+		Auth:      svc,
+		IsLeader:  func() bool { return false },
+		HasQuorum: func() bool { return false },
+		LoginForward: loginForwarderFunc(func(context.Context, Route, *connect.Request[procmeshv1.LoginRequest]) (*connect.Response[procmeshv1.LoginResponse], error) {
+			t.Fatal("follower must not forward login without quorum")
+			return nil, nil
+		}),
+	}
+
+	for _, password := range []string{testAdminPass, "wrong-password"} {
+		_, err := api.Login(context.Background(), connect.NewRequest(&procmeshv1.LoginRequest{
+			Username: "admin", Password: password,
+		}))
+		code, detail := connectDetail(t, err)
+		if code != connect.CodeUnavailable || detail != "CONTROL_QUORUM_UNAVAILABLE" {
+			t.Fatalf("password=%q code=%v detail=%q err=%v", password, code, detail, err)
+		}
+	}
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	admin := store.state.Users["admin"]
+	if len(store.state.Sessions) != 0 || admin.FailCount != 0 || admin.Status != control.UserActive || admin.LockedUntilUnix != 0 {
+		t.Fatalf("follower created split auth state: sessions=%d admin=%+v", len(store.state.Sessions), admin)
+	}
+}
+
 func TestAuthAPI_LoginDoesNotExposeAmbiguousRaftWriteFailure(t *testing.T) {
 	store, svc := newBootstrappedAuth(t)
 	store.applyErr = errcode.E(errcode.UNAVAILABLE, "not raft leader at 10.0.0.8:18685")
