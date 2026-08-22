@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"sort"
+	"strconv"
 	"time"
 
 	"connectrpc.com/connect"
@@ -21,6 +23,22 @@ const (
 	sessionCookieMaxAge       = 43200 // 12h; matches control.SessionTTL
 	sessionReplicationPoll    = 10 * time.Millisecond
 	defaultSessionWaitTimeout = 5 * time.Second
+	leaderRefreshPoll         = 20 * time.Millisecond
+	defaultLeaderRefreshWait  = time.Second
+)
+
+type loginDetailCode string
+
+const (
+	loginDetailNotLeader          loginDetailCode = "LOGIN_NOT_LEADER"
+	loginDetailForwardHopLimit    loginDetailCode = "LOGIN_FORWARD_HOP_LIMIT"
+	loginDetailInvalidCredentials loginDetailCode = "INVALID_CREDENTIALS"
+	loginDetailRateLimited        loginDetailCode = "LOGIN_RATE_LIMITED"
+	loginDetailAccountLocked      loginDetailCode = "ACCOUNT_LOCKED"
+	loginDetailLeaderUnknown      loginDetailCode = "LEADER_UNKNOWN"
+	loginDetailLeaderUnreachable  loginDetailCode = "LEADER_UNREACHABLE"
+	loginDetailQuorumUnavailable  loginDetailCode = "CONTROL_QUORUM_UNAVAILABLE"
+	loginDetailSessionTimeout     loginDetailCode = "SESSION_VISIBILITY_TIMEOUT"
 )
 
 type LoginForwarder interface {
@@ -29,19 +47,42 @@ type LoginForwarder interface {
 
 type AuthAPI struct {
 	Auth               *auth.Service
+	Logger             *slog.Logger
 	LocalID            string
 	IsLeader           func() bool
+	HasQuorum          func() bool
 	LeaderRoute        func() (Route, error)
 	LoginForward       LoginForwarder
 	SessionWaitTimeout time.Duration
+	LeaderRefreshWait  time.Duration
 }
 
 func (s *AuthAPI) Login(ctx context.Context, req *connect.Request[procmeshv1.LoginRequest]) (*connect.Response[procmeshv1.LoginResponse], error) {
 	if s.Auth == nil {
 		return nil, unimplemented()
 	}
-	if s.IsLeader != nil && !s.IsLeader() {
+	hop, err := loginHop(req.Header())
+	if err != nil || hop > 1 {
+		return nil, toConnectWithDetailCode(
+			errcode.E(errcode.CONFLICT, "login forwarding hop limit exceeded"),
+			string(loginDetailForwardHopLimit),
+		)
+	}
+	isLeader := s.IsLeader == nil || s.IsLeader()
+	if !isLeader {
+		if hop == 1 {
+			return nil, toConnectWithDetailCode(
+				errcode.E(errcode.UNAVAILABLE, "login must be retried on the current leader"),
+				string(loginDetailNotLeader),
+			)
+		}
+		if s.HasQuorum != nil && !s.HasQuorum() {
+			return nil, loginUnavailable(loginDetailQuorumUnavailable, "control quorum is unavailable")
+		}
 		return s.forwardLogin(ctx, req)
+	}
+	if s.HasQuorum != nil && !s.HasQuorum() {
+		return nil, loginUnavailable(loginDetailQuorumUnavailable, "control quorum is unavailable")
 	}
 	sid, csrf, userID, exp, err := s.Auth.Login(req.Msg.GetUsername(), req.Msg.GetPassword())
 	if err != nil {
@@ -58,29 +99,189 @@ func (s *AuthAPI) Login(ctx context.Context, req *connect.Request[procmeshv1.Log
 	return resp, nil
 }
 
+func loginHop(h http.Header) (int, error) {
+	raw := rpc.LoginHopOf(h)
+	if raw == "" {
+		return 0, nil
+	}
+	hop, err := strconv.Atoi(raw)
+	if err != nil || hop < 0 {
+		return 0, errors.New("invalid login hop")
+	}
+	return hop, nil
+}
+
 func (s *AuthAPI) forwardLogin(ctx context.Context, req *connect.Request[procmeshv1.LoginRequest]) (*connect.Response[procmeshv1.LoginResponse], error) {
-	if s.LeaderRoute == nil || s.LoginForward == nil {
-		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "raft leader unavailable"))
+	if s.LeaderRoute == nil {
+		return nil, loginUnavailable(loginDetailLeaderUnknown, "leader is unknown")
 	}
+	if s.LoginForward == nil {
+		return nil, loginUnavailable(loginDetailLeaderUnreachable, "leader is unreachable")
+	}
+	discoveryStarted := time.Now()
 	route, err := s.LeaderRoute()
+	if err != nil || route.Local || route.NodeID == "" || route.RPC == "" {
+		stale := route
+		route, err = s.waitForFreshLeader(ctx, stale, err)
+		if err != nil {
+			s.logLoginLeaderDiscovery(1, discoveryStarted)
+			return nil, loginUnavailableCause(loginDetailLeaderUnknown, "leader is unknown", err)
+		}
+		if route.Local {
+			return s.Login(ctx, req)
+		}
+	}
+	resp, err := s.forwardLoginAttempt(ctx, route, req, 1)
+	if isLoginNotLeader(err) {
+		discoveryStarted = time.Now()
+		route, err = s.waitForFreshLeader(ctx, route, nil)
+		if err != nil {
+			s.logLoginLeaderDiscovery(2, discoveryStarted)
+			return nil, loginUnavailableCause(loginDetailLeaderUnknown, "leader is unknown", err)
+		}
+		if route.Local {
+			return s.Login(ctx, req)
+		}
+		resp, err = s.forwardLoginAttempt(ctx, route, req, 2)
+	}
 	if err != nil {
-		return nil, ToConnect(err)
-	}
-	if route.Local {
-		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "raft leader route resolved locally"))
-	}
-	if route.NodeID == "" || route.RPC == "" {
-		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "raft leader unavailable"))
-	}
-	stampHop(req.Header(), s.LocalID, route.NodeID)
-	resp, err := s.LoginForward.Login(ctx, route, req)
-	if err != nil {
+		switch loginDetailOf(err) {
+		case "":
+			return nil, loginUnavailableCause(loginDetailLeaderUnreachable, "leader is unreachable", err)
+		case loginDetailNotLeader:
+			return nil, loginUnavailableCause(loginDetailLeaderUnknown, "leader is unknown", err)
+		case loginDetailCode(errcode.UNAVAILABLE), loginDetailCode(errcode.TIMEOUT):
+			return nil, loginUnavailableCause(loginDetailQuorumUnavailable, "control quorum is unavailable", err)
+		}
 		return nil, toLoginConnect(rpc.MapCallError(err))
 	}
+	waitStarted := time.Now()
 	if err := s.waitForSession(ctx, resp.Msg.GetSessionId(), resp.Msg.GetCsrfToken()); err != nil {
-		return nil, ToConnect(err)
+		s.logLoginSessionVisibility("timeout", waitStarted)
+		return nil, loginUnavailableCause(loginDetailSessionTimeout, "session is not yet available on this agent", err)
 	}
+	s.logLoginSessionVisibility("success", waitStarted)
 	return resp, nil
+}
+
+func (s *AuthAPI) waitForFreshLeader(ctx context.Context, stale Route, initialErr error) (Route, error) {
+	timeout := s.LeaderRefreshWait
+	if timeout <= 0 {
+		timeout = defaultLeaderRefreshWait
+	}
+	refreshCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(leaderRefreshPoll)
+	defer ticker.Stop()
+	lastErr := initialErr
+	for {
+		route, err := s.LeaderRoute()
+		if err == nil {
+			switch {
+			case route.Local && (s.IsLeader == nil || s.IsLeader()) && (s.HasQuorum == nil || s.HasQuorum()):
+				return route, nil
+			case !route.Local && route.NodeID != "" && route.RPC != "" && (route.NodeID != stale.NodeID || route.RPC != stale.RPC):
+				return route, nil
+			}
+		} else {
+			lastErr = err
+		}
+		select {
+		case <-refreshCtx.Done():
+			cause := error(refreshCtx.Err())
+			if lastErr != nil {
+				cause = errors.Join(cause, lastErr)
+			}
+			return Route{}, errcode.Wrap(errcode.UNAVAILABLE, "leader refresh timed out", cause)
+		case <-ticker.C:
+		}
+	}
+}
+
+func (s *AuthAPI) logLoginLeaderDiscovery(attempt int, started time.Time) {
+	if s.Logger == nil {
+		return
+	}
+	s.Logger.Info("login leader discovery",
+		"attempt", attempt,
+		"result", "leader_unknown",
+		"duration_ms", time.Since(started).Milliseconds(),
+	)
+}
+
+func loginUnavailable(detailCode loginDetailCode, message string) error {
+	return toConnectWithDetailCode(errcode.E(errcode.UNAVAILABLE, message), string(detailCode))
+}
+
+func loginUnavailableCause(detailCode loginDetailCode, message string, cause error) error {
+	return newConnectWithDetailCode(errcode.Wrap(errcode.UNAVAILABLE, message, cause), string(detailCode))
+}
+
+func (s *AuthAPI) forwardLoginAttempt(ctx context.Context, route Route, req *connect.Request[procmeshv1.LoginRequest], attempt int) (*connect.Response[procmeshv1.LoginResponse], error) {
+	stampHop(req.Header(), s.LocalID, route.NodeID)
+	rpc.SetLoginHop(req.Header(), "1")
+	started := time.Now()
+	resp, err := s.LoginForward.Login(ctx, route, req)
+	if s.Logger != nil {
+		s.Logger.Info("login forward",
+			"attempt", attempt,
+			"hop", 1,
+			"result", loginForwardResult(err),
+			"duration_ms", time.Since(started).Milliseconds(),
+		)
+	}
+	return resp, err
+}
+
+func (s *AuthAPI) logLoginSessionVisibility(result string, started time.Time) {
+	if s.Logger == nil {
+		return
+	}
+	s.Logger.Info("login session visibility",
+		"result", result,
+		"duration_ms", time.Since(started).Milliseconds(),
+	)
+}
+
+func loginForwardResult(err error) string {
+	if err == nil {
+		return "success"
+	}
+	switch loginDetailOf(err) {
+	case loginDetailNotLeader:
+		return "not_leader"
+	case loginDetailInvalidCredentials:
+		return "invalid_credentials"
+	case loginDetailRateLimited:
+		return "rate_limited"
+	case loginDetailAccountLocked:
+		return "account_locked"
+	case loginDetailQuorumUnavailable:
+		return "quorum_unavailable"
+	default:
+		return "unavailable"
+	}
+}
+
+func isLoginNotLeader(err error) bool {
+	return loginDetailOf(err) == loginDetailNotLeader
+}
+
+func loginDetailOf(err error) loginDetailCode {
+	var ce *connect.Error
+	if !errors.As(err, &ce) {
+		return ""
+	}
+	for _, detail := range ce.Details() {
+		msg, detailErr := detail.Value()
+		if detailErr != nil {
+			continue
+		}
+		if info, ok := msg.(*procmeshv1.ErrorInfo); ok {
+			return loginDetailCode(info.GetCode())
+		}
+	}
+	return ""
 }
 
 func (s *AuthAPI) waitForSession(ctx context.Context, sessionID, csrf string) error {
@@ -106,8 +307,17 @@ func (s *AuthAPI) waitForSession(ctx context.Context, sessionID, csrf string) er
 
 func toLoginConnect(err error) error {
 	var coded *errcode.Error
-	if errors.As(err, &coded) && coded.Code == errcode.DENIED && coded.Msg == "invalid credentials" {
-		return toConnectWithDetailCode(err, "INVALID_CREDENTIALS")
+	if errors.As(err, &coded) {
+		switch coded.Code {
+		case errcode.UNAVAILABLE, errcode.TIMEOUT:
+			return loginUnavailableCause(loginDetailQuorumUnavailable, "control quorum is unavailable", err)
+		case errcode.INVALID_CREDENTIALS:
+			return toConnectWithDetailCode(err, string(loginDetailInvalidCredentials))
+		case errcode.RATE_LIMITED:
+			return toConnectWithDetailCode(err, string(loginDetailRateLimited))
+		case errcode.ACCOUNT_LOCKED:
+			return toConnectWithDetailCode(err, string(loginDetailAccountLocked))
+		}
 	}
 	return ToConnect(err)
 }

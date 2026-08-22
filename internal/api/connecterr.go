@@ -35,8 +35,12 @@ func toConnectWithDetailCode(err error, detailCode string) error {
 	if errors.As(err, &ce) {
 		return ce
 	}
+	return newConnectWithDetailCode(err, detailCode)
+}
+
+func newConnectWithDetailCode(err error, detailCode string) error {
 	c := CodeOf(err)
-	ce = connect.NewError(toConnectCode(c), err)
+	ce := connect.NewError(toConnectCode(c), err)
 	detail, detailErr := connect.NewErrorDetail(&procmeshv1.ErrorInfo{
 		Code:    detailCode,
 		Message: err.Error(),
@@ -61,7 +65,9 @@ func toConnectCode(c errcode.Code) connect.Code {
 		return connect.CodeUnavailable
 	case errcode.TIMEOUT:
 		return connect.CodeDeadlineExceeded
-	case errcode.DENIED:
+	case errcode.RATE_LIMITED:
+		return connect.CodeResourceExhausted
+	case errcode.INVALID_CREDENTIALS, errcode.ACCOUNT_LOCKED, errcode.DENIED:
 		return connect.CodePermissionDenied
 	case errcode.DUPLICATE_NODE_ID:
 		return connect.CodeAlreadyExists

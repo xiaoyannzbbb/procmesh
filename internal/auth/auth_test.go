@@ -180,13 +180,13 @@ func TestLogin_SuccessAndBearer(t *testing.T) {
 func TestLogin_BadPassword(t *testing.T) {
 	svc, store, _ := newTestSvc(t)
 	_, _, _, _, err := svc.Login("admin", "wrong-password")
-	requireCode(t, err, errcode.DENIED, "invalid credentials")
+	requireCode(t, err, errcode.INVALID_CREDENTIALS, "invalid credentials")
 	if store.state.Users["admin"].FailCount != 1 {
 		t.Fatalf("fail=%d", store.state.Users["admin"].FailCount)
 	}
 
 	_, _, _, _, err = svc.Login("nobody", adminPass)
-	requireCode(t, err, errcode.DENIED, "invalid credentials")
+	requireCode(t, err, errcode.INVALID_CREDENTIALS, "invalid credentials")
 
 	_, _, _, _, err = svc.Login("", adminPass)
 	requireCode(t, err, errcode.INVALID, "")
@@ -198,12 +198,12 @@ func TestLogin_RateLimit(t *testing.T) {
 	svc, _, _ := newTestSvc(t)
 	for i := 0; i < 5; i++ {
 		_, _, _, _, err := svc.Login("admin", "wrong-password")
-		requireCode(t, err, errcode.DENIED, "invalid credentials")
+		requireCode(t, err, errcode.INVALID_CREDENTIALS, "invalid credentials")
 	}
 	_, _, _, _, err := svc.Login("admin", "wrong-password")
-	requireCode(t, err, errcode.DENIED, "login rate limited")
+	requireCode(t, err, errcode.RATE_LIMITED, "login rate limited")
 	_, _, _, _, err = svc.Login("admin", adminPass)
-	requireCode(t, err, errcode.DENIED, "login rate limited")
+	requireCode(t, err, errcode.RATE_LIMITED, "login rate limited")
 }
 
 func TestLogin_Lockout(t *testing.T) {
@@ -213,7 +213,7 @@ func TestLogin_Lockout(t *testing.T) {
 			clk.Add(time.Minute + time.Second)
 		}
 		_, _, _, _, err := svc.Login("admin", "wrong-password")
-		requireCode(t, err, errcode.DENIED, "invalid credentials")
+		requireCode(t, err, errcode.INVALID_CREDENTIALS, "invalid credentials")
 	}
 	u := store.state.Users["admin"]
 	if u.Status != control.UserLocked {
@@ -226,7 +226,7 @@ func TestLogin_Lockout(t *testing.T) {
 
 	clk.Add(time.Minute + time.Second)
 	_, _, _, _, err := svc.Login("admin", adminPass)
-	requireCode(t, err, errcode.DENIED, "user locked")
+	requireCode(t, err, errcode.ACCOUNT_LOCKED, "user locked")
 
 	clk.Add(control.LockFor)
 	sid, _, uid, _, err := svc.Login("admin", adminPass)

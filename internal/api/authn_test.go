@@ -36,11 +36,12 @@ func testAdminHash(t *testing.T) string {
 }
 
 type memAuthStore struct {
-	mu     sync.Mutex
-	state  *control.State
-	now    func() time.Time
-	quorum bool
-	fresh  bool
+	mu       sync.Mutex
+	state    *control.State
+	now      func() time.Time
+	applyErr error
+	quorum   bool
+	fresh    bool
 }
 
 func (m *memAuthStore) View() control.State {
@@ -52,6 +53,9 @@ func (m *memAuthStore) View() control.State {
 func (m *memAuthStore) Apply(cmd control.Command, _ time.Duration) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.applyErr != nil {
+		return m.applyErr
+	}
 	now := time.Now()
 	if m.now != nil {
 		now = m.now()

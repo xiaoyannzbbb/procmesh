@@ -89,7 +89,7 @@ func (s *Service) Login(username, password string) (sessionID, csrf, userID stri
 	}
 	now := s.now()
 	if !s.limit.allow(username, now) {
-		return "", "", "", time.Time{}, errcode.E(errcode.DENIED, "login rate limited")
+		return "", "", "", time.Time{}, errcode.E(errcode.RATE_LIMITED, "login rate limited")
 	}
 
 	stStore, err := s.storeOrErr()
@@ -102,13 +102,13 @@ func (s *Service) Login(username, password string) (sessionID, csrf, userID stri
 		if ok {
 			_ = s.apply(control.CmdLoginFail, control.LoginFailBody{Username: username})
 		}
-		return "", "", "", time.Time{}, errcode.E(errcode.DENIED, "invalid credentials")
+		return "", "", "", time.Time{}, errcode.E(errcode.INVALID_CREDENTIALS, "invalid credentials")
 	}
 	if u.Status == control.UserDisabled {
 		return "", "", "", time.Time{}, errcode.E(errcode.DENIED, "user disabled")
 	}
 	if u.Status == control.UserLocked && now.Before(time.Unix(u.LockedUntilUnix, 0)) {
-		return "", "", "", time.Time{}, errcode.E(errcode.DENIED, "user locked")
+		return "", "", "", time.Time{}, errcode.E(errcode.ACCOUNT_LOCKED, "user locked")
 	}
 
 	sid, err := randomPrefixed(sessionPrefix, sessionHexN)

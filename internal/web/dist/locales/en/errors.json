@@ -1,6 +1,13 @@
 {
   "PROCESS_NOT_FOUND": "Process {{name}} not found",
   "INVALID_CREDENTIALS": "Invalid username or password",
+  "LOGIN_RATE_LIMITED": "Too many login attempts. Try again later",
+  "ACCOUNT_LOCKED": "This account is temporarily locked",
+  "LEADER_UNKNOWN": "The current control leader is not known yet",
+  "LEADER_UNREACHABLE": "The current control leader cannot be reached",
+  "CONTROL_QUORUM_UNAVAILABLE": "The control quorum is unavailable",
+  "SESSION_VISIBILITY_TIMEOUT": "Login succeeded, but the session is not yet available on this agent",
+  "LOGIN_FORWARD_HOP_LIMIT": "Login forwarding was stopped because the route is stale",
   "CONFLICT": "Configuration conflict: expected revision {{expected}}, got {{actual}}",
   "UNAVAILABLE": "Target agent {{agent}} is unavailable",
   "DENIED": "Permission denied: {{action}} requires {{permission}}",

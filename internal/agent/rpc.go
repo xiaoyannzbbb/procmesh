@@ -196,10 +196,14 @@ func (r *rpcRuntime) localHandler() http.Handler {
 		opts = append(opts, connect.WithInterceptors(api.OwnerAuthInterceptor(r.auth, r.nodeID)))
 	}
 	authp, authh := procmeshv1connect.NewAuthServiceHandler(&api.AuthAPI{
-		Auth: r.auth, LocalID: r.nodeID,
+		Auth: r.auth, Logger: r.logger.With("component", "login"), LocalID: r.nodeID,
 		IsLeader: func() bool {
 			n := r.control()
-			return n != nil && n.IsLeader() && n.HasQuorum()
+			return n != nil && n.IsLeader()
+		},
+		HasQuorum: func() bool {
+			n := r.control()
+			return n != nil && n.HasQuorum()
 		},
 		LeaderRoute: r.leaderRoute, LoginForward: r.fwd,
 	})

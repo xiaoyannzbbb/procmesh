@@ -5,6 +5,7 @@ import "net/http"
 const (
 	HeaderTargetNode = "Procmesh-Target-Node"
 	HeaderSourceNode = "Procmesh-Source-Node"
+	HeaderLoginHop   = "Procmesh-Login-Hop"
 	HeaderUserID     = "Procmesh-User-ID"
 	HeaderSessionID  = "Procmesh-Session-ID"
 	HeaderTokenID    = "Procmesh-Token-ID"
@@ -12,6 +13,7 @@ const (
 
 func TargetOf(h http.Header) string    { return h.Get(HeaderTargetNode) }
 func SourceOf(h http.Header) string    { return h.Get(HeaderSourceNode) }
+func LoginHopOf(h http.Header) string  { return h.Get(HeaderLoginHop) }
 func UserIDOf(h http.Header) string    { return h.Get(HeaderUserID) }
 func SessionIDOf(h http.Header) string { return h.Get(HeaderSessionID) }
 func TokenIDOf(h http.Header) string   { return h.Get(HeaderTokenID) }
@@ -28,6 +30,14 @@ func SetSource(h http.Header, nodeID string) {
 		return
 	}
 	h.Set(HeaderSourceNode, nodeID)
+}
+
+func SetLoginHop(h http.Header, hop string) {
+	if hop == "" {
+		h.Del(HeaderLoginHop)
+		return
+	}
+	h.Set(HeaderLoginHop, hop)
 }
 
 func SetUserID(h http.Header, userID string) {

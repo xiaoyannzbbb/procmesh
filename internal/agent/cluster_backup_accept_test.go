@@ -429,9 +429,9 @@ func startThreeBackupAgents(t *testing.T, cfg agentcfg.Backup) []backupAcceptNod
 	return nodes
 }
 
-func joinThree(t *testing.T, addrA, addrB, addrC string) {
+func joinThree(t *testing.T, addrA, addrB, addrC string) string {
 	t.Helper()
-	joinTwo(t, addrA, addrB)
+	password := joinTwoAndPassword(t, addrA, addrB)
 	token := createJoinToken(t, addrA)
 	code, out, errb := runP1CLI("--server", addrC, "agent", "join", "--seed", addrA, "--token", token)
 	if code != 0 {
@@ -454,12 +454,13 @@ func joinThree(t *testing.T, addrA, addrB, addrC string) {
 			}
 			if ready {
 				waitClusterQuorum(t, addrA)
-				return
+				return password
 			}
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("want 3 members; A=%q B=%q C=%q", listA, listB, listC)
+	return ""
 }
 
 func seedOwnerSpecs(t *testing.T, nodes []backupAcceptNode) {
@@ -660,16 +661,9 @@ func waitClusterID(t *testing.T, addr string) string {
 
 func waitClusterQuorum(t *testing.T, addr string) {
 	t.Helper()
-	deadline := time.Now().Add(15 * time.Second)
-	cli := procmeshv1connect.NewClusterServiceClient(&http.Client{Timeout: 5 * time.Second}, "http://"+addr, testConnectOpts()...)
-	for time.Now().Before(deadline) {
-		resp, err := cli.Overview(context.Background(), connect.NewRequest(&procmeshv1.ClusterOverviewRequest{}))
-		if err == nil && resp.Msg.GetControlQuorum() && resp.Msg.GetControlLeader() != "" {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	t.Fatal("control quorum not ready")
+	waitClusterOverview(t, addr, 15*time.Second, func(resp *procmeshv1.ClusterOverviewResponse) bool {
+		return resp.GetControlQuorum() && resp.GetControlLeader() != ""
+	}, "control quorum not ready")
 }
 
 func clusterBackupClient(t *testing.T, addr string) procmeshv1connect.ClusterBackupServiceClient {

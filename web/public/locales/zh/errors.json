@@ -1,6 +1,13 @@
 {
   "PROCESS_NOT_FOUND": "未找到进程 {{name}}",
   "INVALID_CREDENTIALS": "用户名或密码无效",
+  "LOGIN_RATE_LIMITED": "登录尝试过于频繁，请稍后再试",
+  "ACCOUNT_LOCKED": "该账号已被临时锁定",
+  "LEADER_UNKNOWN": "当前尚未发现控制面 Leader",
+  "LEADER_UNREACHABLE": "当前无法连接控制面 Leader",
+  "CONTROL_QUORUM_UNAVAILABLE": "控制面 quorum 当前不可用",
+  "SESSION_VISIBILITY_TIMEOUT": "登录已成功，但当前 Agent 尚未同步到该 Session",
+  "LOGIN_FORWARD_HOP_LIMIT": "登录转发因路由陈旧而终止",
   "CONFLICT": "配置冲突：期望版本 {{expected}}，实际版本 {{actual}}",
   "UNAVAILABLE": "目标代理 {{agent}} 不可用",
   "DENIED": "权限被拒绝：{{action}} 需要 {{permission}} 权限",

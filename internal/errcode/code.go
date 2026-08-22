@@ -9,6 +9,9 @@ const (
 	CONFLICT             Code = "CONFLICT"
 	UNAVAILABLE          Code = "UNAVAILABLE"
 	TIMEOUT              Code = "TIMEOUT"
+	RATE_LIMITED         Code = "RATE_LIMITED"
+	INVALID_CREDENTIALS  Code = "INVALID_CREDENTIALS"
+	ACCOUNT_LOCKED       Code = "ACCOUNT_LOCKED"
 	DENIED               Code = "DENIED"
 	DEGRADED             Code = "DEGRADED"
 	DUPLICATE_NODE_ID    Code = "DUPLICATE_NODE_ID"
@@ -36,6 +39,10 @@ func (e *Error) Unwrap() error {
 
 func E(code Code, msg string) error {
 	return &Error{Code: code, Msg: msg}
+}
+
+func Wrap(code Code, msg string, cause error) error {
+	return &Error{Code: code, Msg: msg, Err: cause}
 }
 
 func Is(err error, code Code) bool {

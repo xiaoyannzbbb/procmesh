@@ -1029,6 +1029,13 @@ declare module "i18next" {
       errors: {
         'PROCESS_NOT_FOUND': string
         'INVALID_CREDENTIALS': string
+        'LOGIN_RATE_LIMITED': string
+        'ACCOUNT_LOCKED': string
+        'LEADER_UNKNOWN': string
+        'LEADER_UNREACHABLE': string
+        'CONTROL_QUORUM_UNAVAILABLE': string
+        'SESSION_VISIBILITY_TIMEOUT': string
+        'LOGIN_FORWARD_HOP_LIMIT': string
         'CONFLICT': string
         'UNAVAILABLE': string
         'DENIED': string

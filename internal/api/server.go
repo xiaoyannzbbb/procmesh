@@ -138,10 +138,14 @@ func NewServer(opts Options) (*Server, error) {
 	}, intercept)
 	mountConnect(engine, clp, clh)
 	ap, ah := procmeshv1connect.NewAuthServiceHandler(&AuthAPI{
-		Auth: opts.Auth, LocalID: opts.LocalID,
+		Auth: opts.Auth, Logger: opts.Logger.With("component", "login"), LocalID: opts.LocalID,
 		IsLeader: func() bool {
 			n := opts.Cluster.controlNode()
-			return n == nil || (n.IsLeader() && n.HasQuorum())
+			return n == nil || n.IsLeader()
+		},
+		HasQuorum: func() bool {
+			n := opts.Cluster.controlNode()
+			return n == nil || n.HasQuorum()
 		},
 		LeaderRoute: opts.LoginLeaderRoute, LoginForward: loginForward,
 	}, intercept)
