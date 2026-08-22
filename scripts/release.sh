@@ -158,7 +158,13 @@ for target in "${targets[@]}"; do
     cp docs/conf/agent.yaml "$package_dir/agent.yaml"
   fi
 
-  tar -C "$build_dir" -czf "$dist_dir/$archive_base.tar.gz" "$archive_base"
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    # Avoid Apple xattrs becoming unsupported PAX headers in Linux tar.
+    COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata \
+      -C "$build_dir" -czf "$dist_dir/$archive_base.tar.gz" "$archive_base"
+  else
+    tar -C "$build_dir" -czf "$dist_dir/$archive_base.tar.gz" "$archive_base"
+  fi
 done
 
 checksums="$dist_dir/checksums.txt"
