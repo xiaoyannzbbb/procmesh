@@ -36,15 +36,13 @@ func resolveControlAddr(listen, advertise string) (bind, adv string, err error) 
 		bind = ln.Addr().String()
 		_ = ln.Close()
 	}
-	adv = advertise
-	if adv == "" {
+	if advertise == "" {
 		adv = bind
 		return bind, adv, nil
 	}
-	if _, port, splitErr := net.SplitHostPort(adv); splitErr == nil && port == "0" {
-		_, bindPort, _ := net.SplitHostPort(bind)
-		host, _, _ := net.SplitHostPort(adv)
-		adv = net.JoinHostPort(host, bindPort)
+	adv, err = resolveAdvertiseAddr(bind, advertise)
+	if err != nil {
+		return "", "", err
 	}
 	return bind, adv, nil
 }

@@ -287,6 +287,12 @@ if ((${#existing_binaries[@]})) && ! prompt_yes_no "Existing binaries found in $
   exit 0
 fi
 
+# Record the pre-install state so a newly started service is not treated as an upgrade.
+agent_was_running=false
+if [[ -d /run/systemd/system ]] && systemctl is-active --quiet procmesh-agent; then
+  agent_was_running=true
+fi
+
 if [[ -e "$install_dir" && ! -d "$install_dir" ]]; then
   die "installation path is not a directory: $install_dir"
 fi
@@ -372,7 +378,7 @@ if prompt_yes_no 'Install a systemd unit' no; then
   fi
 fi
 
-if [[ -d /run/systemd/system ]] && systemctl is-active --quiet procmesh-agent; then
+if [[ "$agent_was_running" == true ]]; then
   if prompt_yes_no 'A ProcMesh Agent is running. Restart it to use the installed binaries now' no; then
     run_privileged systemctl restart procmesh-agent
     printf 'ProcMesh Agent restarted.\n'

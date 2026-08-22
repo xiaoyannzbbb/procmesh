@@ -73,6 +73,38 @@ func TestRun_LogsLifecycle(t *testing.T) {
 	}
 }
 
+func TestResolveAdvertiseAddr_InheritsListenPort(t *testing.T) {
+	tests := []struct {
+		name      string
+		listen    string
+		advertise string
+		want      string
+	}{
+		{name: "ipv4", listen: "0.0.0.0:18689", advertise: "209.50.255.237", want: "209.50.255.237:18689"},
+		{name: "hostname", listen: "0.0.0.0:18683", advertise: "agent.example.com", want: "agent.example.com:18683"},
+		{name: "ipv6", listen: "[::]:18685", advertise: "2001:db8::1", want: "[2001:db8::1]:18685"},
+		{name: "explicit port", listen: "0.0.0.0:18689", advertise: "209.50.255.237:30123", want: "209.50.255.237:30123"},
+		{name: "dynamic port", listen: "127.0.0.1:0", advertise: "127.0.0.2:0", want: "127.0.0.2:0"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveAdvertiseAddr(tt.listen, tt.advertise)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("resolveAdvertiseAddr(%q, %q) = %q, want %q", tt.listen, tt.advertise, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveAdvertiseAddr_RejectsMalformedHostPort(t *testing.T) {
+	if _, err := resolveAdvertiseAddr("0.0.0.0:18689", "209.50.255.237:bad"); err == nil {
+		t.Fatal("expected malformed advertise address error")
+	}
+}
+
 func TestLookUser_RejectsOtherUserWithoutRoot(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("running as root")

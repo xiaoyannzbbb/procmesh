@@ -13,6 +13,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -176,6 +177,10 @@ func Run(ctx context.Context, opt Options) error {
 		return err
 	}
 	logInsecureListen(logger, gossipListen, opt.InsecureListen)
+	gossipAdvertise, err = resolveAdvertiseAddr(gossipListen, gossipAdvertise)
+	if err != nil {
+		return fmt.Errorf("gossip advertise: %w", err)
+	}
 	if opt.RPCListen == "" {
 		opt.RPCListen = cfg.RPC.Listen
 	}
@@ -189,6 +194,10 @@ func Run(ctx context.Context, opt Options) error {
 		return err
 	}
 	logInsecureListen(logger, opt.RPCListen, opt.InsecureListen)
+	opt.RPCAdvertise, err = resolveAdvertiseAddr(opt.RPCListen, opt.RPCAdvertise)
+	if err != nil {
+		return fmt.Errorf("rpc advertise: %w", err)
+	}
 	if opt.ControlListen == "" {
 		opt.ControlListen = cfg.Control.Listen
 	}
@@ -856,6 +865,42 @@ func splitListen(addr string) (host string, port int, err error) {
 		return "", 0, fmt.Errorf("gossip port: %w", err)
 	}
 	return host, port, nil
+}
+
+// resolveAdvertiseAddr supplies the listen port when advertise names only a host.
+// An explicit port, including :0, keeps its existing behavior.
+func resolveAdvertiseAddr(listen, advertise string) (string, error) {
+	if advertise == "" {
+		return "", nil
+	}
+	_, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		return "", fmt.Errorf("listen address: %w", err)
+	}
+
+	advertiseHost, advertisePort, err := net.SplitHostPort(advertise)
+	if err == nil {
+		if _, parseErr := strconv.ParseUint(advertisePort, 10, 16); parseErr != nil {
+			return "", fmt.Errorf("port %q: %w", advertisePort, parseErr)
+		}
+		if advertisePort != "0" {
+			return advertise, nil
+		}
+		return net.JoinHostPort(advertiseHost, port), nil
+	}
+
+	if ip := net.ParseIP(advertise); ip != nil {
+		return net.JoinHostPort(ip.String(), port), nil
+	}
+	if strings.HasPrefix(advertise, "[") && strings.HasSuffix(advertise, "]") {
+		if ip := net.ParseIP(strings.TrimSuffix(strings.TrimPrefix(advertise, "["), "]")); ip != nil {
+			return net.JoinHostPort(ip.String(), port), nil
+		}
+	}
+	if !strings.Contains(advertise, ":") {
+		return net.JoinHostPort(advertise, port), nil
+	}
+	return "", fmt.Errorf("address %q: %w", advertise, err)
 }
 
 // CheckListen refuses non-loopback binds unless insecure is set.
