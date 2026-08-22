@@ -10,6 +10,14 @@ data_dir: "/var/lib/procmesh"
 # HTTP API 本地绑定地址。未传 --listen 时使用此值；留空时默认 127.0.0.1:18680。
 listen: "127.0.0.1:18680"
 
+# 本机紧急检查通道。只提供 process list/get/logs，不依赖集群 Session，也不监听 TCP。
+break_glass:
+  # Unix socket 路径。留空时使用 $data_dir/break-glass.sock；生产环境也可放在 /run。
+  socket: "/run/procmesh-break-glass.sock"
+  # 留空时 socket 为 0600，仅 Agent OS 用户（生产通常为 root）可访问。
+  # 配置后 socket 为 0660，并允许该 OS 组；socket 父目录必须允许该组穿越。
+  group: ""
+
 # 磁盘保护策略。三个百分比必须满足：warn_percent < cleanup_percent < emergency_percent。
 disk:
   # 磁盘使用率严格超过此值时记录告警。默认：85。

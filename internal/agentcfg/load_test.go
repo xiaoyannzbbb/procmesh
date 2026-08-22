@@ -122,6 +122,21 @@ func TestLoadAll_ControlListenAndAdvertise(t *testing.T) {
 	}
 }
 
+func TestLoadAll_BreakGlassSocketAndGroup(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	body := "break_glass:\n  socket: /run/procmesh/break-glass.sock\n  group: procmesh-operators\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := agentcfg.LoadAll(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BreakGlass.Socket != "/run/procmesh/break-glass.sock" || cfg.BreakGlass.Group != "procmesh-operators" {
+		t.Fatalf("%+v", cfg.BreakGlass)
+	}
+}
+
 func TestLoad_UsesLoadAllDiskOnly(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent.yaml")

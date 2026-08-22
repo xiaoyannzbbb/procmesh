@@ -16,6 +16,7 @@ const usageText = `usage: procmesh [flags] <command>
 
 flags:
   --server ADDR            Connect base (default 127.0.0.1:18680)
+  --break-glass SOCKET     inspect the local Agent over its Unix socket
   --operation-id ID        mutation id (default generated UUID)
   --operator NAME          operator (default $USER or cli)
   --node NODE              target owner node_id or hostname
@@ -101,6 +102,8 @@ func isUsageError(err error) bool {
 
 type options struct {
 	server      string
+	serverSet   bool
+	breakGlass  string
 	operationID string
 	operator    string
 	node        string
@@ -189,6 +192,9 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprint(stderr, usageText)
 		return 2
 	}
+	if err := validateBreakGlassMode(opt); err != nil {
+		return printUsage(stderr, err)
+	}
 	if opt.operationID == "" {
 		id, err := newUUID()
 		if err != nil {
@@ -202,7 +208,12 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	cmd, rest := opt.args[0], opt.args[1:]
-	c := newClient(opt.server, opt.operationID, opt.operator, opt.node, sessionTokenFor(cmd, opt.server, opt.authToken))
+	var c *client
+	if opt.breakGlass != "" {
+		c = newBreakGlassClient(opt.breakGlass, opt.operationID, opt.operator)
+	} else {
+		c = newClient(opt.server, opt.operationID, opt.operator, opt.node, sessionTokenFor(cmd, opt.server, opt.authToken))
+	}
 	var runErr error
 	switch cmd {
 	case "status":
@@ -343,6 +354,12 @@ func applyFlag(opt *options, name, val string) error {
 	switch name {
 	case "server":
 		opt.server = val
+		opt.serverSet = true
+	case "break-glass":
+		if val == "" {
+			return usageError("--break-glass requires a socket path")
+		}
+		opt.breakGlass = val
 	case "operation-id":
 		opt.operationID = val
 	case "operator":
@@ -538,6 +555,30 @@ func applyFlag(opt *options, name, val string) error {
 		return usageError("unknown flag --" + name)
 	}
 	return nil
+}
+
+func validateBreakGlassMode(opt options) error {
+	if opt.breakGlass == "" {
+		return nil
+	}
+	if opt.serverSet {
+		return usageError("--break-glass cannot be combined with --server")
+	}
+	if opt.node != "" {
+		return usageError("--break-glass does not accept --node")
+	}
+	if opt.authToken != "" {
+		return usageError("--break-glass does not accept cluster credentials")
+	}
+	if len(opt.args) < 2 || opt.args[0] != "process" {
+		return usageError("--break-glass only supports process list, get, and logs")
+	}
+	switch opt.args[1] {
+	case "list", "get", "logs":
+		return nil
+	default:
+		return usageError("--break-glass only supports process list, get, and logs")
+	}
 }
 
 func isPresenceBoolFlag(name string) bool {

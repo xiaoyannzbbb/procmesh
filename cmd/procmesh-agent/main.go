@@ -23,6 +23,8 @@ func run(args []string, stderr io.Writer) int {
 	listen := fs.String("listen", "", "HTTP listen address (overrides agent.yaml listen)")
 	rpcListen := fs.String("rpc", "", "RPC listen address (default 127.0.0.1:18683)")
 	controlListen := fs.String("control", "", "control/raft listen address (default 127.0.0.1:18685)")
+	breakGlassSocket := fs.String("break-glass-socket", "", "local break-glass Unix socket path")
+	breakGlassGroup := fs.String("break-glass-group", "", "OS group allowed to use break-glass inspection")
 	gossip := fs.String("gossip", "", "gossip listen address (default 127.0.0.1:18689)")
 	shimBin := fs.String("shim-bin", "", "path to procmesh-shim binary")
 	insecure := fs.Bool("insecure-listen", false, "allow non-loopback listen (logs a warning)")
@@ -46,15 +48,17 @@ func run(args []string, stderr io.Writer) int {
 	defer stop()
 
 	err = agent.Run(ctx, agent.Options{
-		DataDir:        *dataDir,
-		Listen:         *listen,
-		GossipListen:   *gossip,
-		RPCListen:      *rpcListen,
-		ControlListen:  *controlListen,
-		ShimBin:        *shimBin,
-		InsecureListen: *insecure,
-		ConfigPath:     *config,
-		Logger:         logger,
+		DataDir:          *dataDir,
+		Listen:           *listen,
+		GossipListen:     *gossip,
+		RPCListen:        *rpcListen,
+		ControlListen:    *controlListen,
+		BreakGlassSocket: *breakGlassSocket,
+		BreakGlassGroup:  *breakGlassGroup,
+		ShimBin:          *shimBin,
+		InsecureListen:   *insecure,
+		ConfigPath:       *config,
+		Logger:           logger,
 	})
 	if err != nil {
 		logger.Error("agent stopped", "error", err)

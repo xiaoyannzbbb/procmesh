@@ -123,6 +123,42 @@ func TestCLI_UnknownCommand(t *testing.T) {
 	}
 }
 
+func TestCLI_BreakGlassModeIsExplicitAndReadOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "server",
+			args: []string{"--break-glass=/tmp/procmesh.sock", "--server", "127.0.0.1:18680", "process", "list"},
+			want: "cannot be combined with --server",
+		},
+		{
+			name: "remote node",
+			args: []string{"--break-glass=/tmp/procmesh.sock", "--node", "node-b", "process", "list"},
+			want: "does not accept --node",
+		},
+		{
+			name: "cluster credential",
+			args: []string{"--break-glass=/tmp/procmesh.sock", "--auth-token", "secret", "process", "list"},
+			want: "does not accept cluster credentials",
+		},
+		{
+			name: "write command",
+			args: []string{"--break-glass=/tmp/procmesh.sock", "process", "start", "worker"},
+			want: "only supports process list, get, and logs",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, _, errb := runCLI(tc.args...)
+			if code != 2 || !strings.Contains(errb, tc.want) {
+				t.Fatalf("exit=%d stderr=%q, want usage error containing %q", code, errb, tc.want)
+			}
+		})
+	}
+}
+
 func TestCLI_UsageIncludesMetricsHistory(t *testing.T) {
 	if !strings.Contains(usageText, "metrics history node") {
 		t.Fatal("usage")

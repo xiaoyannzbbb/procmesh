@@ -23,6 +23,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/batch"
+	"github.com/qleelulu/procmesh/internal/breakglass"
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/errcode"
@@ -42,25 +43,28 @@ const defaultRPCListen = "127.0.0.1:18683"
 
 // Options is the procmesh-agent runtime configuration.
 type Options struct {
-	DataDir          string
-	Listen           string
-	ShimBin          string
-	InsecureListen   bool
-	OnListen         func(addr string)
-	ConfigPath       string
-	Logger           *slog.Logger
-	GossipListen     string // default 127.0.0.1:18689
-	GossipAdvertise  string
-	RPCListen        string // default 127.0.0.1:18683; tests use 127.0.0.1:0
-	RPCAdvertise     string
-	OnRPCListen      func(addr string)
-	ControlListen    string // default 127.0.0.1:18685; tests use 127.0.0.1:0
-	ControlAdvertise string
-	OnControlListen  func(addr string)
-	BootID           string // empty = paths.CurrentBootID(); tests may override
-	Backup           agentcfg.Backup
-	DiskPercent      func() float64 // optional override for backup disk protection (tests)
-	Now              func() time.Time
+	DataDir            string
+	Listen             string
+	ShimBin            string
+	InsecureListen     bool
+	OnListen           func(addr string)
+	ConfigPath         string
+	Logger             *slog.Logger
+	GossipListen       string // default 127.0.0.1:18689
+	GossipAdvertise    string
+	RPCListen          string // default 127.0.0.1:18683; tests use 127.0.0.1:0
+	RPCAdvertise       string
+	OnRPCListen        func(addr string)
+	ControlListen      string // default 127.0.0.1:18685; tests use 127.0.0.1:0
+	ControlAdvertise   string
+	OnControlListen    func(addr string)
+	BreakGlassSocket   string
+	BreakGlassGroup    string
+	OnBreakGlassListen func(path string)
+	BootID             string // empty = paths.CurrentBootID(); tests may override
+	Backup             agentcfg.Backup
+	DiskPercent        func() float64 // optional override for backup disk protection (tests)
+	Now                func() time.Time
 }
 
 // Run owns the agent lifecycle and blocks until ctx is cancelled.
@@ -88,6 +92,15 @@ func Run(ctx context.Context, opt Options) error {
 	}
 	if opt.Listen == "" {
 		opt.Listen = cfg.Listen
+	}
+	if opt.BreakGlassSocket == "" {
+		opt.BreakGlassSocket = cfg.BreakGlass.Socket
+	}
+	if opt.BreakGlassSocket == "" {
+		opt.BreakGlassSocket = breakglass.DefaultSocketPath(opt.DataDir)
+	}
+	if opt.BreakGlassGroup == "" {
+		opt.BreakGlassGroup = cfg.BreakGlass.Group
 	}
 
 	logger.Info("agent starting", "data_dir", opt.DataDir)
@@ -736,6 +749,22 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		shutdownMesh(mesh)
 		return fmt.Errorf("new server: %w", err)
 	}
+	var breakGlassServer *breakglass.Server
+	if mgr != nil && st != nil {
+		breakGlassServer, err = breakglass.New(breakglass.Config{
+			SocketPath: opt.BreakGlassSocket,
+			Group:      opt.BreakGlassGroup,
+			LocalID:    clusterDeps.NodeID,
+			Manager:    mgr,
+			Audit:      st,
+		})
+		if err != nil {
+			_ = ln.Close()
+			rt.shutdown(context.Background())
+			shutdownMesh(mesh)
+			return fmt.Errorf("start break-glass: %w", err)
+		}
+	}
 
 	if batchEng != nil && !degraded {
 		batchEng.Start(ctx)
@@ -748,6 +777,9 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 	opt.Logger.Info("agent started")
 	if opt.OnListen != nil {
 		opt.OnListen(apiAddr)
+	}
+	if breakGlassServer != nil && opt.OnBreakGlassListen != nil {
+		opt.OnBreakGlassListen(opt.BreakGlassSocket)
 	}
 
 	if mgr != nil {
@@ -809,7 +841,7 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 
 	startAlertScanner(ctx, opt, mgr, st, mesh, collector, authSvc, rt, clusterDeps)
 
-	errCh := make(chan error, 1)
+	errCh := make(chan error, 2)
 	go func() {
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			errCh <- err
@@ -817,6 +849,11 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		}
 		errCh <- nil
 	}()
+	if breakGlassServer != nil {
+		go func() {
+			errCh <- breakGlassServer.Serve()
+		}()
+	}
 
 	select {
 	case <-ctx.Done():
@@ -824,6 +861,9 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		shutCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shutCtx)
+		if breakGlassServer != nil {
+			_ = breakGlassServer.Shutdown(shutCtx)
+		}
 		rt.shutdown(shutCtx)
 		shutdownMesh(mesh)
 		if collector != nil {
@@ -834,6 +874,10 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 	case err := <-errCh:
 		shutCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
+		_ = srv.Shutdown(shutCtx)
+		if breakGlassServer != nil {
+			_ = breakGlassServer.Shutdown(shutCtx)
+		}
 		rt.shutdown(shutCtx)
 		shutdownMesh(mesh)
 		if collector != nil {

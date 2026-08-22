@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -65,6 +66,24 @@ func newClient(server, opID, operator, node, authToken string) *client {
 		metrics:  procmeshv1connect.NewMetricsServiceClient(hc, base, opts...),
 		alert:    procmeshv1connect.NewAlertServiceClient(hc, base, opts...),
 		backup:   procmeshv1connect.NewBackupServiceClient(hc, base, opts...),
+		opID:     opID,
+		operator: operator,
+	}
+}
+
+func newBreakGlassClient(socketPath, opID, operator string) *client {
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
+		},
+	}
+	hc := &http.Client{Timeout: httpTimeout, Transport: transport}
+	const base = "http://procmesh.local"
+	return &client{
+		base:     base,
+		http:     hc,
+		proc:     procmeshv1connect.NewProcessServiceClient(hc, base),
+		logs:     procmeshv1connect.NewLogServiceClient(hc, base),
 		opID:     opID,
 		operator: operator,
 	}

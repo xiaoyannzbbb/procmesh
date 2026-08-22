@@ -180,6 +180,31 @@ procmesh --server 127.0.0.1:18680 node list
 procmesh --server 127.0.0.1:18680 --node <NODE_ID> process list
 ```
 
+### 本机 break-glass 检查
+
+Agent 会启动一个只存在于本机的 Unix socket。默认路径为
+`$data_dir/break-glass.sock`，权限为 `0600`；生产环境以 root 运行 Agent 时只有
+root 可访问。可在 `agent.yaml` 中显式配置 socket 和受限 OS 用户组：
+
+```yaml
+break_glass:
+  socket: /run/procmesh-break-glass.sock
+  group: procmesh-operators
+```
+
+socket 父目录需要允许该组穿越。配置组后 socket 权限为 `0660`。授权运维人员使用
+独立的 `--break-glass` 入口检查本机 Owner Agent 数据：
+
+```bash
+procmesh --break-glass=/run/procmesh-break-glass.sock process list
+procmesh --break-glass=/run/procmesh-break-glass.sock process get demo-worker
+procmesh --break-glass=/run/procmesh-break-glass.sock process logs demo-worker --lines 100
+```
+
+该模式只支持 `process list/get/logs`，不使用集群 Session，不接受 `--server`、
+`--node` 或 `--auth-token`，失败时也不会自动切换到普通 TCP 模式。每次成功、失败或
+拒绝的请求都会写入本机 SQLite 审计。
+
 运行 `procmesh` 可查看完整命令列表和参数说明。
 
 ## 发布 GitHub Release

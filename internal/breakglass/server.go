@@ -1,0 +1,401 @@
+package breakglass
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"os/user"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"connectrpc.com/connect"
+	"github.com/qleelulu/procmesh/internal/api"
+	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/process"
+	"github.com/qleelulu/procmesh/internal/store"
+	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
+	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
+)
+
+const (
+	ownerSocketMode         = 0o600
+	groupSocketMode         = 0o660
+	portableSocketPathLimit = 90
+	auditTimeout            = 2 * time.Second
+)
+
+type Peer struct {
+	PID      int
+	UID      int
+	GID      int
+	Username string
+	Groups   []string
+}
+
+type Config struct {
+	SocketPath string
+	Group      string
+	LocalID    string
+	Manager    *process.Manager
+	Audit      AuditStore
+	PeerLookup func(net.Conn) (Peer, error)
+}
+
+type AuditStore interface {
+	AppendAudit(context.Context, store.AuditEvent) error
+}
+
+type Server struct {
+	http       *http.Server
+	listener   net.Listener
+	socketPath string
+}
+
+func DefaultSocketPath(dataDir string) string {
+	candidate := filepath.Join(dataDir, "break-glass.sock")
+	if len(candidate) <= portableSocketPathLimit {
+		return candidate
+	}
+	digest := sha256.Sum256([]byte(filepath.Clean(dataDir)))
+	return filepath.Join(os.TempDir(), fmt.Sprintf("procmesh-bg-%x.sock", digest[:8]))
+}
+
+func New(cfg Config) (*Server, error) {
+	if cfg.SocketPath == "" {
+		return nil, fmt.Errorf("break-glass socket path required")
+	}
+	if cfg.LocalID == "" || cfg.Manager == nil || cfg.Audit == nil {
+		return nil, fmt.Errorf("break-glass local identity, process manager, and audit store required")
+	}
+	allowedGID, err := resolveGroup(cfg.Group)
+	if err != nil {
+		return nil, err
+	}
+	if err := prepareSocketPath(cfg.SocketPath); err != nil {
+		return nil, err
+	}
+	ln, err := net.Listen("unix", cfg.SocketPath)
+	if err != nil {
+		return nil, fmt.Errorf("listen break-glass socket: %w", err)
+	}
+	mode := os.FileMode(ownerSocketMode)
+	if allowedGID >= 0 {
+		if err := os.Chown(cfg.SocketPath, -1, allowedGID); err != nil {
+			_ = ln.Close()
+			return nil, fmt.Errorf("set break-glass socket group: %w", err)
+		}
+		mode = groupSocketMode
+	}
+	if err := os.Chmod(cfg.SocketPath, mode); err != nil {
+		_ = ln.Close()
+		return nil, fmt.Errorf("set break-glass socket mode: %w", err)
+	}
+
+	lookup := cfg.PeerLookup
+	if lookup == nil {
+		lookup = lookupPeer
+	}
+	authorizer := &accessController{
+		audit:      cfg.Audit,
+		localID:    cfg.LocalID,
+		serverUID:  os.Geteuid(),
+		allowedGID: allowedGID,
+		socketPath: cfg.SocketPath,
+	}
+	owner := localOwner{manager: cfg.Manager, localID: cfg.LocalID}
+	processAPI := &localProcessAPI{
+		ProcessAPI: &api.ProcessAPI{Mgr: cfg.Manager, LocalOnly: true, LocalID: cfg.LocalID},
+		owner:      owner,
+	}
+	logAPI := &localLogAPI{
+		LogAPI: &api.LogAPI{Mgr: cfg.Manager, LocalOnly: true, LocalID: cfg.LocalID},
+		owner:  owner,
+	}
+	intercept := connect.WithInterceptors(authorizer)
+	processPath, processHandler := procmeshv1connect.NewProcessServiceHandler(processAPI, intercept)
+	logPath, logHandler := procmeshv1connect.NewLogServiceHandler(logAPI, intercept)
+	mux := http.NewServeMux()
+	mux.Handle(processPath, processHandler)
+	mux.Handle(logPath, logHandler)
+	mux.HandleFunc("/", authorizer.rejectUnknown)
+	httpServer := &http.Server{
+		Handler: mux,
+		ConnContext: func(ctx context.Context, conn net.Conn) context.Context {
+			peer := Peer{PID: -1, UID: -1, GID: -1, Username: "unknown"}
+			lookedUp, err := lookup(conn)
+			if err == nil {
+				peer = enrichPeer(lookedUp)
+			}
+			return context.WithValue(ctx, peerKey{}, peerResult{peer: peer, err: err})
+		},
+	}
+	return &Server{http: httpServer, listener: ln, socketPath: cfg.SocketPath}, nil
+}
+
+func (s *Server) Serve() error {
+	err := s.http.Serve(s.listener)
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	return fmt.Errorf("serve break-glass socket: %w", err)
+}
+
+func (s *Server) Shutdown(ctx context.Context) error {
+	if err := s.http.Shutdown(ctx); err != nil {
+		return fmt.Errorf("shutdown break-glass server: %w", err)
+	}
+	if err := os.Remove(s.socketPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove break-glass socket: %w", err)
+	}
+	return nil
+}
+
+func prepareSocketPath(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return fmt.Errorf("create break-glass socket directory: %w", err)
+	}
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect break-glass socket: %w", err)
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("break-glass socket path exists and is not a socket")
+	}
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("remove stale break-glass socket: %w", err)
+	}
+	return nil
+}
+
+func resolveGroup(name string) (int, error) {
+	if name == "" {
+		return -1, nil
+	}
+	group, err := user.LookupGroup(name)
+	if err != nil {
+		return -1, fmt.Errorf("look up break-glass group %q: %w", name, err)
+	}
+	gid, err := strconv.Atoi(group.Gid)
+	if err != nil {
+		return -1, fmt.Errorf("parse break-glass group %q gid: %w", name, err)
+	}
+	return gid, nil
+}
+
+type peerKey struct{}
+
+type peerResult struct {
+	peer Peer
+	err  error
+}
+
+func enrichPeer(peer Peer) Peer {
+	account, err := user.LookupId(strconv.Itoa(peer.UID))
+	if err != nil {
+		return peer
+	}
+	peer.Username = account.Username
+	peer.Groups, _ = account.GroupIds()
+	return peer
+}
+
+type accessController struct {
+	audit      AuditStore
+	localID    string
+	serverUID  int
+	allowedGID int
+	socketPath string
+}
+
+func (a *accessController) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
+	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+		action, target, allowedProcedure := describeRequest(req.Spec().Procedure, req.Any())
+		peer, authorized := a.authorize(ctx)
+		if !authorized || !allowedProcedure {
+			if err := a.record(peer, action, target, "denied"); err != nil {
+				return nil, auditUnavailable(err)
+			}
+			return nil, accessDenied()
+		}
+		response, callErr := next(ctx, req)
+		result := "success"
+		if callErr != nil {
+			result = "error"
+		}
+		if err := a.record(peer, action, target, result); err != nil {
+			return nil, auditUnavailable(err)
+		}
+		return response, callErr
+	}
+}
+
+func (a *accessController) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
+	return next
+}
+
+func (a *accessController) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
+	return func(ctx context.Context, conn connect.StreamingHandlerConn) error {
+		peer, _ := a.authorize(ctx)
+		if err := a.record(peer, "break_glass.reject", conn.Spec().Procedure, "denied"); err != nil {
+			return auditUnavailable(err)
+		}
+		return accessDenied()
+	}
+}
+
+func (a *accessController) authorize(ctx context.Context) (Peer, bool) {
+	result, ok := ctx.Value(peerKey{}).(peerResult)
+	if !ok || result.err != nil {
+		return result.peer, false
+	}
+	peer := result.peer
+	if peer.UID == 0 || peer.UID == a.serverUID {
+		return peer, true
+	}
+	if a.allowedGID < 0 {
+		return peer, false
+	}
+	want := strconv.Itoa(a.allowedGID)
+	if peer.GID == a.allowedGID {
+		return peer, true
+	}
+	for _, gid := range peer.Groups {
+		if gid == want {
+			return peer, true
+		}
+	}
+	return peer, false
+}
+
+func (a *accessController) rejectUnknown(w http.ResponseWriter, r *http.Request) {
+	peer, _ := a.authorize(r.Context())
+	if err := a.record(peer, "break_glass.reject", r.URL.Path, "denied"); err != nil {
+		http.Error(w, "break-glass audit unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	http.Error(w, "break-glass access denied", http.StatusForbidden)
+}
+
+func (a *accessController) record(peer Peer, action, target, result string) error {
+	metadata, _ := json.Marshal(map[string]any{
+		"os_uid":  peer.UID,
+		"os_gid":  peer.GID,
+		"os_pid":  peer.PID,
+		"os_user": peer.Username,
+		"socket":  a.socketPath,
+		"target":  target,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), auditTimeout)
+	defer cancel()
+	if err := a.audit.AppendAudit(ctx, store.AuditEvent{
+		Timestamp:   time.Now().UTC(),
+		UserID:      "uid:" + strconv.Itoa(peer.UID),
+		Username:    peer.Username,
+		SourceIP:    "unix",
+		TargetAgent: a.localID,
+		Resource:    target,
+		Action:      action,
+		Result:      result,
+		Metadata:    metadata,
+	}); err != nil {
+		return fmt.Errorf("append break-glass audit: %w", err)
+	}
+	return nil
+}
+
+func accessDenied() error {
+	return api.ToConnect(errcode.E(errcode.DENIED, "break-glass access denied"))
+}
+
+func auditUnavailable(err error) error {
+	return api.ToConnect(errcode.Wrap(errcode.UNAVAILABLE, "break-glass audit unavailable", err))
+}
+
+func describeRequest(procedure string, message any) (action, target string, allowed bool) {
+	switch procedure {
+	case procmeshv1connect.ProcessServiceListProcessesProcedure:
+		return "break_glass.process.list", "local-agent", true
+	case procmeshv1connect.ProcessServiceGetProcessProcedure:
+		request, _ := message.(*procmeshv1.GetProcessRequest)
+		return "break_glass.process.get", request.GetIdOrName(), true
+	case procmeshv1connect.LogServiceTailLogsProcedure:
+		request, _ := message.(*procmeshv1.TailLogsRequest)
+		return "break_glass.process.logs", request.GetIdOrName(), true
+	default:
+		if request, ok := message.(*procmeshv1.ProcessRefRequest); ok && request.GetIdOrName() != "" {
+			return "break_glass.reject", request.GetIdOrName(), false
+		}
+		name := strings.TrimPrefix(procedure, "/")
+		return "break_glass.reject", name, false
+	}
+}
+
+type localProcessAPI struct {
+	*api.ProcessAPI
+	owner localOwner
+}
+
+func (s *localProcessAPI) ListProcesses(ctx context.Context, req *connect.Request[procmeshv1.ListProcessesRequest]) (*connect.Response[procmeshv1.ListProcessesResponse], error) {
+	response, err := s.ProcessAPI.ListProcesses(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	local := response.Msg.Processes[:0]
+	for _, view := range response.Msg.Processes {
+		owner := view.GetSpec().GetOwnerAgentId()
+		if s.owner.matches(owner) {
+			local = append(local, view)
+		}
+	}
+	response.Msg.Processes = local
+	return response, nil
+}
+
+func (s *localProcessAPI) GetProcess(ctx context.Context, req *connect.Request[procmeshv1.GetProcessRequest]) (*connect.Response[procmeshv1.GetProcessResponse], error) {
+	if err := s.owner.require(ctx, req.Msg.GetIdOrName()); err != nil {
+		return nil, err
+	}
+	return s.ProcessAPI.GetProcess(ctx, req)
+}
+
+type localOwner struct {
+	manager *process.Manager
+	localID string
+}
+
+func (o localOwner) matches(ownerID string) bool {
+	return ownerID == o.localID
+}
+
+func (o localOwner) require(ctx context.Context, idOrName string) error {
+	spec, err := o.manager.Resolve(ctx, idOrName)
+	if err != nil {
+		return api.ToConnect(fmt.Errorf("resolve local process owner: %w", err))
+	}
+	if !o.matches(spec.OwnerAgentID) {
+		return api.ToConnect(errcode.E(errcode.NOT_FOUND, "process"))
+	}
+	return nil
+}
+
+type localLogAPI struct {
+	*api.LogAPI
+	owner localOwner
+}
+
+func (s *localLogAPI) TailLogs(ctx context.Context, req *connect.Request[procmeshv1.TailLogsRequest]) (*connect.Response[procmeshv1.TailLogsResponse], error) {
+	if err := s.owner.require(ctx, req.Msg.GetIdOrName()); err != nil {
+		return nil, err
+	}
+	return s.LogAPI.TailLogs(ctx, req)
+}

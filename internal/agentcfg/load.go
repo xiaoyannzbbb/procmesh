@@ -12,14 +12,15 @@ import (
 )
 
 type Config struct {
-	DataDir string
-	Listen  string
-	Disk    logmgr.Policy
-	Gossip  Gossip
-	RPC     RPC
-	Control Control
-	Batch   Batch
-	Backup  Backup
+	DataDir    string
+	Listen     string
+	Disk       logmgr.Policy
+	Gossip     Gossip
+	RPC        RPC
+	Control    Control
+	BreakGlass BreakGlass
+	Batch      Batch
+	Backup     Backup
 }
 
 type Backup struct {
@@ -54,20 +55,26 @@ type Control struct {
 	Advertise string
 }
 
+type BreakGlass struct {
+	Socket string
+	Group  string
+}
+
 type Batch struct {
 	MaxConcurrency int
 	TargetTimeout  time.Duration
 }
 
 type file struct {
-	DataDir string       `yaml:"data_dir"`
-	Listen  string       `yaml:"listen"`
-	Disk    *diskFile    `yaml:"disk"`
-	Gossip  *gossipFile  `yaml:"gossip"`
-	RPC     *rpcFile     `yaml:"rpc"`
-	Control *controlFile `yaml:"control"`
-	Batch   *batchFile   `yaml:"batch"`
-	Backup  *backupFile  `yaml:"backup"`
+	DataDir    string          `yaml:"data_dir"`
+	Listen     string          `yaml:"listen"`
+	Disk       *diskFile       `yaml:"disk"`
+	Gossip     *gossipFile     `yaml:"gossip"`
+	RPC        *rpcFile        `yaml:"rpc"`
+	Control    *controlFile    `yaml:"control"`
+	BreakGlass *breakGlassFile `yaml:"break_glass"`
+	Batch      *batchFile      `yaml:"batch"`
+	Backup     *backupFile     `yaml:"backup"`
 }
 
 type diskFile struct {
@@ -91,6 +98,11 @@ type rpcFile struct {
 type controlFile struct {
 	Listen    string `yaml:"listen"`
 	Advertise string `yaml:"advertise"`
+}
+
+type breakGlassFile struct {
+	Socket string `yaml:"socket"`
+	Group  string `yaml:"group"`
 }
 
 type batchFile struct {
@@ -225,6 +237,10 @@ func LoadAll(path string, required bool) (Config, error) {
 	if c := f.Control; c != nil {
 		cfg.Control.Listen = c.Listen
 		cfg.Control.Advertise = c.Advertise
+	}
+	if bg := f.BreakGlass; bg != nil {
+		cfg.BreakGlass.Socket = bg.Socket
+		cfg.BreakGlass.Group = bg.Group
 	}
 	if bf := f.Backup; bf != nil {
 		cfg.Backup.FSDir = bf.FSDir
