@@ -48,7 +48,8 @@ export default [
           words: {
             exclude: [
               /^[A-Z_-]+$/,
-              /^(?:24h|7d|overview|config|logs|—|–|=|\/|×|→|,\s*)$/,
+              /^(?:24h|7d|overview|config|logs|processIds|processGroup|action|start|stop|restart|kill|stderr|granted|denied|true|false|all|running|stopped|unhealthy|stale|name|owner|observed|health|revision|freshness|asc|m-)$/,
+              /^(?:—|–|=|\/|×|→|·|:|,\s*)$/,
             ],
           },
           'jsx-attributes': {
@@ -60,7 +61,9 @@ export default [
               'id',
               'data-testid',
               'data-action',
+              /^data-[a-z0-9-]+$/,
               'aria-hidden',
+              /^aria-[a-z0-9-]+$/,
               'tabindex',
               'autocomplete',
               'name',
@@ -92,6 +95,7 @@ export default [
               'stroke-linecap',
               'vector-effect',
               'preserveAspectRatio',
+              'size',
             ],
           },
         },

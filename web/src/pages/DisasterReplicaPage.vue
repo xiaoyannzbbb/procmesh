@@ -42,10 +42,10 @@ type ReplicaPolicy = {
   timezone?: string;
   retentionKeepLast?: number;
   retentionKeepDays?: number;
-  retentionMaxBytes?: bigint | number;
+  retentionMaxBytes?: bigint;
   maxConcurrency?: number;
   verifyAfterCopy?: boolean;
-  bandwidthLimit?: bigint | number;
+  bandwidthLimit?: bigint;
   topologyConstraints?: Record<string, string>;
   revision?: bigint | number;
 };
@@ -88,12 +88,12 @@ type PolicyDraft = {
   timezone?: string;
   retentionKeepLast?: number;
   retentionKeepDays?: number;
-  retentionMaxBytes?: bigint | number;
+  retentionMaxBytes?: bigint;
   maxConcurrency?: number;
   verifyAfterCopy?: boolean;
-  bandwidthLimit?: bigint | number;
+  bandwidthLimit?: bigint;
   topologyConstraints?: Record<string, string>;
-  draftRevision?: bigint | number;
+  draftRevision?: bigint;
   draftHash?: string;
   globalWarnings?: string[];
   inboundLoad?: Record<string, number>;

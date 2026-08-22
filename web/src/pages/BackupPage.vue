@@ -47,11 +47,11 @@ type ClusterPolicy = {
   destinationProfile?: string;
   retentionKeepLast?: number;
   retentionKeepDays?: number;
-  retentionMaxBytes?: bigint | number;
+  retentionMaxBytes?: bigint;
   timeoutSeconds?: number;
   maxConcurrency?: number;
   unavailablePolicy?: string;
-  revision?: bigint | number;
+  revision?: bigint;
 };
 
 type ClusterTask = {
@@ -79,14 +79,6 @@ type ClusterRun = {
   startedUnix?: bigint | number;
   finishedUnix?: bigint | number;
   tasks?: ClusterTask[];
-};
-
-type DestinationHealth = {
-  sink?: string;
-  destinationProfile?: string;
-  status?: string;
-  errorSummary?: string;
-  endpointHost?: string;
 };
 
 const { t } = useI18n();
@@ -230,7 +222,7 @@ const healthQuery = useQuery({
   queryKey: ["cluster-backup-destination-health", healthKey],
   queryFn: async () => {
     const results = await Promise.all(healthRequests.value.map((req) => clusterClient.getDestinationHealth(req)));
-    return results.map((res) => res.health).filter((health): health is DestinationHealth => Boolean(health));
+    return results.map((res) => res.health).filter((health) => health !== undefined);
   },
   enabled: computed(() => healthRequests.value.length > 0),
   refetchInterval: POLL_MS,

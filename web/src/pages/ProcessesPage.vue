@@ -239,7 +239,7 @@ const confirmLabel = computed(() =>
 );
 
 const lastUpdatedLabel = computed(() => {
-  nowMs.value;
+  void nowMs.value;
   const stamp = Math.max(nodesQuery.dataUpdatedAt.value || 0, processesQuery.dataUpdatedAt.value || 0);
   if (!stamp) {
     return t("processes.updatedJustNow");
