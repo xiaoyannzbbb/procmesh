@@ -372,7 +372,7 @@ message ClusterOverviewResponse {
 
 message RequestJoinRequest {
   MutationMeta meta = 1;
-  string seed_server = 2; // host:port of seed :9000
+  string seed_server = 2; // host:port of seed :18680
   string token = 3;
 }
 message RequestJoinResponse {

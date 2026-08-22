@@ -101,20 +101,20 @@ func TestLookUser_RejectsOtherUserWithoutRoot(t *testing.T) {
 }
 
 func TestCheckListen_LoopbackOK(t *testing.T) {
-	if err := CheckListen("127.0.0.1:9000", false); err != nil {
+	if err := CheckListen("127.0.0.1:18680", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := CheckListen("localhost:9000", false); err != nil {
+	if err := CheckListen("localhost:18680", false); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestCheckListen_NonLoopbackRequiresFlag(t *testing.T) {
-	err := CheckListen("0.0.0.0:9000", false)
+	err := CheckListen("0.0.0.0:18680", false)
 	if !errcode.Is(err, errcode.INVALID) {
 		t.Fatalf("got %v", err)
 	}
-	if err := CheckListen("0.0.0.0:9000", true); err != nil {
+	if err := CheckListen("0.0.0.0:18680", true); err != nil {
 		t.Fatal(err)
 	}
 }

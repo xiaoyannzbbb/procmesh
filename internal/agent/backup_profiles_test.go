@@ -26,7 +26,7 @@ func TestNewBackupEngineResolvesNamedS3Profiles(t *testing.T) {
 		DataDir: root,
 		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Backup: agentcfg.Backup{S3Profiles: map[string]agentcfg.S3{
-			"archive": {Endpoint: "http://127.0.0.1:9000", Bucket: "archive", Insecure: true},
+			"archive": {Endpoint: "http://127.0.0.1:18680", Bucket: "archive", Insecure: true},
 		}},
 	}, nil, st, nil, &rpcRuntime{nodeID: "node-1"}, nil)
 	if engine == nil || engine.ResolveDestination == nil {

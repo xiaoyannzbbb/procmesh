@@ -62,11 +62,11 @@ macOS 降级（必须在 UI/日志里显式说明，禁止假装 Linux 语义）
 Browser / CLI
       │
       ▼
-Any Agent :9000  (Web + ConnectRPC)
+Any Agent :18680  (Web + ConnectRPC)
       │
-      ├── Cluster Control (Raft :9002)     用户 / RBAC / 准入 / CRL
-      ├── Gossip (memberlist :7946)        membership + summary
-      └── Direct RPC mTLS (:9001)          写到 Owner
+      ├── Cluster Control (Raft :18685)     用户 / RBAC / 准入 / CRL
+      ├── Gossip (memberlist :18689)        membership + summary
+      └── Direct RPC mTLS (:18683)          写到 Owner
                 │
                 ▼
          Owner Agent
@@ -99,7 +99,7 @@ Any Agent :9000  (Web + ConnectRPC)
 |--------|------|------|
 | `procmesh-agent` | 常驻。Process reconcile、shim 管理、SQLite、Web/API、Gossip、Agent RPC、可选 Raft | 本机 shim 二进制在 PATH 或与 Agent 同目录 |
 | `procmesh-shim` | 每个 Process Instance 一个。fork/exec、信号、PID、exit、stdout/stderr | 不连集群、不读 Raft、不提供 Web |
-| `procmesh` | 无状态 CLI。本机 unix/http 或 `--server host:9000` | 不常驻 |
+| `procmesh` | 无状态 CLI。本机 unix/http 或 `--server host:18680` | 不常驻 |
 
 Agent 停止（含 systemd stop）**不得**级联杀死 shim 和业务进程。升级路径：停 Agent → 换二进制 → 起 Agent → 重连已有 shim。
 
@@ -148,10 +148,10 @@ procmesh/
 
 | 用途 | 默认 | 协议 |
 |------|------|------|
-| Web + 外部 API | `:9000` | HTTP；生产建议 TLS 终结在反向代理或 Agent 配置证书 |
-| Agent RPC | `:9001` | ConnectRPC + mTLS |
-| Raft | `:9002` | Raft TCP |
-| Gossip | `:7946` | memberlist |
+| Web + 外部 API | `:18680` | HTTP；生产建议 TLS 终结在反向代理或 Agent 配置证书 |
+| Agent RPC | `:18683` | ConnectRPC + mTLS |
+| Raft | `:18685` | Raft TCP |
+| Gossip | `:18689` | memberlist |
 
 均可在 `agent.yaml` 覆盖。
 
@@ -320,9 +320,9 @@ Join：向任一 ALIVE Agent 提交 token → 该 Agent 把签发请求交给 Ra
 ### 9.5 远程 Mutation
 
 ```text
-Client → 入口 Agent :9000
+Client → 入口 Agent :18680
        → 入口 RBAC
-       → mTLS RPC → Owner :9001
+       → mTLS RPC → Owner :18683
        → Owner 再验 RBAC + 证书
        → operation_id 去重
        → 本地 commit + 执行
@@ -354,7 +354,7 @@ V1.0 RBAC 范围只支持 **Cluster** 与 **Agent**。Agent Group / Process Grou
 
 ### 11.1 API
 
-HTTP 服务器用 Gin，挂 ConnectRPC handler。对外主协议：ConnectRPC（JSON 与二进制均可），监听 `:9000`。少量 REST：
+HTTP 服务器用 Gin，挂 ConnectRPC handler。对外主协议：ConnectRPC（JSON 与二进制均可），监听 `:18680`。少量 REST：
 
 - `GET /healthz` — 进程活着即 200
 - `GET /readyz` — 本地 store 可用才 200；DEGRADED 返回 503 但 **不** 表示业务进程有问题
@@ -377,7 +377,7 @@ HTTP 服务器用 Gin，挂 ConnectRPC handler。对外主协议：ConnectRPC（
 
 ### 11.2 CLI
 
-本地默认连 `127.0.0.1:9000`（可用 `--server` 覆盖）。CLI 若未传 `operation_id`，自己生成 UUID。不另开第四个管理 Unix socket。
+本地默认连 `127.0.0.1:18680`（可用 `--server` 覆盖）。CLI 若未传 `operation_id`，自己生成 UUID。不另开第四个管理 Unix socket。
 
 最小命令集：
 
@@ -504,7 +504,7 @@ Agent 暴露 PRD §82 所列核心指标中 V1.0 需要的部分：uptime、memb
 - Agent RPC 必须 mTLS。证书含 cluster_id、node_id。
 - 密码 argon2id。Token 只存哈希。
 - Web：Secure Session、CSRF（cookie session 时）、SameSite、登录限流、Session TTL。
-- 生产配置缺 TLS 时启动告警，开发模式允许明文 :9000。
+- 生产配置缺 TLS 时启动告警，开发模式允许明文 :18680。
 - 无硬编码密钥。Cluster CA 私钥只在 control member 的 `cluster/` 目录，权限 0600。
 - 目标 Agent 再验 RBAC。Viewer/Operator 默认无 `command.execute`。
 

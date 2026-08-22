@@ -154,7 +154,7 @@ func (s *AuthAPI) RevokeAPIToken(ctx context.Context, req *connect.Request[procm
 }
 
 func setSessionCookie(h http.Header, value string, maxAge int) {
-	// :9000 may be plaintext this phase; P5/反代终结 TLS. Do not set Secure.
+	// :18680 may be plaintext this phase; P5/反代终结 TLS. Do not set Secure.
 	c := &http.Cookie{
 		Name:     auth.CookieName,
 		Value:    value,

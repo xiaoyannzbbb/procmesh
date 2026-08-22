@@ -36,16 +36,16 @@ ProcMesh 没有独立的中心服务器。每个节点都运行一个 Agent，�
 
 | 端口 | 协议 | 用途 | 建议访问范围 |
 | --- | --- | --- | --- |
-| `9000` | TCP/HTTP | Web UI、CLI 和 ConnectRPC API | 管理网、集群节点 |
-| `9001` | TCP/mTLS | Agent 间远程进程操作 | 仅集群节点 |
-| `9002` | TCP | Raft 控制面 | 仅集群节点 |
-| `7946` | TCP + UDP | Gossip 成员发现和状态传播 | 仅集群节点 |
+| `18680` | TCP/HTTP | Web UI、CLI 和 ConnectRPC API | 管理网、集群节点 |
+| `18683` | TCP/mTLS | Agent 间远程进程操作 | 仅集群节点 |
+| `18685` | TCP | Raft 控制面 | 仅集群节点 |
+| `18689` | TCP + UDP | Gossip 成员发现和状态传播 | 仅集群节点 |
 
 重要安全说明：
 
-- `--insecure-listen` 只是允许 Agent 绑定非回环地址，不会为 `9000` 自动启用 HTTPS。
+- `--insecure-listen` 只是允许 Agent 绑定非回环地址，不会为 `18680` 自动启用 HTTPS。
 - 不要把上述端口直接暴露到公网。应使用安全组或防火墙限定来源地址。
-- 跨不可信网络管理时，在 `9000` 前配置 HTTPS 反向代理，或通过 VPN/堡垒机访问。
+- 跨不可信网络管理时，在 `18680` 前配置 HTTPS 反向代理，或通过 VPN/堡垒机访问。
 - 节点 IP 应保持稳定。多节点部署要绑定实际内网 IP，不要绑定 `0.0.0.0`，否则节点可能向集群发布不可用于远程访问的地址。
 
 ## 3. 最短路径：先在一台机器上跑起来
@@ -82,19 +82,19 @@ bin/procmesh-shim
 mkdir -p /tmp/procmesh-quickstart
 ./bin/procmesh-agent \
   --data-dir /tmp/procmesh-quickstart \
-  --listen 127.0.0.1:9000 \
-  --rpc 127.0.0.1:9001 \
-  --control 127.0.0.1:9002 \
-  --gossip 127.0.0.1:7946 \
+  --listen 127.0.0.1:18680 \
+  --rpc 127.0.0.1:18683 \
+  --control 127.0.0.1:18685 \
+  --gossip 127.0.0.1:18689 \
   --shim-bin ./bin/procmesh-shim
 ```
 
 保持该终端运行，另开终端验证：
 
 ```bash
-curl -fsS http://127.0.0.1:9000/healthz
-curl -fsS http://127.0.0.1:9000/readyz
-./bin/procmesh --server 127.0.0.1:9000 status
+curl -fsS http://127.0.0.1:18680/healthz
+curl -fsS http://127.0.0.1:18680/readyz
+./bin/procmesh --server 127.0.0.1:18680 status
 ```
 
 `healthz` 和 `readyz` 应返回 `ok`，`status` 应输出 `ready` 和当前进程数。
@@ -104,7 +104,7 @@ curl -fsS http://127.0.0.1:9000/readyz
 初始化只能成功执行一次：
 
 ```bash
-./bin/procmesh --server 127.0.0.1:9000 cluster init --admin-user admin
+./bin/procmesh --server 127.0.0.1:18680 cluster init --admin-user admin
 ```
 
 输出格式如下：
@@ -121,12 +121,12 @@ admin_password=<一次性显示的随机密码>
 登录时，省略 `--password` 可从标准输入读取密码，避免密码直接出现在命令参数中：
 
 ```bash
-./bin/procmesh --server 127.0.0.1:9000 login --user admin
+./bin/procmesh --server 127.0.0.1:18680 login --user admin
 ```
 
 输入上一条命令返回的密码并回车。CLI 会把会话以 `0600` 权限保存到 `~/.config/procmesh/session`。不要用 `sudo procmesh` 登录后再用普通用户执行命令，否则两个用户读取的会话文件不同。
 
-现在可在浏览器访问 `http://127.0.0.1:9000/`，或直接跳到第 7 节启动进程。浏览器不会复用 CLI 保存的会话，需要在 Web 登录页再次使用管理员账号和密码登录。
+现在可在浏览器访问 `http://127.0.0.1:18680/`，或直接跳到第 7 节启动进程。浏览器不会复用 CLI 保存的会话，需要在 Web 登录页再次使用管理员账号和密码登录。
 
 ## 4. 构建和分发生产二进制
 
@@ -243,10 +243,10 @@ EnvironmentFile=/etc/procmesh/procmesh.env
 ExecStart=/usr/local/bin/procmesh-agent \
   --data-dir /var/lib/procmesh \
   --config /etc/procmesh/agent.yaml \
-  --listen ${PROCMESH_NODE_IP}:9000 \
-  --rpc ${PROCMESH_NODE_IP}:9001 \
-  --control ${PROCMESH_NODE_IP}:9002 \
-  --gossip ${PROCMESH_NODE_IP}:7946 \
+  --listen ${PROCMESH_NODE_IP}:18680 \
+  --rpc ${PROCMESH_NODE_IP}:18683 \
+  --control ${PROCMESH_NODE_IP}:18685 \
+  --gossip ${PROCMESH_NODE_IP}:18689 \
   --shim-bin /usr/local/bin/procmesh-shim \
   --insecure-listen \
   --log-format json \
@@ -283,18 +283,18 @@ sudo journalctl -u procmesh-agent -f
 在各节点把 `NODE_IP` 替换为本机地址：
 
 ```bash
-curl -fsS http://NODE_IP:9000/healthz
-curl -fsS http://NODE_IP:9000/readyz
-procmesh --server NODE_IP:9000 status
+curl -fsS http://NODE_IP:18680/healthz
+curl -fsS http://NODE_IP:18680/readyz
+procmesh --server NODE_IP:18680 status
 ```
 
 同时确认监听地址不是 `0.0.0.0` 或 `127.0.0.1`：
 
 ```bash
-sudo ss -lntup | grep -E ':(9000|9001|9002|7946)\b'
+sudo ss -lntup | grep -E ':(18680|18683|18685|18689)\b'
 ```
 
-Agent 尚未初始化集群时，`9001` 的 mTLS RPC 服务可能尚未监听；完成初始化或加入集群后会启动。
+Agent 尚未初始化集群时，`18683` 的 mTLS RPC 服务可能尚未监听；完成初始化或加入集群后会启动。
 
 ## 6. 初始化三节点集群
 
@@ -303,19 +303,19 @@ Agent 尚未初始化集群时，`9001` 的 mTLS RPC 服务可能尚未监听；
 ### 6.1 初始化节点 1
 
 ```bash
-procmesh --server 10.0.0.11:9000 cluster init --admin-user admin
+procmesh --server 10.0.0.11:18680 cluster init --admin-user admin
 ```
 
 安全保存输出中的 `admin_password`，然后登录节点 1：
 
 ```bash
-procmesh --server 10.0.0.11:9000 login --user admin
+procmesh --server 10.0.0.11:18680 login --user admin
 ```
 
 登录成功后验证：
 
 ```bash
-procmesh --server 10.0.0.11:9000 node list
+procmesh --server 10.0.0.11:18680 node list
 ```
 
 此时应只有节点 1。
@@ -325,7 +325,7 @@ procmesh --server 10.0.0.11:9000 node list
 为节点 2 和节点 3 创建一个可使用两次、30 分钟后过期的令牌：
 
 ```bash
-procmesh --server 10.0.0.11:9000 node token create --ttl 30m --uses 2
+procmesh --server 10.0.0.11:18680 node token create --ttl 30m --uses 2
 ```
 
 输出格式如下：
@@ -344,8 +344,8 @@ uses=2
 在节点 2 上执行，其中 `<JOIN_TOKEN>` 替换为上一步的令牌：
 
 ```bash
-procmesh --server 10.0.0.12:9000 agent join \
-  --seed 10.0.0.11:9000 \
+procmesh --server 10.0.0.12:18680 agent join \
+  --seed 10.0.0.11:18680 \
   --token '<JOIN_TOKEN>'
 ```
 
@@ -356,8 +356,8 @@ procmesh --server 10.0.0.12:9000 agent join \
 在节点 3 上执行：
 
 ```bash
-procmesh --server 10.0.0.13:9000 agent join \
-  --seed 10.0.0.11:9000 \
+procmesh --server 10.0.0.13:18680 agent join \
+  --seed 10.0.0.11:18680 \
   --token '<JOIN_TOKEN>'
 ```
 
@@ -366,7 +366,7 @@ procmesh --server 10.0.0.13:9000 agent join \
 回到已登录节点 1 的终端：
 
 ```bash
-procmesh --server 10.0.0.11:9000 node list
+procmesh --server 10.0.0.11:18680 node list
 ```
 
 每行依次包含：
@@ -377,18 +377,18 @@ node_id  hostname  state  protocol_version  api_address  gossip_address  rpc_add
 
 确认三个节点均出现、状态为 `ALIVE`，并且地址分别是实际内网 IP。保存节点 2 和节点 3 的 `node_id`，后面提升 Raft 角色和远程部署进程时会用到。
 
-如果新节点没有立即出现，可等待几秒后重试。仍未出现时检查节点间 `7946/TCP` 和 `7946/UDP`。
+如果新节点没有立即出现，可等待几秒后重试。仍未出现时检查节点间 `18689/TCP` 和 `18689/UDP`。
 
 ### 6.6 可选但推荐：组成三 voter Raft
 
 新加入节点默认是 Raft non-voter。三个节点全部在线并稳定后，在节点 1 执行：
 
 ```bash
-procmesh --server 10.0.0.11:9000 node promote <NODE_2_ID>
-procmesh --server 10.0.0.11:9000 node promote <NODE_3_ID>
+procmesh --server 10.0.0.11:18680 node promote <NODE_2_ID>
+procmesh --server 10.0.0.11:18680 node promote <NODE_3_ID>
 ```
 
-三 voter 集群允许任意一个 voter 故障后继续保持控制面 quorum。不要只部署两个 voter 后长期运行：两个 voter 中任意一个离线都会失去多数派。提升期间确保三个节点及 `9002/TCP` 网络稳定。
+三 voter 集群允许任意一个 voter 故障后继续保持控制面 quorum。不要只部署两个 voter 后长期运行：两个 voter 中任意一个离线都会失去多数派。提升期间确保三个节点及 `18685/TCP` 网络稳定。
 
 ## 7. 创建并启动第一个进程
 
@@ -439,7 +439,7 @@ log:
 创建配置时使用期望版本 `0`：
 
 ```bash
-procmesh --server 10.0.0.11:9000 process apply \
+procmesh --server 10.0.0.11:18680 process apply \
   --file demo-worker.yaml \
   --expected-revision 0 \
   --comment 'initial deployment'
@@ -454,15 +454,15 @@ procmesh --server 10.0.0.11:9000 process apply \
 然后启动：
 
 ```bash
-procmesh --server 10.0.0.11:9000 process start demo-worker
+procmesh --server 10.0.0.11:18680 process start demo-worker
 ```
 
 Agent 每秒执行一次状态协调，通常 1 至 2 秒后即可看到 `RUNNING` 和 `HEALTHY`：
 
 ```bash
-procmesh --server 10.0.0.11:9000 process list
-procmesh --server 10.0.0.11:9000 process get demo-worker
-procmesh --server 10.0.0.11:9000 process logs demo-worker --lines 20 --stream stdout
+procmesh --server 10.0.0.11:18680 process list
+procmesh --server 10.0.0.11:18680 process get demo-worker
+procmesh --server 10.0.0.11:18680 process logs demo-worker --lines 20 --stream stdout
 ```
 
 ### 7.3 从节点 1 入口部署到节点 2
@@ -470,44 +470,44 @@ procmesh --server 10.0.0.11:9000 process logs demo-worker --lines 20 --stream st
 CLI 的 `--node` 参数可指定目标 Owner 节点，值可以是 `node_id` 或唯一主机名。以下示例复用已登录节点 1 的会话，把进程部署到节点 2：
 
 ```bash
-procmesh --server 10.0.0.11:9000 --node <NODE_2_ID> process apply \
+procmesh --server 10.0.0.11:18680 --node <NODE_2_ID> process apply \
   --file demo-worker.yaml \
   --expected-revision 0 \
   --comment 'deploy to node 2'
 
-procmesh --server 10.0.0.11:9000 --node <NODE_2_ID> process start demo-worker
-procmesh --server 10.0.0.11:9000 --node <NODE_2_ID> process list
+procmesh --server 10.0.0.11:18680 --node <NODE_2_ID> process start demo-worker
+procmesh --server 10.0.0.11:18680 --node <NODE_2_ID> process list
 ```
 
-远程写操作通过节点间 `9001/TCP` mTLS RPC 转发到 Owner Agent。若本地操作成功而远程操作失败，优先检查节点间 `9001/TCP`、节点状态和 `rpc_address`。
+远程写操作通过节点间 `18683/TCP` mTLS RPC 转发到 Owner Agent。若本地操作成功而远程操作失败，优先检查节点间 `18683/TCP`、节点状态和 `rpc_address`。
 
 ### 7.4 常用进程操作
 
 ```bash
 # 查看详情和当前 revision
-procmesh --server 10.0.0.11:9000 process get demo-worker
+procmesh --server 10.0.0.11:18680 process get demo-worker
 
 # 停止、启动、重启
-procmesh --server 10.0.0.11:9000 process stop demo-worker
-procmesh --server 10.0.0.11:9000 process start demo-worker
-procmesh --server 10.0.0.11:9000 process restart demo-worker
+procmesh --server 10.0.0.11:18680 process stop demo-worker
+procmesh --server 10.0.0.11:18680 process start demo-worker
+procmesh --server 10.0.0.11:18680 process restart demo-worker
 
 # 强制终止并将期望状态设为 STOPPED
-procmesh --server 10.0.0.11:9000 process kill demo-worker
+procmesh --server 10.0.0.11:18680 process kill demo-worker
 
 # 读取 stdout 或 stderr
-procmesh --server 10.0.0.11:9000 process logs demo-worker --lines 100 --stream stdout
-procmesh --server 10.0.0.11:9000 process logs demo-worker --lines 100 --stream stderr
+procmesh --server 10.0.0.11:18680 process logs demo-worker --lines 100 --stream stdout
+procmesh --server 10.0.0.11:18680 process logs demo-worker --lines 100 --stream stderr
 
 # 查看配置历史
-procmesh --server 10.0.0.11:9000 process history demo-worker
+procmesh --server 10.0.0.11:18680 process history demo-worker
 ```
 
 进程进入 `FATAL` 后，需要先清除失败状态，再重新启动：
 
 ```bash
-procmesh --server 10.0.0.11:9000 process reset-failure demo-worker
-procmesh --server 10.0.0.11:9000 process start demo-worker
+procmesh --server 10.0.0.11:18680 process reset-failure demo-worker
+procmesh --server 10.0.0.11:18680 process start demo-worker
 ```
 
 ## 8. 更新和回滚进程配置
@@ -515,13 +515,13 @@ procmesh --server 10.0.0.11:9000 process start demo-worker
 每次修改配置都使用乐观锁。先获取当前版本：
 
 ```bash
-procmesh --server 10.0.0.11:9000 process get demo-worker
+procmesh --server 10.0.0.11:18680 process get demo-worker
 ```
 
 假设输出中 `revision` 为 `1`，修改 YAML 后执行：
 
 ```bash
-procmesh --server 10.0.0.11:9000 process apply \
+procmesh --server 10.0.0.11:18680 process apply \
   --file demo-worker.yaml \
   --expected-revision 1 \
   --comment 'increase instances'
@@ -532,7 +532,7 @@ procmesh --server 10.0.0.11:9000 process apply \
 回滚同样会生成一个新 revision。假设当前最新版本为 `3`，要恢复版本 `1`：
 
 ```bash
-procmesh --server 10.0.0.11:9000 process rollback demo-worker \
+procmesh --server 10.0.0.11:18680 process rollback demo-worker \
   --to 1 \
   --expected-revision 3 \
   --comment 'rollback bad configuration'
@@ -541,15 +541,15 @@ procmesh --server 10.0.0.11:9000 process rollback demo-worker \
 部分运行参数需要重启进程才能应用。更新后用 `process get` 检查提示，并在合适的维护窗口执行：
 
 ```bash
-procmesh --server 10.0.0.11:9000 process restart demo-worker
+procmesh --server 10.0.0.11:18680 process restart demo-worker
 ```
 
 删除前必须先停止进程，等待 `process get` 显示实例已进入 `STOPPED`，再使用最新 revision 删除：
 
 ```bash
-procmesh --server 10.0.0.11:9000 process stop demo-worker
-procmesh --server 10.0.0.11:9000 process get demo-worker
-procmesh --server 10.0.0.11:9000 process delete demo-worker --expected-revision <LATEST_REVISION>
+procmesh --server 10.0.0.11:18680 process stop demo-worker
+procmesh --server 10.0.0.11:18680 process get demo-worker
+procmesh --server 10.0.0.11:18680 process delete demo-worker --expected-revision <LATEST_REVISION>
 ```
 
 ## 9. 进程 YAML 常用字段
@@ -637,20 +637,20 @@ resources:
 
 ```bash
 # 1. Agent 存活和数据存储就绪
-curl -fsS http://10.0.0.11:9000/healthz
-curl -fsS http://10.0.0.11:9000/readyz
+curl -fsS http://10.0.0.11:18680/healthz
+curl -fsS http://10.0.0.11:18680/readyz
 
 # 2. CLI 可认证访问
-procmesh --server 10.0.0.11:9000 status
+procmesh --server 10.0.0.11:18680 status
 
 # 3. 三个节点均为 ALIVE，地址均为实际内网 IP
-procmesh --server 10.0.0.11:9000 node list
+procmesh --server 10.0.0.11:18680 node list
 
 # 4. 本机进程可运行
-procmesh --server 10.0.0.11:9000 process list
+procmesh --server 10.0.0.11:18680 process list
 
 # 5. 远程节点可读取并操作
-procmesh --server 10.0.0.11:9000 --node <NODE_2_ID> process list
+procmesh --server 10.0.0.11:18680 --node <NODE_2_ID> process list
 
 # 6. Agent 开机自启
 systemctl is-enabled procmesh-agent
@@ -687,11 +687,11 @@ sudo systemctl restart procmesh-agent
 依次检查：
 
 1. 节点 2/3 的 `/healthz` 和 `/readyz` 是否正常；
-2. 加入节点能否访问种子节点 `9000/TCP`；
+2. 加入节点能否访问种子节点 `18680/TCP`；
 3. 令牌是否过期、已用完或已撤销；
 4. 节点是否曾使用当前数据目录加入其他集群；
 5. 三个节点是否使用兼容的协议版本；
-6. 节点间 `7946/TCP+UDP` 和 `9002/TCP` 是否放通。
+6. 节点间 `18689/TCP+UDP` 和 `18685/TCP` 是否放通。
 
 创建新令牌后可以重试，但如果返回 `cluster already initialized`，说明该数据目录已有集群身份，不应继续重复执行 `agent join`。
 
@@ -700,17 +700,17 @@ sudo systemctl restart procmesh-agent
 重新针对当前 `--server` 登录：
 
 ```bash
-procmesh --server 10.0.0.11:9000 login --user admin
+procmesh --server 10.0.0.11:18680 login --user admin
 ```
 
-默认会话只匹配登录时的 server 地址。使用 `10.0.0.11:9000` 登录后，改用主机名或另一个节点地址时不会自动复用该会话。
+默认会话只匹配登录时的 server 地址。使用 `10.0.0.11:18680` 登录后，改用主机名或另一个节点地址时不会自动复用该会话。
 
 ### 11.5 创建后进程一直是 STOPPED
 
 `process apply` 只保存配置并创建实例记录。执行：
 
 ```bash
-procmesh --server 10.0.0.11:9000 process start <NAME>
+procmesh --server 10.0.0.11:18680 process start <NAME>
 ```
 
 ### 11.6 启动进程时报 shim not found
@@ -727,9 +727,9 @@ sudo journalctl -u procmesh-agent -n 100 --no-pager
 检查以下内容：
 
 ```bash
-procmesh --server 10.0.0.11:9000 process get <NAME>
-procmesh --server 10.0.0.11:9000 process logs <NAME> --lines 200 --stream stdout
-procmesh --server 10.0.0.11:9000 process logs <NAME> --lines 200 --stream stderr
+procmesh --server 10.0.0.11:18680 process get <NAME>
+procmesh --server 10.0.0.11:18680 process logs <NAME> --lines 200 --stream stdout
+procmesh --server 10.0.0.11:18680 process logs <NAME> --lines 200 --stream stderr
 sudo journalctl -u procmesh-agent -n 200 --no-pager
 ```
 
@@ -737,18 +737,18 @@ sudo journalctl -u procmesh-agent -n 200 --no-pager
 
 ### 11.8 远程操作失败，但本地操作正常
 
-检查目标节点是否为 `ALIVE`，其 `rpc_address` 是否为实际内网 IP，以及节点间 `9001/TCP` 是否可达：
+检查目标节点是否为 `ALIVE`，其 `rpc_address` 是否为实际内网 IP，以及节点间 `18683/TCP` 是否可达：
 
 ```bash
-procmesh --server 10.0.0.11:9000 node list
-nc -vz 10.0.0.12 9001
+procmesh --server 10.0.0.11:18680 node list
+nc -vz 10.0.0.12 18683
 ```
 
 Agent 间 RPC 在集群初始化后使用 mTLS。如果证书或集群身份不一致，不要手工复制单个证书文件，应通过正常的加入流程恢复节点。
 
 ### 11.9 Raft 操作返回 quorum 或 unavailable
 
-确认多数 voter 在线且 `9002/TCP` 双向可达。三 voter 集群至少需要两个 voter 在线。Gossip 显示 `ALIVE` 不等于 Raft 一定具有 quorum，两者使用不同端口和一致性机制。
+确认多数 voter 在线且 `18685/TCP` 双向可达。三 voter 集群至少需要两个 voter 在线。Gossip 显示 `ALIVE` 不等于 Raft 一定具有 quorum，两者使用不同端口和一致性机制。
 
 ### 11.10 停止 Agent 与停止业务进程的区别
 
@@ -782,22 +782,22 @@ systemctl status procmesh-agent
 journalctl -u procmesh-agent -f
 
 # 健康检查
-curl -fsS http://10.0.0.11:9000/healthz
-curl -fsS http://10.0.0.11:9000/readyz
+curl -fsS http://10.0.0.11:18680/healthz
+curl -fsS http://10.0.0.11:18680/readyz
 
 # 登录和集群
-procmesh --server 10.0.0.11:9000 login --user admin
-procmesh --server 10.0.0.11:9000 node list
-procmesh --server 10.0.0.11:9000 node token create --ttl 30m --uses 1
+procmesh --server 10.0.0.11:18680 login --user admin
+procmesh --server 10.0.0.11:18680 node list
+procmesh --server 10.0.0.11:18680 node token create --ttl 30m --uses 1
 
 # 本机进程
-procmesh --server 10.0.0.11:9000 process list
-procmesh --server 10.0.0.11:9000 process start <NAME>
-procmesh --server 10.0.0.11:9000 process stop <NAME>
-procmesh --server 10.0.0.11:9000 process restart <NAME>
-procmesh --server 10.0.0.11:9000 process logs <NAME> --lines 100 --stream stdout
+procmesh --server 10.0.0.11:18680 process list
+procmesh --server 10.0.0.11:18680 process start <NAME>
+procmesh --server 10.0.0.11:18680 process stop <NAME>
+procmesh --server 10.0.0.11:18680 process restart <NAME>
+procmesh --server 10.0.0.11:18680 process logs <NAME> --lines 100 --stream stdout
 
 # 远程节点进程
-procmesh --server 10.0.0.11:9000 --node <NODE_ID> process list
-procmesh --server 10.0.0.11:9000 --node <NODE_ID> process restart <NAME>
+procmesh --server 10.0.0.11:18680 --node <NODE_ID> process list
+procmesh --server 10.0.0.11:18680 --node <NODE_ID> process restart <NAME>
 ```

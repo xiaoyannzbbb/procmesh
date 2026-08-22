@@ -335,7 +335,7 @@ func TestDisasterReplicationAPI_GeneratePolicyDraftForwardsLeader(t *testing.T) 
 		Auth:     authSvc,
 		IsLeader: func() bool { return false },
 		LeaderRoute: func() (Route, bool) {
-			return Route{NodeID: "node-leader", RPC: "127.0.0.1:9001"}, true
+			return Route{NodeID: "node-leader", RPC: "127.0.0.1:18683"}, true
 		},
 		Forward: disasterReplicationForwarder{client: leaderClient},
 	}
@@ -1055,7 +1055,7 @@ func TestDisasterReplicationAPI_NonLeaderForwardsMutation(t *testing.T) {
 		StateFn:  func() control.State { return *control.NewState() },
 		IsLeader: func() bool { return false },
 		LeaderRoute: func() (Route, bool) {
-			return Route{NodeID: "node-b", RPC: "127.0.0.1:9001"}, true
+			return Route{NodeID: "node-b", RPC: "127.0.0.1:18683"}, true
 		},
 		Forward: disasterReplicationForwarder{client: leaderClient},
 	}

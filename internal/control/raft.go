@@ -33,7 +33,7 @@ const (
 
 type RaftConfig struct {
 	Dir       string // $data_dir/raft
-	Bind      string // 127.0.0.1:9002 或 127.0.0.1:0
+	Bind      string // 127.0.0.1:18685 或 127.0.0.1:0
 	Advertise string // 空则用实际 bind
 	NodeID    string
 	ClusterID string

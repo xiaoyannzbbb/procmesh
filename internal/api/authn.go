@@ -117,7 +117,7 @@ func cookieValue(h http.Header, name string) string {
 	return c.Value
 }
 
-// OwnerAuthInterceptor 在 :9001 再验 hop 会话，不信任入口「已授权」头。
+// OwnerAuthInterceptor 在 :18683 再验 hop 会话，不信任入口「已授权」头。
 func OwnerAuthInterceptor(svc *auth.Service, localID string) connect.Interceptor {
 	return &ownerAuthInterceptor{svc: svc, localID: localID}
 }

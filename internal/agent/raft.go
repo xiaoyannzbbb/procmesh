@@ -14,7 +14,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/control"
 )
 
-const defaultControlListen = "127.0.0.1:9002"
+const defaultControlListen = "127.0.0.1:18685"
 
 const (
 	raftStartTO   = 10 * time.Second

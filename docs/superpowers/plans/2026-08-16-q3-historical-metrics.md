@@ -292,7 +292,7 @@ rpc GetProcessHistory(GetProcessHistoryRequest) returns (GetProcessHistoryRespon
 2. `requirePerm(..., auth.PermClusterRead, "", false, true)`
 3. hop：`Router.Resolve(ctx, "", "", node_id)`（`ownerAgentID=node_id`）。非本机则 `Forward.Metrics` 转发同一请求；拨号/调用失败 → `UNAVAILABLE`（`mapForwardErr` / `rpc.MapDialError`）
 4. 本机：规范化 since/until/layer；查 `node.cpu_percent` / `node.memory_percent` / `node.disk_percent`；缺行就是缺口
-5. `:9001` `LocalOnly` 不二次 hop
+5. `:18683` `LocalOnly` 不二次 hop
 
 `GetProcessHistory`：与 `GetProcessMetrics` 相同 hop + `process.read` + `authorizeProcessSpec`；本机 `Mgr.Resolve` 得 `process_id`；查 `process.cpu_percent` / `process.memory_bytes`。未知进程 `NOT_FOUND`。
 

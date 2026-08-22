@@ -151,9 +151,9 @@ STOPPED ─start→ STARTING ─ok→ RUNNING ─exit→ EXITED
 ### 远程操作流程
 
 ```
-Browser → Agent A :9000
+Browser → Agent A :18680
         → 入口 RBAC 检查
-        → mTLS RPC → Owner Agent C :9001
+        → mTLS RPC → Owner Agent C :18683
         → Owner 再次验证 RBAC + 证书
         → operation_id 幂等去重
         → 本地 commit + 执行

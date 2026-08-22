@@ -1642,7 +1642,7 @@ Expected: 成功构建 procmesh-agent, procmesh-shim, procmesh
 tail -f /var/log/procmesh/agent.log | grep metrics
 
 # 验证 Web UI 显示资源数据
-curl http://localhost:9000/api/metrics
+curl http://localhost:18680/api/metrics
 ```
 
 Expected: 看到真实的 CPU/Memory/Disk 数据，不是 -1

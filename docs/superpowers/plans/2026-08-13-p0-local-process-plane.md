@@ -1328,11 +1328,11 @@ git commit -m "feat: add alive/http/tcp/exec health checks"
 **Interfaces:**
 - Consumes: `process.Manager`, `store.Store`, `paths.Layout`, `logmgr.Manager`
 - Produces:
-  - `procmesh-agent --data-dir DIR --listen 127.0.0.1:9000 --shim-bin PATH`
+  - `procmesh-agent --data-dir DIR --listen 127.0.0.1:18680 --shim-bin PATH`
   - On start: `Open` store; if IntegrityCheck fails, process manager still constructed but HTTP `/readyz` → 503 body `DEGRADED`; **do not** stop or signal any discovered live processes
   - `RotateBootID` once per start
   - `Recover` then a 1s ticker `Reconcile` + `Protect`
-  - Loopback JSON (no auth in P0; bind default `127.0.0.1:9000` only — refuse listen on non-loopback unless `--insecure-listen` which still logs a warning):
+  - Loopback JSON (no auth in P0; bind default `127.0.0.1:18680` only — refuse listen on non-loopback unless `--insecure-listen` which still logs a warning):
     - `GET /healthz` → 200 `ok`
     - `GET /readyz` → 200 `ok` or 503 `DEGRADED`
     - `GET /v1/processes` → list specs + instances
@@ -1417,7 +1417,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/procmesh-agent --data-dir /var/lib/procmesh --listen 127.0.0.1:9000
+ExecStart=/usr/local/bin/procmesh-agent --data-dir /var/lib/procmesh --listen 127.0.0.1:18680
 Restart=on-failure
 KillMode=process
 LimitNOFILE=65536

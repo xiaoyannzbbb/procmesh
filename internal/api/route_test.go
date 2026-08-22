@@ -14,7 +14,7 @@ func TestRouter_TargetHeaderWins(t *testing.T) {
 		LocalID: "aaa",
 		Members: func() []cluster.NodeSummary {
 			return []cluster.NodeSummary{
-				{NodeID: "aaa", State: cluster.StateAlive, RPCAddress: "127.0.0.1:9001", ProtocolVersion: version.Protocol},
+				{NodeID: "aaa", State: cluster.StateAlive, RPCAddress: "127.0.0.1:18683", ProtocolVersion: version.Protocol},
 				{NodeID: "ccc", Hostname: "host-c", State: cluster.StateAlive, RPCAddress: "127.0.0.1:9003", ProtocolVersion: version.Protocol},
 			}
 		},
@@ -123,7 +123,7 @@ func TestRouter_AmbiguousProcessOwner(t *testing.T) {
 		Members: func() []cluster.NodeSummary {
 			return []cluster.NodeSummary{
 				{
-					NodeID: "bbb", State: cluster.StateAlive, RPCAddress: "127.0.0.1:9002",
+					NodeID: "bbb", State: cluster.StateAlive, RPCAddress: "127.0.0.1:18685",
 					ProtocolVersion: version.Protocol,
 					Processes:       []cluster.ProcessSummary{{Name: "nginx"}},
 				},
@@ -149,7 +149,7 @@ func TestRouter_LocalHostnameIsLocal(t *testing.T) {
 		Members: func() []cluster.NodeSummary {
 			return []cluster.NodeSummary{{
 				NodeID: "aaa", Hostname: "myhost", State: cluster.StateAlive,
-				RPCAddress: "127.0.0.1:9001", ProtocolVersion: version.Protocol,
+				RPCAddress: "127.0.0.1:18683", ProtocolVersion: version.Protocol,
 			}}
 		},
 	}

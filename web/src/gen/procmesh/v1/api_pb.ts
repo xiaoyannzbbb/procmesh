@@ -1869,7 +1869,7 @@ export type RequestJoinRequest = Message<"procmesh.v1.RequestJoinRequest"> & {
   meta?: MutationMeta | undefined;
 
   /**
-   * host:port of seed :9000
+   * host:port of seed :18680
    *
    * @generated from field: string seed_server = 2;
    */

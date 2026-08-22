@@ -12,6 +12,8 @@ import (
 )
 
 type Config struct {
+	DataDir string
+	Listen  string
 	Disk    logmgr.Policy
 	Gossip  Gossip
 	RPC     RPC
@@ -58,6 +60,8 @@ type Batch struct {
 }
 
 type file struct {
+	DataDir string       `yaml:"data_dir"`
+	Listen  string       `yaml:"listen"`
 	Disk    *diskFile    `yaml:"disk"`
 	Gossip  *gossipFile  `yaml:"gossip"`
 	RPC     *rpcFile     `yaml:"rpc"`
@@ -209,7 +213,7 @@ func LoadAll(path string, required bool) (Config, error) {
 	if err := batch.Validate(); err != nil {
 		return Config{}, err
 	}
-	cfg := Config{Disk: p, Batch: batch}
+	cfg := Config{DataDir: f.DataDir, Listen: f.Listen, Disk: p, Batch: batch}
 	if g := f.Gossip; g != nil {
 		cfg.Gossip.Listen = g.Listen
 		cfg.Gossip.Advertise = g.Advertise

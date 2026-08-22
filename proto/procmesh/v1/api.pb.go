@@ -7,11 +7,12 @@
 package procmeshv1
 
 import (
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
+
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -3936,7 +3937,7 @@ func (x *ClusterOverviewResponse) GetVersionCounts() map[string]int32 {
 type RequestJoinRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Meta          *MutationMeta          `protobuf:"bytes,1,opt,name=meta,proto3" json:"meta,omitempty"`
-	SeedServer    string                 `protobuf:"bytes,2,opt,name=seed_server,json=seedServer,proto3" json:"seed_server,omitempty"` // host:port of seed :9000
+	SeedServer    string                 `protobuf:"bytes,2,opt,name=seed_server,json=seedServer,proto3" json:"seed_server,omitempty"` // host:port of seed :18680
 	Token         string                 `protobuf:"bytes,3,opt,name=token,proto3" json:"token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

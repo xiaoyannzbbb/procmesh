@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在已完成的 P2 集群身份与 Gossip 之上，交付 Agent 间 `:9001` mTLS Direct RPC、入口 Write-to-Owner 转发，以及 Owner 端 `operation_id` 幂等，使 `procmesh --server A --node C restart <name>` 能从 A 重启 C 上的进程。
+**Goal:** 在已完成的 P2 集群身份与 Gossip 之上，交付 Agent 间 `:18683` mTLS Direct RPC、入口 Write-to-Owner 转发，以及 Owner 端 `operation_id` 幂等，使 `procmesh --server A --node C restart <name>` 能从 A 重启 C 上的进程。
 
-**Architecture:** `:9000` 仍是 CLI/外部入口（P4 完成前环回免认证保持）。远程 Mutation 由入口 Agent 经 mTLS 转发到 Owner `:9001`，入口不改权威副本、不用 Gossip 传 Mutation。`:9001` 只服务本机 Process/Config/Log（`LocalOnly`，禁止再转发）。日常认证只有 mTLS；证书 URI SAN 必须是 `procmesh://<cluster_id>/<node_id>`。Join 仍走 `:9000`（加入者尚无证书）。`process` 不得 import `cluster` / `control` / `rpc`。
+**Architecture:** `:18680` 仍是 CLI/外部入口（P4 完成前环回免认证保持）。远程 Mutation 由入口 Agent 经 mTLS 转发到 Owner `:18683`，入口不改权威副本、不用 Gossip 传 Mutation。`:18683` 只服务本机 Process/Config/Log（`LocalOnly`，禁止再转发）。日常认证只有 mTLS；证书 URI SAN 必须是 `procmesh://<cluster_id>/<node_id>`。Join 仍走 `:18680`（加入者尚无证书）。`process` 不得 import `cluster` / `control` / `rpc`。
 
 **Tech Stack:** Go 1.23、已有 ConnectRPC + Gin、标准库 `crypto/tls` / `crypto/x509`、P2 的 Cluster CA 与 Agent 证书、hashicorp/memberlist（只读 RPC 地址）。
 
@@ -22,8 +22,8 @@
 - 错误码沿用 `internal/errcode`：`OK`、`CONFLICT`、`UNAVAILABLE`、`TIMEOUT`、`DENIED`、`DEGRADED`、`DUPLICATE_NODE_ID`、`INCOMPATIBLE_VERSION`、`NOT_FOUND`、`INVALID`
 - 应用错误码放在 Connect error detail（`ErrorInfo.code`），消息为英文
 - 对外主协议是 ConnectRPC；REST 仅 `/healthz`、`/readyz`、`/metrics`
-- 监听默认 `127.0.0.1:9000`、`127.0.0.1:9001`、`127.0.0.1:7946`；非环回必须 `--insecure-listen`
-- **P4 完成前不关闭环回无认证。** `cluster init` 之后仍允许本机 `:9000` 无认证管理。禁止在本阶段实现登录或关掉 loopback 免认证。
+- 监听默认 `127.0.0.1:18680`、`127.0.0.1:18683`、`127.0.0.1:18689`；非环回必须 `--insecure-listen`
+- **P4 完成前不关闭环回无认证。** `cluster init` 之后仍允许本机 `:18680` 无认证管理。禁止在本阶段实现登录或关掉 loopback 免认证。
 - **本阶段不启动 Raft、不实现 CRL、不实现 `node remove`、不实现用户/RBAC。**
 - Agent RPC 必须 mTLS。证书含 `cluster_id`、`node_id`（URI SAN `procmesh://<cluster_id>/<node_id>`）
 - cluster secret **不**作为日常 RPC 凭证
@@ -32,7 +32,7 @@
 - 远程超时：客户端标 `TIMEOUT`（结果未知）；Owner 不可达 / 无 `rpc_address` / 状态为 FAILED 标 `UNAVAILABLE`
 - 重试必须复用 `operation_id`；目标端重复 `operation_id` 返回上次结果，不得重放
 - V1.0 `protocol_version = 1`（`internal/version.Protocol`）；不兼容则 `INCOMPATIBLE_VERSION`
-- Join token 本阶段仍只存本机 `cluster/tokens.json`；Join 仍走 `:9000`
+- Join token 本阶段仍只存本机 `cluster/tokens.json`；Join 仍走 `:18680`
 - Cluster CA 私钥与 cluster secret、admin bootstrap、agent key 权限必须 `0600`
 - 测试与代码同目录：`internal/foo/foo_test.go`
 - 强制 TDD：先红后绿
@@ -46,8 +46,8 @@
 来源：`docs/v2-prd/v2-prd.md` 与 `docs/superpowers/specs/2026-08-13-v1-mvp-architecture-design.md`。冲突以架构 spec 为准。
 
 1. **P3 可演示出口**（spec §13）：从 A 重启 C 上的进程。
-2. **端口**（spec §5.1）：Agent RPC 默认 `:9001`，ConnectRPC + mTLS。
-3. **远程 Mutation**（spec §9.5 / PRD §4.5）：`Client → 入口 :9000 → mTLS RPC → Owner :9001 → operation_id 去重 → 本地 commit`。入口不改权威副本。Owner 不信任入口的「已授权」声明。**P4 才有 RBAC/session**；本阶段 Owner 只再验 mTLS 证书（集群匹配、证书有效）。入口转发 `Procmesh-Source-Node`（本机 `node_id`）与原 `operation_id` / `operator`。
+2. **端口**（spec §5.1）：Agent RPC 默认 `:18683`，ConnectRPC + mTLS。
+3. **远程 Mutation**（spec §9.5 / PRD §4.5）：`Client → 入口 :18680 → mTLS RPC → Owner :18683 → operation_id 去重 → 本地 commit`。入口不改权威副本。Owner 不信任入口的「已授权」声明。**P4 才有 RBAC/session**；本阶段 Owner 只再验 mTLS 证书（集群匹配、证书有效）。入口转发 `Procmesh-Source-Node`（本机 `node_id`）与原 `operation_id` / `operator`。
 4. **幂等**（PRD §48 / spec §3.9 / Case 6）：目标 Agent 收到重复 `operation_id` 返回上次结果。Journal 已在 P0 Owner 本地；转发不得在入口再执行。
 5. **故障**（spec §12 / Case 2）：网络分区两侧本地 Process 继续；跨区操作 `TIMEOUT`/`UNAVAILABLE`；**禁止**因对端 FAILED 而在本机创建对方进程。
 6. **CLI**（spec §11.2）：远程加 `--server` / `--node`。P1 拒绝 `--node` 的行为在本阶段撤销。`--node` 值可以是 `node_id` 或 hostname。
@@ -57,7 +57,7 @@
    - 否则 Gossip 按 process name 找 Owner。
    - 目标等于本机 `node_id`（或本机 hostname）→ 走现有本地 Manager。
    - 目标是远端 → 查 Gossip 的 `rpc_address`，mTLS 转发；找不到 / 无地址 / FAILED → `UNAVAILABLE`，**不**在本机 apply。
-8. **`:9001` 生命周期**：未入群（无 `ca.crt`+`agent.crt`+`agent.key`）不监听 `:9001`。启动时已有证书则立刻听；`cluster init` / `agent join`（`RequestJoin`）成功写入证书后必须立刻启动，无需重启 Agent。
+8. **`:18683` 生命周期**：未入群（无 `ca.crt`+`agent.crt`+`agent.key`）不监听 `:18683`。启动时已有证书则立刻听；`cluster init` / `agent join`（`RequestJoin`）成功写入证书后必须立刻启动，无需重启 Agent。
 9. **加入者没有 `ca.key`**：必须新增 `control.LoadAgentCreds`，只读 `ca.crt` / `agent.crt` / `agent.key`。
 10. **TLS 主机名**：Agent 证书只有 URI SAN，没有 DNS SAN。客户端必须用自定义 `VerifyPeerCertificate`（校验 CA + URI 集群匹配 + 可选期望 `node_id`），禁止依赖默认 hostname 校验。
 11. **明确不做**：Raft、用户登录、RBAC 生效、CRL、node remove、Vue、关闭免认证环回、用 Gossip 传 Mutation。
@@ -69,7 +69,7 @@ Procmesh-Target-Node   CLI --node 或入口解析后的 Owner node_id
 Procmesh-Source-Node   入口本机 node_id（转发时必填）
 ```
 
-`:9001` 忽略 `Procmesh-Target-Node`（已在 Owner，`LocalOnly=true`）。
+`:18683` 忽略 `Procmesh-Target-Node`（已在 Owner，`LocalOnly=true`）。
 
 ## File map（本阶段创建/修改）
 
@@ -136,7 +136,7 @@ docs/superpowers/plans/2026-08-13-v1-mvp.md
 func TestLoadAll_RPCListenAndAdvertise(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent.yaml")
-	body := "rpc:\n  listen: 127.0.0.1:9001\n  advertise: 10.0.0.1:9001\n"
+	body := "rpc:\n  listen: 127.0.0.1:18683\n  advertise: 10.0.0.1:18683\n"
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestLoadAll_RPCListenAndAdvertise(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.RPC.Listen != "127.0.0.1:9001" || cfg.RPC.Advertise != "10.0.0.1:9001" {
+	if cfg.RPC.Listen != "127.0.0.1:18683" || cfg.RPC.Advertise != "10.0.0.1:18683" {
 		t.Fatalf("%+v", cfg.RPC)
 	}
 }
@@ -183,7 +183,7 @@ type rpcFile struct {
 }
 ```
 
-在 `LoadAll` 解析 `rpc` 段，赋给 `cfg.RPC`。缺省为空字符串（默认地址由 Agent 填 `127.0.0.1:9001`）。
+在 `LoadAll` 解析 `rpc` 段，赋给 `cfg.RPC`。缺省为空字符串（默认地址由 Agent 填 `127.0.0.1:18683`）。
 
 - [ ] **Step 4: 跑配置测试确认通过**
 
@@ -463,7 +463,7 @@ EOF
 
 ---
 
-### Task 3: `:9001` mTLS Connect 服务端
+### Task 3: `:18683` mTLS Connect 服务端
 
 **Files:**
 - Create: `internal/rpc/server.go`
@@ -752,7 +752,7 @@ func TestRouter_TargetHeaderWins(t *testing.T) {
 		LocalID: "aaa",
 		Members: func() []cluster.NodeSummary {
 			return []cluster.NodeSummary{
-				{NodeID: "aaa", State: cluster.StateAlive, RPCAddress: "127.0.0.1:9001", ProtocolVersion: version.Protocol},
+				{NodeID: "aaa", State: cluster.StateAlive, RPCAddress: "127.0.0.1:18683", ProtocolVersion: version.Protocol},
 				{NodeID: "ccc", Hostname: "host-c", State: cluster.StateAlive, RPCAddress: "127.0.0.1:9003", ProtocolVersion: version.Protocol},
 			}
 		},
@@ -887,8 +887,8 @@ type ProcessAPI struct {
 
 行为（锁定）：
 
-- `LocalOnly==true`（`:9001`）：忽略 target 头，只走本机；缺 `operation_id` 仍 `INVALID`。
-- `:9000` 上每个 Process/Config Mutation 以及 Get/List/History/Diff/Tail/Stream/Download：先 `hint := rpc.TargetOf(req.Header())`，再 `Resolve`。
+- `LocalOnly==true`（`:18683`）：忽略 target 头，只走本机；缺 `operation_id` 仍 `INVALID`。
+- `:18680` 上每个 Process/Config Mutation 以及 Get/List/History/Diff/Tail/Stream/Download：先 `hint := rpc.TargetOf(req.Header())`，再 `Resolve`。
 - `Route.Local==true`：现有本机逻辑。Apply 时若 `spec.OwnerAgentID==""`，写成 `LocalID`（LocalID 空则保持空，兼容单测）。
 - `Route.Local==false`：**禁止**调用 `s.Mgr.*`。用 Forwarder 拿到客户端，把同一请求（含原 `operation_id`）转发，并设置 `Procmesh-Source-Node=LocalID`、`Procmesh-Target-Node=rt.NodeID`。错误走 `MapCallError` 再 `ToConnect`。
 - 入口 **不得** `BeginOperation` / `PeekOp` 转发请求——幂等只发生在 Owner。
@@ -1031,7 +1031,7 @@ EOF
 
 ---
 
-### Task 8: Agent 接线——证书就绪后启动 `:9001`
+### Task 8: Agent 接线——证书就绪后启动 `:18683`
 
 **Files:**
 - Modify: `internal/agent/run.go`
@@ -1044,20 +1044,20 @@ EOF
 **Interfaces:**
 - Consumes: `control.LoadAgentCreds`、`rpc.NewServer`、`rpc.Dial`、`api.Router`、`agentcfg.RPC`
 - Produces:
-  - `agent.Options.RPCListen string`（默认 `127.0.0.1:9001`；测试 `127.0.0.1:0`）
+  - `agent.Options.RPCListen string`（默认 `127.0.0.1:18683`；测试 `127.0.0.1:0`）
   - `agent.Options.RPCAdvertise string`
   - `agent.Options.OnRPCListen func(addr string)`（可空）
   - `api.ClusterDeps.OnReady func() error`（可空；`Init` 与 `RequestJoin` 成功写完证书后调用，失败只打 stderr，不回滚已成功的 init/join）
   - `liveSource.setRPC(addr string)`
   - 具体 Forwarder：用本机 `AgentCreds` Dial 到 `rt.RPC`
-  - `:9000` 的 Process/Config/Log API：`LocalOnly=false`，注入 Router+Forwarder
-  - `:9001` 的同一套 handler：**新实例** `LocalOnly=true`（不要共享会变的字段）
+  - `:18680` 的 Process/Config/Log API：`LocalOnly=false`，注入 Router+Forwarder
+  - `:18683` 的同一套 handler：**新实例** `LocalOnly=true`（不要共享会变的字段）
 
 行为（锁定）：
 
-- `RPCListen` 空：CLI flag 空则读 `cfg.RPC.Listen`，再空则 `127.0.0.1:9001`。
+- `RPCListen` 空：CLI flag 空则读 `cfg.RPC.Listen`，再空则 `127.0.0.1:18683`。
 - 非环回同样走 `CheckListen`。
-- 无证书：不听 `:9001`，`RPCAddress` 保持空。
+- 无证书：不听 `:18683`，`RPCAddress` 保持空。
 - 有证书：`net.Listen` → `rpc.NewServer` → `src.setRPC(addr)` → `mesh.Update()` → `OnRPCListen`。
 - `Init`/`RequestJoin` 之后 `OnReady` 再走同一条启动路径（已在听则 no-op）。
 - 关闭 Agent 时 `Shutdown` RPC server。
@@ -1131,7 +1131,7 @@ Expected: PASS
 ```bash
 git add internal/agent internal/api internal/cli cmd/procmesh-agent
 git commit -m "$(cat <<'EOF'
-feat: 证书就绪后启动 :9001 并广播 rpc_address
+feat: 证书就绪后启动 :18683 并广播 rpc_address
 
 EOF
 )"
@@ -1352,6 +1352,6 @@ EOF
 
 ## 自检
 
-1. **规格覆盖：** §3.4/3.8/3.9 Direct RPC + timeout + operation_id；§4.2 `internal/rpc`；§5.1 `:9001`；§9.5 Write-to-Owner；§11.2 `--node`；§12 分区不迁移；§13 P3 演示；§14 Case 2 / Case 6；§16 mTLS；§18 禁止非 Owner 写 / 无 operation_id 远程写。P4 项（Raft/RBAC/CRL/关环回）明确不做。
+1. **规格覆盖：** §3.4/3.8/3.9 Direct RPC + timeout + operation_id；§4.2 `internal/rpc`；§5.1 `:18683`；§9.5 Write-to-Owner；§11.2 `--node`；§12 分区不迁移；§13 P3 演示；§14 Case 2 / Case 6；§16 mTLS；§18 禁止非 Owner 写 / 无 operation_id 远程写。P4 项（Raft/RBAC/CRL/关环回）明确不做。
 2. **无占位符：** 任务均含测试代码、命令、期望、提交说明。
 3. **类型一致：** `LoadAgentCreds` / `AgentCreds` / `Router.Resolve` / `Forwarder` / `DialConfig` / 头常量在后续任务中名称一致。

@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -52,6 +53,41 @@ func TestRun_AppliesAutoDeleteFromConfig(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		cancel()
+		t.Fatal("timeout")
+	}
+}
+
+func TestRun_UsesDataDirAndListenFromConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "agent.yaml")
+	body := fmt.Sprintf("data_dir: %q\nlisten: 127.0.0.1:0\n", dir)
+	if err := os.WriteFile(cfg, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- agent.Run(ctx, agent.Options{
+			GossipListen:  "127.0.0.1:0",
+			RPCListen:     "127.0.0.1:0",
+			ControlListen: "127.0.0.1:0",
+			ConfigPath:    cfg,
+			OnListen: func(addr string) {
+				if addr == "127.0.0.1:18680" {
+					t.Errorf("listen address = %q, want configured ephemeral port", addr)
+				}
+				cancel()
+			},
+		})
+	}()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
 		t.Fatal("timeout")
 	}
 }

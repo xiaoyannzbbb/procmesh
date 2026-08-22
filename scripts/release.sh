@@ -7,7 +7,7 @@ usage() {
 Usage: scripts/release.sh <version> [--dry-run] [--skip-web]
 
 Builds GitHub release archives for:
-  linux:   amd64, arm64
+  linux:   amd64, arm64, armv7
   darwin:  amd64, arm64
 
 The script pushes main and an annotated version tag to the github remote, then
@@ -125,6 +125,7 @@ mkdir -p "$dist_dir"
 targets=(
   linux/amd64
   linux/arm64
+  linux/armv7
   darwin/amd64
   darwin/arm64
 )
@@ -138,15 +139,23 @@ for target in "${targets[@]}"; do
   package_dir="$build_dir/$archive_base"
   mkdir -p "$package_dir"
 
+  printf 'Building binaries for %s/%s\n' "$os" "$arch"
   for binary in "${binaries[@]}"; do
-    GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -buildvcs=true \
-      -ldflags "$ldflags" \
-      -o "$package_dir/$binary" "./cmd/$binary"
+    if [[ "$arch" == "armv7" ]]; then
+      GOOS="$os" GOARCH=arm GOARM=7 CGO_ENABLED=0 go build -trimpath -buildvcs=true \
+        -ldflags "$ldflags" \
+        -o "$package_dir/$binary" "./cmd/$binary"
+    else
+      GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -buildvcs=true \
+        -ldflags "$ldflags" \
+        -o "$package_dir/$binary" "./cmd/$binary"
+    fi
   done
 
   cp README.md "$package_dir/README.md"
   if [[ "$os" == "linux" ]]; then
     cp deployments/systemd/procmesh-agent.service "$package_dir/procmesh-agent.service"
+    cp docs/conf/agent.yaml "$package_dir/agent.yaml"
   fi
 
   tar -C "$build_dir" -czf "$dist_dir/$archive_base.tar.gz" "$archive_base"
@@ -174,7 +183,7 @@ git push "$remote" HEAD:refs/heads/main
 git tag -a "$version" -m "Release $version" "$commit"
 git push "$remote" "refs/tags/$version"
 
-release_notes=$'Prebuilt archives include procmesh, procmesh-agent, and procmesh-shim.\n\nPlatform support:\n- Linux amd64/arm64: production target.\n- macOS amd64/arm64: development and evaluation target.\n\nWindows is not released because the Agent and Shim currently depend on Unix process and filesystem APIs.'
+release_notes=$'Prebuilt archives include procmesh, procmesh-agent, and procmesh-shim. Linux archives also include the default agent.yaml and a systemd unit.\n\nPlatform support:\n- Linux amd64/arm64/armv7: production target.\n- macOS amd64/arm64: development and evaluation target.\n\nWindows is not released because the Agent and Shim currently depend on Unix process and filesystem APIs.'
 gh release create "$version" "$dist_dir"/*.tar.gz "$checksums" \
   --repo "$repository" \
   --target "$commit" \

@@ -4,7 +4,7 @@
 
 **Goal:** 在已完成的 P3 mTLS Write-to-Owner 之上，交付内嵌 Raft 控制面、用户/会话/API Token、RBAC、Join 准入、CRL + `node remove`，并在 `cluster init` 之后关闭环回无认证，使登录与权限生效。
 
-**Architecture:** `cluster init` 的节点 bootstrap 为唯一 Raft voter（`:9002`）。加入者作为 Raft non-voter 接收 FSM apply，从而任意 Owner 都能独立验 session / token / RBAC。`:9000` 在集群已初始化后强制用户会话或 API Token（`healthz`/`readyz`/`metrics`、未入群的 `Init`、以及加入者尚无证书的 `Join`/`RequestJoin`/`Login` 除外）。远程 Mutation 入口先做 RBAC，再经 mTLS 转发到 Owner；入口只转发 `user_id` + `session_id`（或 `token_id`），Owner 用本地 Raft 缓存再验，不信任入口的「已授权」声明。`node remove` 删除 membership **并且** 吊销证书；被吊销节点再连拒绝。失 quorum 时 Process Plane 与本地 Process 读写仍开；`user.*` / `role.*` / `node.remove` / 准入写拒绝；远程 Mutation 受 RBAC 缓存 TTL（默认 5 分钟）约束。`process` 不得 import `cluster` / `control` / `rpc` / `auth`。
+**Architecture:** `cluster init` 的节点 bootstrap 为唯一 Raft voter（`:18685`）。加入者作为 Raft non-voter 接收 FSM apply，从而任意 Owner 都能独立验 session / token / RBAC。`:18680` 在集群已初始化后强制用户会话或 API Token（`healthz`/`readyz`/`metrics`、未入群的 `Init`、以及加入者尚无证书的 `Join`/`RequestJoin`/`Login` 除外）。远程 Mutation 入口先做 RBAC，再经 mTLS 转发到 Owner；入口只转发 `user_id` + `session_id`（或 `token_id`），Owner 用本地 Raft 缓存再验，不信任入口的「已授权」声明。`node remove` 删除 membership **并且** 吊销证书；被吊销节点再连拒绝。失 quorum 时 Process Plane 与本地 Process 读写仍开；`user.*` / `role.*` / `node.remove` / 准入写拒绝；远程 Mutation 受 RBAC 缓存 TTL（默认 5 分钟）约束。`process` 不得 import `cluster` / `control` / `rpc` / `auth`。
 
 **Tech Stack:** Go 1.23、已有 ConnectRPC + Gin + argon2id + memberlist、`github.com/hashicorp/raft`、`github.com/hashicorp/raft-boltdb/v2`、`go.etcd.io/bbolt`、标准库 `crypto/x509`（CRL）。
 
@@ -23,7 +23,7 @@
 - 错误码沿用 `internal/errcode`：`OK`、`CONFLICT`、`UNAVAILABLE`、`TIMEOUT`、`DENIED`、`DEGRADED`、`DUPLICATE_NODE_ID`、`INCOMPATIBLE_VERSION`、`NOT_FOUND`、`INVALID`
 - 应用错误码放在 Connect error detail（`ErrorInfo.code`），消息为英文
 - 对外主协议是 ConnectRPC；REST 仅 `/healthz`、`/readyz`、`/metrics`
-- 监听默认 `127.0.0.1:9000`、`127.0.0.1:9001`、`127.0.0.1:9002`、`127.0.0.1:7946`；非环回必须 `--insecure-listen`
+- 监听默认 `127.0.0.1:18680`、`127.0.0.1:18683`、`127.0.0.1:18685`、`127.0.0.1:18689`；非环回必须 `--insecure-listen`
 - **`cluster init` 成功后必须关闭环回无认证。** 禁止在已入群节点上保留无认证入口。尚未 `cluster init` 的 Agent 仍允许本机环回无认证（方便单机自测）
 - Agent RPC 必须 mTLS。证书含 `cluster_id`、`node_id`（URI SAN `procmesh://<cluster_id>/<node_id>`）。RPC 校验：集群匹配、证书有效、**未在 CRL**
 - cluster secret **不**作为日常 RPC 凭证
@@ -52,10 +52,10 @@
 来源：`docs/v2-prd/v2-prd.md` 与 `docs/superpowers/specs/2026-08-13-v1-mvp-architecture-design.md`。冲突以架构 spec 为准。
 
 1. **P4 可演示出口**（spec §13）：登录与权限生效。`cluster init` 后无会话的 `process list` 必须 `DENIED`；admin 登录后可管理；Viewer 不能 restart。
-2. **Raft**（spec §10 / §5.1）：hashicorp/raft，日志 raft-boltdb/v2，FSM 快照 bbolt。默认端口 `:9002`。init 节点 bootstrap 为唯一 voter。加入者 `AddNonvoter`。显式 `node promote` 才变 voter。默认目标 3 voter，可配 5；本阶段实现 promote，不自动把加入者升级为 voter。
+2. **Raft**（spec §10 / §5.1）：hashicorp/raft，日志 raft-boltdb/v2，FSM 快照 bbolt。默认端口 `:18685`。init 节点 bootstrap 为唯一 voter。加入者 `AddNonvoter`。显式 `node promote` 才变 voter。默认目标 3 voter，可配 5；本阶段实现 promote，不自动把加入者升级为 voter。
 3. **认证**（spec §10 / §16）：Username+Password 与 API Token。Session 在 Raft。Cookie 给未来 Web；CLI 用 `Authorization: Bearer` + 本机 session 文件。
 4. **RBAC**（spec §10 / PRD §16–19）：User → Role → Permission。一个用户可绑多个 Role。Scope 仅 Cluster / Agent。
-5. **远程 Mutation**（spec §9.5）：`Client → 入口 :9000 RBAC → mTLS → Owner :9001 再验 RBAC+证书+CRL → operation_id 去重 → 本地 commit`。
+5. **远程 Mutation**（spec §9.5）：`Client → 入口 :18680 RBAC → mTLS → Owner :18683 再验 RBAC+证书+CRL → operation_id 去重 → 本地 commit`。
 6. **Join**（spec §9.3）：向任一 ALIVE Agent 提交 token → 该 Agent 把签发请求交给 Raft leader → leader 校验并消费 token → 用 Cluster CA 签发 → 写入 membership → 返回证书与 CA。重复 `node_id`：`DUPLICATE_NODE_ID`。被 `remove` 的 `node_id` 再 join：`DENIED`。
 7. **Remove**（spec §9.3 / Case 8）：membership 删除 **并且** 证书吊销。仅 Gossip LEFT 不算安全删除。被吊销节点再连：拒绝。
 8. **失 quorum**（spec §10 / Case 9）：3 节点内存 Raft 测拒绝写；Linux 验收：voter 不可达时本地 Process 仍开，`user.create` / `node.remove` 拒绝。
@@ -74,14 +74,14 @@ Procmesh-Session-ID                   # 入口转发（session 认证时）
 Procmesh-Token-ID                     # 入口转发（API token 认证时）
 ```
 
-`:9001` 忽略 `Procmesh-Target-Node`。Owner 用 `Procmesh-Session-ID` / `Procmesh-Token-ID` 查 Raft 缓存，**不**信任入口声明的权限列表。
+`:18683` 忽略 `Procmesh-Target-Node`。Owner 用 `Procmesh-Session-ID` / `Procmesh-Token-ID` 查 Raft 缓存，**不**信任入口声明的权限列表。
 
 Session id 前缀 `pms_`，API token 明文前缀 `pmt_`，join token 仍是 `pmj_`。
 
 CLI session 文件：`~/.config/procmesh/session`（0600），JSON：
 
 ```json
-{"server":"http://127.0.0.1:9000","session_id":"pms_...","user_id":"...","expires_unix":0}
+{"server":"http://127.0.0.1:18680","session_id":"pms_...","user_id":"...","expires_unix":0}
 ```
 
 ## 内置角色权限（本阶段锁定）
@@ -112,7 +112,7 @@ command.execute  command.execute.batch
 
 Scope：`CLUSTER`（`scope_id` 空）或 `AGENT`（`scope_id` = `node_id`）。检查目标节点时：Cluster binding 对所有节点生效；Agent binding 仅当目标 `node_id` 匹配。
 
-## 鉴权例外（已入群的 :9000）
+## 鉴权例外（已入群的 :18680）
 
 **不需要会话：**
 
@@ -121,7 +121,7 @@ Scope：`CLUSTER`（`scope_id` 空）或 `AGENT`（`scope_id` = `node_id`）。�
 - `ClusterService.Join`（加入者尚无证书，持 token）
 - `ClusterService.RequestJoin`（加入者本机调用，持 token）
 
-**尚未 `cluster init`：** 全部 `:9000` 保持无认证（与 P0–P3 单机行为一致）。
+**尚未 `cluster init`：** 全部 `:18680` 保持无认证（与 P0–P3 单机行为一致）。
 
 **`NewServer` 未注入 `Auth`：** 单测保持无认证。Agent 在集群已初始化后必须注入 `Auth`。
 
@@ -671,7 +671,7 @@ EOF
 ```go
 type RaftConfig struct {
     Dir       string // $data_dir/raft
-    Bind      string // 127.0.0.1:9002 或 127.0.0.1:0
+    Bind      string // 127.0.0.1:18685 或 127.0.0.1:0
     Advertise string // 空则用实际 bind
     NodeID    string
     ClusterID string
@@ -888,7 +888,7 @@ EOF
 
 ---
 
-### Task 5: :9000 鉴权拦截器 + Login/Logout + 关闭环回无认证
+### Task 5: :18680 鉴权拦截器 + Login/Logout + 关闭环回无认证
 
 **Files:**
 - Create: `internal/api/authn.go`
@@ -931,7 +931,7 @@ func AuthInterceptor(svc *auth.Service, clusterInited func() bool) connect.Inter
 5. 失败 → `ToConnect(DENIED)`
 6. 成功 → `WithPrincipal`，并在 handler 里可用
 
-`Login`：调 `svc.Login`；响应写 `Set-Cookie: procmesh_session=...; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200`（不要 `Secure`，本阶段 :9000 可为明文；注释说明 P5/反代终结 TLS）。
+`Login`：调 `svc.Login`；响应写 `Set-Cookie: procmesh_session=...; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200`（不要 `Secure`，本阶段 :18680 可为明文；注释说明 P5/反代终结 TLS）。
 
 `Logout`：需要已认证；`svc.Logout`。
 
@@ -1170,7 +1170,7 @@ func CopyIdentity(dst, src http.Header)
 
 入口 `remoteProcess/Config/Log`：从 `PrincipalFrom(ctx)` 设置 User + Session 或 Token 头。
 
-Owner `:9001` interceptor（Agent 注入同一 `auth.Service`）：
+Owner `:18683` interceptor（Agent 注入同一 `auth.Service`）：
 
 1. mTLS 已保证集群成员
 2. 读 `Procmesh-Session-ID` 或 `Procmesh-Token-ID`（无则 `DENIED` `missing session`——**已入群 Owner 拒绝匿名 hop**）
@@ -1276,7 +1276,7 @@ OnAdmit func(nodeID, raftAddr string) error // leader AddNonvoter；nil 忽略
 
 ```go
 func TestLoadAll_ControlListenAndAdvertise(t *testing.T) {
-    body := "control:\n  listen: 127.0.0.1:9002\n  advertise: 10.0.0.1:9002\n"
+    body := "control:\n  listen: 127.0.0.1:18685\n  advertise: 10.0.0.1:18685\n"
     // 断言 cfg.Control.Listen / Advertise
 }
 ```
@@ -1430,7 +1430,7 @@ EOF
 
 ```go
 // agent.Options 增加
-ControlListen    string // default 127.0.0.1:9002；测试 127.0.0.1:0
+ControlListen    string // default 127.0.0.1:18685；测试 127.0.0.1:0
 ControlAdvertise string
 OnControlListen  func(addr string)
 
@@ -1442,7 +1442,7 @@ procmesh_cluster_control_quorum 0|1
 
 启动顺序（`Run`）：
 
-1. 现有 store / process / gossip / :9000
+1. 现有 store / process / gossip / :18680
 2. 若已有 `cluster.json`：`Start` Raft（**不要**再次 Bootstrap）。init 节点目录已有 raft 则 Open；全新 init 在 `ClusterAPI.Init` 之后的 `OnReady` 里 `Start`+`Bootstrap`+`Apply(bootstrap from LoadAdminBootstrap)`
 3. 构造 `auth.Service{Store: raftNode}`
 4. `api.NewServer` 设 `Auth`（仅当 `control.AlreadyInited`）
@@ -1540,7 +1540,7 @@ func TestP4_Case9_ControlDownLocalProcessContinues(t *testing.T)
 1. A init，B join
 2. admin 从 A `node remove <B node_id>`
 3. B 再 `agent join`（新 token）必须失败，detail `DENIED` 或消息 `node removed` / `certificate revoked`
-4. 用 B 的旧证书 Dial A 的 `:9001` 必须失败
+4. 用 B 的旧证书 Dial A 的 `:18683` 必须失败
 
 `TestP4_Case9_ControlDownLocalProcessContinues`：
 
@@ -1592,7 +1592,7 @@ EOF
 
 ## 自检
 
-1. **规格覆盖：** §3.6 用户/RBAC 强一致；§4.2 `control`/`auth`；§5.1 `:9002`；§5.2 `raft/`；§9.1 CRL；§9.3 join/remove；§9.5 入口+Owner 再验；§10 Raft FSM 内容与失 quorum；§11.1 Auth/User/Role/Remove；§11.2 login/user/role/remove CLI；§13 P4 演示；§14 三节点内存 Raft、Case 8/9、`auth`/`control` 80%；§16 密码/session/限流；§17 无 Group scope；§18 不把 Process 写入 Raft。P5 项（Vue/LIVE）明确不做。
+1. **规格覆盖：** §3.6 用户/RBAC 强一致；§4.2 `control`/`auth`；§5.1 `:18685`；§5.2 `raft/`；§9.1 CRL；§9.3 join/remove；§9.5 入口+Owner 再验；§10 Raft FSM 内容与失 quorum；§11.1 Auth/User/Role/Remove；§11.2 login/user/role/remove CLI；§13 P4 演示；§14 三节点内存 Raft、Case 8/9、`auth`/`control` 80%；§16 密码/session/限流；§17 无 Group scope；§18 不把 Process 写入 Raft。P5 项（Vue/LIVE）明确不做。
 2. **无占位符：** 任务均含测试名、命令、期望、提交说明与关键类型签名。
 3. **类型一致：** `control.Node` / `auth.Service` / `Store` / `Admission` / 头常量 / 角色 id / token 前缀在后续任务中名称一致。
 4. **旧测试策略：** `Options.Auth == nil` 保持 P0–P3 单测无认证；真 Agent 入群后注入 Auth。`tokens.json` 路径仅当 `ClusterDeps.Control==nil`。CheckJoin 的 REMOVED/REVOKED 语义在 Task 10 起改为拒绝。

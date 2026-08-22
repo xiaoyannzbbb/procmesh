@@ -132,8 +132,8 @@ func newClusterEnvFull(t *testing.T, cfg clusterEnvCfg) *clusterEnv {
 		BootID:          bootID,
 		State:           cluster.StateAlive,
 		ProtocolVersion: version.Protocol,
-		APIAddress:      "127.0.0.1:9000",
-		GossipAddress:   "127.0.0.1:7946",
+		APIAddress:      "127.0.0.1:18680",
+		GossipAddress:   "127.0.0.1:18689",
 	}
 	env := &clusterEnv{
 		dir:    layout.ClusterDir,
@@ -400,7 +400,7 @@ func TestJoin_SignsCSRVerifyAgent(t *testing.T) {
 		Hostname:        "joiner-host",
 		BootId:          "joiner-boot",
 		ProtocolVersion: int32(version.Protocol),
-		ApiAddress:      "127.0.0.1:9001",
+		ApiAddress:      "127.0.0.1:18683",
 		GossipAddress:   "127.0.0.1:7947",
 		CsrPem:          csr,
 	}))
@@ -960,9 +960,9 @@ func TestJoin_UsesRaftTokenNotFile(t *testing.T) {
 		Hostname:        "joiner-host",
 		BootId:          "boot-rj",
 		ProtocolVersion: int32(version.Protocol),
-		ApiAddress:      "127.0.0.1:9001",
+		ApiAddress:      "127.0.0.1:18683",
 		GossipAddress:   "127.0.0.1:7947",
-		RaftAddress:     "127.0.0.1:19002",
+		RaftAddress:     "127.0.0.1:118685",
 		CsrPem:          csr,
 	}))
 	if err != nil {
@@ -981,10 +981,10 @@ func TestJoin_UsesRaftTokenNotFile(t *testing.T) {
 		t.Fatal("tokens.json must not be written")
 	}
 	m, ok := raftNode.View().Members[joinerID]
-	if !ok || m.Status != control.MemberAdmitted || m.RaftAddr != "127.0.0.1:19002" {
+	if !ok || m.Status != control.MemberAdmitted || m.RaftAddr != "127.0.0.1:118685" {
 		t.Fatalf("member=%+v ok=%v", m, ok)
 	}
-	if len(admitted) != 1 || admitted[0] != joinerID+"=127.0.0.1:19002" {
+	if len(admitted) != 1 || admitted[0] != joinerID+"=127.0.0.1:118685" {
 		t.Fatalf("onAdmit=%v", admitted)
 	}
 }

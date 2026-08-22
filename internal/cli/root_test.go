@@ -635,7 +635,7 @@ func TestCLI_AgentJoinAlreadyInited(t *testing.T) {
 }
 
 func TestClient_HTTPTimeout(t *testing.T) {
-	c := newClient("127.0.0.1:9000", "op", "t", "", "")
+	c := newClient("127.0.0.1:18680", "op", "t", "", "")
 	if c.http == nil {
 		t.Fatal("nil http client")
 	}
@@ -734,16 +734,16 @@ func startTestServer(t *testing.T, withCluster bool) (string, *store.Store) {
 					BootID:          boot,
 					State:           cluster.StateAlive,
 					ProtocolVersion: version.Protocol,
-					APIAddress:      "127.0.0.1:9000",
-					GossipAddress:   "127.0.0.1:7946",
+					APIAddress:      "127.0.0.1:18680",
+					GossipAddress:   "127.0.0.1:18689",
 				}
 			},
-			GossipAddr: func() string { return "127.0.0.1:7946" },
+			GossipAddr: func() string { return "127.0.0.1:18689" },
 			Now:        time.Now,
 			NodeID:     nodeID,
 			Hostname:   "test-host",
 			BootID:     boot,
-			APIAddr:    "127.0.0.1:9000",
+			APIAddr:    "127.0.0.1:18680",
 		}
 	}
 	srv, err := api.NewServer(opts)

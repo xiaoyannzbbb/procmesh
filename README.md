@@ -21,7 +21,7 @@ ProcMesh 是一个 Local-First、Agent-Owned、Peer-Managed 的分布式进程�
 ```text
                        Web UI / CLI / ConnectRPC
                                   |
-                             任意 Agent :9000
+                             任意 Agent :18680
                                   |
                      mTLS RPC 写入所属 Owner Agent
                                   |
@@ -75,28 +75,28 @@ bin/procmesh-shim
 mkdir -p /tmp/procmesh-quickstart
 ./bin/procmesh-agent \
   --data-dir /tmp/procmesh-quickstart \
-  --listen 127.0.0.1:9000 \
-  --rpc 127.0.0.1:9001 \
-  --control 127.0.0.1:9002 \
-  --gossip 127.0.0.1:7946 \
+  --listen 127.0.0.1:18680 \
+  --rpc 127.0.0.1:18683 \
+  --control 127.0.0.1:18685 \
+  --gossip 127.0.0.1:18689 \
   --shim-bin ./bin/procmesh-shim
 ```
 
 在第二个终端中检查服务状态并初始化集群：
 
 ```bash
-curl -fsS http://127.0.0.1:9000/healthz
-curl -fsS http://127.0.0.1:9000/readyz
-./bin/procmesh --server 127.0.0.1:9000 cluster init --admin-user admin
+curl -fsS http://127.0.0.1:18680/healthz
+curl -fsS http://127.0.0.1:18680/readyz
+./bin/procmesh --server 127.0.0.1:18680 cluster init --admin-user admin
 ```
 
 初始化命令只可成功执行一次，并会输出一次性管理员密码。请立即将其保存到密码管理器，然后登录：
 
 ```bash
-./bin/procmesh --server 127.0.0.1:9000 login --user admin
+./bin/procmesh --server 127.0.0.1:18680 login --user admin
 ```
 
-访问 <http://127.0.0.1:9000/> 可打开 Web UI。Web UI 需要单独使用管理员账户登录。
+访问 <http://127.0.0.1:18680/> 可打开 Web UI。Web UI 需要单独使用管理员账户登录。
 
 ### 3. 创建并启动第一个进程
 
@@ -130,14 +130,14 @@ log:
 应用配置、启动进程并查看日志：
 
 ```bash
-./bin/procmesh --server 127.0.0.1:9000 process apply \
+./bin/procmesh --server 127.0.0.1:18680 process apply \
   --file demo-worker.yaml \
   --expected-revision 0 \
   --comment 'initial deployment'
 
-./bin/procmesh --server 127.0.0.1:9000 process start demo-worker
-./bin/procmesh --server 127.0.0.1:9000 process list
-./bin/procmesh --server 127.0.0.1:9000 process logs demo-worker --lines 20 --stream stdout
+./bin/procmesh --server 127.0.0.1:18680 process start demo-worker
+./bin/procmesh --server 127.0.0.1:18680 process list
+./bin/procmesh --server 127.0.0.1:18680 process logs demo-worker --lines 20 --stream stdout
 ```
 
 `autostart` 用于主机或 Agent 恢复后的运行意图，不会在首次创建配置时自动启动进程，因此首次部署仍需执行 `process start`。
@@ -166,18 +166,18 @@ make proto-ts
 
 ```bash
 # 查看、停止和重启进程
-procmesh --server 127.0.0.1:9000 process get demo-worker
-procmesh --server 127.0.0.1:9000 process stop demo-worker
-procmesh --server 127.0.0.1:9000 process restart demo-worker
+procmesh --server 127.0.0.1:18680 process get demo-worker
+procmesh --server 127.0.0.1:18680 process stop demo-worker
+procmesh --server 127.0.0.1:18680 process restart demo-worker
 
 # 查询配置历史并回滚
-procmesh --server 127.0.0.1:9000 process history demo-worker
-procmesh --server 127.0.0.1:9000 process rollback demo-worker \
+procmesh --server 127.0.0.1:18680 process history demo-worker
+procmesh --server 127.0.0.1:18680 process rollback demo-worker \
   --to 1 --expected-revision 3 --comment 'rollback configuration'
 
 # 管理节点与远程 Owner 上的进程
-procmesh --server 127.0.0.1:9000 node list
-procmesh --server 127.0.0.1:9000 --node <NODE_ID> process list
+procmesh --server 127.0.0.1:18680 node list
+procmesh --server 127.0.0.1:18680 --node <NODE_ID> process list
 ```
 
 运行 `procmesh` 可查看完整命令列表和参数说明。
@@ -191,18 +191,28 @@ gh auth login
 scripts/release.sh v1.2.3
 ```
 
-脚本会构建 Web UI，并为 Linux、macOS 的 amd64、arm64 目标生成包含三个二进制程序的压缩包及 `checksums.txt`；随后推送 `main`、创建带注释的版本标签并发布 GitHub Release。可先用 `scripts/release.sh v1.2.3 --dry-run` 只生成和检查产物。Linux 是生产目标；macOS 仅用于开发和评估。Windows 暂不发布，因为 Agent 和 Shim 依赖 Unix 进程及文件系统 API。
+脚本会构建 Web UI，并为 Linux 的 amd64、arm64、armv7 及 macOS 的 amd64、arm64 目标生成包含三个二进制程序的压缩包及 `checksums.txt`；Linux 包同时包含默认 `agent.yaml` 与 systemd 单元。随后推送 `main`、创建带注释的版本标签并发布 GitHub Release。可先用 `scripts/release.sh v1.2.3 --dry-run` 只生成和检查产物。Linux 是生产目标；macOS 仅用于开发和评估。Windows 暂不发布，因为 Agent 和 Shim 依赖 Unix 进程及文件系统 API。
+
+## 自动安装（Linux）
+
+以下命令会交互式安装最新正式 Release。安装器只支持 `amd64`、`arm64` 和 `armv7l`，下载后强制校验 Release 的 SHA-256 值：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xiaoyannzbbb/procmesh/main/scripts/install.sh | bash
+```
+
+默认安装到 `/usr/local/bin`，可在提示时改为其他绝对路径或 `~/...`。安装器默认不创建 systemd 服务；选择创建后可配置数据目录、配置文件、监听地址和端口，默认监听 `127.0.0.1:18680`。非回环监听会自动加入 `--insecure-listen`，因此必须使用防火墙、HTTPS 反向代理、VPN 或堡垒机限制访问。已有配置、数据目录和 systemd 单元不会被覆盖。
 
 ## 端口与安全
 
 | 端口 | 协议 | 用途 |
 | --- | --- | --- |
-| `9000` | TCP/HTTP | Web UI、CLI 和 ConnectRPC API。 |
-| `9001` | TCP/mTLS | Agent 间远程进程操作。 |
-| `9002` | TCP | Raft 控制面。 |
-| `7946` | TCP/UDP | Gossip 成员发现与状态传播。 |
+| `18680` | TCP/HTTP | Web UI、CLI 和 ConnectRPC API。 |
+| `18683` | TCP/mTLS | Agent 间远程进程操作。 |
+| `18685` | TCP | Raft 控制面。 |
+| `18689` | TCP/UDP | Gossip 成员发现与状态传播。 |
 
-生产环境中不要将这些端口直接暴露到公网。使用防火墙或安全组限制访问范围；跨不可信网络访问 `9000` 时，请使用 HTTPS 反向代理、VPN 或堡垒机。`--insecure-listen` 仅允许 Agent 监听非回环地址，不会启用 HTTPS。
+生产环境中不要将这些端口直接暴露到公网。使用防火墙或安全组限制访问范围；跨不可信网络访问 `18680` 时，请使用 HTTPS 反向代理、VPN 或堡垒机。`--insecure-listen` 仅允许 Agent 监听非回环地址，不会启用 HTTPS。
 
 ## 文档
 

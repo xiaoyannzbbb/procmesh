@@ -248,9 +248,9 @@ Cluster Control Member
 例如：
 
 ```text
-http://agent-a:9000
-http://agent-b:9000
-http://agent-c:9000
+http://agent-a:18680
+http://agent-b:18680
+http://agent-c:18680
 ```
 
 访问任意一个入口，都可以查看整个集群。
@@ -545,7 +545,7 @@ One-Time Join Token
 
 ```bash
 procmesh agent join \
-  --server agent-a:9001 \
+  --server agent-a:18683 \
   --token xxx
 ```
 
@@ -1667,9 +1667,9 @@ Large Audit Records
 访问：
 
 ```text
-http://agent-a:9000
-http://agent-b:9000
-http://agent-c:9000
+http://agent-a:18680
+http://agent-b:18680
+http://agent-c:18680
 ```
 
 任意 Agent 页面可以查看：

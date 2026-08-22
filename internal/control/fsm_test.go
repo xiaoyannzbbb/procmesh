@@ -202,7 +202,7 @@ func TestFSM_MemberRemoveAddsCRL(t *testing.T) {
 	s := mustBootstrap(t, now)
 	if err := s.Apply(mustEncode(t, "member_put", control.MemberPutBody{
 		NodeID:     "node-1",
-		RaftAddr:   "127.0.0.1:9002",
+		RaftAddr:   "127.0.0.1:18685",
 		CertSerial: "DEADBEEF",
 		Status:     control.MemberAdmitted,
 	}), now); err != nil {

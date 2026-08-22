@@ -4,7 +4,7 @@
 
 **Goal:** 在已完成的 P4 登录与 RBAC 之上，交付嵌入 Agent 的 Vue3 管理后台：任意节点打开都能看集群，Gossip 字段带 LIVE/STALE/UNKNOWN，远程配置/日志走 Write-to-Owner，浏览器可管集群。
 
-**Architecture:** `:9000` 用 `go:embed` 提供 SPA。浏览器只打入口 Agent 的 ConnectRPC（cookie 会话 + CSRF）。集群列表与 Overview 读本机 Gossip 视图；Process 详情、配置、日志、启停经已有 hop 到 Owner。Audit 本机列出并按需 RPC 聚合，缺失节点标 STALE。`internal/web` 无业务逻辑。`process` 不得 import `cluster` / `control` / `rpc` / `auth` / `web`。
+**Architecture:** `:18680` 用 `go:embed` 提供 SPA。浏览器只打入口 Agent 的 ConnectRPC（cookie 会话 + CSRF）。集群列表与 Overview 读本机 Gossip 视图；Process 详情、配置、日志、启停经已有 hop 到 Owner。Audit 本机列出并按需 RPC 聚合，缺失节点标 STALE。`internal/web` 无业务逻辑。`process` 不得 import `cluster` / `control` / `rpc` / `auth` / `web`。
 
 **Tech Stack:** Go 1.23、已有 ConnectRPC + Gin、Vue 3.5 + Vite 6 + TypeScript 5.7 + Tailwind CSS v4 + shadcn-vue + TanStack Vue Query 5 + Connect-Web、Vitest、Playwright、`go:embed`。Node.js ≥ 20。
 
@@ -25,7 +25,7 @@
 - 错误码沿用 `internal/errcode`：`OK`、`CONFLICT`、`UNAVAILABLE`、`TIMEOUT`、`DENIED`、`DEGRADED`、`DUPLICATE_NODE_ID`、`INCOMPATIBLE_VERSION`、`NOT_FOUND`、`INVALID`
 - 应用错误码放在 Connect error detail（`ErrorInfo.code`），消息为英文
 - 对外主协议是 ConnectRPC；REST 仅 `/healthz`、`/readyz`、`/metrics`，以及嵌入式 Web 静态资源
-- 监听默认 `127.0.0.1:9000`、`127.0.0.1:9001`、`127.0.0.1:9002`、`127.0.0.1:7946`；非环回必须 `--insecure-listen`
+- 监听默认 `127.0.0.1:18680`、`127.0.0.1:18683`、`127.0.0.1:18685`、`127.0.0.1:18689`；非环回必须 `--insecure-listen`
 - **`cluster init` 成功后必须关闭环回无认证。** 禁止在已入群节点上保留无认证入口
 - Agent RPC 必须 mTLS。入口不改权威副本。Owner 不信任入口的「已授权」声明
 - 远程 Mutation 必须 Direct RPC 到 Owner，禁止「改本地副本再 Gossip」
@@ -146,7 +146,7 @@ internal/api/metricsapi_test.go
 internal/api/server.go
 internal/api/proto_gen_test.go
 internal/api/process.go                    # Forwarder.Audit / Metrics
-internal/rpc/server.go                     # :9001 挂 Audit/Metrics LocalOnly
+internal/rpc/server.go                     # :18683 挂 Audit/Metrics LocalOnly
 internal/agent/rpc.go
 internal/web/embed.go
 internal/web/embed_test.go
@@ -475,7 +475,7 @@ EOF
 - Modify: `internal/api/process.go`（`Forwarder` 增加 `Audit`）
 - Modify: `internal/api/metrics.go`（`countingForwarder` 同步加方法）
 - Modify: `internal/rpc/server.go`
-- Modify: `internal/agent/rpc.go`（:9001 LocalOnly 挂 Audit）
+- Modify: `internal/agent/rpc.go`（:18683 LocalOnly 挂 Audit）
 - Modify: `internal/agent/run.go`（入口 AuditAPI 注入 Store + Router + Forward）
 
 **Interfaces:**
@@ -509,7 +509,7 @@ type AuditAPI struct {
 5. 合并按 `timestamp_unix_ms` 降序，截断到 limit
 6. 本机条目 `freshness=LIVE`，`source_node=LocalID`，`last_updated_unix_ms=now`
 
-`:9001` LocalOnly 的 AuditAPI 只查本机，忽略 target_node 聚合（防止环）。
+`:18683` LocalOnly 的 AuditAPI 只查本机，忽略 target_node 聚合（防止环）。
 
 Forwarder：
 
@@ -609,9 +609,9 @@ Run: `go test ./internal/api -run 'TestMetrics_|TestReadProcStat' -count=1`
 
 Expected: FAIL
 
-- [ ] **Step 3: 实现并挂到 :9000 / :9001**
+- [ ] **Step 3: 实现并挂到 :18680 / :18683**
 
-:9001 LocalOnly，GetProcessMetrics 不向远端再 hop。
+:18683 LocalOnly，GetProcessMetrics 不向远端再 hop。
 
 - [ ] **Step 4: 跑测试确认通过**
 
@@ -717,7 +717,7 @@ Expected: PASS
 ```bash
 git add internal/web internal/api/server.go internal/api/server_test.go Makefile
 git commit -m "$(cat <<'EOF'
-feat: 用 go:embed 在 :9000 提供 SPA
+feat: 用 go:embed 在 :18680 提供 SPA
 
 EOF
 )"

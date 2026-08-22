@@ -4,7 +4,7 @@
 
 **Goal:** 在已完成的 P0/P1 本机 Process Plane 与 ConnectRPC CLI 之上，交付节点身份、`cluster init`、本地 join token、证书骨架和 memberlist gossip，使 `procmesh node list` 能列出本机及已加入节点。
 
-**Architecture:** Agent 首次启动把 `node_id` 写成 `$data_dir/node_id` 并与 SQLite `local_meta` 对齐；`boot_id` 文件写入 **host** boot id（与 P0 Process 恢复语义一致，不在每次 Agent 重启时轮转 store boot_id）。`cluster init` 在 `$data_dir/cluster/` 生成 Cluster CA、本机 Agent 证书、32 字节 cluster secret、初始 Super Admin 的 argon2id 哈希，并标记本机为未来的 Control Member（**本阶段不启动 Raft**）。Join token 以哈希形式存在 `cluster/tokens.json`（TTL / 次数 / 作废）；P4 再迁入 Raft。Gossip 用 hashicorp/memberlist，`:7946` 默认同环回。Join 走已有 `:9000` ConnectRPC（P3 才做 `:9001` mTLS）。`process` 不得 import `cluster` 或 `control`；cluster 通过 `SummarySource` 回调拿摘要 DTO。
+**Architecture:** Agent 首次启动把 `node_id` 写成 `$data_dir/node_id` 并与 SQLite `local_meta` 对齐；`boot_id` 文件写入 **host** boot id（与 P0 Process 恢复语义一致，不在每次 Agent 重启时轮转 store boot_id）。`cluster init` 在 `$data_dir/cluster/` 生成 Cluster CA、本机 Agent 证书、32 字节 cluster secret、初始 Super Admin 的 argon2id 哈希，并标记本机为未来的 Control Member（**本阶段不启动 Raft**）。Join token 以哈希形式存在 `cluster/tokens.json`（TTL / 次数 / 作废）；P4 再迁入 Raft。Gossip 用 hashicorp/memberlist，`:18689` 默认同环回。Join 走已有 `:18680` ConnectRPC（P3 才做 `:18683` mTLS）。`process` 不得 import `cluster` 或 `control`；cluster 通过 `SummarySource` 回调拿摘要 DTO。
 
 **Tech Stack:** Go 1.23、已有 ConnectRPC + Gin + modernc.org/sqlite、`github.com/hashicorp/memberlist`、`golang.org/x/crypto/argon2`、标准库 `crypto/x509` / `crypto/ecdsa`。
 
@@ -21,9 +21,9 @@
 - 错误码沿用 `internal/errcode`：`OK`、`CONFLICT`、`UNAVAILABLE`、`TIMEOUT`、`DENIED`、`DEGRADED`、`DUPLICATE_NODE_ID`、`INCOMPATIBLE_VERSION`、`NOT_FOUND`、`INVALID`
 - 应用错误码放在 Connect error detail（`ErrorInfo.code`），消息为英文
 - 对外主协议是 ConnectRPC；REST 仅 `/healthz`、`/readyz`、`/metrics`
-- 监听默认 `127.0.0.1:9000` 与 `127.0.0.1:7946`；非环回必须 `--insecure-listen`
+- 监听默认 `127.0.0.1:18680` 与 `127.0.0.1:18689`；非环回必须 `--insecure-listen`
 - **P4 完成前不关闭环回无认证。** `cluster init` 之后仍允许本机无认证管理。禁止在本阶段实现登录或关掉 loopback 免认证。
-- **本阶段不启动 Raft、不实现 CRL、不实现 `node remove`、不做 Agent 间 mTLS（:9001）。**
+- **本阶段不启动 Raft、不实现 CRL、不实现 `node remove`、不做 Agent 间 mTLS（:18683）。**
 - Join token 本阶段只存本机 `cluster/tokens.json`（只存哈希）；明文 token 只在创建响应里出现一次
 - Cluster CA 私钥与 cluster secret、admin bootstrap、agent key 权限必须 `0600`
 - 证书 SAN 必须含 URI `procmesh://<cluster_id>/<node_id>`
@@ -47,10 +47,10 @@
 3. **cluster init**（spec §9.3 / PRD §9.1）：生成 `cluster_id`、Cluster CA、cluster secret、初始 Super Admin，为本机签 Agent 证书，标记本机为 Control Member。**不**在本阶段 bootstrap Raft voter 进程。
 4. **cluster secret**：随机 32 字节，只存 `cluster/secret`（0600），**不**作为日常 RPC 凭证。
 5. **Join token**（PRD §9.2）：TTL、使用次数、手动作废。本阶段本地文件；P4 迁 Raft。
-6. **Join**：向种子 Agent 的 `:9000` 提交 token + CSR；种子校验 token、查重、用 CA 签证书，返回证书、CA、gossip 地址。PRD 写 `--server agent-a:9001` 被本阶段刻意改成 `:9000`（:9001 mTLS 是 P3）。
+6. **Join**：向种子 Agent 的 `:18680` 提交 token + CSR；种子校验 token、查重、用 CA 签证书，返回证书、CA、gossip 地址。PRD 写 `--server agent-a:18683` 被本阶段刻意改成 `:18680`（:18683 mTLS 是 P3）。
 7. **Gossip**（spec §9.4）：memberlist。重复 node_id 与 protocol 检查在 join 与 merge 两条路径都做。
 8. **CLI**（spec §11.2）：`cluster init`、`agent join --token`、`node list`、`node status`、`node token create`。额外提供 `node token revoke`（PRD 要求手动失效）。`node remove` 留给 P4。
-9. **明确不做**：Raft、用户登录、RBAC 生效、CRL、node remove、Write-to-Owner、mTLS :9001、Vue、关闭免认证环回。
+9. **明确不做**：Raft、用户登录、RBAC 生效、CRL、node remove、Write-to-Owner、mTLS :18683、Vue、关闭免认证环回。
 
 ## File map（本阶段创建/修改）
 
@@ -768,7 +768,7 @@ message ClusterOverviewResponse {
 
 message RequestJoinRequest {
   MutationMeta meta = 1;
-  string seed_server = 2; // host:port of seed :9000
+  string seed_server = 2; // host:port of seed :18680
   string token = 3;
 }
 message RequestJoinResponse {
@@ -927,8 +927,8 @@ func TestEncodeMeta_OmitsProcessesAndFits512(t *testing.T) {
     s := cluster.NodeSummary{
         NodeID: "n1", ClusterID: "c1", Hostname: "h", BootID: "b",
         State: cluster.StateAlive, AgentVersion: version.Agent,
-        ProtocolVersion: version.Protocol, APIAddress: "127.0.0.1:9000",
-        GossipAddress: "127.0.0.1:7946",
+        ProtocolVersion: version.Protocol, APIAddress: "127.0.0.1:18680",
+        GossipAddress: "127.0.0.1:18689",
         Processes: []cluster.ProcessSummary{{Name: "web", Desired: "RUNNING"}},
     }
     raw := cluster.EncodeMeta(s)
@@ -1228,21 +1228,21 @@ procmesh node token revoke TOKEN_ID
 
 全局已有 `--server`、`--operation-id`。新增：
 - `--admin-user`（仅 init）
-- `--seed`（join，种子 `:9000`）
+- `--seed`（join，种子 `:18680`）
 - `--token`（join）
 - `--ttl`（默认 `1h`，`time.ParseDuration`）
 - `--uses`（默认 1）
 
-`agent join` 调 **本机** Agent 的 `ClusterService.RequestJoin`（默认 `--server 127.0.0.1:9000` 是加入者本机；种子地址是 `--seed`）。
+`agent join` 调 **本机** Agent 的 `ClusterService.RequestJoin`（默认 `--server 127.0.0.1:18680` 是加入者本机；种子地址是 `--seed`）。
 
 新增 flag：
-- `--seed HOST:PORT`（`agent join` 必填，种子的 `:9000`）
+- `--seed HOST:PORT`（`agent join` 必填，种子的 `:18680`）
 - `--token`（join 必填）
 
 注意：全局 `--server` 仍指向 CLI 要说话的 Agent。加入者本机执行：
 
 ```text
-procmesh --server 127.0.0.1:9000 agent join --seed 10.0.0.1:9000 --token pmj_...
+procmesh --server 127.0.0.1:18680 agent join --seed 10.0.0.1:18680 --token pmj_...
 ```
 
 单测里两个 httptest 时：对加入者 server 调 `agent join --seed <seedURL>`。
@@ -1357,7 +1357,7 @@ EOF
 
 ```yaml
 gossip:
-  listen: 127.0.0.1:7946
+  listen: 127.0.0.1:18689
   advertise: ""
 ```
 
@@ -1366,7 +1366,7 @@ gossip:
 `agent.Options`：
 
 ```go
-GossipListen    string // 默认 127.0.0.1:7946
+GossipListen    string // 默认 127.0.0.1:18689
 GossipAdvertise string
 ```
 
@@ -1377,7 +1377,7 @@ GossipAdvertise string
 4. `SummarySource` 从 `process.Manager` 填 ProcessSummary（在 **agent 包** 实现，禁止 process import cluster）。资源摘要本阶段可全 0；若容易拿到磁盘占用百分比可填 DiskPercent，否则 0
 5. `api.Options.Cluster` 接上 Dir/Store/Mesh/Local/GossipAddr
 6. `hostname, _ := os.Hostname()`
-7. `rpc_address` 本阶段填空或 `127.0.0.1:9001` 占位字符串（不监听）
+7. `rpc_address` 本阶段填空或 `127.0.0.1:18683` 占位字符串（不监听）
 8. 非环回 gossip bind 走与 HTTP 相同的 `--insecure-listen` 检查
 9. 关闭时 `Mesh.Leave` + `Shutdown`（不要杀 shim）
 
@@ -1475,7 +1475,7 @@ EOF
 | INCOMPATIBLE_VERSION | Task 7 |
 | NodeService / ClusterService | Task 5、8 |
 | CLI node list / cluster init / join | Task 9–10 |
-| 不关闭免认证、无 Raft、无 remove、无 :9001 mTLS | Global Constraints |
+| 不关闭免认证、无 Raft、无 remove、无 :18683 mTLS | Global Constraints |
 | process 不 import cluster/control | Global Constraints + Task 10 source 在 agent |
 
 无 TBD/TODO 占位。类型名在后续任务与前面 Produces 一致。

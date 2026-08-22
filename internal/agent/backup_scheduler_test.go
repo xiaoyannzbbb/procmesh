@@ -40,7 +40,7 @@ func TestBackupDispatcherDispatchesRemoteAgentTaskAndPersistsResult(t *testing.T
 		runtime: &rpcRuntime{nodeID: "node-a"},
 		forward: fakeClusterBackupAgentForwarder{client: client},
 		members: func() []cluster.NodeSummary {
-			return []cluster.NodeSummary{{NodeID: "node-b", RPCAddress: "127.0.0.1:9001"}}
+			return []cluster.NodeSummary{{NodeID: "node-b", RPCAddress: "127.0.0.1:18683"}}
 		},
 		update: func(_ context.Context, got backup.TaskUpdate) error { updated = got; return nil },
 	}
@@ -69,7 +69,7 @@ func TestBackupDispatcherPreservesPersistedTerminalFailure(t *testing.T) {
 		runtime: &rpcRuntime{nodeID: "node-a"},
 		forward: fakeClusterBackupAgentForwarder{client: client},
 		members: func() []cluster.NodeSummary {
-			return []cluster.NodeSummary{{NodeID: "node-b", RPCAddress: "127.0.0.1:9001"}}
+			return []cluster.NodeSummary{{NodeID: "node-b", RPCAddress: "127.0.0.1:18683"}}
 		},
 		update: func(_ context.Context, got backup.TaskUpdate) error { updated = got; return nil },
 	}
@@ -94,7 +94,7 @@ func TestBackupDispatcherRemoteRunTaskUsesParentDeadline(t *testing.T) {
 		runtime: &rpcRuntime{nodeID: "node-a"},
 		forward: fakeClusterBackupAgentForwarder{client: client},
 		members: func() []cluster.NodeSummary {
-			return []cluster.NodeSummary{{NodeID: "node-b", RPCAddress: "127.0.0.1:9001"}}
+			return []cluster.NodeSummary{{NodeID: "node-b", RPCAddress: "127.0.0.1:18683"}}
 		},
 		update: func(context.Context, backup.TaskUpdate) error { return nil },
 	}

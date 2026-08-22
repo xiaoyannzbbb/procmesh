@@ -56,10 +56,9 @@ func TestLoad_InvalidOrder(t *testing.T) {
 	}
 }
 
-func TestLoadAll_GossipListenAndAdvertise(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "agent.yaml")
-	body := "gossip:\n  listen: 127.0.0.1:7946\n  advertise: 10.0.0.1:7946\n"
+func TestLoadAll_DataDirAndListen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	body := "data_dir: /var/lib/procmesh\nlisten: 127.0.0.1:18680\n"
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +66,23 @@ func TestLoadAll_GossipListenAndAdvertise(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Gossip.Listen != "127.0.0.1:7946" || cfg.Gossip.Advertise != "10.0.0.1:7946" {
+	if cfg.DataDir != "/var/lib/procmesh" || cfg.Listen != "127.0.0.1:18680" {
+		t.Fatalf("config = %+v", cfg)
+	}
+}
+
+func TestLoadAll_GossipListenAndAdvertise(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent.yaml")
+	body := "gossip:\n  listen: 127.0.0.1:18689\n  advertise: 10.0.0.1:18689\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := agentcfg.LoadAll(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Gossip.Listen != "127.0.0.1:18689" || cfg.Gossip.Advertise != "10.0.0.1:18689" {
 		t.Fatalf("%+v", cfg.Gossip)
 	}
 	if cfg.Disk != logmgr.DefaultPolicy() {
@@ -78,7 +93,7 @@ func TestLoadAll_GossipListenAndAdvertise(t *testing.T) {
 func TestLoadAll_RPCListenAndAdvertise(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent.yaml")
-	body := "rpc:\n  listen: 127.0.0.1:9001\n  advertise: 10.0.0.1:9001\n"
+	body := "rpc:\n  listen: 127.0.0.1:18683\n  advertise: 10.0.0.1:18683\n"
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +101,7 @@ func TestLoadAll_RPCListenAndAdvertise(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.RPC.Listen != "127.0.0.1:9001" || cfg.RPC.Advertise != "10.0.0.1:9001" {
+	if cfg.RPC.Listen != "127.0.0.1:18683" || cfg.RPC.Advertise != "10.0.0.1:18683" {
 		t.Fatalf("%+v", cfg.RPC)
 	}
 }
@@ -94,7 +109,7 @@ func TestLoadAll_RPCListenAndAdvertise(t *testing.T) {
 func TestLoadAll_ControlListenAndAdvertise(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent.yaml")
-	body := "control:\n  listen: 127.0.0.1:9002\n  advertise: 10.0.0.1:9002\n"
+	body := "control:\n  listen: 127.0.0.1:18685\n  advertise: 10.0.0.1:18685\n"
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +117,7 @@ func TestLoadAll_ControlListenAndAdvertise(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Control.Listen != "127.0.0.1:9002" || cfg.Control.Advertise != "10.0.0.1:9002" {
+	if cfg.Control.Listen != "127.0.0.1:18685" || cfg.Control.Advertise != "10.0.0.1:18685" {
 		t.Fatalf("%+v", cfg.Control)
 	}
 }
@@ -199,7 +214,7 @@ func TestLoadAll_BackupNamedS3Profiles(t *testing.T) {
       access_key: archive-ak
       secret_key: archive-sk
     local-test:
-      endpoint: http://127.0.0.1:9000
+      endpoint: http://127.0.0.1:18680
       bucket: local-snaps
       insecure: true
 `

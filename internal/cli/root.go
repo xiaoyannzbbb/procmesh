@@ -10,12 +10,12 @@ import (
 	"time"
 )
 
-const defaultServer = "127.0.0.1:9000"
+const defaultServer = "127.0.0.1:18680"
 
 const usageText = `usage: procmesh [flags] <command>
 
 flags:
-  --server ADDR            Connect base (default 127.0.0.1:9000)
+  --server ADDR            Connect base (default 127.0.0.1:18680)
   --operation-id ID        mutation id (default generated UUID)
   --operator NAME          operator (default $USER or cli)
   --node NODE              target owner node_id or hostname

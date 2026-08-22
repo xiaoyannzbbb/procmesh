@@ -11,8 +11,8 @@ func TestEncodeMeta_OmitsProcessesAndFits512(t *testing.T) {
 	s := cluster.NodeSummary{
 		NodeID: "n1", ClusterID: "c1", Hostname: "h", BootID: "b",
 		State: cluster.StateAlive, AgentVersion: version.Agent,
-		ProtocolVersion: version.Protocol, APIAddress: "127.0.0.1:9000",
-		GossipAddress: "127.0.0.1:7946",
+		ProtocolVersion: version.Protocol, APIAddress: "127.0.0.1:18680",
+		GossipAddress: "127.0.0.1:18689",
 		Processes:     []cluster.ProcessSummary{{Name: "web", Desired: "RUNNING"}},
 	}
 	raw := cluster.EncodeMeta(s)

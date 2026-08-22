@@ -1,0 +1,95 @@
+# Procmesh Agent 完整配置示例。
+#
+# Linux 默认路径：/etc/procmesh/agent.yaml
+# macOS 默认路径：~/.config/procmesh/agent.yaml
+# 对应命令行参数的显式设置优先于本文件，例如 --data-dir、--listen、--gossip、--rpc、--control。
+
+# Agent 数据根目录。未传 --data-dir 时必填；Linux 生产环境通常使用 /var/lib/procmesh。
+data_dir: "/var/lib/procmesh"
+
+# HTTP API 本地绑定地址。未传 --listen 时使用此值；留空时默认 127.0.0.1:18680。
+listen: "127.0.0.1:18680"
+
+# 磁盘保护策略。三个百分比必须满足：warn_percent < cleanup_percent < emergency_percent。
+disk:
+  # 磁盘使用率严格超过此值时记录告警。默认：85。
+  warn_percent: 85
+  # auto_delete 为 true 时，使用率严格超过此值会删除最旧的进程日志。默认：90。
+  cleanup_percent: 90
+  # emergency_stop_writes 为 true 时，使用率严格超过此值会停止新的日志和历史指标写入。默认：95。
+  emergency_percent: 95
+  # 是否在达到 cleanup_percent 后自动删除最旧的进程日志。默认：false。
+  auto_delete: false
+  # 是否在达到 emergency_percent 后停止新的日志和历史指标写入。默认：true。
+  emergency_stop_writes: true
+
+# Memberlist Gossip 集群通信地址。
+gossip:
+  # 本地绑定地址。留空时默认 127.0.0.1:18689。
+  listen: "127.0.0.1:18689"
+  # 向其他节点公布的地址。留空时使用实际绑定地址；集群部署时应设为可达地址。
+  advertise: ""
+
+# Agent 间 mTLS RPC 通信地址。
+rpc:
+  # 本地绑定地址。留空时默认 127.0.0.1:18683。
+  listen: "127.0.0.1:18683"
+  # 向其他节点公布的地址。留空时使用实际绑定地址；集群部署时应设为可达地址。
+  advertise: ""
+
+# Raft 控制面通信地址。
+control:
+  # 本地绑定地址。留空时默认 127.0.0.1:18685。
+  listen: "127.0.0.1:18685"
+  # 向其他节点公布的地址。留空时使用实际绑定地址；集群部署时应设为可达地址。
+  advertise: ""
+
+# 批量操作执行策略。
+batch:
+  # 同时执行的目标数，允许范围 1-64。默认：16。
+  max_concurrency: 16
+  # 单个目标的超时，使用 Go duration 格式，例如 500ms、30s、2m。默认：30s。
+  target_timeout: "30s"
+
+# 本地和 S3 配置备份。
+backup:
+  # 文件系统备份目录。留空时使用 $data_dir/backup/fs。
+  fs_dir: ""
+  # 本地定时备份的五字段 cron（分 时 日 月 周）。留空表示关闭，例如 "0 * * * *"。
+  schedule: ""
+
+  # 传统默认 S3 备份目标，供本地 BackupService 的 sink=s3 使用。
+  s3:
+    # S3 兼容服务端点；bucket 非空时必须设置。生产环境应使用 HTTPS。
+    endpoint: ""
+    # S3 存储桶名称。留空时不启用默认 S3 目标。
+    bucket: ""
+    # 对象键前缀；可留空。
+    prefix: ""
+    # AWS 区域；留空时 S3 客户端使用 us-east-1。
+    region: ""
+    # 访问密钥。建议留空并用 PROCMESH_S3_ACCESS_KEY 环境变量提供，环境变量优先。
+    access_key: ""
+    # 密钥。建议留空并用 PROCMESH_S3_SECRET_KEY 环境变量提供，环境变量优先。
+    secret_key: ""
+    # 仅供本地测试允许 HTTP 端点；生产环境保持 false。
+    insecure: false
+
+  # 集群备份策略引用的命名 S3 目标。键名（例如 archive）即 destination_profile。
+  # 可继续添加更多配置项，每项均需包含以下全部字段。
+  s3_profiles:
+    archive:
+      # S3 兼容服务端点；生产环境应使用 HTTPS。
+      endpoint: "https://s3.example.com"
+      # S3 存储桶名称。
+      bucket: "procmesh-backups"
+      # 对象键前缀；可留空。
+      prefix: "procmesh"
+      # AWS 区域；留空时 S3 客户端使用 us-east-1。
+      region: "us-east-1"
+      # 此命名配置项的访问密钥。请替换为真实密钥，且不要提交含密钥的配置文件。
+      access_key: ""
+      # 此命名配置项的密钥。请替换为真实密钥，且不要提交含密钥的配置文件。
+      secret_key: ""
+      # 仅供本地测试允许 HTTP 端点；生产环境保持 false。
+      insecure: false

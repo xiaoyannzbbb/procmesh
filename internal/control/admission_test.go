@@ -58,11 +58,11 @@ func TestAdmission_CreateConsumeRevoke(t *testing.T) {
 		t.Fatal("expected revoked")
 	}
 
-	if err := a.Admit("joiner", "127.0.0.1:9002", "abcd"); err != nil {
+	if err := a.Admit("joiner", "127.0.0.1:18685", "abcd"); err != nil {
 		t.Fatal(err)
 	}
 	m, ok := n.View().Members["joiner"]
-	if !ok || m.Status != control.MemberAdmitted || m.RaftAddr != "127.0.0.1:9002" || m.CertSerial != "ABCD" {
+	if !ok || m.Status != control.MemberAdmitted || m.RaftAddr != "127.0.0.1:18685" || m.CertSerial != "ABCD" {
 		t.Fatalf("member=%+v ok=%v", m, ok)
 	}
 	if a.IsRevoked("joiner") {

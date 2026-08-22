@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在已完成的 P0 本机 Process Plane 之上，用 Gin 挂载 ConnectRPC（`:9000`）并交付无状态 `procmesh` CLI，使本机可用 `procmesh start/stop/logs` 管理进程。
+**Goal:** 在已完成的 P0 本机 Process Plane 之上，用 Gin 挂载 ConnectRPC（`:18680`）并交付无状态 `procmesh` CLI，使本机可用 `procmesh start/stop/logs` 管理进程。
 
-**Architecture:** CLI 默认连 `127.0.0.1:9000`，只走 ConnectRPC（JSON 与二进制均可）。Agent 的 HTTP 入口改为 Gin：REST 只保留 `/healthz`、`/readyz`、`/metrics`；`ProcessService` / `ConfigService` / `LogService` 全部走 `procmesh.v1`。写操作必须经 `process.Manager`（`operation_id` 幂等、CAS、audit）。P0 的 `/v1/` JSON 仅作为测试兼容层挂在同一端口，不是第二套对外资源模型。本阶段不做集群、鉴权、Web、Agent 间 RPC。
+**Architecture:** CLI 默认连 `127.0.0.1:18680`，只走 ConnectRPC（JSON 与二进制均可）。Agent 的 HTTP 入口改为 Gin：REST 只保留 `/healthz`、`/readyz`、`/metrics`；`ProcessService` / `ConfigService` / `LogService` 全部走 `procmesh.v1`。写操作必须经 `process.Manager`（`operation_id` 幂等、CAS、audit）。P0 的 `/v1/` JSON 仅作为测试兼容层挂在同一端口，不是第二套对外资源模型。本阶段不做集群、鉴权、Web、Agent 间 RPC。
 
 **Tech Stack:** Go 1.23、ConnectRPC（`connectrpc.com/connect`）、Gin、已有 `google.golang.org/protobuf`、`gopkg.in/yaml.v3`（CLI `apply`）、`modernc.org/sqlite`。代码生成沿用仓库已有 `protoc` 方式。
 
@@ -25,10 +25,10 @@
 - 对外主协议是 ConnectRPC；REST 仅 `/healthz`、`/readyz`、`/metrics`
 - `/healthz`：进程活着即 200
 - `/readyz`：本地 store 可用才 200；DEGRADED 返回 503，**不**表示业务进程有问题
-- 监听默认 `127.0.0.1:9000`；非环回必须 `--insecure-listen`（P0 已有）
+- 监听默认 `127.0.0.1:18680`；非环回必须 `--insecure-listen`（P0 已有）
 - P4 完成前、尚未 `cluster init`：环回无认证。本阶段不实现登录
 - 不另开第四个管理 Unix socket
-- CLI 默认 `--server 127.0.0.1:9000`；本阶段忽略/拒绝 `--node`（远程 Owner 是 P3）
+- CLI 默认 `--server 127.0.0.1:18680`；本阶段忽略/拒绝 `--node`（远程 Owner 是 P3）
 - 不实现 Auth/User/Role/Node/Cluster/Audit 聚合/批量/告警/Web
 - 测试与代码同目录：`internal/foo/foo_test.go`
 - 强制 TDD：先红后绿
@@ -42,7 +42,7 @@
 
 1. **P1 可演示出口**（spec §13）：`procmesh start/stop/logs` 管本机。
 2. **三个二进制**（spec §2 / §4.1）：本阶段补齐第三个 `procmesh`。它无状态、不常驻。
-3. **入口**（spec §3 / §11）：Browser/CLI → 任意 Agent `:9000`（Web + ConnectRPC）。P1 只有本机环回。
+3. **入口**（spec §3 / §11）：Browser/CLI → 任意 Agent `:18680`（Web + ConnectRPC）。P1 只有本机环回。
 4. **服务**（spec §11.1）本阶段只做：`ProcessService`、`ConfigService`、`LogService`。不做 Auth/User/Role/Node/Cluster/MetricsService/AuditService。
 5. **CLI 最小集**（spec §11.2 + PRD §66）：`status`、`process list|get|start|stop|restart|logs`、`process apply --file --expected-revision`；并提供 PRD 别名 `procmesh start|stop|restart|logs <name>`。`cluster/user/role/node` 留给后续阶段。
 6. **标识**（spec §6.2）：CLI 参数可以是 `process_id` 或 `process_name`，先按 id 查，miss 再按 name 查。
@@ -1037,7 +1037,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 
 | 旗标 | 默认 | 含义 |
 |------|------|------|
-| `--server` | `127.0.0.1:9000` | Connect 基址，自动补 `http://` |
+| `--server` | `127.0.0.1:18680` | Connect 基址，自动补 `http://` |
 | `--operation-id` | 空则生成 UUID | 本次 mutation |
 | `--operator` | `$USER` 或 `cli` | 操作者 |
 | `--node` | 空 | **若非空：stderr 打印英文 `remote --node is not supported until P3`，退出码 2** |
@@ -1155,7 +1155,7 @@ git commit -m "test: 增加 P1 CLI 对本机 Agent 的验收"
 
 | 规格项 | 任务 |
 |--------|------|
-| Gin + ConnectRPC `:9000` | 7 |
+| Gin + ConnectRPC `:18680` | 7 |
 | ProcessService CRUD/Start/Stop/Restart/Kill/ResetFailure/Adopt | 3–4 |
 | ConfigService Get/Update/History/Diff/Rollback | 3、5 |
 | LogService Tail/Stream/Download | 6 |
@@ -1169,4 +1169,4 @@ git commit -m "test: 增加 P1 CLI 对本机 Agent 的验收"
 | 保留 P0 JSON 使 Cases 3/5/10/11 仍过 | 7 |
 | 不做集群/RBAC/Web/批量 | 全计划省略 |
 
-刻意延后：`AuthService` 等、`--node` 转发、mTLS `:9001`、Vue、`MetricsService` RPC（只有 REST `/metrics` 子集）。
+刻意延后：`AuthService` 等、`--node` 转发、mTLS `:18683`、Vue、`MetricsService` RPC（只有 REST `/metrics` 子集）。

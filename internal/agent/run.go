@@ -36,8 +36,8 @@ import (
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 )
 
-const defaultGossipListen = "127.0.0.1:7946"
-const defaultRPCListen = "127.0.0.1:9001"
+const defaultGossipListen = "127.0.0.1:18689"
+const defaultRPCListen = "127.0.0.1:18683"
 
 // Options is the procmesh-agent runtime configuration.
 type Options struct {
@@ -48,12 +48,12 @@ type Options struct {
 	OnListen         func(addr string)
 	ConfigPath       string
 	Logger           *slog.Logger
-	GossipListen     string // default 127.0.0.1:7946
+	GossipListen     string // default 127.0.0.1:18689
 	GossipAdvertise  string
-	RPCListen        string // default 127.0.0.1:9001; tests use 127.0.0.1:0
+	RPCListen        string // default 127.0.0.1:18683; tests use 127.0.0.1:0
 	RPCAdvertise     string
 	OnRPCListen      func(addr string)
-	ControlListen    string // default 127.0.0.1:9002; tests use 127.0.0.1:0
+	ControlListen    string // default 127.0.0.1:18685; tests use 127.0.0.1:0
 	ControlAdvertise string
 	OnControlListen  func(addr string)
 	BootID           string // empty = paths.CurrentBootID(); tests may override
@@ -64,17 +64,34 @@ type Options struct {
 
 // Run owns the agent lifecycle and blocks until ctx is cancelled.
 func Run(ctx context.Context, opt Options) error {
-	if opt.DataDir == "" {
-		return fmt.Errorf("data-dir required")
-	}
 	logger := opt.Logger
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	opt.Logger = logger
+
+	path := opt.ConfigPath
+	required := path != ""
+	if path == "" {
+		path = agentcfg.DefaultPath()
+	}
+	cfg, err := agentcfg.LoadAll(path, required)
+	if err != nil {
+		return err
+	}
+	if opt.DataDir == "" {
+		opt.DataDir = cfg.DataDir
+	}
+	if opt.DataDir == "" {
+		return fmt.Errorf("data-dir required")
+	}
+	if opt.Listen == "" {
+		opt.Listen = cfg.Listen
+	}
+
 	logger.Info("agent starting", "data_dir", opt.DataDir)
 	if opt.Listen == "" {
-		opt.Listen = "127.0.0.1:9000"
+		opt.Listen = "127.0.0.1:18680"
 	}
 	if err := CheckListen(opt.Listen, opt.InsecureListen); err != nil {
 		return err
@@ -122,15 +139,6 @@ func Run(ctx context.Context, opt Options) error {
 		return fmt.Errorf("ensure identity: %w", err)
 	}
 
-	path := opt.ConfigPath
-	required := path != ""
-	if path == "" {
-		path = agentcfg.DefaultPath()
-	}
-	cfg, err := agentcfg.LoadAll(path, required)
-	if err != nil {
-		return err
-	}
 	logs := &logmgr.Manager{Root: layout.Root, Now: time.Now, Policy: cfg.Disk}
 	mgr := process.NewManager(process.Deps{
 		Store:    st,
@@ -857,7 +865,7 @@ func CheckListen(addr string, insecure bool) error {
 		return fmt.Errorf("listen address: %w", err)
 	}
 	if host == "" {
-		// ":9000" binds all interfaces
+		// ":18680" binds all interfaces
 		if !insecure {
 			return errcode.E(errcode.INVALID, "non-loopback listen requires --insecure-listen")
 		}
