@@ -103,6 +103,8 @@ git rev-parse -q --verify "refs/tags/$version" >/dev/null && die "tag already ex
 
 if ! "$dry_run"; then
   require_command gh
+  gh auth switch --hostname github.com --user xiaoyannzbbb >/dev/null 2>&1 || \
+    die "GitHub CLI is not authenticated as xiaoyannzbbb; run: gh auth login --hostname github.com"
   gh auth status --hostname github.com >/dev/null 2>&1 || die "authenticate GitHub CLI first: gh auth login"
   git ls-remote --exit-code --tags "$remote" "refs/tags/$version" >/dev/null 2>&1 && \
     die "tag already exists on $remote: $version"
