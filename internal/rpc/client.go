@@ -47,6 +47,11 @@ func NewProcessClient(hc *http.Client, base string) procmeshv1connect.ProcessSer
 	return procmeshv1connect.NewProcessServiceClient(hc, base)
 }
 
+// NewAuthClient returns an AuthService client over the given HTTP client and base URL.
+func NewAuthClient(hc *http.Client, base string) procmeshv1connect.AuthServiceClient {
+	return procmeshv1connect.NewAuthServiceClient(hc, base)
+}
+
 // NewConfigClient returns a ConfigService client over the given HTTP client and base URL.
 func NewConfigClient(hc *http.Client, base string) procmeshv1connect.ConfigServiceClient {
 	return procmeshv1connect.NewConfigServiceClient(hc, base)

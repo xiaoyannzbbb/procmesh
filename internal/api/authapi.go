@@ -10,21 +10,38 @@ import (
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/rpc"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
 
 var _ procmeshv1connect.AuthServiceHandler = (*AuthAPI)(nil)
 
-const sessionCookieMaxAge = 43200 // 12h; matches control.SessionTTL
+const (
+	sessionCookieMaxAge       = 43200 // 12h; matches control.SessionTTL
+	sessionReplicationPoll    = 10 * time.Millisecond
+	defaultSessionWaitTimeout = 5 * time.Second
+)
 
-type AuthAPI struct {
-	Auth *auth.Service
+type LoginForwarder interface {
+	Login(context.Context, Route, *connect.Request[procmeshv1.LoginRequest]) (*connect.Response[procmeshv1.LoginResponse], error)
 }
 
-func (s *AuthAPI) Login(_ context.Context, req *connect.Request[procmeshv1.LoginRequest]) (*connect.Response[procmeshv1.LoginResponse], error) {
+type AuthAPI struct {
+	Auth               *auth.Service
+	LocalID            string
+	IsLeader           func() bool
+	LeaderRoute        func() (Route, error)
+	LoginForward       LoginForwarder
+	SessionWaitTimeout time.Duration
+}
+
+func (s *AuthAPI) Login(ctx context.Context, req *connect.Request[procmeshv1.LoginRequest]) (*connect.Response[procmeshv1.LoginResponse], error) {
 	if s.Auth == nil {
 		return nil, unimplemented()
+	}
+	if s.IsLeader != nil && !s.IsLeader() {
+		return s.forwardLogin(ctx, req)
 	}
 	sid, csrf, userID, exp, err := s.Auth.Login(req.Msg.GetUsername(), req.Msg.GetPassword())
 	if err != nil {
@@ -39,6 +56,52 @@ func (s *AuthAPI) Login(_ context.Context, req *connect.Request[procmeshv1.Login
 	})
 	setSessionCookie(resp.Header(), sid, sessionCookieMaxAge)
 	return resp, nil
+}
+
+func (s *AuthAPI) forwardLogin(ctx context.Context, req *connect.Request[procmeshv1.LoginRequest]) (*connect.Response[procmeshv1.LoginResponse], error) {
+	if s.LeaderRoute == nil || s.LoginForward == nil {
+		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "raft leader unavailable"))
+	}
+	route, err := s.LeaderRoute()
+	if err != nil {
+		return nil, ToConnect(err)
+	}
+	if route.Local {
+		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "raft leader route resolved locally"))
+	}
+	if route.NodeID == "" || route.RPC == "" {
+		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "raft leader unavailable"))
+	}
+	stampHop(req.Header(), s.LocalID, route.NodeID)
+	resp, err := s.LoginForward.Login(ctx, route, req)
+	if err != nil {
+		return nil, toLoginConnect(rpc.MapCallError(err))
+	}
+	if err := s.waitForSession(ctx, resp.Msg.GetSessionId(), resp.Msg.GetCsrfToken()); err != nil {
+		return nil, ToConnect(err)
+	}
+	return resp, nil
+}
+
+func (s *AuthAPI) waitForSession(ctx context.Context, sessionID, csrf string) error {
+	timeout := s.SessionWaitTimeout
+	if timeout <= 0 {
+		timeout = defaultSessionWaitTimeout
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(sessionReplicationPoll)
+	defer ticker.Stop()
+	for {
+		if _, err := s.Auth.AuthenticateSession(sessionID, csrf, true); err == nil {
+			return nil
+		}
+		select {
+		case <-waitCtx.Done():
+			return errcode.E(errcode.UNAVAILABLE, "session replication timed out")
+		case <-ticker.C:
+		}
+	}
 }
 
 func toLoginConnect(err error) error {

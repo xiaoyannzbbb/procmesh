@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/hashicorp/raft"
+	"github.com/qleelulu/procmesh/internal/api"
 	"github.com/qleelulu/procmesh/internal/control"
+	"github.com/qleelulu/procmesh/internal/errcode"
 )
 
 const defaultControlListen = "127.0.0.1:18685"
@@ -244,16 +246,35 @@ func (r *rpcRuntime) onAdmit(nodeID, raftAddr string) error {
 }
 
 func (r *rpcRuntime) leaderAPI() string {
-	n := r.control()
-	if n == nil {
+	if r.control() == nil {
 		return ""
 	}
 	localAPI := ""
 	if r.src != nil {
 		localAPI = r.src.Snapshot().APIAddress
 	}
-	if n.IsLeader() {
+	leaderID, ok := r.leaderNodeID()
+	if !ok || leaderID == r.nodeID {
 		return localAPI
+	}
+	if r.mesh == nil {
+		return ""
+	}
+	for _, mem := range r.mesh.Members() {
+		if mem.NodeID == leaderID && mem.APIAddress != "" {
+			return mem.APIAddress
+		}
+	}
+	return ""
+}
+
+func (r *rpcRuntime) leaderNodeID() (string, bool) {
+	n := r.control()
+	if n == nil {
+		return "", false
+	}
+	if n.IsLeader() {
+		return r.nodeID, true
 	}
 	leaderRaft := n.LeaderAddr()
 	if leaderRaft == "" {
@@ -261,24 +282,45 @@ func (r *rpcRuntime) leaderAPI() string {
 		leaderRaft = r.knownLeader
 		r.mu.Unlock()
 	}
-	if leaderRaft == "" || leaderRaft == n.Advertise() {
-		return localAPI
+	if leaderRaft == "" {
+		return "", false
+	}
+	if leaderRaft == n.Advertise() {
+		return r.nodeID, true
+	}
+	for id, member := range n.View().Members {
+		if member.RaftAddr == leaderRaft && member.Status == control.MemberAdmitted {
+			return id, true
+		}
+	}
+	return "", false
+}
+
+func (r *rpcRuntime) leaderRoute() (api.Route, error) {
+	n := r.control()
+	if n == nil {
+		return api.Route{}, errcode.E(errcode.UNAVAILABLE, "raft control unavailable")
+	}
+	leaderID, ok := r.leaderNodeID()
+	if !ok {
+		return api.Route{}, errcode.E(errcode.UNAVAILABLE, "raft leader unavailable")
+	}
+	if leaderID == r.nodeID {
+		return api.Route{Local: true, NodeID: r.nodeID}, nil
+	}
+	if r.mesh == nil {
+		return api.Route{}, errcode.E(errcode.UNAVAILABLE, "gossip unavailable")
 	}
 	view := n.View()
-	if r.mesh == nil {
-		return ""
+	router := api.Router{
+		LocalID: r.nodeID,
+		Members: r.mesh.Members,
+		ControlStatus: func(nodeID string) (string, bool) {
+			member, ok := view.Member(nodeID)
+			return string(member.Status), ok
+		},
 	}
-	for id, m := range view.Members {
-		if m.RaftAddr != leaderRaft {
-			continue
-		}
-		for _, mem := range r.mesh.Members() {
-			if mem.NodeID == id && mem.APIAddress != "" {
-				return mem.APIAddress
-			}
-		}
-	}
-	return ""
+	return router.Resolve(context.Background(), leaderID, "", "")
 }
 
 func applyAdminBootstrap(n *control.Node, clusterDir string) error {

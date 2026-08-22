@@ -5,11 +5,21 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/auth"
+	"github.com/qleelulu/procmesh/internal/control"
+	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/rpc"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 )
+
+type loginForwarderFunc func(context.Context, Route, *connect.Request[procmeshv1.LoginRequest]) (*connect.Response[procmeshv1.LoginResponse], error)
+
+func (f loginForwarderFunc) Login(ctx context.Context, route Route, req *connect.Request[procmeshv1.LoginRequest]) (*connect.Response[procmeshv1.LoginResponse], error) {
+	return f(ctx, route, req)
+}
 
 func TestAuthAPI_LoginSetsSessionCookie(t *testing.T) {
 	e := newAuthnEnv(t, true)
@@ -40,6 +50,164 @@ func TestAuthAPI_LoginSetsSessionCookie(t *testing.T) {
 	if strings.Contains(cookie, "Secure") {
 		t.Fatalf("cookie must not set Secure: %q", cookie)
 	}
+}
+
+func TestAuthAPI_FollowerForwardsLoginAndWaitsForLocalSession(t *testing.T) {
+	store, followerAuth := newBootstrappedAuth(t)
+	store.mu.Lock()
+	admin := store.state.Users["admin"]
+	admin.PasswordHash = testAdminHashForPassword(t, "different-pass")
+	store.state.Users["admin"] = admin
+	store.mu.Unlock()
+
+	const (
+		sessionID = "pms_forwarded"
+		csrf      = "forwarded-csrf"
+	)
+	expiresUnix := time.Unix(1_700_000_000, 0).Add(time.Hour).Unix()
+	replicated := make(chan error, 1)
+	forward := loginForwarderFunc(func(_ context.Context, route Route, req *connect.Request[procmeshv1.LoginRequest]) (*connect.Response[procmeshv1.LoginResponse], error) {
+		if route.NodeID != "leader" || route.RPC != "127.0.0.1:18683" {
+			t.Fatalf("route=%+v", route)
+		}
+		if rpc.SourceOf(req.Header()) != "follower" || rpc.TargetOf(req.Header()) != "leader" {
+			t.Fatalf("hop headers source=%q target=%q", rpc.SourceOf(req.Header()), rpc.TargetOf(req.Header()))
+		}
+		if req.Msg.GetUsername() != "admin" || req.Msg.GetPassword() != testAdminPass {
+			t.Fatalf("credentials not forwarded: %+v", req.Msg)
+		}
+		go func() {
+			time.Sleep(20 * time.Millisecond)
+			cmd, err := control.EncodeCommand(control.CmdSessionPut, control.SessionPutBody{
+				ID: sessionID, UserID: "user-admin", CSRF: csrf, ExpiresUnix: expiresUnix,
+			})
+			if err == nil {
+				err = store.Apply(cmd, 0)
+			}
+			replicated <- err
+		}()
+		resp := connect.NewResponse(&procmeshv1.LoginResponse{
+			SessionId: sessionID, UserId: "user-admin", Username: "admin",
+			ExpiresUnix: expiresUnix, CsrfToken: csrf,
+		})
+		setSessionCookie(resp.Header(), sessionID, sessionCookieMaxAge)
+		return resp, nil
+	})
+
+	api := &AuthAPI{
+		Auth: followerAuth, LocalID: "follower",
+		IsLeader: func() bool { return false },
+		LeaderRoute: func() (Route, error) {
+			return Route{NodeID: "leader", RPC: "127.0.0.1:18683"}, nil
+		},
+		LoginForward: forward,
+	}
+	resp, err := api.Login(context.Background(), connect.NewRequest(&procmeshv1.LoginRequest{
+		Username: "admin", Password: testAdminPass,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-replicated; err != nil {
+		t.Fatal(err)
+	}
+	if resp.Msg.GetSessionId() != sessionID {
+		t.Fatalf("session=%q", resp.Msg.GetSessionId())
+	}
+	if cookie := resp.Header().Get("Set-Cookie"); !strings.Contains(cookie, auth.CookieName+"="+sessionID) {
+		t.Fatalf("forwarded response missing entry cookie: %q", cookie)
+	}
+	if _, err := followerAuth.AuthenticateSession(sessionID, csrf, true); err != nil {
+		t.Fatalf("login returned before follower could authenticate session: %v", err)
+	}
+}
+
+func TestAuthAPI_FollowerSessionWaitTimeoutIsUnavailable(t *testing.T) {
+	_, followerAuth := newBootstrappedAuth(t)
+	api := &AuthAPI{
+		Auth: followerAuth, LocalID: "follower",
+		IsLeader: func() bool { return false },
+		LeaderRoute: func() (Route, error) {
+			return Route{NodeID: "leader", RPC: "127.0.0.1:18683"}, nil
+		},
+		LoginForward: loginForwarderFunc(func(context.Context, Route, *connect.Request[procmeshv1.LoginRequest]) (*connect.Response[procmeshv1.LoginResponse], error) {
+			return connect.NewResponse(&procmeshv1.LoginResponse{
+				SessionId: "pms_not_replicated", UserId: "user-admin", Username: "admin",
+				ExpiresUnix: time.Unix(1_700_000_000, 0).Add(time.Hour).Unix(), CsrfToken: "csrf",
+			}), nil
+		}),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	_, err := api.Login(ctx, connect.NewRequest(&procmeshv1.LoginRequest{
+		Username: "admin", Password: testAdminPass,
+	}))
+	code, detail := connectDetail(t, err)
+	if code != connect.CodeUnavailable || detail != "UNAVAILABLE" {
+		t.Fatalf("code=%v detail=%q err=%v", code, detail, err)
+	}
+}
+
+func TestAuthAPI_FollowerSessionWaitHasServerTimeout(t *testing.T) {
+	_, followerAuth := newBootstrappedAuth(t)
+	api := &AuthAPI{
+		Auth: followerAuth, LocalID: "follower", SessionWaitTimeout: 25 * time.Millisecond,
+		IsLeader: func() bool { return false },
+		LeaderRoute: func() (Route, error) {
+			return Route{NodeID: "leader", RPC: "127.0.0.1:18683"}, nil
+		},
+		LoginForward: loginForwarderFunc(func(context.Context, Route, *connect.Request[procmeshv1.LoginRequest]) (*connect.Response[procmeshv1.LoginResponse], error) {
+			return connect.NewResponse(&procmeshv1.LoginResponse{
+				SessionId: "pms_not_replicated", UserId: "user-admin", Username: "admin",
+				ExpiresUnix: time.Unix(1_700_000_000, 0).Add(time.Hour).Unix(), CsrfToken: "csrf",
+			}), nil
+		}),
+	}
+
+	_, err := api.Login(context.Background(), connect.NewRequest(&procmeshv1.LoginRequest{
+		Username: "admin", Password: testAdminPass,
+	}))
+	code, detail := connectDetail(t, err)
+	if code != connect.CodeUnavailable || detail != "UNAVAILABLE" {
+		t.Fatalf("code=%v detail=%q err=%v", code, detail, err)
+	}
+}
+
+func TestAuthAPI_FollowerWithoutLeaderDoesNotLoginLocally(t *testing.T) {
+	store, followerAuth := newBootstrappedAuth(t)
+	api := &AuthAPI{
+		Auth:     followerAuth,
+		IsLeader: func() bool { return false },
+		LeaderRoute: func() (Route, error) {
+			return Route{}, errcode.E(errcode.UNAVAILABLE, "raft leader unavailable")
+		},
+		LoginForward: loginForwarderFunc(func(context.Context, Route, *connect.Request[procmeshv1.LoginRequest]) (*connect.Response[procmeshv1.LoginResponse], error) {
+			t.Fatal("forwarder must not run without a leader route")
+			return nil, nil
+		}),
+	}
+	_, err := api.Login(context.Background(), connect.NewRequest(&procmeshv1.LoginRequest{
+		Username: "admin", Password: testAdminPass,
+	}))
+	code, detail := connectDetail(t, err)
+	if code != connect.CodeUnavailable || detail != "UNAVAILABLE" {
+		t.Fatalf("code=%v detail=%q err=%v", code, detail, err)
+	}
+	store.mu.Lock()
+	sessions := len(store.state.Sessions)
+	store.mu.Unlock()
+	if sessions != 0 {
+		t.Fatalf("follower created %d local sessions", sessions)
+	}
+}
+
+func testAdminHashForPassword(t *testing.T, password string) string {
+	t.Helper()
+	hash, err := control.HashPassword(password)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return hash
 }
 
 func TestAuthAPI_LogoutRevokesSession(t *testing.T) {

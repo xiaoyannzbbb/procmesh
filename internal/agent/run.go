@@ -696,20 +696,21 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		revs = st
 	}
 	srv, err := api.NewServer(api.Options{
-		Addr:      opt.Listen,
-		Logger:    opt.Logger.With("component", "http"),
-		Mgr:       mgr,
-		Logs:      logs,
-		Store:     revs,
-		Cluster:   clusterDeps,
-		Auth:      authSvc,
-		Degraded:  degraded,
-		Ready:     ready,
-		Started:   started,
-		LocalOnly: false,
-		LocalID:   clusterDeps.NodeID,
-		Router:    router,
-		Forward:   fwd,
+		Addr:             opt.Listen,
+		Logger:           opt.Logger.With("component", "http"),
+		Mgr:              mgr,
+		Logs:             logs,
+		Store:            revs,
+		Cluster:          clusterDeps,
+		Auth:             authSvc,
+		Degraded:         degraded,
+		Ready:            ready,
+		Started:          started,
+		LocalOnly:        false,
+		LocalID:          clusterDeps.NodeID,
+		Router:           router,
+		Forward:          fwd,
+		LoginLeaderRoute: rt.leaderRoute,
 		HasQuorum: func() bool {
 			n := rt.control()
 			return n != nil && n.HasQuorum()

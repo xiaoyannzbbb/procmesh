@@ -68,7 +68,20 @@ func TestAccept_JoinTwoAgents(t *testing.T) {
 
 func joinTwo(t *testing.T, addrA, addrC string) {
 	t.Helper()
-	initAndLogin(t, addrA)
+	_ = joinTwoAndPassword(t, addrA, addrC)
+}
+
+func joinTwoAndPassword(t *testing.T, addrA, addrC string) string {
+	t.Helper()
+	code, initOut, errb := runP1CLI("--server", addrA, "cluster", "init")
+	if code != 0 {
+		t.Fatalf("cluster init exit=%d stderr=%q stdout=%q", code, errb, initOut)
+	}
+	password := parseKV(initOut, "admin_password")
+	if password == "" {
+		t.Fatalf("missing admin_password in %q", initOut)
+	}
+	loginAdmin(t, addrA, password)
 	code, tokOut, errb := runP1CLI("--server", addrA, "node", "token", "create")
 	if code != 0 {
 		t.Fatalf("token create exit=%d stderr=%q stdout=%q", code, errb, tokOut)
@@ -97,11 +110,12 @@ func joinTwo(t *testing.T, addrA, addrC string) {
 		idsA := parseNodeIDs(listA)
 		idsC := parseNodeIDs(listC)
 		if len(idsA) == 2 && len(idsC) == 2 && distinctIDs(idsA) && distinctIDs(idsC) {
-			return
+			return password
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("want 2 distinct members on both agents; A=%q C=%q", listA, listC)
+	return ""
 }
 
 func TestAccept_DuplicateNodeIDRejected(t *testing.T) {

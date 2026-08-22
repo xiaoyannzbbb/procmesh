@@ -56,6 +56,7 @@ type Options struct {
 	LocalID             string
 	Router              *Router
 	Forward             Forwarder
+	LoginLeaderRoute    func() (Route, error)
 	HasQuorum           func() bool
 	RPCHealthy          func() bool
 	GossipHealthy       func() bool
@@ -93,6 +94,10 @@ func NewServer(opts Options) (*Server, error) {
 	}
 
 	rpcForwardTotal := &atomic.Uint64{}
+	var loginForward LoginForwarder
+	if candidate, ok := opts.Forward.(LoginForwarder); ok {
+		loginForward = candidate
+	}
 	opts.Forward = wrapForwarder(opts.Forward, rpcForwardTotal)
 
 	engine := gin.New()
@@ -132,7 +137,14 @@ func NewServer(opts Options) (*Server, error) {
 		Logger: opts.Logger.With("component", "cluster"),
 	}, intercept)
 	mountConnect(engine, clp, clh)
-	ap, ah := procmeshv1connect.NewAuthServiceHandler(&AuthAPI{Auth: opts.Auth}, intercept)
+	ap, ah := procmeshv1connect.NewAuthServiceHandler(&AuthAPI{
+		Auth: opts.Auth, LocalID: opts.LocalID,
+		IsLeader: func() bool {
+			n := opts.Cluster.controlNode()
+			return n == nil || (n.IsLeader() && n.HasQuorum())
+		},
+		LeaderRoute: opts.LoginLeaderRoute, LoginForward: loginForward,
+	}, intercept)
 	mountConnect(engine, ap, ah)
 	up, uh := procmeshv1connect.NewUserServiceHandler(&UserAPI{Auth: opts.Auth}, intercept)
 	mountConnect(engine, up, uh)

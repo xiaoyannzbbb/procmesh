@@ -20,6 +20,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/rpc"
 	"github.com/qleelulu/procmesh/internal/store"
+	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
 
@@ -194,6 +195,15 @@ func (r *rpcRuntime) localHandler() http.Handler {
 	if r.auth != nil {
 		opts = append(opts, connect.WithInterceptors(api.OwnerAuthInterceptor(r.auth, r.nodeID)))
 	}
+	authp, authh := procmeshv1connect.NewAuthServiceHandler(&api.AuthAPI{
+		Auth: r.auth, LocalID: r.nodeID,
+		IsLeader: func() bool {
+			n := r.control()
+			return n != nil && n.IsLeader() && n.HasQuorum()
+		},
+		LeaderRoute: r.leaderRoute, LoginForward: r.fwd,
+	})
+	mux.Handle(authp, authh)
 	pp, ph := procmeshv1connect.NewProcessServiceHandler(&api.ProcessAPI{
 		Mgr: r.mgr, Auth: r.auth, Degraded: degraded,
 		LocalOnly: true, LocalID: r.nodeID,
@@ -419,6 +429,7 @@ func (f *agentForwarder) snapshot() (control.AgentCreds, string, func(string) bo
 
 const (
 	processHopTimeout             = rpc.MutationTimeout
+	loginHopTimeout               = rpc.MutationTimeout
 	configHopTimeout              = rpc.MutationTimeout
 	logHopTimeout                 = time.Duration(0)
 	auditHopTimeout               = 2 * time.Second
@@ -428,6 +439,14 @@ const (
 	clusterBackupHopTimeout       = rpc.MutationTimeout
 	disasterReplicationHopTimeout = rpc.MutationTimeout
 )
+
+func (f *agentForwarder) Login(ctx context.Context, rt api.Route, req *connect.Request[procmeshv1.LoginRequest]) (*connect.Response[procmeshv1.LoginResponse], error) {
+	hc, base, err := f.dial(rt, loginHopTimeout)
+	if err != nil {
+		return nil, err
+	}
+	return rpc.NewAuthClient(hc, base).Login(ctx, req)
+}
 
 func (f *agentForwarder) dial(rt api.Route, timeout time.Duration) (*http.Client, string, error) {
 	creds, clusterID, revoked := f.snapshot()
