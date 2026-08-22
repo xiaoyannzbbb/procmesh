@@ -12,6 +12,7 @@ import (
 
 	"connectrpc.com/connect"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
+	"golang.org/x/term"
 )
 
 type fileSession struct {
@@ -22,6 +23,11 @@ type fileSession struct {
 }
 
 var sessionFileFn = defaultSessionPath
+
+var (
+	isTerminalFn   = term.IsTerminal
+	readPasswordFn = term.ReadPassword
+)
 
 func sessionPath() string { return sessionFileFn() }
 
@@ -117,15 +123,26 @@ func resolvePassword(flag string, stdin io.Reader) (string, error) {
 	if stdin == nil {
 		return "", usageError("login requires a password")
 	}
+	if input, ok := stdin.(*os.File); ok && isTerminalFn(int(input.Fd())) {
+		password, err := readPasswordFn(int(input.Fd()))
+		if err != nil {
+			return "", usageErrorWithCause{message: "login could not read password", cause: err}
+		}
+		return requirePassword(string(password))
+	}
 	line, err := bufio.NewReader(stdin).ReadString('\n')
 	if err != nil && !(err == io.EOF && line != "") {
 		return "", usageError("login requires a password")
 	}
-	pass := strings.TrimRight(line, "\r\n")
-	if pass == "" {
+	return requirePassword(line)
+}
+
+func requirePassword(password string) (string, error) {
+	password = strings.TrimRight(password, "\r\n")
+	if password == "" {
 		return "", usageError("login requires a password")
 	}
-	return pass, nil
+	return password, nil
 }
 
 func sameServer(a, b string) bool {

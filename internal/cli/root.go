@@ -83,6 +83,21 @@ commands:
 type usageError string
 
 func (e usageError) Error() string { return string(e) }
+func (e usageError) isUsageError() {}
+
+type usageErrorWithCause struct {
+	message string
+	cause   error
+}
+
+func (e usageErrorWithCause) Error() string { return fmt.Sprintf("%s: %v", e.message, e.cause) }
+func (e usageErrorWithCause) Unwrap() error { return e.cause }
+func (e usageErrorWithCause) isUsageError() {}
+
+func isUsageError(err error) bool {
+	_, ok := err.(interface{ isUsageError() })
+	return ok
+}
 
 type options struct {
 	server      string
@@ -263,7 +278,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return printUsage(stderr, usageError("unknown command"))
 	}
 	if runErr != nil {
-		if _, ok := runErr.(usageError); ok {
+		if isUsageError(runErr) {
 			return printUsage(stderr, runErr)
 		}
 		fmt.Fprintln(stderr, formatErr(runErr))
