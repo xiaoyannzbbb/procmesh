@@ -69,7 +69,11 @@ func TestAccept_BreakGlassLifecycleWithoutQuorumOrClusterCredentials(t *testing.
 			continue
 		}
 		var metadata map[string]any
-		if json.Unmarshal(event.Metadata, &metadata) == nil && metadata["reason"] == "recover local service" && metadata["error_code"] == "" && metadata["os_uid"] == float64(os.Geteuid()) {
+		if json.Unmarshal(event.Metadata, &metadata) != nil {
+			continue
+		}
+		processID, _ := metadata["process_id"].(string)
+		if metadata["reason"] == "recover local service" && metadata["process_name"] == name && processID != "" && event.Resource == processID && metadata["error_code"] == "" && metadata["os_uid"] == float64(os.Geteuid()) {
 			delete(want, event.Action)
 		}
 	}
@@ -211,6 +215,19 @@ func TestAccept_BreakGlassReadsOnlyLocalOwnerWithoutClusterSession(t *testing.T)
 	if code == 0 || !strings.Contains(errOut, "NOT_FOUND") {
 		t.Fatalf("remote logs exit=%d stderr=%q", code, errOut)
 	}
+	code, _, errOut = runP1CLI(
+		"--break-glass="+socketPath,
+		"--operation-id", "op-remote-owner-denied",
+		"--reason", "recover local service",
+		"process", "stop", "remote-worker",
+	)
+	if code == 0 || !strings.Contains(errOut, "NOT_FOUND") {
+		t.Fatalf("remote stop exit=%d stderr=%q", code, errOut)
+	}
+	code, _, errOut = runP1CLI("--break-glass="+socketPath, "process", "delete", "local-worker")
+	if code != 2 || !strings.Contains(errOut, "only supports process list, get, logs, start, stop, restart, and kill") {
+		t.Fatalf("forbidden delete exit=%d stderr=%q", code, errOut)
+	}
 
 	auditStore, err := store.Open(layout.Store)
 	if err != nil {
@@ -227,17 +244,28 @@ func TestAccept_BreakGlassReadsOnlyLocalOwnerWithoutClusterSession(t *testing.T)
 		"break_glass.process.get/error":    false,
 		"break_glass.process.logs/success": false,
 		"break_glass.process.logs/error":   false,
+		"break_glass.process.stop/error":   false,
 	}
+	var remoteStopAudited bool
 	for _, event := range events {
 		key := event.Action + "/" + event.Result
 		if _, ok := wantOutcomes[key]; ok && event.UserID != "" && event.Username != "" && event.Resource != "" && !event.Timestamp.IsZero() {
 			wantOutcomes[key] = true
+		}
+		if event.Action == "break_glass.process.stop" && event.OperationID == "op-remote-owner-denied" && event.Resource == "remote-worker" {
+			var metadata map[string]any
+			if json.Unmarshal(event.Metadata, &metadata) == nil && metadata["process_id"] == "remote-worker" && metadata["process_name"] == "remote-worker" && metadata["error_code"] == "NOT_FOUND" {
+				remoteStopAudited = true
+			}
 		}
 	}
 	for outcome, found := range wantOutcomes {
 		if !found {
 			t.Fatalf("missing break-glass audit outcome %s in %+v", outcome, events)
 		}
+	}
+	if !remoteStopAudited {
+		t.Fatalf("missing complete remote stop denial audit in %+v", events)
 	}
 
 	cancel()

@@ -23,7 +23,7 @@ import (
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
 
-func TestServer_DeniesUnauthorizedPeerAndAuditsAttempt(t *testing.T) {
+func TestServer_DeniesUnauthorizedPeerAndAuditsCompleteProcessIdentity(t *testing.T) {
 	root := shortTempDir(t)
 	layout := paths.New(root)
 	if err := layout.Ensure(); err != nil {
@@ -35,6 +35,11 @@ func TestServer_DeniesUnauthorizedPeerAndAuditsAttempt(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	mgr := process.NewManager(process.Deps{Store: st, Layout: layout, Now: time.Now})
+	if _, err := mgr.ApplySpec(context.Background(), process.ProcessSpec{
+		ProcessID: "worker-id", Name: "worker", OwnerAgentID: "agent-local", Command: "/bin/true", Instances: 1,
+	}, 0, "op-seed-worker", "test", ""); err != nil {
+		t.Fatal(err)
+	}
 	socketPath := filepath.Join(root, "break-glass.sock")
 	srv, err := New(Config{
 		SocketPath: socketPath,
@@ -66,7 +71,11 @@ func TestServer_DeniesUnauthorizedPeerAndAuditsAttempt(t *testing.T) {
 
 	hc := unixHTTPClient(socketPath)
 	client := procmeshv1connect.NewProcessServiceClient(hc, "http://procmesh.local")
-	_, err = client.ListProcesses(context.Background(), connect.NewRequest(&procmeshv1.ListProcessesRequest{}))
+	request := connect.NewRequest(&procmeshv1.ProcessRefRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-denied"}, IdOrName: "worker",
+	})
+	request.Header().Set(rpc.HeaderBreakGlassReason, "recover service")
+	_, err = client.StopProcess(context.Background(), request)
 	if connect.CodeOf(err) != connect.CodePermissionDenied {
 		t.Fatalf("code=%v err=%v", connect.CodeOf(err), err)
 	}
@@ -78,8 +87,22 @@ func TestServer_DeniesUnauthorizedPeerAndAuditsAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 1 || events[0].Action != "break_glass.process.list" || events[0].Resource != "local-agent" || events[0].Result != "denied" || events[0].UserID != "uid:"+strconv.Itoa(os.Geteuid()+1) || events[0].Username == "" || events[0].Timestamp.IsZero() {
+	var denied *store.AuditEvent
+	for i := range events {
+		if events[i].Action == "break_glass.process.stop" && events[i].OperationID == "op-denied" {
+			denied = &events[i]
+			break
+		}
+	}
+	if denied == nil || denied.Resource != "worker-id" || denied.Result != "denied" || denied.UserID != "uid:"+strconv.Itoa(os.Geteuid()+1) || denied.Username == "" || denied.Timestamp.IsZero() {
 		t.Fatalf("denied audit=%+v", events)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(denied.Metadata, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata["process_id"] != "worker-id" || metadata["process_name"] != "worker" || metadata["error_code"] != "DENIED" {
+		t.Fatalf("denied audit metadata=%v", metadata)
 	}
 }
 
@@ -203,34 +226,27 @@ func TestServer_LifecycleRequiresRecoveryMetadataAndWritesCompleteAudit(t *testi
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	ctx := context.Background()
-	if _, err := st.PutSpec(ctx, process.ProcessSpec{
-		ProcessID: "worker-id", Name: "worker", OwnerAgentID: "agent-local", Command: "/bin/true", Instances: 1,
-	}, 0, "seed", ""); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.PutInstance(ctx, process.Instance{
-		InstanceID: "worker-id:0", ProcessID: "worker-id", Desired: process.DesiredRunning,
-		Observed: process.ObservedStopped, Health: process.HealthUnknown,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.PutSpec(ctx, process.ProcessSpec{
-		ProcessID: "remote-id", Name: "remote", OwnerAgentID: "agent-remote", Command: "/bin/true", Instances: 1,
-	}, 0, "seed", ""); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.PutInstance(ctx, process.Instance{
-		InstanceID: "remote-id:0", ProcessID: "remote-id", Desired: process.DesiredRunning,
-		Observed: process.ObservedStopped, Health: process.HealthUnknown,
-	}); err != nil {
-		t.Fatal(err)
+	mgr := process.NewManager(process.Deps{Store: st, Layout: layout, Now: time.Now})
+	for _, fixture := range []struct {
+		spec process.ProcessSpec
+		opID string
+	}{
+		{spec: process.ProcessSpec{ProcessID: "worker-id", Name: "worker", OwnerAgentID: "agent-local", Command: "/bin/true", Instances: 1}, opID: "op-seed-worker"},
+		{spec: process.ProcessSpec{ProcessID: "remote-id", Name: "remote", OwnerAgentID: "agent-remote", Command: "/bin/true", Instances: 1}, opID: "op-seed-remote"},
+	} {
+		if _, err := mgr.ApplySpec(ctx, fixture.spec, 0, fixture.opID, "test", ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := mgr.SetDesired(ctx, fixture.spec.ProcessID, process.DesiredRunning, fixture.opID+"-start", "test"); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	socketPath := filepath.Join(root, "break-glass.sock")
 	srv, err := New(Config{
 		SocketPath: socketPath,
 		LocalID:    "agent-local",
-		Manager:    process.NewManager(process.Deps{Store: st, Layout: layout, Now: time.Now}),
+		Manager:    mgr,
 		Audit:      st,
 		PeerLookup: func(net.Conn) (Peer, error) {
 			return Peer{PID: 42, UID: os.Geteuid(), GID: os.Getegid(), Username: "trusted"}, nil
@@ -267,6 +283,14 @@ func TestServer_LifecycleRequiresRecoveryMetadataAndWritesCompleteAudit(t *testi
 	if _, err := client.StopProcess(ctx, remote); connect.CodeOf(err) != connect.CodeNotFound {
 		t.Fatalf("remote owner code=%v err=%v", connect.CodeOf(err), err)
 	}
+	remoteTarget := connect.NewRequest(&procmeshv1.ProcessRefRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-remote-target"}, IdOrName: "worker",
+	})
+	remoteTarget.Header().Set(rpc.HeaderBreakGlassReason, "recover service")
+	remoteTarget.Header().Set(rpc.HeaderTargetNode, "agent-remote")
+	if _, err := client.StopProcess(ctx, remoteTarget); connect.CodeOf(err) != connect.CodePermissionDenied {
+		t.Fatalf("remote target code=%v err=%v", connect.CodeOf(err), err)
+	}
 	remoteInstances, err := st.ListInstances(ctx, "remote-id")
 	if err != nil || len(remoteInstances) != 1 || remoteInstances[0].Desired != process.DesiredRunning {
 		t.Fatalf("remote lifecycle state changed: %+v err=%v", remoteInstances, err)
@@ -301,10 +325,13 @@ func TestServer_LifecycleRequiresRecoveryMetadataAndWritesCompleteAudit(t *testi
 		t.Fatal(err)
 	}
 	var lifecycle *store.AuditEvent
+	var remoteTargetDenial *store.AuditEvent
 	for i := range events {
-		if events[i].Action == "break_glass.process.stop" {
+		if events[i].Action == "break_glass.process.stop" && events[i].OperationID == "op-stop" {
 			lifecycle = &events[i]
-			break
+		}
+		if events[i].Action == "break_glass.process.stop" && events[i].OperationID == "op-remote-target" {
+			remoteTargetDenial = &events[i]
 		}
 	}
 	if lifecycle == nil {
@@ -319,6 +346,15 @@ func TestServer_LifecycleRequiresRecoveryMetadataAndWritesCompleteAudit(t *testi
 	}
 	if metadata["reason"] != "recover service" || metadata["process_id"] != "worker-id" || metadata["process_name"] != "worker" || metadata["error_code"] != "" || metadata["os_uid"] != float64(os.Geteuid()) {
 		t.Fatalf("audit metadata=%v", metadata)
+	}
+	if remoteTargetDenial == nil || remoteTargetDenial.Resource != "worker-id" || remoteTargetDenial.Result != "denied" {
+		t.Fatalf("missing remote target denial audit: %+v", events)
+	}
+	if err := json.Unmarshal(remoteTargetDenial.Metadata, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata["process_id"] != "worker-id" || metadata["process_name"] != "worker" || metadata["error_code"] != "DENIED" {
+		t.Fatalf("remote target denial metadata=%v", metadata)
 	}
 }
 

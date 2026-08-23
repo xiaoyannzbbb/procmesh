@@ -224,6 +224,7 @@ func (a *accessController) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
 		description := describeRequest(req.Spec().Procedure, req.Any())
 		description.reason = strings.TrimSpace(req.Header().Get(rpc.HeaderBreakGlassReason))
+		a.describeProcess(ctx, &description)
 		peer, authorized := a.authorize(ctx)
 		if !authorized {
 			if err := a.record(peer, description, "denied", "DENIED"); err != nil {
@@ -231,7 +232,12 @@ func (a *accessController) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 			}
 			return nil, accessDenied()
 		}
-		a.describeProcess(ctx, &description)
+		if targetNode := strings.TrimSpace(rpc.TargetOf(req.Header())); targetNode != "" && targetNode != a.localID {
+			if err := a.record(peer, description, "denied", "DENIED"); err != nil {
+				return nil, auditUnavailable(err)
+			}
+			return nil, accessDenied()
+		}
 		if !description.allowed {
 			if err := a.record(peer, description, "denied", "DENIED"); err != nil {
 				return nil, auditUnavailable(err)
