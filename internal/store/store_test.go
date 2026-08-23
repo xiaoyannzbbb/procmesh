@@ -98,6 +98,9 @@ func TestIntegrityCheck_OKOnFreshDB(t *testing.T) {
 	if err := s.IntegrityCheck(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.QuickCheck(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestSetBootID_Persists(t *testing.T) {
@@ -341,6 +344,9 @@ func TestStore_MethodsErrorAfterClose(t *testing.T) {
 	}
 	if err := s.IntegrityCheck(ctx); !errcode.Is(err, errcode.DEGRADED) {
 		t.Fatalf("integrity: %v", err)
+	}
+	if err := s.QuickCheck(ctx); !errcode.Is(err, errcode.DEGRADED) {
+		t.Fatalf("quick check: %v", err)
 	}
 	if _, err := s.GetOrCreateNodeID(ctx); err == nil {
 		t.Fatal("GetOrCreateNodeID")

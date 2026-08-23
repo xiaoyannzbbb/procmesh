@@ -149,7 +149,16 @@ func (s *Store) Close() error {
 
 // IntegrityCheck runs PRAGMA integrity_check and returns DEGRADED if not ok.
 func (s *Store) IntegrityCheck(ctx context.Context) error {
-	rows, err := s.db.QueryContext(ctx, "PRAGMA integrity_check")
+	return s.runIntegrityCheck(ctx, "PRAGMA integrity_check")
+}
+
+// QuickCheck runs PRAGMA quick_check(1) and returns DEGRADED if not ok.
+func (s *Store) QuickCheck(ctx context.Context) error {
+	return s.runIntegrityCheck(ctx, "PRAGMA quick_check(1)")
+}
+
+func (s *Store) runIntegrityCheck(ctx context.Context, query string) error {
+	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return errcode.E(errcode.DEGRADED, err.Error())
 	}

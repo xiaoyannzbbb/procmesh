@@ -182,7 +182,12 @@ func Run(ctx context.Context, opt Options) error {
 	}
 	defer func() { _ = st.Close() }()
 
-	if err := st.IntegrityCheck(ctx); err != nil {
+	health := newStoreHealthMonitor(
+		st.IntegrityCheck,
+		st.QuickCheck,
+		func() error { return checkSQLiteFileHeader(layout.Store) },
+	)
+	if err := health.initialize(ctx); err != nil {
 		degraded = true
 		logger.Warn("store integrity check failed", "error", err)
 	}
@@ -347,19 +352,10 @@ func Run(ctx context.Context, opt Options) error {
 		}
 	}
 
-	ready := func() error {
-		if err := st.IntegrityCheck(context.Background()); err != nil {
-			return err
-		}
-		b, err := os.ReadFile(layout.Store)
-		if err != nil {
-			return errcode.E(errcode.DEGRADED, err.Error())
-		}
-		if len(b) < 16 || string(b[:15]) != "SQLite format 3" {
-			return errcode.E(errcode.DEGRADED, "store file corrupted")
-		}
-		return nil
-	}
+	healthCtx, stopHealth := context.WithCancel(ctx)
+	defer stopHealth()
+	go health.runPeriodic(healthCtx)
+	ready := health.ready
 	batchEng := newBatchEngine(st, cfg, nodeID)
 	opt.Backup = mergeBackupConfig(cfg.Backup, opt.Backup)
 	return serveHTTP(ctx, opt, mgr, logs, st, degraded, ready, mesh, src, collector, api.ClusterDeps{
