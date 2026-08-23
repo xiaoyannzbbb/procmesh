@@ -285,6 +285,7 @@ func Run(ctx context.Context, opt Options) error {
 		Source:    src,
 		Protocol:  version.Protocol,
 		TestFast:  bindPort == 0,
+		Logger:    logger.With("component", "gossip"),
 	})
 	if err != nil {
 		return fmt.Errorf("start mesh: %w", err)

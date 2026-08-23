@@ -1,6 +1,10 @@
 package cluster_test
 
 import (
+	"bytes"
+	"log/slog"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,6 +14,23 @@ import (
 
 type staticSource struct {
 	s cluster.NodeSummary
+}
+
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.String()
 }
 
 func (s *staticSource) Snapshot() cluster.NodeSummary {
@@ -113,6 +134,105 @@ func TestMesh_StaleAlivePresentMemberMarkedSuspect(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("want nb SUSPECT via stale Members() overlay, got %q members=%+v", memberState(a, "nb"), a.Members())
+}
+
+func TestMesh_StaleOverlayLogsTransitionAndPushPullRecovery(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	var logs lockedBuffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	srcA := &staticSource{s: cluster.NodeSummary{
+		NodeID: "na", BootID: "ba", State: cluster.StateAlive,
+		LastUpdatedUnixMs: now.UnixMilli(),
+	}}
+	srcB := &staticSource{s: cluster.NodeSummary{
+		NodeID: "nb", BootID: "bb", State: cluster.StateAlive,
+		LastUpdatedUnixMs: now.Add(-3 * time.Second).UnixMilli(),
+	}}
+	a, err := cluster.Start(cluster.Config{
+		NodeID: "na", BindAddr: "127.0.0.1", BindPort: 0, Source: srcA,
+		TestFast: true, SuspectAfter: 2 * time.Second,
+		Now: func() time.Time { return now }, Logger: logger,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = a.Shutdown() })
+	b, err := cluster.Start(cluster.Config{
+		NodeID: "nb", BindAddr: "127.0.0.1", BindPort: 0, Source: srcB,
+		TestFast: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = b.Shutdown() })
+	if _, err := b.Join([]string{a.LocalAddr()}); err != nil {
+		t.Fatal(err)
+	}
+	waitMembers(t, a, 2)
+	_ = a.Members()
+	_ = a.Members()
+
+	got := logs.String()
+	if count := strings.Count(got, `msg="gossip member marked suspect"`); count != 1 {
+		t.Fatalf("suspect transition logs=%d want 1: %s", count, got)
+	}
+	for _, want := range []string{"reason=metadata_stale", "observer_node_id=na", "node_id=nb", "metadata_age_ms=3000", "threshold_ms=2000"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("suspect log missing %q: %s", want, got)
+		}
+	}
+
+	a.MergeForTest(cluster.EncodeState(cluster.NodeSummary{
+		NodeID: "nb", BootID: "bb", State: cluster.StateAlive,
+		LastUpdatedUnixMs: now.UnixMilli(),
+	}))
+	got = logs.String()
+	for _, want := range []string{`msg="gossip member recovered"`, "source=push_pull", "previous_state=SUSPECT", "state=ALIVE"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("recovery log missing %q: %s", want, got)
+		}
+	}
+}
+
+func TestMesh_UpdateTimesOutAndLogsFailure(t *testing.T) {
+	var logs lockedBuffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	srcA := &staticSource{s: cluster.NodeSummary{NodeID: "na", BootID: "ba", State: cluster.StateAlive}}
+	srcB := &staticSource{s: cluster.NodeSummary{NodeID: "nb", BootID: "bb", State: cluster.StateAlive}}
+	a, err := cluster.Start(cluster.Config{
+		NodeID: "na", BindAddr: "127.0.0.1", BindPort: 0, Source: srcA,
+		TestFast: true, UpdateTimeout: 20 * time.Millisecond, Logger: logger,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := cluster.Start(cluster.Config{
+		NodeID: "nb", BindAddr: "127.0.0.1", BindPort: 0, Source: srcB,
+		TestFast: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = b.Shutdown() })
+	if _, err := b.Join([]string{a.LocalAddr()}); err != nil {
+		t.Fatal(err)
+	}
+	waitMembers(t, a, 2)
+	if err := a.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
+
+	started := time.Now()
+	a.Update()
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("Update returned too slowly: %s", elapsed)
+	}
+	got := logs.String()
+	for _, want := range []string{`msg="gossip metadata publish failed"`, "timeout_ms=20", "observer_node_id=na", `error="timeout waiting for update broadcast"`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("publish failure log missing %q: %s", want, got)
+		}
+	}
 }
 
 func TestMesh_ZeroLastUpdatedNotSuspect(t *testing.T) {

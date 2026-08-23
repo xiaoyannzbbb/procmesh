@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net"
 	"sort"
 	"strconv"
@@ -21,19 +22,26 @@ import (
 // AGENT_SUSPECT_TOO_LONG alert window (control.AlertPolicy.SuspectTooLongSec).
 const DefaultSuspectAfter = 2 * time.Second
 
+// DefaultUpdateTimeout bounds a metadata publication so the Agent's
+// reconcile loop cannot be blocked indefinitely by Gossip dissemination.
+const DefaultUpdateTimeout = 2 * time.Second
+
 type Config struct {
 	NodeID    string
 	BindAddr  string // default 127.0.0.1
 	BindPort  int    // 0 = ephemeral（测试）
 	Advertise string // host:port，可空
 	Source    SummarySource
-	Protocol  int         // must be version.Protocol
-	Logger    *log.Logger // 可空
-	TestFast  bool        // short probe/gossip intervals for tests
+	Protocol  int          // must be version.Protocol
+	Logger    *slog.Logger // 可空
+	TestFast  bool         // short probe/gossip intervals for tests
 	// SuspectAfter overlays StateSuspect on still-present ALIVE remotes whose
 	// LastUpdatedUnixMs is this old. Zero means DefaultSuspectAfter (2s).
 	SuspectAfter time.Duration
-	Now          func() time.Time
+	// UpdateTimeout bounds UpdateNode dissemination. Zero means
+	// DefaultUpdateTimeout (2s).
+	UpdateTimeout time.Duration
+	Now           func() time.Time
 }
 
 type Mesh struct {
@@ -94,7 +102,7 @@ func Start(cfg Config) (*Mesh, error) {
 	conf.Delegate = m
 	conf.Events = m
 	if cfg.Logger != nil {
-		conf.Logger = cfg.Logger
+		conf.Logger = newMemberlistLogger(cfg.Logger)
 	} else {
 		conf.LogOutput = io.Discard
 	}
@@ -120,7 +128,13 @@ func Start(cfg Config) (*Mesh, error) {
 	ln := list.LocalNode()
 	m.bound = net.JoinHostPort(ln.Addr.String(), strconv.Itoa(int(ln.Port)))
 	// Refresh NodeMeta now that the bound port is known.
-	_ = list.UpdateNode(0)
+	if err := list.UpdateNode(m.updateTimeout()); err != nil && cfg.Logger != nil {
+		cfg.Logger.Error("initial gossip metadata publish failed",
+			"observer_node_id", cfg.NodeID,
+			"timeout_ms", m.updateTimeout().Milliseconds(),
+			"error", err,
+		)
+	}
 	return m, nil
 }
 
@@ -169,7 +183,38 @@ func (m *Mesh) Update() {
 	if m.list == nil {
 		return
 	}
-	_ = m.list.UpdateNode(0)
+	started := time.Now()
+	timeout := m.updateTimeout()
+	if m.cfg.Logger != nil {
+		m.cfg.Logger.Debug("gossip metadata publish started",
+			"observer_node_id", m.cfg.NodeID,
+			"timeout_ms", timeout.Milliseconds(),
+		)
+	}
+	slow := time.AfterFunc(timeout, func() {
+		if m.cfg.Logger != nil {
+			m.cfg.Logger.Warn("gossip metadata publish slow",
+				"observer_node_id", m.cfg.NodeID,
+				"duration_ms", time.Since(started).Milliseconds(),
+				"timeout_ms", timeout.Milliseconds(),
+			)
+		}
+	})
+	err := m.list.UpdateNode(timeout)
+	slow.Stop()
+	if m.cfg.Logger == nil {
+		return
+	}
+	fields := []any{
+		"observer_node_id", m.cfg.NodeID,
+		"duration_ms", time.Since(started).Milliseconds(),
+		"timeout_ms", timeout.Milliseconds(),
+	}
+	if err != nil {
+		m.cfg.Logger.Error("gossip metadata publish failed", append(fields, "error", err)...)
+		return
+	}
+	m.cfg.Logger.Debug("gossip metadata publish completed", fields...)
 }
 
 // ApplyMemberlistState maps a memberlist node state onto the local view.
@@ -180,7 +225,13 @@ func (m *Mesh) ApplyMemberlistState(nodeID string, state memberlist.NodeStateTyp
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.markSuspectLocked(nodeID)
+	if m.markSuspectLocked(nodeID) && m.cfg.Logger != nil {
+		m.cfg.Logger.Warn("gossip member marked suspect",
+			"reason", "memberlist_suspect",
+			"observer_node_id", m.cfg.NodeID,
+			"node_id", nodeID,
+		)
+	}
 }
 
 // Members returns the local snapshot plus remote views, sorted by node_id.
@@ -229,7 +280,16 @@ func (m *Mesh) applyMemberlistStates() {
 		if now.Sub(time.UnixMilli(s.LastUpdatedUnixMs)) < after {
 			continue
 		}
-		m.markSuspectLocked(id)
+		if m.markSuspectLocked(id) && m.cfg.Logger != nil {
+			m.cfg.Logger.Warn("gossip member marked suspect",
+				"reason", "metadata_stale",
+				"observer_node_id", m.cfg.NodeID,
+				"node_id", id,
+				"metadata_age_ms", now.Sub(time.UnixMilli(s.LastUpdatedUnixMs)).Milliseconds(),
+				"threshold_ms", after.Milliseconds(),
+				"last_updated_unix_ms", s.LastUpdatedUnixMs,
+			)
+		}
 	}
 }
 
@@ -264,17 +324,27 @@ func (m *Mesh) suspectAfter() time.Duration {
 	return DefaultSuspectAfter
 }
 
-func (m *Mesh) markSuspectLocked(nodeID string) {
+func (m *Mesh) updateTimeout() time.Duration {
+	if m.cfg.UpdateTimeout > 0 {
+		return m.cfg.UpdateTimeout
+	}
+	return DefaultUpdateTimeout
+}
+
+func (m *Mesh) markSuspectLocked(nodeID string) bool {
 	prev, ok := m.view[nodeID]
 	if !ok {
-		return
+		return false
 	}
 	switch prev.State {
 	case StateLeft, StateRemoved, StateRevoked, StateFailed:
-		return
+		return false
+	case StateSuspect:
+		return false
 	}
 	prev.State = StateSuspect
 	m.view[nodeID] = prev
+	return true
 }
 
 func (m *Mesh) NodeMeta(limit int) []byte {
@@ -301,7 +371,7 @@ func (m *Mesh) MergeRemoteState(buf []byte, join bool) {
 	if err != nil || s.NodeID == "" {
 		return
 	}
-	m.store(s)
+	m.store(s, "push_pull")
 }
 
 // MergeForTest applies the same merge path as MergeRemoteState.
@@ -329,7 +399,7 @@ func (m *Mesh) NotifyJoin(n *memberlist.Node) {
 	if s.State == "" {
 		s.State = StateAlive
 	}
-	m.upsertMeta(s, true)
+	m.upsertMeta(s, true, "join")
 }
 
 func (m *Mesh) NotifyLeave(n *memberlist.Node) {
@@ -351,6 +421,18 @@ func (m *Mesh) NotifyLeave(n *memberlist.Node) {
 		s.State = StateFailed
 	}
 	m.view[s.NodeID] = s
+	if m.cfg.Logger != nil {
+		logFn := m.cfg.Logger.Warn
+		if s.State == StateLeft {
+			logFn = m.cfg.Logger.Info
+		}
+		logFn("gossip member left",
+			"observer_node_id", m.cfg.NodeID,
+			"node_id", s.NodeID,
+			"previous_state", prev.State,
+			"state", s.State,
+		)
+	}
 }
 
 func (m *Mesh) NotifyUpdate(n *memberlist.Node) {
@@ -358,7 +440,7 @@ func (m *Mesh) NotifyUpdate(n *memberlist.Node) {
 		return
 	}
 	s := summaryFromNode(n)
-	m.upsertMeta(s, false)
+	m.upsertMeta(s, false, "node_meta")
 }
 
 func (m *Mesh) localSummary() NodeSummary {
@@ -400,19 +482,21 @@ func (m *Mesh) rejectLocalCloneLocked(s NodeSummary) bool {
 	return true
 }
 
-func (m *Mesh) store(s NodeSummary) {
+func (m *Mesh) store(s NodeSummary, source string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.rejectLocalCloneLocked(s) {
 		return
 	}
-	if prev, ok := m.view[s.NodeID]; ok && keepTerminal(prev.State, s.State) {
+	prev := m.view[s.NodeID]
+	if prev.NodeID != "" && keepTerminal(prev.State, s.State) {
 		return
 	}
 	m.view[s.NodeID] = s
+	m.logRemoteUpdateLocked(prev, s, source)
 }
 
-func (m *Mesh) upsertMeta(s NodeSummary, revive bool) {
+func (m *Mesh) upsertMeta(s NodeSummary, revive bool, source string) {
 	if s.NodeID == "" {
 		return
 	}
@@ -421,7 +505,8 @@ func (m *Mesh) upsertMeta(s NodeSummary, revive bool) {
 	if m.rejectLocalCloneLocked(s) {
 		return
 	}
-	if prev, ok := m.view[s.NodeID]; ok {
+	prev := m.view[s.NodeID]
+	if prev.NodeID != "" {
 		s = mergePreserved(s, prev)
 		if !revive && keepTerminal(prev.State, s.State) {
 			s.State = prev.State
@@ -434,6 +519,76 @@ func (m *Mesh) upsertMeta(s NodeSummary, revive bool) {
 		s.State = StateAlive
 	}
 	m.view[s.NodeID] = s
+	m.logRemoteUpdateLocked(prev, s, source)
+}
+
+func (m *Mesh) logRemoteUpdateLocked(prev, current NodeSummary, source string) {
+	if m.cfg.Logger == nil {
+		return
+	}
+	ageMs := int64(-1)
+	if current.LastUpdatedUnixMs > 0 {
+		ageMs = m.now().Sub(time.UnixMilli(current.LastUpdatedUnixMs)).Milliseconds()
+	}
+	m.cfg.Logger.Debug("gossip metadata received",
+		"observer_node_id", m.cfg.NodeID,
+		"node_id", current.NodeID,
+		"source", source,
+		"previous_state", prev.State,
+		"state", current.State,
+		"metadata_age_ms", ageMs,
+		"last_updated_unix_ms", current.LastUpdatedUnixMs,
+	)
+	if prev.State == StateSuspect && current.State == StateAlive {
+		m.cfg.Logger.Info("gossip member recovered",
+			"observer_node_id", m.cfg.NodeID,
+			"node_id", current.NodeID,
+			"source", source,
+			"previous_state", prev.State,
+			"state", current.State,
+			"metadata_age_ms", ageMs,
+		)
+		return
+	}
+	if prev.NodeID == "" {
+		m.cfg.Logger.Info("gossip member joined",
+			"observer_node_id", m.cfg.NodeID,
+			"node_id", current.NodeID,
+			"source", source,
+			"state", current.State,
+		)
+	}
+}
+
+type memberlistLogWriter struct {
+	logger *slog.Logger
+}
+
+func newMemberlistLogger(logger *slog.Logger) *log.Logger {
+	return log.New(memberlistLogWriter{logger: logger}, "", 0)
+}
+
+func (w memberlistLogWriter) Write(p []byte) (int, error) {
+	message := strings.TrimSpace(string(p))
+	logFn := w.logger.Info
+	for _, level := range []struct {
+		prefix string
+		fn     func(string, ...any)
+	}{
+		{prefix: "[DEBUG]", fn: w.logger.Debug},
+		{prefix: "[WARN]", fn: w.logger.Warn},
+		{prefix: "[ERR]", fn: w.logger.Error},
+		{prefix: "[ERROR]", fn: w.logger.Error},
+		{prefix: "[INFO]", fn: w.logger.Info},
+	} {
+		if strings.HasPrefix(message, level.prefix) {
+			message = strings.TrimSpace(strings.TrimPrefix(message, level.prefix))
+			logFn = level.fn
+			break
+		}
+	}
+	logFn(message, "source", "memberlist")
+	return len(p), nil
 }
 
 func mergePreserved(s, prev NodeSummary) NodeSummary {
