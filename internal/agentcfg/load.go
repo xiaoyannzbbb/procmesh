@@ -42,8 +42,9 @@ type S3 struct {
 }
 
 type Gossip struct {
-	Listen    string
-	Advertise string
+	Listen      string
+	Advertise   string
+	Compression bool
 }
 
 type Pprof struct {
@@ -96,8 +97,9 @@ type diskFile struct {
 }
 
 type gossipFile struct {
-	Listen    string `yaml:"listen"`
-	Advertise string `yaml:"advertise"`
+	Listen      string `yaml:"listen"`
+	Advertise   string `yaml:"advertise"`
+	Compression bool   `yaml:"compression"`
 }
 
 type rpcFile struct {
@@ -242,6 +244,7 @@ func LoadAll(path string, required bool) (Config, error) {
 	if g := f.Gossip; g != nil {
 		cfg.Gossip.Listen = g.Listen
 		cfg.Gossip.Advertise = g.Advertise
+		cfg.Gossip.Compression = g.Compression
 	}
 	if r := f.RPC; r != nil {
 		cfg.RPC.Listen = r.Listen

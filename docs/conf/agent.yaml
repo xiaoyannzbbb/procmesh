@@ -41,6 +41,8 @@ gossip:
   listen: "127.0.0.1:18689"
   # 向其他节点公布的地址。留空时使用实际绑定地址；仅填 IP/主机名时沿用 listen 端口。
   advertise: ""
+  # memberlist LZW 压缩会降低 Gossip 带宽，但显著增加小包的 CPU 和临时内存分配。默认：false。
+  compression: false
 
 # Agent 间 mTLS RPC 通信地址。
 rpc:

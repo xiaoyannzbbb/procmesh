@@ -323,20 +323,21 @@ func Run(ctx context.Context, opt Options) error {
 	}
 
 	mesh, err := cluster.Start(cluster.Config{
-		NodeID:    nodeID,
-		BindAddr:  bindAddr,
-		BindPort:  bindPort,
-		Advertise: gossipAdvertise,
-		Source:    src,
-		Protocol:  version.Protocol,
-		TestFast:  bindPort == 0,
-		Logger:    logger.With("component", "gossip"),
+		NodeID:            nodeID,
+		BindAddr:          bindAddr,
+		BindPort:          bindPort,
+		Advertise:         gossipAdvertise,
+		Source:            src,
+		Protocol:          version.Protocol,
+		TestFast:          bindPort == 0,
+		EnableCompression: cfg.Gossip.Compression,
+		Logger:            logger.With("component", "gossip"),
 	})
 	if err != nil {
 		return fmt.Errorf("start mesh: %w", err)
 	}
 	src.setGossip(mesh.LocalAddr())
-	logger.With("component", "gossip").Info("gossip listening", "address", mesh.LocalAddr())
+	logger.With("component", "gossip").Info("gossip listening", "address", mesh.LocalAddr(), "compression", cfg.Gossip.Compression)
 	if meta, err := control.LoadMeta(layout.ClusterDir); err == nil && len(meta.GossipSeeds) > 0 {
 		members, err := mesh.Join(meta.GossipSeeds)
 		if err != nil {

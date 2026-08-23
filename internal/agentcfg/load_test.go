@@ -105,6 +105,21 @@ func TestLoadAll_GossipListenAndAdvertise(t *testing.T) {
 	}
 }
 
+func TestLoadAll_GossipCompression(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	body := "gossip:\n  compression: true\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := agentcfg.LoadAll(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Gossip.Compression {
+		t.Fatal("gossip compression override was not loaded")
+	}
+}
+
 func TestLoadAll_RPCListenAndAdvertise(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent.yaml")

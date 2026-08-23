@@ -27,14 +27,15 @@ const DefaultSuspectAfter = 2 * time.Second
 const DefaultUpdateTimeout = 2 * time.Second
 
 type Config struct {
-	NodeID    string
-	BindAddr  string // default 127.0.0.1
-	BindPort  int    // 0 = ephemeral（测试）
-	Advertise string // host:port，可空
-	Source    SummarySource
-	Protocol  int          // must be version.Protocol
-	Logger    *slog.Logger // 可空
-	TestFast  bool         // short probe/gossip intervals for tests
+	NodeID            string
+	BindAddr          string // default 127.0.0.1
+	BindPort          int    // 0 = ephemeral（测试）
+	Advertise         string // host:port，可空
+	Source            SummarySource
+	Protocol          int          // must be version.Protocol
+	Logger            *slog.Logger // 可空
+	TestFast          bool         // short probe/gossip intervals for tests
+	EnableCompression bool         // false avoids memberlist's high per-packet LZW allocation
 	// SuspectAfter overlays StateSuspect on still-present ALIVE remotes whose
 	// LastUpdatedUnixMs is this old. Zero means DefaultSuspectAfter (2s).
 	SuspectAfter time.Duration
@@ -47,6 +48,7 @@ type Config struct {
 type Mesh struct {
 	cfg       Config
 	localName string
+	localBoot string
 	bound     string
 	list      *memberlist.Memberlist
 	leaving   atomic.Bool
@@ -81,6 +83,7 @@ func Start(cfg Config) (*Mesh, error) {
 	m := &Mesh{
 		cfg:       cfg,
 		localName: localName,
+		localBoot: snap.BootID,
 		view:      make(map[string]NodeSummary),
 		conflicts: make(map[string]struct{}),
 	}
@@ -97,6 +100,7 @@ func Start(cfg Config) (*Mesh, error) {
 		conf.TCPTimeout = 200 * time.Millisecond
 	}
 	conf.Name = localName
+	conf.EnableCompression = cfg.EnableCompression
 	conf.BindAddr = cfg.BindAddr
 	conf.BindPort = cfg.BindPort
 	conf.Delegate = m
@@ -472,11 +476,10 @@ func (m *Mesh) localSummary() NodeSummary {
 // rejectLocalCloneLocked drops a remote with the local node_id.
 // A different boot_id is recorded as a duplicate conflict.
 func (m *Mesh) rejectLocalCloneLocked(s NodeSummary) bool {
-	local := m.localSummary()
-	if s.NodeID != local.NodeID {
+	if s.NodeID != m.cfg.NodeID {
 		return false
 	}
-	if s.BootID != local.BootID {
+	if s.BootID != m.localBoot {
 		m.conflicts[s.NodeID] = struct{}{}
 	}
 	return true
