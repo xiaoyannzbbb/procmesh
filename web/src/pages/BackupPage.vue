@@ -978,7 +978,7 @@ const createPolicyMut = useMutation({
   mutationFn: () =>
     clusterClient.createPolicy({
       meta: mutationMeta(),
-      policy: buildPolicyPayload(crypto.randomUUID()),
+      policy: buildPolicyPayload(newOperationId()),
     }),
   onSuccess: async () => {
     policyOpen.value = false;
