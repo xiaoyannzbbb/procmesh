@@ -69,6 +69,7 @@ type Manager struct {
 	healthTrackers    map[string]*health.Tracker
 	lastHealthCheck   map[string]time.Time
 	lastHealthRestart map[string]time.Time
+	lastShimCheck     map[string]time.Time
 }
 
 func NewManager(d Deps) *Manager {
@@ -83,6 +84,7 @@ func NewManager(d Deps) *Manager {
 		healthTrackers:    make(map[string]*health.Tracker),
 		lastHealthCheck:   make(map[string]time.Time),
 		lastHealthRestart: make(map[string]time.Time),
+		lastShimCheck:     make(map[string]time.Time),
 	}
 }
 

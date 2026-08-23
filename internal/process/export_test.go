@@ -16,6 +16,7 @@ func SeedInstanceMemory(m *Manager, id string) {
 	m.healthTrackers[id] = health.NewTracker(HealthCheckSpec{})
 	m.lastHealthCheck[id] = now
 	m.lastHealthRestart[id] = now
+	m.lastShimCheck[id] = now
 }
 
 // InstanceMemoryHeld reports whether any per-instance maps still mention id.
@@ -37,8 +38,18 @@ func InstanceMemoryHeld(m *Manager, id string) bool {
 	if _, ok := m.lastHealthRestart[id]; ok {
 		return true
 	}
+	if _, ok := m.lastShimCheck[id]; ok {
+		return true
+	}
 	if _, ok := m.clients[id]; ok {
 		return true
 	}
 	return false
+}
+
+// LastShimCheckForTest returns the last full shim status verification time.
+func LastShimCheckForTest(m *Manager, id string) time.Time {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lastShimCheck[id]
 }

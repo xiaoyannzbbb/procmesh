@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"time"
 
 	"github.com/qleelulu/procmesh/internal/shim"
 	shimpb "github.com/qleelulu/procmesh/proto/shim/v1"
@@ -17,6 +18,7 @@ func (m *Manager) Recover(ctx context.Context) error {
 
 func (m *Manager) recoverLocked(ctx context.Context) error {
 	m.resetAllHealth()
+	m.lastShimCheck = make(map[string]time.Time)
 	boot, err := m.deps.Store.GetBootID(ctx)
 	if err != nil {
 		return err

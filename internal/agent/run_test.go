@@ -73,6 +73,28 @@ func TestRun_LogsLifecycle(t *testing.T) {
 	}
 }
 
+func TestAgentLoopCadence_ThrottlesMaintenance(t *testing.T) {
+	base := time.Unix(2_000_000, 0)
+	var cadence agentLoopCadence
+
+	first := cadence.due(base)
+	if !first.diskProtect || !first.logRotate || !first.backupSchedule {
+		t.Fatalf("first tick must run all maintenance: %+v", first)
+	}
+	second := cadence.due(base.Add(time.Second))
+	if second.diskProtect || second.logRotate || second.backupSchedule {
+		t.Fatalf("1s tick repeated maintenance: %+v", second)
+	}
+	fiveSeconds := cadence.due(base.Add(5 * time.Second))
+	if !fiveSeconds.diskProtect || fiveSeconds.logRotate || !fiveSeconds.backupSchedule {
+		t.Fatalf("5s cadence mismatch: %+v", fiveSeconds)
+	}
+	tenSeconds := cadence.due(base.Add(10 * time.Second))
+	if !tenSeconds.diskProtect || !tenSeconds.logRotate || !tenSeconds.backupSchedule {
+		t.Fatalf("10s cadence mismatch: %+v", tenSeconds)
+	}
+}
+
 func TestResolveAdvertiseAddr_InheritsListenPort(t *testing.T) {
 	tests := []struct {
 		name      string

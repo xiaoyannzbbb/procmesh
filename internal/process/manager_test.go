@@ -27,6 +27,101 @@ import (
 
 var processIDRE = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
+type countingStateStore struct {
+	*store.Store
+	mu                 sync.Mutex
+	listInstancesCalls int
+	bootIDCalls        int
+}
+
+func (s *countingStateStore) ListInstances(ctx context.Context, processID string) ([]process.Instance, error) {
+	s.mu.Lock()
+	s.listInstancesCalls++
+	s.mu.Unlock()
+	return s.Store.ListInstances(ctx, processID)
+}
+
+func (s *countingStateStore) GetBootID(ctx context.Context) (string, error) {
+	s.mu.Lock()
+	s.bootIDCalls++
+	s.mu.Unlock()
+	return s.Store.GetBootID(ctx)
+}
+
+func (s *countingStateStore) resetCounts() {
+	s.mu.Lock()
+	s.listInstancesCalls = 0
+	s.bootIDCalls = 0
+	s.mu.Unlock()
+}
+
+func (s *countingStateStore) counts() (listInstances, bootID int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.listInstancesCalls, s.bootIDCalls
+}
+
+func TestReconcile_ReadsOneStoreSnapshotPerPass(t *testing.T) {
+	ctx := context.Background()
+	root := shortRoot(t)
+	base := openStoreAt(t, filepath.Join(root, "store.db"))
+	layout := paths.New(root)
+	if err := layout.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	counted := &countingStateStore{Store: base}
+	m := process.NewManager(process.Deps{Store: counted, Layout: layout, Now: time.Now})
+	if _, err := m.ApplySpec(ctx, process.ProcessSpec{
+		ProcessID: "p1",
+		Name:      "stopped",
+		Command:   "/bin/true",
+		Instances: 10,
+	}, 0, "op-create", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	counted.resetCounts()
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	listCalls, bootCalls := counted.counts()
+	if listCalls != 1 || bootCalls != 1 {
+		t.Fatalf("store reads per reconcile: ListInstances=%d GetBootID=%d, want 1 each", listCalls, bootCalls)
+	}
+}
+
+func TestReconcile_ThrottlesHealthyShimStatusChecks(t *testing.T) {
+	now := time.Unix(2_000_000, 0)
+	m, st, _ := newTestManagerNow(t, func() time.Time { return now })
+	inst := startSleep(t, m, st, process.ProcessSpec{
+		ProcessID: "p1",
+		Name:      "sleep",
+		Command:   "/bin/sleep",
+		Args:      []string{"60"},
+		Instances: 1,
+		Health:    process.HealthCheckSpec{Type: "alive", Interval: time.Minute},
+	})
+
+	first := process.LastShimCheckForTest(m, inst.InstanceID)
+	if first.IsZero() {
+		t.Fatal("starting an instance must record a shim status verification")
+	}
+	now = now.Add(time.Second)
+	if err := m.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := process.LastShimCheckForTest(m, inst.InstanceID); !got.Equal(first) {
+		t.Fatalf("healthy shim was checked again after 1s: first=%v got=%v", first, got)
+	}
+	now = now.Add(10 * time.Second)
+	if err := m.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := process.LastShimCheckForTest(m, inst.InstanceID); !got.After(first) {
+		t.Fatalf("shim was not rechecked after verification interval: first=%v got=%v", first, got)
+	}
+}
+
 func TestApplySpec_CreatesInstancesAndIdempotentOp(t *testing.T) {
 	ctx := context.Background()
 	m, st, _ := newTestManager(t)

@@ -15,7 +15,10 @@ import (
 	shimpb "github.com/qleelulu/procmesh/proto/shim/v1"
 )
 
-const adoptRequiredMsg = "adopt required"
+const (
+	adoptRequiredMsg = "adopt required"
+	shimVerifyEvery  = 10 * time.Second
+)
 
 func (m *Manager) Reconcile(ctx context.Context) error {
 	m.mu.Lock()
@@ -24,6 +27,10 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 }
 
 func (m *Manager) reconcileLocked(ctx context.Context) error {
+	boot, err := m.deps.Store.GetBootID(ctx)
+	if err != nil {
+		return err
+	}
 	specs, err := m.deps.Store.ListSpecs(ctx)
 	if err != nil {
 		return err
@@ -32,7 +39,7 @@ func (m *Manager) reconcileLocked(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	byName, err := m.instancesByName(ctx, specs)
+	byProcess, byName, err := m.instanceSnapshots(ctx, specs)
 	if err != nil {
 		return err
 	}
@@ -41,10 +48,7 @@ func (m *Manager) reconcileLocked(ctx context.Context) error {
 		if !ok {
 			continue
 		}
-		insts, err := m.deps.Store.ListInstances(ctx, pid)
-		if err != nil {
-			return err
-		}
+		insts := byProcess[pid]
 		for _, inst := range insts {
 			if inst.Ordinal >= spec.Instances {
 				if err := m.stopInstance(ctx, spec, &inst); err != nil {
@@ -59,7 +63,7 @@ func (m *Manager) reconcileLocked(ctx context.Context) error {
 				}
 				continue
 			}
-			if err := m.reconcileInstance(ctx, spec, &inst, byName); err != nil {
+			if err := m.reconcileInstance(ctx, spec, &inst, byName, boot); err != nil {
 				// one startInstance failure must not abort later processes
 				continue
 			}
@@ -82,21 +86,24 @@ func (m *Manager) getSpecByID(specs []ProcessSpec, pid string) (ProcessSpec, boo
 	return ProcessSpec{}, false
 }
 
-// instancesByName snapshots current instance rows keyed by spec Name.
-func (m *Manager) instancesByName(ctx context.Context, specs []ProcessSpec) (map[string][]Instance, error) {
+// instanceSnapshots reads each process once and indexes the same snapshot by
+// process ID and name for dependency checks and reconciliation.
+func (m *Manager) instanceSnapshots(ctx context.Context, specs []ProcessSpec) (map[string][]Instance, map[string][]Instance, error) {
+	byProcess := make(map[string][]Instance, len(specs))
 	byName := make(map[string][]Instance, len(specs))
 	for _, spec := range specs {
 		insts, err := m.deps.Store.ListInstances(ctx, spec.ProcessID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
+		byProcess[spec.ProcessID] = insts
 		byName[spec.Name] = insts
 	}
-	return byName, nil
+	return byProcess, byName, nil
 }
 
-func (m *Manager) reconcileInstance(ctx context.Context, spec ProcessSpec, inst *Instance, byName map[string][]Instance) error {
-	if err := m.refresh(ctx, inst); err != nil {
+func (m *Manager) reconcileInstance(ctx context.Context, spec ProcessSpec, inst *Instance, byName map[string][]Instance, boot string) error {
+	if err := m.refresh(ctx, inst, boot); err != nil {
 		return err
 	}
 
@@ -124,7 +131,7 @@ func (m *Manager) reconcileInstance(ctx context.Context, spec ProcessSpec, inst 
 
 	if inst.Desired == DesiredRunning {
 		if inst.Observed == ObservedRunning {
-			return m.applyHealth(ctx, spec, inst)
+			return m.applyHealth(ctx, spec, inst, boot)
 		}
 		if inst.Observed == ObservedStarting {
 			return nil
@@ -161,7 +168,7 @@ func (m *Manager) reconcileInstance(ctx context.Context, spec ProcessSpec, inst 
 				} else {
 					inst.Observed = ObservedStarting
 				}
-				return m.startInstance(ctx, spec, inst, m.bootID(ctx))
+				return m.startInstance(ctx, spec, inst, boot)
 			}
 			// DecideRestart said neither restart nor fatal (never / clean on-failure).
 			// Stay EXITED/BACKOFF so the next pass does not treat this as STOPPED
@@ -175,7 +182,7 @@ func (m *Manager) reconcileInstance(ctx context.Context, spec ProcessSpec, inst 
 			if !DepsReady(spec, byName) {
 				return nil
 			}
-			return m.startInstance(ctx, spec, inst, m.bootID(ctx))
+			return m.startInstance(ctx, spec, inst, boot)
 		}
 	}
 
@@ -186,15 +193,25 @@ func (m *Manager) reconcileInstance(ctx context.Context, spec ProcessSpec, inst 
 	return nil
 }
 
-func (m *Manager) refresh(ctx context.Context, inst *Instance) error {
+func (m *Manager) refresh(ctx context.Context, inst *Instance, boot string) error {
+	now := m.now()
+	if inst.Desired == DesiredRunning &&
+		inst.Observed == ObservedRunning &&
+		sameBoot(inst.BootID, boot) &&
+		pidAlive(inst.PID) &&
+		pidAlive(inst.ShimPID) &&
+		now.Before(m.lastShimCheck[inst.InstanceID].Add(shimVerifyEvery)) {
+		return nil
+	}
+	m.lastShimCheck[inst.InstanceID] = now
 	m.closeClient(inst.InstanceID)
 	sock := m.deps.Layout.ShimSocket(inst.InstanceID)
 	if !socketExists(sock) {
-		return m.refreshNoSocket(ctx, inst)
+		return m.refreshNoSocket(ctx, inst, boot)
 	}
 	client, st, err := shim.Reconnect(ctx, sock)
 	if err != nil {
-		if pidAlive(inst.PID) && sameBoot(inst.BootID, m.bootID(ctx)) {
+		if pidAlive(inst.PID) && sameBoot(inst.BootID, boot) {
 			if err := m.markOrphan(ctx, *inst, inst.PID); err != nil {
 				return err
 			}
@@ -205,9 +222,9 @@ func (m *Manager) refresh(ctx context.Context, inst *Instance) error {
 	}
 	defer m.closeConn(client, inst.InstanceID)
 	if st != nil && st.GetAlive() {
-		if !sameBoot(inst.BootID, m.bootID(ctx)) {
+		if !sameBoot(inst.BootID, boot) {
 			// Previous-boot leftover: do not adopt the old PID as RUNNING.
-			return m.refreshNoSocket(ctx, inst)
+			return m.refreshNoSocket(ctx, inst, boot)
 		}
 		inst.PID = int(st.GetPid())
 		if inst.Observed != ObservedRunning {
@@ -230,8 +247,7 @@ func (m *Manager) refresh(ctx context.Context, inst *Instance) error {
 
 // refreshNoSocket handles a missing shim socket without launching a second copy
 // when the managed PID is still live on the same boot.
-func (m *Manager) refreshNoSocket(ctx context.Context, inst *Instance) error {
-	boot := m.bootID(ctx)
+func (m *Manager) refreshNoSocket(ctx context.Context, inst *Instance, boot string) error {
 	livePID := 0
 	if sameBoot(inst.BootID, boot) && pidAlive(inst.PID) {
 		livePID = inst.PID
@@ -287,6 +303,7 @@ func (m *Manager) handleExit(ctx context.Context, inst *Instance, st *shimpb.Sta
 		inst.Observed = ObservedExited
 	}
 	inst.Health = HealthUnknown
+	delete(m.lastShimCheck, inst.InstanceID)
 	if shouldCount {
 		m.recordFailure(inst.InstanceID)
 		// Clear any prior nextTry so the next DecideRestart arms a fresh Delay.
@@ -408,6 +425,7 @@ func (m *Manager) startInstance(ctx context.Context, spec ProcessSpec, inst *Ins
 		return fmt.Errorf("start: %s", msg)
 	}
 	now := m.now()
+	m.lastShimCheck[inst.InstanceID] = now
 	inst.PID = int(resp.GetPid())
 	inst.StartedAt = &now
 	inst.ExitAt = nil
@@ -431,6 +449,7 @@ func (m *Manager) startInstance(ctx context.Context, spec ProcessSpec, inst *Ins
 }
 
 func (m *Manager) applyRunning(ctx context.Context, inst *Instance, pid int, boot string) error {
+	m.lastShimCheck[inst.InstanceID] = m.now()
 	inst.PID = pid
 	inst.Health = HealthUnknown
 	inst.BootID = boot
@@ -517,6 +536,7 @@ func (m *Manager) signalStop(ctx context.Context, inst *Instance, signal, killSi
 		inst.Observed = ObservedStopped
 	}
 	inst.Health = HealthUnknown
+	delete(m.lastShimCheck, inst.InstanceID)
 	return m.deps.Store.PutInstance(ctx, *inst)
 }
 
@@ -553,6 +573,7 @@ func (m *Manager) forgetInstance(id string) {
 	m.closeClient(id)
 	delete(m.failures, id)
 	delete(m.nextTry, id)
+	delete(m.lastShimCheck, id)
 	m.resetHealth(id)
 }
 
@@ -571,7 +592,7 @@ func (m *Manager) tracker(id string, spec HealthCheckSpec) *health.Tracker {
 	return tr
 }
 
-func (m *Manager) applyHealth(ctx context.Context, spec ProcessSpec, inst *Instance) error {
+func (m *Manager) applyHealth(ctx context.Context, spec ProcessSpec, inst *Instance, boot string) error {
 	now := m.now()
 	if inst.StartedAt != nil && now.Before(inst.StartedAt.Add(spec.Health.InitialDelay)) {
 		return nil
@@ -642,7 +663,7 @@ func (m *Manager) applyHealth(ctx context.Context, spec ProcessSpec, inst *Insta
 		return err
 	}
 	inst.Desired = desired
-	return m.startInstance(ctx, spec, inst, m.bootID(ctx))
+	return m.startInstance(ctx, spec, inst, boot)
 }
 
 func exitCode(inst *Instance) int {

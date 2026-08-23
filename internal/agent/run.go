@@ -41,6 +41,40 @@ import (
 const defaultGossipListen = "127.0.0.1:18689"
 const defaultRPCListen = "127.0.0.1:18683"
 
+const (
+	diskProtectEvery    = 5 * time.Second
+	logRotateEvery      = 10 * time.Second
+	backupScheduleEvery = 5 * time.Second
+)
+
+type agentLoopWork struct {
+	diskProtect    bool
+	logRotate      bool
+	backupSchedule bool
+}
+
+type agentLoopCadence struct {
+	lastDiskProtect    time.Time
+	lastLogRotate      time.Time
+	lastBackupSchedule time.Time
+}
+
+func (c *agentLoopCadence) due(now time.Time) agentLoopWork {
+	return agentLoopWork{
+		diskProtect:    dueAt(now, &c.lastDiskProtect, diskProtectEvery),
+		logRotate:      dueAt(now, &c.lastLogRotate, logRotateEvery),
+		backupSchedule: dueAt(now, &c.lastBackupSchedule, backupScheduleEvery),
+	}
+}
+
+func dueAt(now time.Time, last *time.Time, interval time.Duration) bool {
+	if !last.IsZero() && now.Before(last.Add(interval)) {
+		return false
+	}
+	*last = now
+	return true
+}
+
 // Options is the procmesh-agent runtime configuration.
 type Options struct {
 	DataDir            string
@@ -787,26 +821,30 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		go func() {
 			ticker := time.NewTicker(time.Second)
 			defer ticker.Stop()
+			var cadence agentLoopCadence
 			var lastBackupMin time.Time
 			for {
 				select {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
+					work := cadence.due(time.Now())
 					if err := mgr.Reconcile(ctx); err != nil {
 						opt.Logger.Warn("process reconcile failed", "error", err)
 					}
-					if logs != nil {
+					if logs != nil && work.diskProtect {
 						logs.ExtraLogDirs = mgr.CustomLogDirs(ctx)
 						if _, err := logs.Protect(ctx); err != nil {
 							opt.Logger.Warn("disk protection failed", "error", err)
 						}
 					}
-					_ = mgr.RotateLogs(ctx)
+					if work.logRotate {
+						_ = mgr.RotateLogs(ctx)
+					}
 					if mesh != nil {
 						mesh.Update()
 					}
-					if bak := rt.backup; bak != nil {
+					if bak := rt.backup; bak != nil && work.backupSchedule {
 						if rt.backupCoord != nil {
 							if err := rt.backupCoord.Tick(ctx); err != nil && ctx.Err() == nil {
 								opt.Logger.Warn("cluster backup schedule tick failed", "error", err)
