@@ -3,12 +3,13 @@ package rpc
 import "net/http"
 
 const (
-	HeaderTargetNode = "Procmesh-Target-Node"
-	HeaderSourceNode = "Procmesh-Source-Node"
-	HeaderLoginHop   = "Procmesh-Login-Hop"
-	HeaderUserID     = "Procmesh-User-ID"
-	HeaderSessionID  = "Procmesh-Session-ID"
-	HeaderTokenID    = "Procmesh-Token-ID"
+	HeaderTargetNode       = "Procmesh-Target-Node"
+	HeaderSourceNode       = "Procmesh-Source-Node"
+	HeaderLoginHop         = "Procmesh-Login-Hop"
+	HeaderUserID           = "Procmesh-User-ID"
+	HeaderSessionID        = "Procmesh-Session-ID"
+	HeaderTokenID          = "Procmesh-Token-ID"
+	HeaderBreakGlassReason = "Procmesh-Break-Glass-Reason"
 )
 
 func TargetOf(h http.Header) string    { return h.Get(HeaderTargetNode) }

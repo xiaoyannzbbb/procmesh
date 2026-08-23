@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/qleelulu/procmesh/internal/breakglass"
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/rpc"
 	"golang.org/x/sys/unix"
@@ -167,11 +168,24 @@ func TestP4_Case8_RemoveThenRejoinDenied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse B cert: %v", err)
 	}
+	const localProcess = "removed-agent-local"
+	code, out, errb := runP1CLI("--server", addrB, "process", "apply", "--file", writeSleepSpecNamed(t, localProcess), "--expected-revision", "0")
+	if code != 0 {
+		t.Fatalf("apply before remove exit=%d stderr=%q stdout=%q", code, errb, out)
+	}
+	code, out, errb = runP1CLI("--server", addrB, "process", "start", localProcess)
+	if code != 0 {
+		t.Fatalf("start before remove exit=%d stderr=%q stdout=%q", code, errb, out)
+	}
+	waitProcessPID(t, addrB, localProcess)
 
-	code, out, errb := runP1CLI("--server", addrA, "node", "remove", idB)
+	code, out, errb = runP1CLI("--server", addrA, "node", "remove", idB)
 	if code != 0 {
 		t.Fatalf("node remove exit=%d stderr=%q stdout=%q", code, errb, out)
 	}
+	breakGlassSocket := breakglass.DefaultSocketPath(rootB)
+	runBreakGlassLifecycle(t, breakGlassSocket, "stop", localProcess, "op-removed-agent-stop")
+	waitBreakGlassObserved(t, breakGlassSocket, localProcess, "STOPPED", 0)
 
 	code, out, errb = runP1CLI("--server", addrA, "--node", idB, "process", "restart", "sleep")
 	if code == 0 {

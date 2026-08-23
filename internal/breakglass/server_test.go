@@ -2,6 +2,7 @@ package breakglass
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/paths"
 	"github.com/qleelulu/procmesh/internal/process"
+	"github.com/qleelulu/procmesh/internal/rpc"
 	"github.com/qleelulu/procmesh/internal/store"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
@@ -134,9 +136,45 @@ func TestServer_ConfiguredGroupCanInspectOverUnixSocket(t *testing.T) {
 	if _, err := client.ListProcesses(context.Background(), connect.NewRequest(&procmeshv1.ListProcessesRequest{})); err != nil {
 		t.Fatalf("configured group member denied: %v", err)
 	}
-	_, err = client.StartProcess(context.Background(), connect.NewRequest(&procmeshv1.ProcessRefRequest{IdOrName: "worker"}))
-	if connect.CodeOf(err) != connect.CodePermissionDenied {
-		t.Fatalf("write procedure code=%v err=%v", connect.CodeOf(err), err)
+	hc := unixHTTPClient(socketPath)
+	base := "http://procmesh.local"
+	for name, call := range map[string]func() error{
+		"reset failure": func() error {
+			_, err := client.ResetFailure(context.Background(), connect.NewRequest(&procmeshv1.ProcessRefRequest{IdOrName: "worker"}))
+			return err
+		},
+		"apply": func() error {
+			_, err := client.ApplyProcess(context.Background(), connect.NewRequest(&procmeshv1.ApplyProcessRequest{}))
+			return err
+		},
+		"delete": func() error {
+			_, err := client.DeleteProcess(context.Background(), connect.NewRequest(&procmeshv1.DeleteProcessRequest{IdOrName: "worker"}))
+			return err
+		},
+		"adopt": func() error {
+			_, err := client.AdoptInstance(context.Background(), connect.NewRequest(&procmeshv1.AdoptRequest{InstanceId: "worker:0"}))
+			return err
+		},
+		"configuration": func() error {
+			_, err := procmeshv1connect.NewConfigServiceClient(hc, base).GetConfig(context.Background(), connect.NewRequest(&procmeshv1.GetConfigRequest{IdOrName: "worker"}))
+			return err
+		},
+		"backup": func() error {
+			_, err := procmeshv1connect.NewBackupServiceClient(hc, base).ListBackups(context.Background(), connect.NewRequest(&procmeshv1.ListBackupsRequest{}))
+			return err
+		},
+		"batch": func() error {
+			_, err := procmeshv1connect.NewBatchServiceClient(hc, base).ListBatches(context.Background(), connect.NewRequest(&procmeshv1.ListBatchesRequest{}))
+			return err
+		},
+		"control plane": func() error {
+			_, err := procmeshv1connect.NewClusterServiceClient(hc, base).Overview(context.Background(), connect.NewRequest(&procmeshv1.ClusterOverviewRequest{}))
+			return err
+		},
+	} {
+		if err := call(); err == nil {
+			t.Fatalf("%s unexpectedly allowed", name)
+		}
 	}
 	events, err := st.ListAuditAll(context.Background(), "", 10)
 	if err != nil {
@@ -150,6 +188,137 @@ func TestServer_ConfiguredGroupCanInspectOverUnixSocket(t *testing.T) {
 	}
 	if !rejected {
 		t.Fatalf("missing rejected write audit: %+v", events)
+	}
+}
+
+func TestServer_LifecycleRequiresRecoveryMetadataAndWritesCompleteAudit(t *testing.T) {
+	root := shortTempDir(t)
+	layout := paths.New(root)
+	if err := layout.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(layout.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	if _, err := st.PutSpec(ctx, process.ProcessSpec{
+		ProcessID: "worker-id", Name: "worker", OwnerAgentID: "agent-local", Command: "/bin/true", Instances: 1,
+	}, 0, "seed", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutInstance(ctx, process.Instance{
+		InstanceID: "worker-id:0", ProcessID: "worker-id", Desired: process.DesiredRunning,
+		Observed: process.ObservedStopped, Health: process.HealthUnknown,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.PutSpec(ctx, process.ProcessSpec{
+		ProcessID: "remote-id", Name: "remote", OwnerAgentID: "agent-remote", Command: "/bin/true", Instances: 1,
+	}, 0, "seed", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutInstance(ctx, process.Instance{
+		InstanceID: "remote-id:0", ProcessID: "remote-id", Desired: process.DesiredRunning,
+		Observed: process.ObservedStopped, Health: process.HealthUnknown,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	socketPath := filepath.Join(root, "break-glass.sock")
+	srv, err := New(Config{
+		SocketPath: socketPath,
+		LocalID:    "agent-local",
+		Manager:    process.NewManager(process.Deps{Store: st, Layout: layout, Now: time.Now}),
+		Audit:      st,
+		PeerLookup: func(net.Conn) (Peer, error) {
+			return Peer{PID: 42, UID: os.Geteuid(), GID: os.Getegid(), Username: "trusted"}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.Serve() }()
+	t.Cleanup(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdownCtx)
+		<-serveErr
+	})
+	client := procmeshv1connect.NewProcessServiceClient(unixHTTPClient(socketPath), "http://procmesh.local")
+
+	missingOperation := connect.NewRequest(&procmeshv1.ProcessRefRequest{IdOrName: "worker"})
+	missingOperation.Header().Set(rpc.HeaderBreakGlassReason, "recover service")
+	if _, err := client.StopProcess(ctx, missingOperation); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("missing operation ID code=%v err=%v", connect.CodeOf(err), err)
+	}
+	missingReason := connect.NewRequest(&procmeshv1.ProcessRefRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-missing-reason", Operator: "spoofed"}, IdOrName: "worker",
+	})
+	if _, err := client.StopProcess(ctx, missingReason); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("missing reason code=%v err=%v", connect.CodeOf(err), err)
+	}
+	remote := connect.NewRequest(&procmeshv1.ProcessRefRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-remote"}, IdOrName: "remote",
+	})
+	remote.Header().Set(rpc.HeaderBreakGlassReason, "recover service")
+	if _, err := client.StopProcess(ctx, remote); connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("remote owner code=%v err=%v", connect.CodeOf(err), err)
+	}
+	remoteInstances, err := st.ListInstances(ctx, "remote-id")
+	if err != nil || len(remoteInstances) != 1 || remoteInstances[0].Desired != process.DesiredRunning {
+		t.Fatalf("remote lifecycle state changed: %+v err=%v", remoteInstances, err)
+	}
+	before, err := st.ListInstances(ctx, "worker-id")
+	if err != nil || len(before) != 1 || before[0].Desired != process.DesiredRunning {
+		t.Fatalf("invalid requests changed lifecycle state: %+v err=%v", before, err)
+	}
+
+	valid := connect.NewRequest(&procmeshv1.ProcessRefRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-stop", Operator: "spoofed"}, IdOrName: "worker",
+	})
+	valid.Header().Set(rpc.HeaderBreakGlassReason, "recover service")
+	if _, err := client.StopProcess(ctx, valid); err != nil {
+		t.Fatalf("valid stop: %v", err)
+	}
+	after, err := st.ListInstances(ctx, "worker-id")
+	if err != nil || len(after) != 1 || after[0].Desired != process.DesiredStopped {
+		t.Fatalf("stop did not change lifecycle state: %+v err=%v", after, err)
+	}
+
+	account, err := user.LookupId(strconv.Itoa(os.Geteuid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err := st.GetOperation(ctx, "op-stop")
+	if err != nil || op.Operator != account.Username || op.Type != "set_desired" || op.Target != "worker-id" || op.Status != store.OpSuccess {
+		t.Fatalf("journal=%+v err=%v", op, err)
+	}
+	events, err := st.ListAuditAll(ctx, "worker-id", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lifecycle *store.AuditEvent
+	for i := range events {
+		if events[i].Action == "break_glass.process.stop" {
+			lifecycle = &events[i]
+			break
+		}
+	}
+	if lifecycle == nil {
+		t.Fatalf("missing lifecycle audit: %+v", events)
+	}
+	if lifecycle.OperationID != "op-stop" || lifecycle.TargetAgent != "agent-local" || lifecycle.Username != account.Username || lifecycle.Result != "success" || lifecycle.Timestamp.IsZero() {
+		t.Fatalf("incomplete lifecycle audit: %+v", lifecycle)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(lifecycle.Metadata, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata["reason"] != "recover service" || metadata["process_id"] != "worker-id" || metadata["process_name"] != "worker" || metadata["error_code"] != "" || metadata["os_uid"] != float64(os.Geteuid()) {
+		t.Fatalf("audit metadata=%v", metadata)
 	}
 }
 

@@ -199,11 +199,22 @@ socket 父目录需要允许该组穿越。配置组后 socket 权限为 `0660`�
 procmesh --break-glass=/run/procmesh-break-glass.sock process list
 procmesh --break-glass=/run/procmesh-break-glass.sock process get demo-worker
 procmesh --break-glass=/run/procmesh-break-glass.sock process logs demo-worker --lines 100
+procmesh --break-glass=/run/procmesh-break-glass.sock \
+  --operation-id 9e602ad6-408f-4c59-9558-1bfbd0df59b7 \
+  --reason 'recover service after control quorum loss' \
+  process restart demo-worker
 ```
 
-该模式只支持 `process list/get/logs`，不使用集群 Session，不接受 `--server`、
-`--node` 或 `--auth-token`，失败时也不会自动切换到普通 TCP 模式。每次成功、失败或
-拒绝的请求都会写入本机 SQLite 审计。
+该模式只支持 `process list/get/logs/start/stop/restart/kill`。四个生命周期操作必须
+显式提供非空 `--operation-id` 和 `--reason`，重复 operation ID 复用本机幂等 journal，
+不会重复执行生命周期副作用。该通道不使用集群 Session，不接受 `--server`、`--node`
+或 `--auth-token`，失败时也不会自动切换到普通 TCP 模式。
+
+break-glass 明确拒绝 process apply/delete/adopt、配置编辑、backup/restore、batch、
+远程节点选择和全部 Control Plane 操作，也不会签发 Session、API Token 或任何可通过
+TCP 使用的凭证。每次成功、失败或拒绝的请求都会写入本机 SQLite 审计；生命周期审计
+包含 OS UID/用户、原因、operation ID、动作、本机节点、Process 身份、时间、结果和
+脱敏错误码。
 
 运行 `procmesh` 可查看完整命令列表和参数说明。
 

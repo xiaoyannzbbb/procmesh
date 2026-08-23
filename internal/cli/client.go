@@ -71,7 +71,7 @@ func newClient(server, opID, operator, node, authToken string) *client {
 	}
 }
 
-func newBreakGlassClient(socketPath, opID, operator string) *client {
+func newBreakGlassClient(socketPath, opID, operator, reason string) *client {
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
@@ -79,14 +79,35 @@ func newBreakGlassClient(socketPath, opID, operator string) *client {
 	}
 	hc := &http.Client{Timeout: httpTimeout, Transport: transport}
 	const base = "http://procmesh.local"
+	opts := []connect.ClientOption{}
+	if reason != "" {
+		opts = append(opts, connect.WithInterceptors(breakGlassReasonInterceptor(reason)))
+	}
 	return &client{
 		base:     base,
 		http:     hc,
-		proc:     procmeshv1connect.NewProcessServiceClient(hc, base),
-		logs:     procmeshv1connect.NewLogServiceClient(hc, base),
+		proc:     procmeshv1connect.NewProcessServiceClient(hc, base, opts...),
+		logs:     procmeshv1connect.NewLogServiceClient(hc, base, opts...),
 		opID:     opID,
 		operator: operator,
 	}
+}
+
+type breakGlassReasonInterceptor string
+
+func (r breakGlassReasonInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
+	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+		req.Header().Set(rpc.HeaderBreakGlassReason, string(r))
+		return next(ctx, req)
+	}
+}
+
+func (r breakGlassReasonInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
+	return next
+}
+
+func (r breakGlassReasonInterceptor) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
+	return next
 }
 
 // targetNodeInterceptor sets Procmesh-Target-Node on unary and streaming client RPCs.

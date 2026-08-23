@@ -16,8 +16,9 @@ const usageText = `usage: procmesh [flags] <command>
 
 flags:
   --server ADDR            Connect base (default 127.0.0.1:18680)
-  --break-glass SOCKET     inspect the local Agent over its Unix socket
+  --break-glass SOCKET     inspect or recover the local Agent over its Unix socket
   --operation-id ID        mutation id (default generated UUID)
+  --reason TEXT            required reason for break-glass lifecycle mutations
   --operator NAME          operator (default $USER or cli)
   --node NODE              target owner node_id or hostname
   --auth-token TOKEN       Bearer token (overrides session file)
@@ -101,12 +102,14 @@ func isUsageError(err error) bool {
 }
 
 type options struct {
-	server      string
-	serverSet   bool
-	breakGlass  string
-	operationID string
-	operator    string
-	node        string
+	server         string
+	serverSet      bool
+	breakGlass     string
+	operationID    string
+	operationIDSet bool
+	reason         string
+	operator       string
+	node           string
 
 	file             string
 	expectedRevision int64
@@ -195,6 +198,9 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if err := validateBreakGlassMode(opt); err != nil {
 		return printUsage(stderr, err)
 	}
+	if opt.breakGlass == "" && strings.TrimSpace(opt.reason) != "" {
+		return printUsage(stderr, usageError("--reason is only valid with --break-glass"))
+	}
 	if opt.operationID == "" {
 		id, err := newUUID()
 		if err != nil {
@@ -210,7 +216,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	cmd, rest := opt.args[0], opt.args[1:]
 	var c *client
 	if opt.breakGlass != "" {
-		c = newBreakGlassClient(opt.breakGlass, opt.operationID, opt.operator)
+		c = newBreakGlassClient(opt.breakGlass, opt.operationID, opt.operator, opt.reason)
 	} else {
 		c = newClient(opt.server, opt.operationID, opt.operator, opt.node, sessionTokenFor(cmd, opt.server, opt.authToken))
 	}
@@ -362,6 +368,9 @@ func applyFlag(opt *options, name, val string) error {
 		opt.breakGlass = val
 	case "operation-id":
 		opt.operationID = val
+		opt.operationIDSet = true
+	case "reason":
+		opt.reason = val
 	case "operator":
 		opt.operator = val
 	case "node":
@@ -570,14 +579,23 @@ func validateBreakGlassMode(opt options) error {
 	if opt.authToken != "" {
 		return usageError("--break-glass does not accept cluster credentials")
 	}
+	const supported = "--break-glass only supports process list, get, logs, start, stop, restart, and kill"
 	if len(opt.args) < 2 || opt.args[0] != "process" {
-		return usageError("--break-glass only supports process list, get, and logs")
+		return usageError(supported)
 	}
 	switch opt.args[1] {
 	case "list", "get", "logs":
 		return nil
+	case "start", "stop", "restart", "kill":
+		if !opt.operationIDSet || strings.TrimSpace(opt.operationID) == "" {
+			return usageError("break-glass lifecycle mutation requires --operation-id")
+		}
+		if strings.TrimSpace(opt.reason) == "" {
+			return usageError("break-glass lifecycle mutation requires --reason")
+		}
+		return nil
 	default:
-		return usageError("--break-glass only supports process list, get, and logs")
+		return usageError(supported)
 	}
 }
 

@@ -123,7 +123,7 @@ func TestCLI_UnknownCommand(t *testing.T) {
 	}
 }
 
-func TestCLI_BreakGlassModeIsExplicitAndReadOnly(t *testing.T) {
+func TestCLI_BreakGlassModeIsExplicitAndRestricted(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		args []string
@@ -145,9 +145,44 @@ func TestCLI_BreakGlassModeIsExplicitAndReadOnly(t *testing.T) {
 			want: "does not accept cluster credentials",
 		},
 		{
-			name: "write command",
-			args: []string{"--break-glass=/tmp/procmesh.sock", "process", "start", "worker"},
-			want: "only supports process list, get, and logs",
+			name: "apply",
+			args: []string{"--break-glass=/tmp/procmesh.sock", "--operation-id", "op-apply", "--reason", "recover service", "process", "apply"},
+			want: "only supports process list, get, logs, start, stop, restart, and kill",
+		},
+		{
+			name: "delete",
+			args: []string{"--break-glass=/tmp/procmesh.sock", "process", "delete", "worker"},
+			want: "only supports process list, get, logs, start, stop, restart, and kill",
+		},
+		{
+			name: "adopt",
+			args: []string{"--break-glass=/tmp/procmesh.sock", "process", "adopt", "worker:0"},
+			want: "only supports process list, get, logs, start, stop, restart, and kill",
+		},
+		{
+			name: "configuration",
+			args: []string{"--break-glass=/tmp/procmesh.sock", "process", "history", "worker"},
+			want: "only supports process list, get, logs, start, stop, restart, and kill",
+		},
+		{
+			name: "backup",
+			args: []string{"--break-glass=/tmp/procmesh.sock", "backup", "list"},
+			want: "only supports process list, get, logs, start, stop, restart, and kill",
+		},
+		{
+			name: "restore",
+			args: []string{"--break-glass=/tmp/procmesh.sock", "backup", "restore", "snapshot"},
+			want: "only supports process list, get, logs, start, stop, restart, and kill",
+		},
+		{
+			name: "batch",
+			args: []string{"--break-glass=/tmp/procmesh.sock", "batch", "list"},
+			want: "only supports process list, get, logs, start, stop, restart, and kill",
+		},
+		{
+			name: "control plane",
+			args: []string{"--break-glass=/tmp/procmesh.sock", "cluster", "init"},
+			want: "only supports process list, get, logs, start, stop, restart, and kill",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -156,6 +191,51 @@ func TestCLI_BreakGlassModeIsExplicitAndReadOnly(t *testing.T) {
 				t.Fatalf("exit=%d stderr=%q, want usage error containing %q", code, errb, tc.want)
 			}
 		})
+	}
+}
+
+func TestCLI_BreakGlassLifecycleRequiresExplicitOperationIDAndReason(t *testing.T) {
+	for _, action := range []string{"start", "stop", "restart", "kill"} {
+		t.Run(action+" missing operation ID", func(t *testing.T) {
+			code, _, errb := runCLI(
+				"--break-glass=/tmp/procmesh.sock",
+				"--reason", "recover service",
+				"process", action, "worker",
+			)
+			if code != 2 || !strings.Contains(errb, "requires --operation-id") {
+				t.Fatalf("exit=%d stderr=%q", code, errb)
+			}
+		})
+
+		t.Run(action+" missing reason", func(t *testing.T) {
+			code, _, errb := runCLI(
+				"--break-glass=/tmp/procmesh.sock",
+				"--operation-id", "op-"+action,
+				"process", action, "worker",
+			)
+			if code != 2 || !strings.Contains(errb, "requires --reason") {
+				t.Fatalf("exit=%d stderr=%q", code, errb)
+			}
+		})
+
+		t.Run(action+" accepts required fields", func(t *testing.T) {
+			code, _, errb := runCLI(
+				"--break-glass=/tmp/procmesh-missing.sock",
+				"--operation-id", "op-"+action,
+				"--reason", "recover service",
+				"process", action, "worker",
+			)
+			if code == 2 {
+				t.Fatalf("valid lifecycle command rejected as usage error: %q", errb)
+			}
+		})
+	}
+}
+
+func TestCLI_ReasonIsBreakGlassOnly(t *testing.T) {
+	code, _, errb := runCLI("--reason", "recover service", "process", "list")
+	if code != 2 || !strings.Contains(errb, "only valid with --break-glass") {
+		t.Fatalf("exit=%d stderr=%q", code, errb)
 	}
 }
 

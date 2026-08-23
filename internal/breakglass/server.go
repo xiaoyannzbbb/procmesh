@@ -19,6 +19,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/api"
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/process"
+	"github.com/qleelulu/procmesh/internal/rpc"
 	"github.com/qleelulu/procmesh/internal/store"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
@@ -104,6 +105,7 @@ func New(cfg Config) (*Server, error) {
 	}
 	authorizer := &accessController{
 		audit:      cfg.Audit,
+		manager:    cfg.Manager,
 		localID:    cfg.LocalID,
 		serverUID:  os.Geteuid(),
 		allowedGID: allowedGID,
@@ -211,6 +213,7 @@ func enrichPeer(peer Peer) Peer {
 
 type accessController struct {
 	audit      AuditStore
+	manager    *process.Manager
 	localID    string
 	serverUID  int
 	allowedGID int
@@ -219,20 +222,47 @@ type accessController struct {
 
 func (a *accessController) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
-		action, target, allowedProcedure := describeRequest(req.Spec().Procedure, req.Any())
+		description := describeRequest(req.Spec().Procedure, req.Any())
+		description.reason = strings.TrimSpace(req.Header().Get(rpc.HeaderBreakGlassReason))
 		peer, authorized := a.authorize(ctx)
-		if !authorized || !allowedProcedure {
-			if err := a.record(peer, action, target, "denied"); err != nil {
+		if !authorized {
+			if err := a.record(peer, description, "denied", "DENIED"); err != nil {
 				return nil, auditUnavailable(err)
 			}
 			return nil, accessDenied()
+		}
+		a.describeProcess(ctx, &description)
+		if !description.allowed {
+			if err := a.record(peer, description, "denied", "DENIED"); err != nil {
+				return nil, auditUnavailable(err)
+			}
+			return nil, accessDenied()
+		}
+		if description.mutation {
+			if strings.TrimSpace(description.operationID) == "" {
+				if err := a.record(peer, description, "error", "INVALID"); err != nil {
+					return nil, auditUnavailable(err)
+				}
+				return nil, api.ToConnect(errcode.E(errcode.INVALID, "operation_id required"))
+			}
+			if description.reason == "" {
+				if err := a.record(peer, description, "error", "INVALID"); err != nil {
+					return nil, auditUnavailable(err)
+				}
+				return nil, api.ToConnect(errcode.E(errcode.INVALID, "break-glass reason required"))
+			}
+			if message, ok := req.Any().(*procmeshv1.ProcessRefRequest); ok {
+				message.Meta.OperationId = strings.TrimSpace(message.Meta.GetOperationId())
+				message.Meta.Operator = peerOperator(peer)
+				description.operationID = message.Meta.GetOperationId()
+			}
 		}
 		response, callErr := next(ctx, req)
 		result := "success"
 		if callErr != nil {
 			result = "error"
 		}
-		if err := a.record(peer, action, target, result); err != nil {
+		if err := a.record(peer, description, result, redactedErrorCode(callErr)); err != nil {
 			return nil, auditUnavailable(err)
 		}
 		return response, callErr
@@ -246,7 +276,8 @@ func (a *accessController) WrapStreamingClient(next connect.StreamingClientFunc)
 func (a *accessController) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
 	return func(ctx context.Context, conn connect.StreamingHandlerConn) error {
 		peer, _ := a.authorize(ctx)
-		if err := a.record(peer, "break_glass.reject", conn.Spec().Procedure, "denied"); err != nil {
+		description := requestDescription{action: "break_glass.reject", target: conn.Spec().Procedure}
+		if err := a.record(peer, description, "denied", "DENIED"); err != nil {
 			return auditUnavailable(err)
 		}
 		return accessDenied()
@@ -279,38 +310,87 @@ func (a *accessController) authorize(ctx context.Context) (Peer, bool) {
 
 func (a *accessController) rejectUnknown(w http.ResponseWriter, r *http.Request) {
 	peer, _ := a.authorize(r.Context())
-	if err := a.record(peer, "break_glass.reject", r.URL.Path, "denied"); err != nil {
+	description := requestDescription{action: "break_glass.reject", target: r.URL.Path}
+	if err := a.record(peer, description, "denied", "DENIED"); err != nil {
 		http.Error(w, "break-glass audit unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	http.Error(w, "break-glass access denied", http.StatusForbidden)
 }
 
-func (a *accessController) record(peer Peer, action, target, result string) error {
+func (a *accessController) describeProcess(ctx context.Context, description *requestDescription) {
+	if a.manager == nil || description.target == "" || description.target == "local-agent" {
+		return
+	}
+	spec, err := a.manager.Resolve(ctx, description.target)
+	if err != nil {
+		return
+	}
+	description.processID = spec.ProcessID
+	description.processName = spec.Name
+}
+
+func (a *accessController) record(peer Peer, description requestDescription, result, errorCode string) error {
+	osUser := peerOperator(peer)
 	metadata, _ := json.Marshal(map[string]any{
-		"os_uid":  peer.UID,
-		"os_gid":  peer.GID,
-		"os_pid":  peer.PID,
-		"os_user": peer.Username,
-		"socket":  a.socketPath,
-		"target":  target,
+		"os_uid":       peer.UID,
+		"os_gid":       peer.GID,
+		"os_pid":       peer.PID,
+		"os_user":      osUser,
+		"socket":       a.socketPath,
+		"target":       description.target,
+		"process_id":   description.processID,
+		"process_name": description.processName,
+		"reason":       description.reason,
+		"error_code":   errorCode,
 	})
+	resource := description.target
+	if description.processID != "" {
+		resource = description.processID
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), auditTimeout)
 	defer cancel()
 	if err := a.audit.AppendAudit(ctx, store.AuditEvent{
 		Timestamp:   time.Now().UTC(),
 		UserID:      "uid:" + strconv.Itoa(peer.UID),
-		Username:    peer.Username,
+		Username:    osUser,
 		SourceIP:    "unix",
 		TargetAgent: a.localID,
-		Resource:    target,
-		Action:      action,
+		Resource:    resource,
+		Action:      description.action,
+		OperationID: description.operationID,
 		Result:      result,
 		Metadata:    metadata,
 	}); err != nil {
 		return fmt.Errorf("append break-glass audit: %w", err)
 	}
 	return nil
+}
+
+func peerOperator(peer Peer) string {
+	if peer.Username != "" {
+		return peer.Username
+	}
+	return "uid:" + strconv.Itoa(peer.UID)
+}
+
+func redactedErrorCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	var connectErr *connect.Error
+	if errors.As(err, &connectErr) {
+		for _, detail := range connectErr.Details() {
+			message, detailErr := detail.Value()
+			if detailErr != nil {
+				continue
+			}
+			if info, ok := message.(*procmeshv1.ErrorInfo); ok && info.GetCode() != "" {
+				return info.GetCode()
+			}
+		}
+	}
+	return strings.ToUpper(connect.CodeOf(err).String())
 }
 
 func accessDenied() error {
@@ -321,22 +401,56 @@ func auditUnavailable(err error) error {
 	return api.ToConnect(errcode.Wrap(errcode.UNAVAILABLE, "break-glass audit unavailable", err))
 }
 
-func describeRequest(procedure string, message any) (action, target string, allowed bool) {
+type requestDescription struct {
+	action      string
+	target      string
+	allowed     bool
+	mutation    bool
+	operationID string
+	reason      string
+	processID   string
+	processName string
+}
+
+func describeRequest(procedure string, message any) requestDescription {
 	switch procedure {
 	case procmeshv1connect.ProcessServiceListProcessesProcedure:
-		return "break_glass.process.list", "local-agent", true
+		return requestDescription{action: "break_glass.process.list", target: "local-agent", allowed: true}
 	case procmeshv1connect.ProcessServiceGetProcessProcedure:
 		request, _ := message.(*procmeshv1.GetProcessRequest)
-		return "break_glass.process.get", request.GetIdOrName(), true
+		return requestDescription{action: "break_glass.process.get", target: request.GetIdOrName(), allowed: true}
 	case procmeshv1connect.LogServiceTailLogsProcedure:
 		request, _ := message.(*procmeshv1.TailLogsRequest)
-		return "break_glass.process.logs", request.GetIdOrName(), true
+		return requestDescription{action: "break_glass.process.logs", target: request.GetIdOrName(), allowed: true}
+	case procmeshv1connect.ProcessServiceStartProcessProcedure,
+		procmeshv1connect.ProcessServiceStopProcessProcedure,
+		procmeshv1connect.ProcessServiceRestartProcessProcedure,
+		procmeshv1connect.ProcessServiceKillProcessProcedure:
+		request, _ := message.(*procmeshv1.ProcessRefRequest)
+		action := ""
+		switch procedure {
+		case procmeshv1connect.ProcessServiceStartProcessProcedure:
+			action = "start"
+		case procmeshv1connect.ProcessServiceStopProcessProcedure:
+			action = "stop"
+		case procmeshv1connect.ProcessServiceRestartProcessProcedure:
+			action = "restart"
+		case procmeshv1connect.ProcessServiceKillProcessProcedure:
+			action = "kill"
+		}
+		return requestDescription{
+			action:      "break_glass.process." + action,
+			target:      request.GetIdOrName(),
+			allowed:     true,
+			mutation:    true,
+			operationID: request.GetMeta().GetOperationId(),
+		}
 	default:
 		if request, ok := message.(*procmeshv1.ProcessRefRequest); ok && request.GetIdOrName() != "" {
-			return "break_glass.reject", request.GetIdOrName(), false
+			return requestDescription{action: "break_glass.reject", target: request.GetIdOrName()}
 		}
 		name := strings.TrimPrefix(procedure, "/")
-		return "break_glass.reject", name, false
+		return requestDescription{action: "break_glass.reject", target: name}
 	}
 }
 
@@ -366,6 +480,34 @@ func (s *localProcessAPI) GetProcess(ctx context.Context, req *connect.Request[p
 		return nil, err
 	}
 	return s.ProcessAPI.GetProcess(ctx, req)
+}
+
+func (s *localProcessAPI) StartProcess(ctx context.Context, req *connect.Request[procmeshv1.ProcessRefRequest]) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
+	if err := s.owner.require(ctx, req.Msg.GetIdOrName()); err != nil {
+		return nil, err
+	}
+	return s.ProcessAPI.StartProcess(ctx, req)
+}
+
+func (s *localProcessAPI) StopProcess(ctx context.Context, req *connect.Request[procmeshv1.ProcessRefRequest]) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
+	if err := s.owner.require(ctx, req.Msg.GetIdOrName()); err != nil {
+		return nil, err
+	}
+	return s.ProcessAPI.StopProcess(ctx, req)
+}
+
+func (s *localProcessAPI) RestartProcess(ctx context.Context, req *connect.Request[procmeshv1.ProcessRefRequest]) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
+	if err := s.owner.require(ctx, req.Msg.GetIdOrName()); err != nil {
+		return nil, err
+	}
+	return s.ProcessAPI.RestartProcess(ctx, req)
+}
+
+func (s *localProcessAPI) KillProcess(ctx context.Context, req *connect.Request[procmeshv1.ProcessRefRequest]) (*connect.Response[procmeshv1.ProcessRefResponse], error) {
+	if err := s.owner.require(ctx, req.Msg.GetIdOrName()); err != nil {
+		return nil, err
+	}
+	return s.ProcessAPI.KillProcess(ctx, req)
 }
 
 type localOwner struct {

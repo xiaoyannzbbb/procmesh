@@ -2,8 +2,10 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +14,107 @@ import (
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/store"
 )
+
+func TestAccept_BreakGlassLifecycleWithoutQuorumOrClusterCredentials(t *testing.T) {
+	leaderAddr, _, stopLeader := startClusterAgentCtl(t, "")
+	ownerRoot, err := os.MkdirTemp("", "pm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(ownerRoot) })
+	socketPath := filepath.Join(ownerRoot, "break-glass.sock")
+	ownerAddr, _ := startClusterAgentAtOpts(t, ownerRoot, Options{BreakGlassSocket: socketPath})
+	password := joinTwoAndPassword(t, leaderAddr, ownerAddr)
+	loginAdmin(t, ownerAddr, password)
+
+	name := "break-glass-lifecycle"
+	initialPID := prepareLoggedProcess(t, quorumCredential{}, ownerAddr, name)
+	stopLeader()
+	waitCredentialNoQuorum(t, quorumCredential{}, ownerAddr)
+	t.Setenv("PROCMESH_SESSION", filepath.Join(ownerRoot, "missing-session"))
+
+	runBreakGlassLifecycle(t, socketPath, "stop", name, "op-bg-stop")
+	waitBreakGlassObserved(t, socketPath, name, "STOPPED", 0)
+	runBreakGlassLifecycle(t, socketPath, "start", name, "op-bg-start")
+	startedPID := waitBreakGlassObserved(t, socketPath, name, "RUNNING", initialPID)
+	runBreakGlassLifecycle(t, socketPath, "restart", name, "op-bg-restart")
+	restartedPID := waitBreakGlassObserved(t, socketPath, name, "RUNNING", startedPID)
+	runBreakGlassLifecycle(t, socketPath, "restart", name, "op-bg-restart")
+	time.Sleep(200 * time.Millisecond)
+	if replayPID := waitBreakGlassObserved(t, socketPath, name, "RUNNING", 0); replayPID != restartedPID {
+		t.Fatalf("idempotent replay restarted process: pid=%d want=%d", replayPID, restartedPID)
+	}
+	runBreakGlassLifecycle(t, socketPath, "kill", name, "op-bg-kill")
+	waitBreakGlassObserved(t, socketPath, name, "STOPPED", 0)
+	waitPIDGone(t, restartedPID)
+
+	auditStore, err := store.Open(paths.New(ownerRoot).Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = auditStore.Close() })
+	events, err := auditStore.ListAuditAll(context.Background(), name, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"break_glass.process.stop":    "op-bg-stop",
+		"break_glass.process.start":   "op-bg-start",
+		"break_glass.process.restart": "op-bg-restart",
+		"break_glass.process.kill":    "op-bg-kill",
+	}
+	for _, event := range events {
+		opID, ok := want[event.Action]
+		if !ok || event.OperationID != opID || event.Result != "success" || event.TargetAgent == "" || event.UserID == "" || event.Username == "" || event.Timestamp.IsZero() {
+			continue
+		}
+		var metadata map[string]any
+		if json.Unmarshal(event.Metadata, &metadata) == nil && metadata["reason"] == "recover local service" && metadata["error_code"] == "" && metadata["os_uid"] == float64(os.Geteuid()) {
+			delete(want, event.Action)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing complete lifecycle audits %v in %+v", want, events)
+	}
+}
+
+func runBreakGlassLifecycle(t *testing.T, socketPath, action, name, operationID string) {
+	t.Helper()
+	code, out, errOut := runP1CLI(
+		"--break-glass", socketPath,
+		"--operation-id", operationID,
+		"--reason", "recover local service",
+		"process", action, name,
+	)
+	if code != 0 {
+		t.Fatalf("break-glass %s exit=%d stdout=%q stderr=%q", action, code, out, errOut)
+	}
+}
+
+func waitBreakGlassObserved(t *testing.T, socketPath, name, observed string, differentPID int32) int32 {
+	t.Helper()
+	deadline := time.Now().Add(8 * time.Second)
+	var last string
+	for time.Now().Before(deadline) {
+		code, out, errOut := runP1CLI("--break-glass", socketPath, "process", "get", name)
+		last = out + errOut
+		if code == 0 {
+			for _, line := range strings.Split(out, "\n") {
+				fields := strings.Split(line, "\t")
+				if len(fields) != 7 || fields[0] != "instance" || fields[4] != observed {
+					continue
+				}
+				pid, err := strconv.ParseInt(fields[6], 10, 32)
+				if err == nil && (observed != "RUNNING" || pid > 0 && int32(pid) != differentPID) {
+					return int32(pid)
+				}
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("break-glass process %s did not reach %s: %q", name, observed, last)
+	return 0
+}
 
 func TestAccept_BreakGlassReadsOnlyLocalOwnerWithoutClusterSession(t *testing.T) {
 	root, err := os.MkdirTemp("", "pm-bg-")
