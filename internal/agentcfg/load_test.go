@@ -71,6 +71,21 @@ func TestLoadAll_DataDirAndListen(t *testing.T) {
 	}
 }
 
+func TestLoadAll_PprofListen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	body := "pprof:\n  listen: 127.0.0.1:6060\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := agentcfg.LoadAll(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Pprof.Listen != "127.0.0.1:6060" {
+		t.Fatalf("pprof listen = %q", cfg.Pprof.Listen)
+	}
+}
+
 func TestLoadAll_GossipListenAndAdvertise(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent.yaml")

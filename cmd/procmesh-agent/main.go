@@ -21,6 +21,7 @@ func run(args []string, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	dataDir := fs.String("data-dir", "", "data directory (overrides agent.yaml data_dir)")
 	listen := fs.String("listen", "", "HTTP listen address (overrides agent.yaml listen)")
+	pprofListen := fs.String("pprof-listen", "", "pprof HTTP listen address (overrides agent.yaml pprof.listen; disabled by default)")
 	rpcListen := fs.String("rpc", "", "RPC listen address (default 127.0.0.1:18683)")
 	controlListen := fs.String("control", "", "control/raft listen address (default 127.0.0.1:18685)")
 	breakGlassSocket := fs.String("break-glass-socket", "", "local break-glass Unix socket path")
@@ -50,6 +51,7 @@ func run(args []string, stderr io.Writer) int {
 	err = agent.Run(ctx, agent.Options{
 		DataDir:          *dataDir,
 		Listen:           *listen,
+		PprofListen:      *pprofListen,
 		GossipListen:     *gossip,
 		RPCListen:        *rpcListen,
 		ControlListen:    *controlListen,

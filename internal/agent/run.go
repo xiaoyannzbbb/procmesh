@@ -79,9 +79,11 @@ func dueAt(now time.Time, last *time.Time, interval time.Duration) bool {
 type Options struct {
 	DataDir            string
 	Listen             string
+	PprofListen        string
 	ShimBin            string
 	InsecureListen     bool
 	OnListen           func(addr string)
+	OnPprofListen      func(addr string)
 	ConfigPath         string
 	Logger             *slog.Logger
 	GossipListen       string // default 127.0.0.1:18689
@@ -127,6 +129,9 @@ func Run(ctx context.Context, opt Options) error {
 	if opt.Listen == "" {
 		opt.Listen = cfg.Listen
 	}
+	if opt.PprofListen == "" {
+		opt.PprofListen = cfg.Pprof.Listen
+	}
 	if opt.BreakGlassSocket == "" {
 		opt.BreakGlassSocket = cfg.BreakGlass.Socket
 	}
@@ -145,6 +150,12 @@ func Run(ctx context.Context, opt Options) error {
 		return err
 	}
 	logInsecureListen(logger, opt.Listen, opt.InsecureListen)
+	if opt.PprofListen != "" {
+		if err := CheckListen(opt.PprofListen, opt.InsecureListen); err != nil {
+			return fmt.Errorf("pprof %w", err)
+		}
+		logInsecureListen(logger.With("component", "pprof"), opt.PprofListen, opt.InsecureListen)
+	}
 
 	layout := paths.New(opt.DataDir)
 	if err := layout.Ensure(); err != nil {
@@ -800,6 +811,16 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 			return fmt.Errorf("start break-glass: %w", err)
 		}
 	}
+	pprofServer, err := newPprofServer(opt.PprofListen)
+	if err != nil {
+		_ = ln.Close()
+		if breakGlassServer != nil {
+			_ = breakGlassServer.Shutdown(context.Background())
+		}
+		rt.shutdown(context.Background())
+		shutdownMesh(mesh)
+		return err
+	}
 
 	if batchEng != nil && !degraded {
 		batchEng.Start(ctx)
@@ -809,12 +830,18 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 	}
 
 	opt.Logger.With("component", "http").Info("http listening", "address", apiAddr)
+	if pprofServer != nil {
+		opt.Logger.With("component", "pprof").Info("pprof listening", "address", pprofServer.Addr())
+	}
 	opt.Logger.Info("agent started")
 	if opt.OnListen != nil {
 		opt.OnListen(apiAddr)
 	}
 	if breakGlassServer != nil && opt.OnBreakGlassListen != nil {
 		opt.OnBreakGlassListen(opt.BreakGlassSocket)
+	}
+	if pprofServer != nil && opt.OnPprofListen != nil {
+		opt.OnPprofListen(pprofServer.Addr())
 	}
 
 	if mgr != nil {
@@ -880,7 +907,7 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 
 	startAlertScanner(ctx, opt, mgr, st, mesh, collector, authSvc, rt, clusterDeps)
 
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
 	go func() {
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			errCh <- err
@@ -893,6 +920,11 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 			errCh <- breakGlassServer.Serve()
 		}()
 	}
+	if pprofServer != nil {
+		go func() {
+			errCh <- pprofServer.Serve()
+		}()
+	}
 
 	select {
 	case <-ctx.Done():
@@ -902,6 +934,9 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		_ = srv.Shutdown(shutCtx)
 		if breakGlassServer != nil {
 			_ = breakGlassServer.Shutdown(shutCtx)
+		}
+		if pprofServer != nil {
+			_ = pprofServer.Shutdown(shutCtx)
 		}
 		rt.shutdown(shutCtx)
 		shutdownMesh(mesh)
@@ -916,6 +951,9 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		_ = srv.Shutdown(shutCtx)
 		if breakGlassServer != nil {
 			_ = breakGlassServer.Shutdown(shutCtx)
+		}
+		if pprofServer != nil {
+			_ = pprofServer.Shutdown(shutCtx)
 		}
 		rt.shutdown(shutCtx)
 		shutdownMesh(mesh)

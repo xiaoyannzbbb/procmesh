@@ -14,6 +14,7 @@ import (
 type Config struct {
 	DataDir    string
 	Listen     string
+	Pprof      Pprof
 	Disk       logmgr.Policy
 	Gossip     Gossip
 	RPC        RPC
@@ -45,6 +46,10 @@ type Gossip struct {
 	Advertise string
 }
 
+type Pprof struct {
+	Listen string
+}
+
 type RPC struct {
 	Listen    string
 	Advertise string
@@ -68,6 +73,7 @@ type Batch struct {
 type file struct {
 	DataDir    string          `yaml:"data_dir"`
 	Listen     string          `yaml:"listen"`
+	Pprof      *pprofFile      `yaml:"pprof"`
 	Disk       *diskFile       `yaml:"disk"`
 	Gossip     *gossipFile     `yaml:"gossip"`
 	RPC        *rpcFile        `yaml:"rpc"`
@@ -75,6 +81,10 @@ type file struct {
 	BreakGlass *breakGlassFile `yaml:"break_glass"`
 	Batch      *batchFile      `yaml:"batch"`
 	Backup     *backupFile     `yaml:"backup"`
+}
+
+type pprofFile struct {
+	Listen string `yaml:"listen"`
 }
 
 type diskFile struct {
@@ -226,6 +236,9 @@ func LoadAll(path string, required bool) (Config, error) {
 		return Config{}, err
 	}
 	cfg := Config{DataDir: f.DataDir, Listen: f.Listen, Disk: p, Batch: batch}
+	if pprof := f.Pprof; pprof != nil {
+		cfg.Pprof.Listen = pprof.Listen
+	}
 	if g := f.Gossip; g != nil {
 		cfg.Gossip.Listen = g.Listen
 		cfg.Gossip.Advertise = g.Advertise

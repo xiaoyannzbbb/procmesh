@@ -2,13 +2,17 @@
 #
 # Linux 默认路径：/etc/procmesh/agent.yaml
 # macOS 默认路径：~/.config/procmesh/agent.yaml
-# 对应命令行参数的显式设置优先于本文件，例如 --data-dir、--listen、--gossip、--rpc、--control。
+# 对应命令行参数的显式设置优先于本文件，例如 --data-dir、--listen、--pprof-listen、--gossip、--rpc、--control。
 
 # Agent 数据根目录。未传 --data-dir 时必填；Linux 生产环境通常使用 /var/lib/procmesh。
 data_dir: "/var/lib/procmesh"
 
 # HTTP API 本地绑定地址。未传 --listen 时使用此值；留空时默认 127.0.0.1:18680。
 listen: "127.0.0.1:18680"
+
+# Go pprof 诊断服务。留空表示关闭；建议只绑定回环地址并通过 SSH 隧道采样。
+pprof:
+  listen: ""
 
 # 本机紧急检查通道。只提供 process list/get/logs，不依赖集群 Session，也不监听 TCP。
 break_glass:

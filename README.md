@@ -250,6 +250,22 @@ curl -fsSL https://raw.githubusercontent.com/xiaoyannzbbb/procmesh/main/scripts/
 
 生产环境中不要将这些端口直接暴露到公网。使用防火墙或安全组限制访问范围；跨不可信网络访问 `18680` 时，请使用 HTTPS 反向代理、VPN 或堡垒机。`--insecure-listen` 仅允许 Agent 监听非回环地址，不会启用 HTTPS。
 
+## CPU 与内存诊断
+
+Agent 默认关闭 pprof。需要采样时，可通过命令行临时启用独立的本地诊断端口：
+
+```bash
+./bin/procmesh-agent --data-dir /tmp/procmesh --pprof-listen 127.0.0.1:6060
+```
+
+也可以在 `agent.yaml` 中配置 `pprof.listen`。建议始终绑定回环地址，远程机器通过 SSH 隧道访问；pprof 包含进程内部信息，不应直接暴露到公网。
+
+```bash
+go tool pprof -http=:8081 'http://127.0.0.1:6060/debug/pprof/profile?seconds=30'
+go tool pprof -http=:8081 http://127.0.0.1:6060/debug/pprof/heap
+curl -o goroutine.txt 'http://127.0.0.1:6060/debug/pprof/goroutine?debug=2'
+```
+
 ## 文档
 
 - [部署与集群快速开始](docs/QUICKSTART_ZH.md)：systemd 安装、三节点集群初始化、扩容、进程配置与排障。
