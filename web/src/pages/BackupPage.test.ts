@@ -1,9 +1,11 @@
+import { Code, ConnectError } from "@connectrpc/connect";
 import { QueryClient, VueQueryPlugin } from "@tanstack/vue-query";
 import { flushPromises, mount } from "@vue/test-utils";
 import i18next from "i18next";
 import I18NextVue from "i18next-vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
+import { ErrorInfoSchema } from "../gen/procmesh/v1/api_pb";
 import { session } from "../lib/session";
 import BackupPage from "./BackupPage.vue";
 
@@ -14,6 +16,8 @@ const backupI18n = {
   staleBanner: "Some backup sources are unreachable. This is not an empty catalog.",
   noBackups: "No backups",
   create: "Create backup",
+  createDiskFull:
+    "Cannot create a local snapshot because disk usage is at or above 95%. Free disk space and try again.",
   restore: "Restore",
   restoreConfirm: "Restore this snapshot?",
   owner: "Owner",
@@ -234,6 +238,7 @@ async function mountBackup(
     health?: unknown;
     policiesError?: Error;
     runsError?: Error;
+    createBackupError?: Error;
     query?: Record<string, string>;
   } = {},
 ) {
@@ -252,7 +257,9 @@ async function mountBackup(
   const run = opts.run ?? { ...partialRun, tasks: partialRunTasks };
   const backupClient = {
     listBackups: vi.fn().mockResolvedValue({ entries }),
-    createBackup: vi.fn().mockResolvedValue({ snapshot: liveSnapshot.snapshot }),
+    createBackup: opts.createBackupError
+      ? vi.fn().mockRejectedValue(opts.createBackupError)
+      : vi.fn().mockResolvedValue({ snapshot: liveSnapshot.snapshot }),
     deleteBackup: vi.fn().mockResolvedValue({}),
     restoreBackup: vi.fn().mockResolvedValue({
       results: opts.restoreResults ?? [
@@ -483,6 +490,43 @@ describe("BackupPage", () => {
     expect(arg.meta?.operationId).toBeTruthy();
     expect(arg.meta?.operator).toBe("admin");
     expect(arg.sink).toBe("fs");
+  });
+
+  it("explains disk protection instead of a bare DEGRADED code when create backup is blocked", async () => {
+    const err = new ConnectError("DEGRADED: disk usage at or above 95%", Code.Unavailable, undefined, [
+      {
+        desc: ErrorInfoSchema,
+        value: { code: "DEGRADED", message: "DEGRADED: disk usage at or above 95%" },
+      },
+    ]);
+    const { wrapper } = await mountBackup({ createBackupError: err });
+    await wrapper.get('[data-action="open-create"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    await wrapper.get("form.create-backup").trigger("submit");
+    await flushPromises();
+    const alert = wrapper.get('[data-error="create"]');
+    expect(alert.attributes("role")).toBe("alert");
+    expect(alert.text()).toContain(
+      "Cannot create a local snapshot because disk usage is at or above 95%. Free disk space and try again.",
+    );
+    expect(alert.text()).not.toBe("DEGRADED");
+  });
+
+  it("keeps the detailed DEGRADED reason when create backup fails for other agent damage", async () => {
+    const err = new ConnectError("DEGRADED: store file corrupted", Code.Unavailable, undefined, [
+      {
+        desc: ErrorInfoSchema,
+        value: { code: "DEGRADED", message: "DEGRADED: store file corrupted" },
+      },
+    ]);
+    const { wrapper } = await mountBackup({ createBackupError: err });
+    await wrapper.get('[data-action="open-create"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    await wrapper.get("form.create-backup").trigger("submit");
+    await flushPromises();
+    const alert = wrapper.get('[data-error="create"]');
+    expect(alert.text()).toContain("store file corrupted");
+    expect(alert.text()).not.toBe("DEGRADED");
   });
 
   it("shows error, not success, when restore returns CONFLICT", async () => {

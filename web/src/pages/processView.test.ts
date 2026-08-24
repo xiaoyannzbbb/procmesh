@@ -147,7 +147,20 @@ describe("formatRemoteError", () => {
     const err = new ConnectError("store impaired", Code.Unavailable, undefined, [
       { desc: ErrorInfoSchema, value: { code: "DEGRADED", message: "store impaired" } },
     ]);
-    expect(formatRemoteError(err)).toBe("DEGRADED");
+    expect(formatRemoteError(err)).toBe("store impaired");
+    expect(formatRemoteError(err)).not.toBe("UNAVAILABLE");
+    expect(formatRemoteError(err)).not.toBe("DEGRADED");
+  });
+
+  it("keeps DEGRADED backup disk-protection details instead of the bare code", () => {
+    const err = new ConnectError("DEGRADED: disk usage at or above 95%", Code.Unavailable, undefined, [
+      {
+        desc: ErrorInfoSchema,
+        value: { code: "DEGRADED", message: "DEGRADED: disk usage at or above 95%" },
+      },
+    ]);
+    expect(formatRemoteError(err)).toBe("DEGRADED: disk usage at or above 95%");
+    expect(formatRemoteError(err)).not.toBe("DEGRADED");
     expect(formatRemoteError(err)).not.toBe("UNAVAILABLE");
   });
 

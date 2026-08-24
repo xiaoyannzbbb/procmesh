@@ -205,11 +205,7 @@ export function needsRestartBanner(latestRevision: number, activeRevision: numbe
 export function formatRemoteError(err: unknown): string {
   const app = appCode(err);
   if (app) {
-    if (app === "DEGRADED") {
-      return app;
-    }
     const msg = appMessage(err);
-    // Preserve the application state for DEGRADED, but show actionable details for other errors.
     return msg || app;
   }
   if (err instanceof ConnectError) {

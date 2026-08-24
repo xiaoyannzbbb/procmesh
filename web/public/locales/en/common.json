@@ -947,6 +947,7 @@
     "create": "Create backup",
     "createHint": "This creates a snapshot on the currently connected Agent. It is not a cluster run.",
     "createSuccess": "Local backup created",
+    "createDiskFull": "Cannot create a local snapshot because disk usage is at or above 95%. Free disk space and try again.",
     "restore": "Restore",
     "restoreConfirm": "Restore this snapshot?",
     "owner": "Owner",

@@ -82,6 +82,7 @@ type ClusterRun = {
 };
 
 const { t } = useI18n();
+const DISK_PROTECTION_RE = /disk usage at or above 95%/i;
 const route = useRoute();
 const POLL_MS = 5000;
 const client = useBackupClient();
@@ -860,6 +861,14 @@ function onRunKeydown(event: KeyboardEvent, runId: string): void {
   }
 }
 
+function formatBackupActionError(err: unknown): string {
+  const detail = formatRemoteError(err);
+  if (DISK_PROTECTION_RE.test(detail)) {
+    return t("backup.createDiskFull");
+  }
+  return detail;
+}
+
 function notify(message: string, type: "success" | "error" | "info" | "warning" = "success"): void {
   toastMessage.value = message;
   toastType.value = type;
@@ -905,7 +914,7 @@ const createMut = useMutation({
     await queryClient.invalidateQueries({ queryKey: ["backups"] });
   },
   onError: (err: unknown) => {
-    actionError.value = formatRemoteError(err);
+    actionError.value = formatBackupActionError(err);
   },
 });
 
@@ -1561,7 +1570,10 @@ async function onRetryFailed(): Promise<void> {
     >
       <form class="drawer-form create-backup" @submit.prevent="onCreate">
         <p class="drawer-lead">{{ t("backup.createHint") }}</p>
-        <p v-if="actionError && createOpen" class="error" role="alert">{{ actionError }}</p>
+        <p v-if="actionError && createOpen" class="error-banner" role="alert" data-error="create">
+          <TriangleAlert :size="18" aria-hidden="true" />
+          <span>{{ actionError }}</span>
+        </p>
 
         <fieldset class="field">
           <legend>
@@ -2099,6 +2111,22 @@ h3 {
   margin: 0;
   color: var(--color-danger);
   font-size: 0.875rem;
+}
+.error-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+  margin: 0;
+  border-radius: 10px;
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  background: color-mix(in srgb, var(--color-danger) 12%, var(--color-card));
+  color: var(--color-danger);
+}
+.error-banner svg {
+  flex-shrink: 0;
+  margin-top: 0.1rem;
 }
 .notice {
   margin: 0;

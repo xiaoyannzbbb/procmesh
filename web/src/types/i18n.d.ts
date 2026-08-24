@@ -832,6 +832,7 @@ declare module "i18next" {
         'backup.create': string
         'backup.createHint': string
         'backup.createSuccess': string
+        'backup.createDiskFull': string
         'backup.restore': string
         'backup.restoreConfirm': string
         'backup.owner': string
