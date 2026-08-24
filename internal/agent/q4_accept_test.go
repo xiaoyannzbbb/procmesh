@@ -23,25 +23,22 @@ import (
 )
 
 func TestQ4_ProcessKillWritesInbox(t *testing.T) {
-	addr, _ := startClusterAgent(t, "")
+	triggers := newManualRunTriggers()
+	root := t.TempDir()
+	addr, _ := startClusterAgentAtOpts(t, root, Options{triggers: triggers.hooks})
 	initAndLogin(t, addr)
 
 	spec := writeShortLivedSpec(t)
 	mustCLI(t, addr, "process", "apply", "--file", spec, "--expected-revision", "0")
 	mustCLI(t, addr, "process", "start", "boom")
 	waitObservedLong(t, addr, "boom", "EXITED", "FATAL", "BACKOFF")
+	triggers.triggerAlertScan(t)
 
-	deadline := time.Now().Add(45 * time.Second)
-	var out string
-	for time.Now().Before(deadline) {
-		out = mustCLI(t, addr, "alert", "list")
-		up := strings.ToUpper(out)
-		if strings.Contains(up, "PROCESS_EXIT") || strings.Contains(up, "PROCESS_FATAL") {
-			return
-		}
-		time.Sleep(200 * time.Millisecond)
+	out := mustCLI(t, addr, "alert", "list")
+	up := strings.ToUpper(out)
+	if !strings.Contains(up, "PROCESS_EXIT") && !strings.Contains(up, "PROCESS_FATAL") {
+		t.Fatalf("want PROCESS_EXIT or PROCESS_FATAL after short-lived process, got %s", out)
 	}
-	t.Fatalf("want PROCESS_EXIT or PROCESS_FATAL after short-lived process, got %s", out)
 }
 
 func TestQ4_LostQuorumRejectsPutChannelOwnerStillWritesInbox(t *testing.T) {
@@ -90,18 +87,15 @@ func TestQ4_LostQuorumRejectsPutChannelOwnerStillWritesInbox(t *testing.T) {
 
 func TestQ4_LeaderFailedNotSentByEveryFollower(t *testing.T) {
 	addrA, rootA, cancelA := startClusterAgentCtl(t, "")
-	addrC, rootC := startClusterAgent(t, "")
+	triggers := newManualRunTriggers()
+	rootC := t.TempDir()
+	addrC, _ := startClusterAgentAtOpts(t, rootC, Options{triggers: triggers.hooks})
 	idA := readNodeID(t, rootA)
 	joinTwo(t, addrA, addrC)
 	cancelA()
 
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
-		if alertHasFingerprint(t, rootC, "NODE_FAILED:"+idA) {
-			t.Fatalf("follower wrote NODE_FAILED:%s", idA)
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
+	waitNodeState(t, addrC, idA, "LEFT", 10*time.Second)
+	triggers.triggerAlertScan(t)
 	if alertHasFingerprint(t, rootC, "NODE_FAILED:"+idA) {
 		t.Fatalf("non-leader must not write NODE_FAILED:%s", idA)
 	}

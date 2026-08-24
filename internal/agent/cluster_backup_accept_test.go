@@ -5,11 +5,13 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -27,6 +29,33 @@ import (
 type backupAcceptNode struct {
 	addr, root, id, rpc, control string
 	stop                         context.CancelFunc
+	triggers                     *manualRunTriggers
+}
+
+type backupAcceptClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func newBackupAcceptClock() *backupAcceptClock {
+	return &backupAcceptClock{now: time.Now().UTC().Truncate(time.Minute).Add(time.Minute + 10*time.Second)}
+}
+
+func (c *backupAcceptClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *backupAcceptClock) AdvancePast(unix int64) time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	target := time.Unix(unix+1, 0).UTC()
+	if !target.After(c.now) {
+		target = c.now.Add(time.Second)
+	}
+	c.now = target
+	return c.now
 }
 
 func TestClusterBackup_FS_ThreeAgentNamespace(t *testing.T) {
@@ -157,64 +186,87 @@ func TestClusterBackup_S3_KeysAndRedaction(t *testing.T) {
 }
 
 func TestClusterBackup_LeaderFailover_Schedule(t *testing.T) {
-	nodes := startThreeBackupAgents(t, agentcfg.Backup{})
+	nodes, clock := startThreeBackupAgentsWithClock(t, agentcfg.Backup{})
 	joinThree(t, nodes[0].addr, nodes[1].addr, nodes[2].addr)
+	promoteBackupFailoverVoters(t, nodes)
 	seedOwnerSpecs(t, nodes)
+	nodes = backupLeaderFirst(t, nodes)
+	pause := nodes[0].triggers.pauseBackup(backupPauseAfterRunClaim, 1)
+	t.Cleanup(pause.resume)
 
 	policyID := uniqueID("bp-sched")
 	createClusterBackupPolicy(t, nodes[0].addr, &procmeshv1.ClusterBackupPolicy{
 		PolicyId: policyID, Name: policyID, Enabled: true, ScheduleCron: "* * * * *", Timezone: "UTC",
-		TargetSelector: "ALL_ADMITTED", Sink: "fs", UnavailablePolicy: "RECORD_AND_CONTINUE",
+		TargetSelector: "EXPLICIT_NODES", TargetNodeIds: backupNodeIDs(nodes[1:]), Sink: "fs", UnavailablePolicy: "RECORD_AND_CONTINUE",
 		TimeoutSeconds: 8, MaxConcurrency: 3,
 	})
-	runID := waitPolicyRunID(t, nodes[0].addr, policyID, 75*time.Second)
+	oldTick := nodes[0].triggers.triggerBackupCoordinatorAsync(t)
+	waitBackupPauseOrTick(t, pause, oldTick)
+	runID := waitPolicyRunID(t, nodes[0].addr, policyID, 15*time.Second)
 	clusterID := waitClusterID(t, nodes[0].addr)
 	before := countClusterSnapshots(t, nodes, clusterID)
-	nodes[0].stop()
-	entry := remainingBackupEntry(t, nodes[1:])
-	waitStableSingleRun(t, entry, policyID, runID)
-	assertNoDuplicateSnapshots(t, nodes[1:], clusterID, before)
+	assertBackupLeaderFailover(t, nodes, clock, pause, oldTick, policyID, runID, clusterID, before, 0, 2)
 }
 
 func TestClusterBackup_LeaderFailover_Upload(t *testing.T) {
-	nodes := startThreeBackupAgents(t, agentcfg.Backup{})
+	nodes, clock := startThreeBackupAgentsWithClock(t, agentcfg.Backup{})
 	joinThree(t, nodes[0].addr, nodes[1].addr, nodes[2].addr)
+	promoteBackupFailoverVoters(t, nodes)
 	seedOwnerSpecs(t, nodes)
+	nodes = backupLeaderFirst(t, nodes)
+	claimPause := nodes[0].triggers.pauseBackup(backupPauseAfterRunClaim, 1)
+	uploadPause := nodes[0].triggers.pauseBackup(backupPauseBeforeTaskDispatch, 1)
+	t.Cleanup(claimPause.resume)
+	t.Cleanup(uploadPause.resume)
 
 	policyID := uniqueID("bp-upload")
 	createClusterBackupPolicy(t, nodes[0].addr, &procmeshv1.ClusterBackupPolicy{
-		PolicyId: policyID, Name: policyID, Enabled: true, Timezone: "UTC",
-		TargetSelector: "ALL_ADMITTED", Sink: "fs", UnavailablePolicy: "RECORD_AND_CONTINUE",
+		PolicyId: policyID, Name: policyID, Enabled: true, ScheduleCron: "* * * * *", Timezone: "UTC",
+		TargetSelector: "EXPLICIT_NODES", TargetNodeIds: backupNodeIDs(nodes[1:]), Sink: "fs", UnavailablePolicy: "RECORD_AND_CONTINUE",
 		TimeoutSeconds: 8, MaxConcurrency: 3,
 	})
-	run := startClusterBackupRun(t, nodes[0].addr, policyID)
+	oldTick := nodes[0].triggers.triggerBackupCoordinatorAsync(t)
+	waitBackupPauseOrTick(t, claimPause, oldTick)
+	runID := waitPolicyRunID(t, nodes[0].addr, policyID, 15*time.Second)
+	claimPause.resume()
+	waitBackupPauseOrTick(t, uploadPause, oldTick)
 	clusterID := waitClusterID(t, nodes[0].addr)
 	before := countClusterSnapshots(t, nodes, clusterID)
-	nodes[0].stop()
-	entry := remainingBackupEntry(t, nodes[1:])
-	waitStableSingleRun(t, entry, policyID, run.GetRunId())
-	assertNoDuplicateSnapshots(t, nodes[1:], clusterID, before)
+	assertBackupLeaderFailover(t, nodes, clock, uploadPause, oldTick, policyID, runID, clusterID, before, 0, 2)
 }
 
 func TestClusterBackup_LeaderFailover_StatusReport(t *testing.T) {
-	nodes := startThreeBackupAgents(t, agentcfg.Backup{})
+	nodes, clock := startThreeBackupAgentsWithClock(t, agentcfg.Backup{})
 	joinThree(t, nodes[0].addr, nodes[1].addr, nodes[2].addr)
+	promoteBackupFailoverVoters(t, nodes)
 	seedOwnerSpecs(t, nodes)
+	nodes = backupLeaderFirst(t, nodes)
+	pause := nodes[0].triggers.pauseBackup(backupPauseAfterRunClaim, 1)
+	t.Cleanup(pause.resume)
 
 	policyID := uniqueID("bp-status")
 	createClusterBackupPolicy(t, nodes[0].addr, &procmeshv1.ClusterBackupPolicy{
-		PolicyId: policyID, Name: policyID, Enabled: true, Timezone: "UTC",
-		TargetSelector: "ALL_ADMITTED", Sink: "fs", UnavailablePolicy: "RECORD_AND_CONTINUE",
-		TimeoutSeconds: 8, MaxConcurrency: 3,
+		PolicyId: policyID, Name: policyID, Enabled: true, ScheduleCron: "* * * * *", Timezone: "UTC",
+		TargetSelector: "EXPLICIT_NODES", TargetNodeIds: []string{nodes[1].id}, Sink: "fs", UnavailablePolicy: "RECORD_AND_CONTINUE",
+		TimeoutSeconds: 8, MaxConcurrency: 1,
 	})
-	run := startClusterBackupRun(t, nodes[0].addr, policyID)
+	oldTick := nodes[0].triggers.triggerBackupCoordinatorAsync(t)
+	waitBackupPauseOrTick(t, pause, oldTick)
+	runID := waitPolicyRunID(t, nodes[0].addr, policyID, 15*time.Second)
 	clusterID := waitClusterID(t, nodes[0].addr)
-	waitAnyClusterSnapshot(t, nodes, clusterID)
+	oldRuntime := nodes[0].triggers.rpcRuntime()
+	oldState := oldRuntime.control().View()
+	oldRun := oldState.BackupRuns[runID]
+	result, err := nodes[1].triggers.rpcRuntime().backup.RunClusterTask(context.Background(), backup.ClusterTaskRequest{
+		RunID: runID, TaskID: "task-" + nodes[1].id, PolicyID: policyID, NodeID: nodes[1].id,
+		PolicyRevision: oldRun.PolicyRevision, Sink: oldRun.Sink, DestinationProfile: oldRun.DestinationProfile,
+		LeaderTerm: oldState.BackupRunTerms[runID], LeaseExpiresUnix: oldRun.LeaseUntilUnix,
+	})
+	if err != nil || result.Status != "SUCCESS" {
+		t.Fatalf("prepare unreported backup result: result=%+v err=%v", result, err)
+	}
 	before := countClusterSnapshots(t, nodes, clusterID)
-	nodes[0].stop()
-	entry := remainingBackupEntry(t, nodes[1:])
-	waitStableSingleRun(t, entry, policyID, run.GetRunId())
-	assertNoDuplicateSnapshots(t, nodes[1:], clusterID, before)
+	assertBackupLeaderFailover(t, nodes, clock, pause, oldTick, policyID, runID, clusterID, before, 1, 1)
 }
 
 func TestDisasterReplication_PeerIdempotencyAndConflict(t *testing.T) {
@@ -407,6 +459,17 @@ func TestRestore_OwnerCAS(t *testing.T) {
 
 func startThreeBackupAgents(t *testing.T, cfg agentcfg.Backup) []backupAcceptNode {
 	t.Helper()
+	return startThreeBackupAgentsAt(t, cfg, nil)
+}
+
+func startThreeBackupAgentsWithClock(t *testing.T, cfg agentcfg.Backup) ([]backupAcceptNode, *backupAcceptClock) {
+	t.Helper()
+	clock := newBackupAcceptClock()
+	return startThreeBackupAgentsAt(t, cfg, clock.Now), clock
+}
+
+func startThreeBackupAgentsAt(t *testing.T, cfg agentcfg.Backup, now func() time.Time) []backupAcceptNode {
+	t.Helper()
 	nodes := make([]backupAcceptNode, 3)
 	for i := range nodes {
 		root, err := os.MkdirTemp("", "pm")
@@ -416,11 +479,15 @@ func startThreeBackupAgents(t *testing.T, cfg agentcfg.Backup) []backupAcceptNod
 		t.Cleanup(func() { _ = os.RemoveAll(root) })
 		n := &nodes[i]
 		n.root = root
+		n.triggers = newManualRunTriggers()
+		n.triggers.hooks.manualBackupCoordinator = now != nil
 		addr, stop := startClusterAgentAtOpts(t, root, Options{
 			Backup:          cfg,
 			DiskPercent:     func() float64 { return 10 },
+			Now:             now,
 			OnRPCListen:     func(a string) { n.rpc = a },
 			OnControlListen: func(a string) { n.control = a },
+			triggers:        n.triggers.hooks,
 		})
 		n.addr = addr
 		n.stop = stop
@@ -461,6 +528,58 @@ func joinThree(t *testing.T, addrA, addrB, addrC string) string {
 	}
 	t.Fatalf("want 3 members; A=%q B=%q C=%q", listA, listB, listC)
 	return ""
+}
+
+func promoteBackupFailoverVoters(t *testing.T, nodes []backupAcceptNode) {
+	t.Helper()
+	if len(nodes) != 3 {
+		t.Fatalf("want three backup nodes, got %d", len(nodes))
+	}
+	mustCLI(t, nodes[0].addr, "node", "promote", nodes[1].id)
+	mustCLI(t, nodes[0].addr, "node", "promote", nodes[2].id)
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		runtime := nodes[0].triggers.rpcRuntime()
+		if runtime != nil {
+			if controlNode := runtime.control(); controlNode != nil && controlNode.IsLeader() && controlNode.HasQuorum() {
+				return
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("promoted backup voters did not reach quorum")
+}
+
+func backupLeaderFirst(t *testing.T, nodes []backupAcceptNode) []backupAcceptNode {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		for i := range nodes {
+			runtime := nodes[i].triggers.rpcRuntime()
+			if runtime == nil {
+				continue
+			}
+			controlNode := runtime.control()
+			if controlNode == nil || !controlNode.IsLeader() || !controlNode.HasQuorum() {
+				continue
+			}
+			ordered := append([]backupAcceptNode(nil), nodes...)
+			ordered[0], ordered[i] = ordered[i], ordered[0]
+			return ordered
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("backup cluster has no quorum leader")
+	return nil
+}
+
+func backupNodeIDs(nodes []backupAcceptNode) []string {
+	ids := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		ids = append(ids, node.id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 func seedOwnerSpecs(t *testing.T, nodes []backupAcceptNode) {
@@ -709,23 +828,10 @@ func countClusterSnapshots(t *testing.T, nodes []backupAcceptNode, clusterID str
 	return n
 }
 
-func waitAnyClusterSnapshot(t *testing.T, nodes []backupAcceptNode, clusterID string) {
+func assertNoDuplicateSnapshots(t *testing.T, nodes []backupAcceptNode, clusterID string, expected int) {
 	t.Helper()
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
-		if countClusterSnapshots(t, nodes, clusterID) > 0 {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	t.Fatal("no cluster snapshot files before status-report failover")
-}
-
-func assertNoDuplicateSnapshots(t *testing.T, nodes []backupAcceptNode, clusterID string, before int) {
-	t.Helper()
-	after := countClusterSnapshots(t, nodes, clusterID)
-	if after > 3 {
-		t.Fatalf("duplicate snapshots: before=%d after=%d", before, after)
+	if got := countClusterSnapshots(t, nodes, clusterID); got != expected {
+		t.Fatalf("want %d snapshots after takeover, got %d", expected, got)
 	}
 	for _, node := range nodes {
 		matches, _ := filepath.Glob(filepath.Join(paths.New(node.root).BackupFSDir(), clusterID, node.id, "*.json"))
@@ -746,45 +852,131 @@ func assertSinglePolicyRun(t *testing.T, addr, policyID, runID string) {
 	}
 }
 
-func remainingBackupEntry(t *testing.T, nodes []backupAcceptNode) string {
+func assertBackupLeaderFailover(t *testing.T, nodes []backupAcceptNode, clock *backupAcceptClock, pause *manualBackupPause, oldTick <-chan error, policyID, runID, clusterID string, before, wantBefore, wantTasks int) {
 	t.Helper()
-	deadline := time.Now().Add(8 * time.Second)
-	for time.Now().Before(deadline) {
-		for _, node := range nodes {
-			_, err := procmeshv1connect.NewClusterServiceClient(&http.Client{Timeout: 3 * time.Second}, "http://"+node.addr, testConnectOpts()...).Overview(context.Background(), connect.NewRequest(&procmeshv1.ClusterOverviewRequest{}))
-			if err == nil {
-				return node.addr
-			}
+	if before != wantBefore {
+		t.Fatalf("want %d snapshots at failover pause, got %d", wantBefore, before)
+	}
+	oldRuntime := nodes[0].triggers.rpcRuntime()
+	if oldRuntime == nil {
+		t.Fatal("old leader runtime unavailable")
+	}
+	oldControl := oldRuntime.control()
+	if oldControl == nil || !oldControl.IsLeader() || !oldControl.HasQuorum() {
+		t.Fatal("old backup leader is not an active quorum leader")
+	}
+	oldTerm := oldControl.CurrentTerm()
+	oldLeader := oldControl.LeaderAddr()
+	oldState := oldControl.View()
+	oldRun, ok := oldState.BackupRuns[runID]
+	if !ok || oldRun.Status != "RUNNING" {
+		t.Fatalf("run %s must be running before failover: %+v", runID, oldRun)
+	}
+	if oldState.BackupRunTerms[runID] != oldTerm {
+		t.Fatalf("run %s term=%d want old leader term=%d", runID, oldState.BackupRunTerms[runID], oldTerm)
+	}
+	if oldRun.LeaseUntilUnix <= clock.Now().Unix() {
+		t.Fatalf("run %s lease=%d is not live at test time=%d", runID, oldRun.LeaseUntilUnix, clock.Now().Unix())
+	}
+	assertSinglePolicyRun(t, nodes[0].addr, policyID, runID)
+
+	nodes[0].stop()
+	pause.resume()
+	if err := waitBackupCoordinatorTick(t, oldTick); err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("old leader backup tick: %v", err)
+	}
+	newLeader, newTerm := waitBackupFailoverLeader(t, nodes[1:], oldLeader, oldTerm, runID, oldRun.LeaseUntilUnix)
+	advanced := clock.AdvancePast(oldRun.LeaseUntilUnix)
+	if advanced.Unix() <= oldRun.LeaseUntilUnix {
+		t.Fatalf("test time=%d did not advance past old lease=%d", advanced.Unix(), oldRun.LeaseUntilUnix)
+	}
+
+	newRuntime := newLeader.triggers.rpcRuntime()
+	newControl := newRuntime.control()
+	preTickState := newControl.View()
+	preTickRun := preTickState.BackupRuns[runID]
+	if !newControl.IsLeader() || !newControl.HasQuorum() || newControl.CurrentTerm() != newTerm {
+		t.Fatalf("takeover node lost leadership before tick: leader=%t quorum=%t term=%d want=%d", newControl.IsLeader(), newControl.HasQuorum(), newControl.CurrentTerm(), newTerm)
+	}
+	if preTickRun.Status != "RUNNING" || preTickState.BackupRunTerms[runID] != oldTerm || preTickRun.LeaseUntilUnix != oldRun.LeaseUntilUnix {
+		t.Fatalf("run changed before explicit takeover tick: run=%+v term=%d want old term=%d lease=%d", preTickRun, preTickState.BackupRunTerms[runID], oldTerm, oldRun.LeaseUntilUnix)
+	}
+	if dispatches := newLeader.triggers.takeBackupDispatches(); len(dispatches) != 0 {
+		t.Fatalf("tasks dispatched before explicit takeover tick: %+v", dispatches)
+	}
+	if err := newLeader.triggers.triggerBackupCoordinator(t); err != nil {
+		t.Fatalf("takeover backup coordinator tick: %v", err)
+	}
+	assertTakeoverBackupDispatches(t, newLeader.triggers.takeBackupDispatches(), newTerm, advanced, wantTasks)
+	got := waitClusterBackupRun(t, newLeader.addr, runID, "SUCCEEDED", 15*time.Second)
+	if got.GetSuccess() != int32(wantTasks) || len(got.GetTasks()) != wantTasks {
+		t.Fatalf("recovered run did not converge: %+v tasks=%v", got, taskStatuses(got))
+	}
+	for _, task := range got.GetTasks() {
+		if task.GetLeaderTerm() != newTerm || !successfulBackupTaskStatus(task.GetStatus()) {
+			t.Fatalf("task was not fenced by new term %d: %+v", newTerm, task)
 		}
-		time.Sleep(100 * time.Millisecond)
 	}
-	if len(nodes) == 0 {
-		t.Fatal("no remaining agents")
+	newState := newControl.View()
+	if newState.BackupRunTerms[runID] != newTerm {
+		t.Fatalf("run %s was not claimed by term %d: got %d", runID, newTerm, newState.BackupRunTerms[runID])
 	}
-	return nodes[0].addr
+
+	for range 2 {
+		if err := newLeader.triggers.triggerBackupCoordinator(t); err != nil {
+			t.Fatalf("dedup backup coordinator tick: %v", err)
+		}
+		if dispatches := newLeader.triggers.takeBackupDispatches(); len(dispatches) != 0 {
+			t.Fatalf("terminal run was dispatched again: %+v", dispatches)
+		}
+		assertSinglePolicyRun(t, newLeader.addr, policyID, runID)
+		assertNoDuplicateSnapshots(t, nodes, clusterID, wantTasks)
+	}
 }
 
-func waitStableSingleRun(t *testing.T, addr, policyID, runID string) {
+func assertTakeoverBackupDispatches(t *testing.T, dispatches []backup.BackupTaskRequest, term uint64, now time.Time, want int) {
 	t.Helper()
-	deadline := time.Now().Add(12 * time.Second)
-	var lastErr error
+	if len(dispatches) != want {
+		t.Fatalf("takeover dispatched %d tasks, want %d: %+v", len(dispatches), want, dispatches)
+	}
+	wantLease := now.Add(minBackupRecoveryLease).Unix()
+	for _, task := range dispatches {
+		if task.LeaderTerm != term {
+			t.Fatalf("takeover task %s term=%d want %d", task.TaskID, task.LeaderTerm, term)
+		}
+		if task.LeaseExpiresUnix < wantLease {
+			t.Fatalf("takeover task %s lease=%d want at least %d", task.TaskID, task.LeaseExpiresUnix, wantLease)
+		}
+	}
+}
+
+func waitBackupFailoverLeader(t *testing.T, nodes []backupAcceptNode, oldLeader string, oldTerm uint64, runID string, oldLease int64) (*backupAcceptNode, uint64) {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
-		resp, err := clusterBackupClient(t, addr).ListRuns(context.Background(), connect.NewRequest(&procmeshv1.ListClusterBackupRunsRequest{PolicyId: policyID, Limit: 20}))
-		if err != nil {
-			lastErr = err
-			time.Sleep(200 * time.Millisecond)
-			continue
+		for i := range nodes {
+			runtime := nodes[i].triggers.rpcRuntime()
+			if runtime == nil {
+				continue
+			}
+			controlNode := runtime.control()
+			if controlNode == nil || !controlNode.IsLeader() || !controlNode.HasQuorum() {
+				continue
+			}
+			term := controlNode.CurrentTerm()
+			if controlNode.LeaderAddr() == "" || controlNode.LeaderAddr() == oldLeader || term <= oldTerm {
+				continue
+			}
+			state := controlNode.View()
+			run, ok := state.BackupRuns[runID]
+			if ok && run.Status == "RUNNING" && state.BackupRunTerms[runID] == oldTerm && run.LeaseUntilUnix == oldLease {
+				return &nodes[i], term
+			}
 		}
-		if len(resp.Msg.GetRuns()) != 1 || resp.Msg.GetRuns()[0].GetRunId() != runID {
-			t.Fatalf("want single run %s, got %+v", runID, resp.Msg.GetRuns())
-		}
-		lastErr = nil
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	}
-	if lastErr != nil {
-		t.Fatalf("list runs after leader loss: %v", lastErr)
-	}
-	assertSinglePolicyRun(t, addr, policyID, runID)
+	t.Fatalf("survivors did not elect a caught-up quorum leader newer than term %d and leader %s for run %s", oldTerm, oldLeader, runID)
+	return nil, 0
 }
 
 func taskStatuses(run *procmeshv1.ClusterBackupRun) []string {

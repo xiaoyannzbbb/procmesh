@@ -21,6 +21,8 @@ import (
 
 type raftBackupControl struct{ runtime *rpcRuntime }
 
+const minBackupRecoveryLease = 30 * time.Second
+
 func (a raftBackupControl) node() *control.Node {
 	if a.runtime == nil {
 		return nil
@@ -83,6 +85,9 @@ func (a raftBackupControl) ClaimScheduledRun(_ context.Context, key string, view
 	if err != nil {
 		return backup.FrozenRun{}, false, err
 	}
+	if acquired && a.runtime != nil && a.runtime.opt.triggers != nil && a.runtime.opt.triggers.afterBackupRunClaim != nil {
+		a.runtime.opt.triggers.afterBackupRunClaim()
+	}
 	return backup.FrozenRun{RunID: record.RunID, PolicyID: run.PolicyID, PolicyRevision: run.PolicyRevision, TargetNodeIDs: append([]string(nil), run.TargetNodeIDs...), Sink: run.Sink, DestinationProfile: run.DestinationProfile, MaxConcurrency: run.MaxConcurrency, LeaderTerm: record.LeaderTerm, LeaseExpiresUnix: run.LeaseUntilUnix, TimeoutSeconds: run.TimeoutSeconds, UnavailablePolicy: run.UnavailablePolicy}, acquired, nil
 }
 
@@ -103,7 +108,11 @@ func (a raftBackupControl) ClaimRecoverableRuns(_ context.Context, term uint64, 
 	for _, id := range ids {
 		run := state.BackupRuns[id]
 		timeout := backupTimeout(run.TimeoutSeconds)
-		leaseUntil := now.Add(time.Duration(timeout) * time.Second).Unix()
+		leaseDuration := time.Duration(timeout) * time.Second
+		if leaseDuration < minBackupRecoveryLease {
+			leaseDuration = minBackupRecoveryLease
+		}
+		leaseUntil := now.Add(leaseDuration).Unix()
 		cmd, err := control.EncodeCommand(control.CmdBackupRunClaim, control.RunClaimBody{OperationID: "scheduler-recover-" + id, RunID: id, LeaderTerm: term, UpdatedUnix: now.Unix(), LeaseUntilUnix: leaseUntil})
 		if err != nil {
 			return nil, err
@@ -200,6 +209,9 @@ type localBackupDispatcher struct {
 func (d localBackupDispatcher) DispatchBackupTask(ctx context.Context, task backup.BackupTaskRequest) error {
 	if d.runtime == nil {
 		return fmt.Errorf("backup runtime unavailable")
+	}
+	if d.runtime.opt.triggers != nil && d.runtime.opt.triggers.beforeBackupTaskDispatch != nil {
+		d.runtime.opt.triggers.beforeBackupTaskDispatch(task)
 	}
 	if n := d.runtime.control(); n != nil {
 		if existing, ok := n.View().BackupTasks[task.RunID+":"+task.TaskID]; ok && terminalBackupTaskStatus(existing.Status) {
@@ -406,7 +418,7 @@ func (r *rpcRuntime) authorizeClusterBackupTask(sourceNodeID string, msg *procme
 	if msg.GetLeaderTerm() == 0 || msg.GetLeaderTerm() != n.CurrentTerm() {
 		return errcode.E(errcode.CONFLICT, "stale leader term")
 	}
-	if msg.GetLeaseExpiresUnix() <= time.Now().Unix() {
+	if msg.GetLeaseExpiresUnix() <= r.opt.now().Unix() {
 		return errcode.E(errcode.TIMEOUT, "task lease expired")
 	}
 	state := n.View()

@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestE2E_MetricsFlow verifies the complete metrics collection pipeline:

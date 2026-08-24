@@ -146,8 +146,10 @@ log:
 
 ```bash
 # 测试与构建
-make test
-make test-e2e       # Linux 环境的端到端测试
+make test             # 默认快速 Go 测试
+make test-acceptance  # Agent 验收测试（真实进程/集群，耗时较长）
+make test-e2e-web     # 启动测试 Agent 并运行完整 Playwright 门禁
+make test-e2e         # 依次运行 Agent 验收与 Web E2E
 make web
 make bin
 

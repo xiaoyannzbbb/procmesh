@@ -1,8 +1,12 @@
-.PHONY: test proto proto-ts web web-dev test-e2e bin
-test:
+.PHONY: test test-go test-acceptance test-e2e test-e2e-web proto proto-ts web web-dev bin
+test: test-go
+test-go:
 	go test ./...
-test-e2e:
-	go test ./internal/agent -run TestP5_ -count=1 -timeout 180s
+test-acceptance:
+	go test -tags=acceptance ./internal/agent -count=1 -timeout 300s
+test-e2e-web:
+	go test -tags='acceptance web_e2e' ./internal/agent -run '^TestP5_Playwright_' -count=1 -timeout 180s
+test-e2e: test-acceptance test-e2e-web
 proto:
 	PATH="$$PATH:$$(go env GOPATH)/bin" protoc \
 		--go_out=. --go_opt=module=github.com/qleelulu/procmesh \

@@ -150,6 +150,119 @@ func TestUnfinishedBackupTargetsPreservesTerminalResults(t *testing.T) {
 	}
 }
 
+func TestAuthorizeClusterBackupTaskUsesRuntimeClock(t *testing.T) {
+	const (
+		clusterID = "cluster-backup-clock"
+		sourceID  = "source"
+		targetID  = "target"
+		policyID  = "policy"
+		runID     = "run"
+	)
+	fakeNow := time.Now().Add(-time.Hour).Truncate(time.Second)
+	node, apply := startBackupSchedulerControl(t, clusterID, targetID)
+	apply(control.CmdMemberPut, control.MemberPutBody{NodeID: sourceID, RaftAddr: node.LeaderAddr(), Status: control.MemberAdmitted})
+	apply(control.CmdMemberPut, control.MemberPutBody{NodeID: targetID, Status: control.MemberAdmitted})
+	apply(control.CmdBackupPolicyPut, control.BackupPolicyPutBody{
+		OperationID: "policy", PolicyID: policyID, Name: policyID, Enabled: true,
+		ScheduleCron: "0 2 * * *", Timezone: "UTC",
+		TargetSelector: "EXPLICIT_NODES", TargetIDs: []string{targetID}, Sink: "fs",
+		TimeoutSeconds: 8, MaxConcurrency: 1, UnavailablePolicy: "RECORD_AND_CONTINUE",
+	})
+	term := node.CurrentTerm()
+	apply(control.CmdBackupRunCreate, control.CreateRunBody{
+		OperationID: "run", LeaderTerm: term,
+		Run: control.ClusterBackupRun{
+			RunID: runID, PolicyID: policyID, PolicyRevision: 1, TargetNodeIDs: []string{targetID},
+			Status: "RUNNING", TimeoutSeconds: 8, LeaseUntilUnix: fakeNow.Add(time.Minute).Unix(),
+		},
+	})
+
+	runtime := &rpcRuntime{nodeID: targetID, node: node, opt: Options{Now: func() time.Time { return fakeNow }}}
+	err := runtime.authorizeClusterBackupTask(sourceID, &procmeshv1.RunClusterBackupTaskRequest{
+		RunId: runID, TaskId: "task-target", NodeId: targetID, PolicyId: policyID,
+		PolicyRevision: 1, LeaderTerm: term, LeaseExpiresUnix: fakeNow.Add(time.Minute).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("runtime-clock-live task rejected: %v", err)
+	}
+}
+
+func TestClaimRecoverableRunsRenewsMinimumLeaseWithoutChangingTimeout(t *testing.T) {
+	const (
+		clusterID = "cluster-backup-recovery"
+		nodeID    = "target"
+		policyID  = "policy"
+		runID     = "run"
+	)
+	now := time.Now().Truncate(time.Second)
+	node, apply := startBackupSchedulerControl(t, clusterID, nodeID)
+	apply(control.CmdMemberPut, control.MemberPutBody{NodeID: nodeID, Status: control.MemberAdmitted})
+	apply(control.CmdBackupPolicyPut, control.BackupPolicyPutBody{
+		OperationID: "policy", PolicyID: policyID, Name: policyID, Enabled: true,
+		ScheduleCron: "0 2 * * *", Timezone: "UTC",
+		TargetSelector: "EXPLICIT_NODES", TargetIDs: []string{nodeID}, Sink: "fs",
+		TimeoutSeconds: 8, MaxConcurrency: 1, UnavailablePolicy: "RECORD_AND_CONTINUE",
+	})
+	oldTerm := node.CurrentTerm()
+	apply(control.CmdBackupRunCreate, control.CreateRunBody{
+		OperationID: "run", LeaderTerm: oldTerm,
+		Run: control.ClusterBackupRun{
+			RunID: runID, PolicyID: policyID, PolicyRevision: 1, TargetNodeIDs: []string{nodeID},
+			Status: "RUNNING", TimeoutSeconds: 8, LeaseUntilUnix: now.Add(-time.Second).Unix(),
+		},
+	})
+
+	runs, err := (raftBackupControl{runtime: &rpcRuntime{node: node}}).ClaimRecoverableRuns(context.Background(), oldTerm+1, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("recovered runs=%d want 1", len(runs))
+	}
+	wantLease := now.Add(30 * time.Second).Unix()
+	if runs[0].LeaseExpiresUnix < wantLease {
+		t.Fatalf("recovered lease=%d want at least %d", runs[0].LeaseExpiresUnix, wantLease)
+	}
+	if runs[0].TimeoutSeconds != 8 {
+		t.Fatalf("recovered timeout=%d want original 8", runs[0].TimeoutSeconds)
+	}
+	committed := node.View().BackupRuns[runID]
+	if committed.LeaseUntilUnix != runs[0].LeaseExpiresUnix {
+		t.Fatalf("committed lease=%d returned lease=%d", committed.LeaseUntilUnix, runs[0].LeaseExpiresUnix)
+	}
+	if committed.TimeoutSeconds != 8 {
+		t.Fatalf("committed timeout=%d want original 8", committed.TimeoutSeconds)
+	}
+}
+
+func startBackupSchedulerControl(t *testing.T, clusterID, nodeID string) (*control.Node, func(string, any)) {
+	t.Helper()
+	node, err := control.Start(control.RaftConfig{
+		Dir: t.TempDir(), Bind: "127.0.0.1:0", NodeID: nodeID, ClusterID: clusterID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = node.Shutdown() })
+	if err := node.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitRaftLeader(node, raftStartTO); err != nil {
+		t.Fatal(err)
+	}
+	apply := func(commandType string, body any) {
+		t.Helper()
+		command, err := control.EncodeCommand(commandType, body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := node.Apply(command, raftApplyTO); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return node, apply
+}
+
 type fakeClusterBackupAgentForwarder struct {
 	client procmeshv1connect.ClusterBackupAgentServiceClient
 }

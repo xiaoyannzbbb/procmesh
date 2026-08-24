@@ -255,6 +255,7 @@ func (r *rpcRuntime) localHandler() http.Handler {
 	mux.Handle(bpkup, bkh)
 	cbp, cbh := procmeshv1connect.NewClusterBackupServiceHandler(&api.ClusterBackupAPI{
 		Auth: r.auth, Store: r.st, ControlFn: r.control, LocalOnly: true, LocalID: r.nodeID,
+		Now: r.opt.Now,
 		DispatchRun: func(run backup.FrozenRun) {
 			if r.backupCoord != nil {
 				ctx := r.ctx

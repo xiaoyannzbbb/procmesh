@@ -77,19 +77,19 @@ func TestQ2_ResumeDoesNotReplaySuccess(t *testing.T) {
 
 	cancel()
 
-	addr2 := startClusterAgentAt(t, root, "q2-resume")
+	triggers := newManualRunTriggers()
+	addr2, _ := startClusterAgentAtOpts(t, root, Options{BootID: "q2-resume", triggers: triggers.hooks})
 	if !waitProcessReady(t, addr2, "sleep") {
 		waitClusterInited(t, addr2)
 		loginAdmin(t, addr2, adminPW)
 	}
 
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
+	for range 3 {
+		triggers.triggerAgentLoop(t)
 		inst, ok := getProcessInstance(t, addr2, "sleep")
 		if ok && inst.GetObserved() == "RUNNING" && inst.GetPid() > 0 && inst.GetPid() != pid {
 			t.Fatalf("Resume replayed SUCCESS: pid %d -> %d", pid, inst.GetPid())
 		}
-		time.Sleep(50 * time.Millisecond)
 	}
 	gotPID := waitProcessPID(t, addr2, "sleep")
 	if gotPID != pid {

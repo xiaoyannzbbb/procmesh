@@ -59,6 +59,19 @@ type agentLoopCadence struct {
 	lastBackupSchedule time.Time
 }
 
+// runTriggers exposes deterministic maintenance triggers to same-package tests
+// without widening the runtime configuration interface used by production callers.
+type runTriggers struct {
+	agentLoop                <-chan struct{}
+	afterAgentLoop           func()
+	alertScan                <-chan struct{}
+	afterAlertScan           func()
+	runtimeReady             func(*rpcRuntime)
+	afterBackupRunClaim      func()
+	beforeBackupTaskDispatch func(backup.BackupTaskRequest)
+	manualBackupCoordinator  bool
+}
+
 func (c *agentLoopCadence) due(now time.Time) agentLoopWork {
 	return agentLoopWork{
 		diskProtect:    dueAt(now, &c.lastDiskProtect, diskProtectEvery),
@@ -101,6 +114,14 @@ type Options struct {
 	Backup             agentcfg.Backup
 	DiskPercent        func() float64 // optional override for backup disk protection (tests)
 	Now                func() time.Time
+	triggers           *runTriggers
+}
+
+func (o Options) now() time.Time {
+	if o.Now != nil {
+		return o.Now()
+	}
+	return time.Now()
 }
 
 // Run owns the agent lifecycle and blocks until ctx is cancelled.
@@ -466,6 +487,7 @@ func newBackupEngine(opt Options, mgr *process.Manager, st *store.Store, collect
 		Store:     st,
 		NodeID:    rt.nodeID,
 		ClusterID: clusterID,
+		Now:       opt.Now,
 		Apply:     mgr,
 		Sinks:     sinks,
 		OnRetentionDelete: func(ctx context.Context, ev backup.RetentionDeleteEvent) {
@@ -700,6 +722,9 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		},
 		Now: opt.Now,
 	})
+	if opt.triggers != nil && opt.triggers.runtimeReady != nil {
+		opt.triggers.runtimeReady(rt)
+	}
 	if control.AlreadyInited(clusterDeps.Dir) || raftLogExists(raftDir) {
 		if err := rt.startRaft(false); err != nil {
 			_ = ln.Close()
@@ -845,57 +870,77 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		go func() {
 			ticker := time.NewTicker(time.Second)
 			defer ticker.Stop()
+			var manual <-chan struct{}
+			if opt.triggers != nil {
+				manual = opt.triggers.agentLoop
+			}
 			var cadence agentLoopCadence
 			var lastBackupMin time.Time
+			runRound := func(force bool) {
+				now := opt.now()
+				work := cadence.due(now)
+				if force {
+					work = agentLoopWork{diskProtect: true, logRotate: true, backupSchedule: true}
+				}
+				if err := mgr.Reconcile(ctx); err != nil {
+					opt.Logger.Warn("process reconcile failed", "error", err)
+				}
+				if logs != nil && work.diskProtect {
+					logs.ExtraLogDirs = mgr.CustomLogDirs(ctx)
+					if _, err := logs.Protect(ctx); err != nil {
+						opt.Logger.Warn("disk protection failed", "error", err)
+					}
+				}
+				if work.logRotate {
+					_ = mgr.RotateLogs(ctx)
+				}
+				if mesh != nil {
+					mesh.Update()
+				}
+				if bak := rt.backup; bak != nil && work.backupSchedule {
+					if rt.backupCoord != nil && (opt.triggers == nil || !opt.triggers.manualBackupCoordinator) {
+						if err := rt.backupCoord.Tick(ctx); err != nil && ctx.Err() == nil {
+							opt.Logger.Warn("cluster backup schedule tick failed", "error", err)
+						}
+					}
+					if rt.replicationCoord != nil {
+						if err := rt.replicationCoord.Tick(ctx); err != nil && ctx.Err() == nil {
+							opt.Logger.Warn("replication schedule tick failed", "error", err)
+						}
+					}
+					min := now.Truncate(time.Minute)
+					if lastBackupMin.IsZero() || !min.Equal(lastBackupMin) {
+						lastBackupMin = min
+						clusterEnabled := false
+						clusterPolicyReadOK := false
+						if rt.backupCoord != nil {
+							if policies, err := (raftBackupControl{runtime: rt}).ListEnabledBackupPolicies(ctx); err == nil {
+								clusterPolicyReadOK = true
+								clusterEnabled = len(policies) > 0
+							}
+						}
+						if clusterPolicyReadOK && !clusterEnabled {
+							if err := bak.TickSchedule(ctx); err != nil && ctx.Err() == nil {
+								opt.Logger.Warn("backup schedule tick failed", "error", err)
+							}
+						}
+					}
+				}
+			}
 			for {
 				select {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					work := cadence.due(time.Now())
-					if err := mgr.Reconcile(ctx); err != nil {
-						opt.Logger.Warn("process reconcile failed", "error", err)
+					runRound(false)
+				case _, ok := <-manual:
+					if !ok {
+						manual = nil
+						continue
 					}
-					if logs != nil && work.diskProtect {
-						logs.ExtraLogDirs = mgr.CustomLogDirs(ctx)
-						if _, err := logs.Protect(ctx); err != nil {
-							opt.Logger.Warn("disk protection failed", "error", err)
-						}
-					}
-					if work.logRotate {
-						_ = mgr.RotateLogs(ctx)
-					}
-					if mesh != nil {
-						mesh.Update()
-					}
-					if bak := rt.backup; bak != nil && work.backupSchedule {
-						if rt.backupCoord != nil {
-							if err := rt.backupCoord.Tick(ctx); err != nil && ctx.Err() == nil {
-								opt.Logger.Warn("cluster backup schedule tick failed", "error", err)
-							}
-						}
-						if rt.replicationCoord != nil {
-							if err := rt.replicationCoord.Tick(ctx); err != nil && ctx.Err() == nil {
-								opt.Logger.Warn("replication schedule tick failed", "error", err)
-							}
-						}
-						min := time.Now().Truncate(time.Minute)
-						if lastBackupMin.IsZero() || !min.Equal(lastBackupMin) {
-							lastBackupMin = min
-							clusterEnabled := false
-							clusterPolicyReadOK := false
-							if rt.backupCoord != nil {
-								if policies, err := (raftBackupControl{runtime: rt}).ListEnabledBackupPolicies(ctx); err == nil {
-									clusterPolicyReadOK = true
-									clusterEnabled = len(policies) > 0
-								}
-							}
-							if clusterPolicyReadOK && !clusterEnabled {
-								if err := bak.TickSchedule(ctx); err != nil && ctx.Err() == nil {
-									opt.Logger.Warn("backup schedule tick failed", "error", err)
-								}
-							}
-						}
+					runRound(true)
+					if opt.triggers.afterAgentLoop != nil {
+						opt.triggers.afterAgentLoop()
 					}
 				}
 			}
@@ -1136,6 +1181,10 @@ func startAlertScanner(ctx context.Context, opt Options, mgr *process.Manager, s
 	go func() {
 		ticker := time.NewTicker(alertScanInterval)
 		defer ticker.Stop()
+		var manual <-chan struct{}
+		if opt.triggers != nil {
+			manual = opt.triggers.alertScan
+		}
 		scan := func() {
 			if err := sc.ScanLocal(ctx); err != nil && ctx.Err() == nil {
 				opt.Logger.Warn("alert scan local failed", "error", err)
@@ -1151,6 +1200,15 @@ func startAlertScanner(ctx context.Context, opt Options, mgr *process.Manager, s
 				return
 			case <-ticker.C:
 				scan()
+			case _, ok := <-manual:
+				if !ok {
+					manual = nil
+					continue
+				}
+				scan()
+				if opt.triggers.afterAlertScan != nil {
+					opt.triggers.afterAlertScan()
+				}
 			}
 		}
 	}()

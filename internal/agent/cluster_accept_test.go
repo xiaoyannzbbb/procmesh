@@ -173,13 +173,17 @@ func startClusterAgent(t *testing.T, bootID string) (addr, root string) {
 }
 
 func startClusterAgentCtl(t *testing.T, bootID string) (addr, root string, cancel context.CancelFunc) {
+	return startClusterAgentOptsCtl(t, Options{BootID: bootID})
+}
+
+func startClusterAgentOptsCtl(t *testing.T, extra Options) (addr, root string, cancel context.CancelFunc) {
 	t.Helper()
 	root, err := os.MkdirTemp("", "pm")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
-	addr, cancel = startClusterAgentAtCtl(t, root, bootID)
+	addr, cancel = startClusterAgentAtOpts(t, root, extra)
 	return addr, root, cancel
 }
 
@@ -212,6 +216,7 @@ func startClusterAgentAtOpts(t *testing.T, root string, extra Options) (string, 
 		ensureTestSession(t)
 		errCh <- Run(ctx, Options{
 			DataDir:            root,
+			ConfigPath:         extra.ConfigPath,
 			Listen:             "127.0.0.1:0",
 			GossipListen:       gossipListen,
 			RPCListen:          rpcListen,
@@ -228,6 +233,8 @@ func startClusterAgentAtOpts(t *testing.T, root string, extra Options) (string, 
 			OnBreakGlassListen: extra.OnBreakGlassListen,
 			DiskPercent:        extra.DiskPercent,
 			Backup:             extra.Backup,
+			Now:                extra.Now,
+			triggers:           extra.triggers,
 		})
 	}()
 	var addr string
@@ -381,6 +388,26 @@ func parseNodeIDs(out string) []string {
 		}
 	}
 	return ids
+}
+
+func waitNodeState(t *testing.T, addr, nodeID, want string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var out, errb string
+	for time.Now().Before(deadline) {
+		code := 0
+		code, out, errb = runP1CLI("--server", addr, "node", "list")
+		if code == 0 {
+			for _, line := range strings.Split(out, "\n") {
+				fields := strings.Split(strings.TrimSpace(line), "\t")
+				if len(fields) >= 3 && fields[0] == nodeID && fields[2] == want {
+					return
+				}
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("node %s did not reach %s: stdout=%q stderr=%q", nodeID, want, out, errb)
 }
 
 func distinctIDs(ids []string) bool {

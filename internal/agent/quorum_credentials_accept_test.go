@@ -38,8 +38,9 @@ func (c quorumCredential) connectOpts() []connect.ClientOption {
 }
 
 func TestAccept_ReplicatedSessionManagesOwnerProcessesWithoutQuorum(t *testing.T) {
-	leaderAddr, _, stopLeader := startClusterAgentCtl(t, "")
-	ownerAddr, _ := startClusterAgent(t, "")
+	configPath := writeQuorumCredentialAgentConfig(t)
+	leaderAddr, _, stopLeader := startClusterAgentOptsCtl(t, Options{ConfigPath: configPath})
+	ownerAddr, _, _ := startClusterAgentOptsCtl(t, Options{ConfigPath: configPath})
 	password := joinTwoAndPassword(t, leaderAddr, ownerAddr)
 
 	loginAdmin(t, ownerAddr, password)
@@ -54,8 +55,9 @@ func TestAccept_ReplicatedSessionManagesOwnerProcessesWithoutQuorum(t *testing.T
 }
 
 func TestAccept_ReplicatedAPITokenManagesOwnerProcessesWithoutQuorum(t *testing.T) {
-	leaderAddr, _, stopLeader := startClusterAgentCtl(t, "")
-	ownerAddr, _ := startClusterAgent(t, "")
+	configPath := writeQuorumCredentialAgentConfig(t)
+	leaderAddr, _, stopLeader := startClusterAgentOptsCtl(t, Options{ConfigPath: configPath})
+	ownerAddr, _, _ := startClusterAgentOptsCtl(t, Options{ConfigPath: configPath})
 	password := joinTwoAndPassword(t, leaderAddr, ownerAddr)
 
 	loginAdmin(t, ownerAddr, password)
@@ -328,6 +330,15 @@ func writeLoggedSleepSpec(t *testing.T, name string) string {
 	path := filepath.Join(t.TempDir(), name+".yaml")
 	body := fmt.Sprintf("name: %s\nprocess_id: %s\ncommand: /bin/sh\nargs:\n  - -c\n  - 'echo %s; exec /bin/sleep 60'\ninstances: 1\n", name, name, quorumLossLogMarker)
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func writeQuorumCredentialAgentConfig(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	if err := os.WriteFile(path, []byte("disk:\n  emergency_stop_writes: false\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return path
