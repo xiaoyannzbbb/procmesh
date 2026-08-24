@@ -100,12 +100,14 @@ async function mountOverview(
   overrides: Partial<typeof overview> = {},
   batches: unknown[] = [],
   alerts: unknown[] = [],
+  nodes: unknown[] = [],
   alertsError?: Error,
 ) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   const clusterClient = { overview: vi.fn().mockResolvedValue({ ...overview, ...overrides }) };
+  const nodeClient = { listNodes: vi.fn().mockResolvedValue({ nodes }) };
   const batchClient = { listBatches: vi.fn().mockResolvedValue({ batches }) };
   const alertClient = {
     listAlerts: alertsError
@@ -118,16 +120,16 @@ async function mountOverview(
         [VueQueryPlugin, { queryClient }],
         [I18NextVue, { i18next: i18n }],
       ],
-      provide: { clusterClient, batchClient, alertClient },
+      provide: { clusterClient, nodeClient, batchClient, alertClient },
       stubs: {
-        RouterLink: { template: "<a><slot /></a>" },
+        RouterLink: { props: ["to"], template: '<a :href="to"><slot /></a>' },
       },
     },
   });
   mounted.push(wrapper);
   await flushPromises();
   await wrapper.vm.$nextTick();
-  return { wrapper, batchClient, alertClient };
+  return { wrapper, nodeClient, batchClient, alertClient };
 }
 
 afterEach(() => {
@@ -227,8 +229,37 @@ describe("OverviewPage", () => {
     expect(wrapper.find('[data-freshness="STALE"]').exists()).toBe(true);
   });
 
+  it("shows alert node hostnames linked to node details with node ID fallback", async () => {
+    const alerts = [
+      {
+        alert: { alertId: "a1", nodeId: "node/a", state: "FIRING" },
+        sourceNode: "node/a",
+        freshness: "LIVE",
+      },
+      {
+        alert: { alertId: "a2", nodeId: "node-b", state: "RESOLVED" },
+        sourceNode: "node-b",
+        freshness: "LIVE",
+      },
+    ];
+    const nodes = [
+      { nodeId: "node/a", hostname: "agent-a" },
+      { nodeId: "node-b", hostname: "" },
+    ];
+
+    const { wrapper, nodeClient } = await mountOverview({}, [], alerts, nodes);
+
+    expect(nodeClient.listNodes).toHaveBeenCalledWith({});
+    const links = wrapper.findAll('[data-testid="recent-alert-node"]');
+    expect(links).toHaveLength(2);
+    expect(links[0].text()).toBe("agent-a");
+    expect(links[0].attributes("href")).toBe("/nodes/node%2Fa");
+    expect(links[1].text()).toBe("node-b");
+    expect(links[1].attributes("href")).toBe("/nodes/node-b");
+  });
+
   it("keeps Recent Alerts card when listAlerts fails", async () => {
-    const { wrapper } = await mountOverview({}, [], [], new Error("alerts unavailable"));
+    const { wrapper } = await mountOverview({}, [], [], [], new Error("alerts unavailable"));
     expect(wrapper.find('[data-testid="recent-alerts"]').exists()).toBe(true);
     expect(wrapper.text()).toContain("Recent alerts");
     expect(wrapper.find(".alert-stale-banner").exists()).toBe(true);

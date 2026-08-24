@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/vue-query";
 import { computed } from "vue";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
 import { LIVE, STALE, UNKNOWN, type Freshness } from "../lib/freshness";
-import { useAlertClient, useBatchClient, useClusterClient } from "../lib/rpc";
+import { useAlertClient, useBatchClient, useClusterClient, useNodeClient } from "../lib/rpc";
 import { useI18n } from "../lib/useI18n";
 import { formatPercent, mapOverview } from "./clusterView";
 
@@ -11,6 +11,7 @@ const { t } = useI18n();
 
 const POLL_MS = 5000;
 const client = useClusterClient();
+const nodeClient = useNodeClient();
 const batchClient = useBatchClient();
 const alertClient = useAlertClient();
 
@@ -27,6 +28,15 @@ const recentQuery = useQuery({
 });
 
 const recentBatches = computed(() => recentQuery.data.value?.batches ?? []);
+
+const nodesQuery = useQuery({
+  queryKey: ["nodes"],
+  queryFn: () => nodeClient.listNodes({}),
+  refetchInterval: POLL_MS,
+});
+const nodeHostnames = computed(
+  () => new Map((nodesQuery.data.value?.nodes ?? []).map((node) => [node.nodeId, node.hostname])),
+);
 
 const recentAlertsQuery = useQuery({
   queryKey: ["alerts", "recent"],
@@ -45,7 +55,9 @@ const recentAlertsError = computed(() => {
 const recentAlertHasStale = computed(() =>
   recentAlertEntries.value.some((e) => freshnessOf(e.freshness) === STALE),
 );
-const recentAlertRows = computed(() => recentAlertEntries.value.map(mapRecentAlert));
+const recentAlertRows = computed(() =>
+  recentAlertEntries.value.map((entry, index) => mapRecentAlert(entry, index, nodeHostnames.value)),
+);
 const showRecentAlertsEmpty = computed(
   () =>
     !!recentAlertsQuery.data.value &&
@@ -74,15 +86,18 @@ function mapRecentAlert(
     freshness?: string;
   },
   index: number,
+  hostnames: ReadonlyMap<string, string>,
 ) {
   const alert = entry.alert;
   const freshness = freshnessOf(entry.freshness);
+  const nodeId = alert?.nodeId || entry.sourceNode || "";
   return {
     key: alert?.alertId || `${entry.sourceNode ?? "node"}:${index}`,
     fingerprint: alert?.fingerprint || "—",
     type: alert?.type || "—",
     state: (alert?.state || "").toUpperCase(),
-    node: alert?.nodeId || entry.sourceNode || "—",
+    nodeId,
+    node: hostnames.get(nodeId) || nodeId || "—",
     freshness,
   };
 }
@@ -257,7 +272,14 @@ const errorText = computed(() => {
                   :data-state="row.state || undefined"
                 >{{ alertStateLabel(row.state) }}</span>
               </td>
-              <td class="mono">{{ row.node }}</td>
+              <td class="mono">
+                <RouterLink
+                  v-if="row.nodeId"
+                  data-testid="recent-alert-node"
+                  :to="`/nodes/${encodeURIComponent(row.nodeId)}`"
+                >{{ row.node }}</RouterLink>
+                <span v-else>{{ row.node }}</span>
+              </td>
               <td><FreshnessBadge :status="row.freshness" /></td>
             </tr>
           </tbody>
