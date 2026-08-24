@@ -2,6 +2,7 @@ export const LIVE = "LIVE";
 export const STALE = "STALE";
 export const UNKNOWN = "UNKNOWN";
 export const MAX_AGE_MS = 10_000;
+export const PROCESS_MAX_AGE_MS = 40_000;
 
 export type Freshness = typeof LIVE | typeof STALE | typeof UNKNOWN;
 
@@ -9,6 +10,7 @@ export function classify(
   nowMs: number,
   lastUpdatedUnixMs: number,
   nodeState: string,
+  maxAgeMs: number = MAX_AGE_MS,
 ): Freshness {
   if (lastUpdatedUnixMs <= 0) {
     return UNKNOWN;
@@ -19,7 +21,7 @@ export function classify(
       return UNKNOWN;
   }
   const age = nowMs - lastUpdatedUnixMs;
-  if (nodeState === "ALIVE" && age <= MAX_AGE_MS) {
+  if (nodeState === "ALIVE" && age <= maxAgeMs) {
     return LIVE;
   }
   return STALE;

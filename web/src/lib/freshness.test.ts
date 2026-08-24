@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classify, formatAge, LIVE, STALE, UNKNOWN } from "./freshness";
+import { classify, formatAge, LIVE, PROCESS_MAX_AGE_MS, STALE, UNKNOWN } from "./freshness";
 
 const nowMs = 1_700_000_010_000;
 
@@ -38,6 +38,18 @@ describe("classify", () => {
 
   it("STALE when JOINING with timestamp", () => {
     expect(classify(nowMs, 1_700_000_009_000, "JOINING")).toBe(STALE);
+  });
+
+  it("LIVE when ALIVE and age == 40s with process max age", () => {
+    expect(classify(nowMs, nowMs - 40_000, "ALIVE", PROCESS_MAX_AGE_MS)).toBe(LIVE);
+  });
+
+  it("STALE when ALIVE and age > 40s with process max age", () => {
+    expect(classify(nowMs, nowMs - 40_001, "ALIVE", PROCESS_MAX_AGE_MS)).toBe(STALE);
+  });
+
+  it("STALE when ALIVE and age == 11s with default node max age", () => {
+    expect(classify(nowMs, nowMs - 11_000, "ALIVE")).toBe(STALE);
   });
 });
 

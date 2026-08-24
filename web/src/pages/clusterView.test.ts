@@ -109,6 +109,60 @@ describe("mapOverview", () => {
 });
 
 describe("mapProcess / mapNode", () => {
+  it("marks an ALIVE node process as LIVE when age is 30s", () => {
+    const row = mapProcess(
+      {
+        name: "api",
+        desired: "RUNNING",
+        observed: "RUNNING",
+        freshnessUnixMs: nowMs - 30_000,
+      },
+      "ALIVE",
+      nowMs,
+    );
+    expect(row.freshness).toBe(LIVE);
+  });
+
+  it("marks an ALIVE node process as LIVE when age is 40s", () => {
+    const row = mapProcess(
+      {
+        name: "api",
+        observed: "RUNNING",
+        freshnessUnixMs: nowMs - 40_000,
+      },
+      "ALIVE",
+      nowMs,
+    );
+    expect(row.freshness).toBe(LIVE);
+  });
+
+  it("marks an ALIVE node process as STALE when age is over 40s", () => {
+    const row = mapProcess(
+      {
+        name: "api",
+        observed: "RUNNING",
+        freshnessUnixMs: nowMs - 40_001,
+      },
+      "ALIVE",
+      nowMs,
+    );
+    expect(row.freshness).toBe(STALE);
+  });
+
+  it("keeps node freshness STALE at 11s even when processes stay LIVE", () => {
+    const node = mapNode(
+      {
+        nodeId: "n1",
+        state: "ALIVE",
+        lastUpdatedUnixMs: nowMs - 11_000,
+        processes: [{ name: "api", observed: "RUNNING", freshnessUnixMs: nowMs - 30_000 }],
+      },
+      nowMs,
+    );
+    expect(node.freshness).toBe(STALE);
+    expect(node.processes[0]?.freshness).toBe(LIVE);
+  });
+
   it("marks a RUNNING process on a FAILED node as STALE", () => {
     const row = mapProcess(
       {

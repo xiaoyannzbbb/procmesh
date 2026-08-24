@@ -1,4 +1,4 @@
-import { classify, formatAge, STALE, UNKNOWN, type Freshness } from "../lib/freshness";
+import { classify, formatAge, PROCESS_MAX_AGE_MS, STALE, UNKNOWN, type Freshness } from "../lib/freshness";
 
 export const DEGRADED_BANNER =
   "Agent DEGRADED — local store impaired; business processes are not stopped.";
@@ -213,7 +213,7 @@ export function mapProcess(input: unknown, nodeState: string, nowMs: number): Pr
     health: toStr(pick(input, "health")),
     latestRevision: toNum(pick(input, "latestRevision", "latest_revision")),
     activeRevision: toNum(pick(input, "activeRevision", "active_revision")),
-    freshness: classify(nowMs, freshnessUnixMs, nodeState),
+    freshness: classify(nowMs, freshnessUnixMs, nodeState, PROCESS_MAX_AGE_MS),
     freshnessUnixMs,
   };
 }

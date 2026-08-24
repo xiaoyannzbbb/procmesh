@@ -57,3 +57,21 @@ func TestClassify_StaleJoiningWithTimestamp(t *testing.T) {
 		t.Fatalf("recent JOINING: got %s want STALE", got)
 	}
 }
+
+func TestClassifyProcess_LiveAliveAt40s(t *testing.T) {
+	if got := ClassifyProcess(classifyNow, 1_700_000_010_000-40_000, "ALIVE"); got != LIVE {
+		t.Fatalf("ALIVE age==40s: got %s want LIVE", got)
+	}
+}
+
+func TestClassifyProcess_StaleAliveOver40s(t *testing.T) {
+	if got := ClassifyProcess(classifyNow, 1_700_000_010_000-40_001, "ALIVE"); got != STALE {
+		t.Fatalf("ALIVE age>40s: got %s want STALE", got)
+	}
+}
+
+func TestClassify_NodeStillStaleAt11s(t *testing.T) {
+	if got := Classify(classifyNow, 1_700_000_010_000-11_000, "ALIVE"); got != STALE {
+		t.Fatalf("ALIVE age==11s: got %s want STALE", got)
+	}
+}
