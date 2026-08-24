@@ -2,6 +2,9 @@
 .superpowers/
 .claude/
 .agents/
+.agent_context/
+.multica/
+
 .DS_Store
 /procmesh
 /procmesh-agent
