@@ -112,6 +112,7 @@ async function mountShell(current: Me, provide: Record<string, unknown> = {}) {
 describe("AppShell", () => {
   beforeEach(() => {
     clearSession();
+    localStorage.removeItem("procmesh-sidebar-collapsed");
   });
 
   it("renders Overview and Processes", async () => {
@@ -256,5 +257,14 @@ describe("AppShell", () => {
   it("locks the shell to the viewport so logout stays on screen", () => {
     expect(shellSource).toMatch(/\.app-shell\s*\{[^}]*height:\s*100dvh/s);
     expect(shellSource).toMatch(/\.content\s*\{[^}]*overflow-y:\s*auto/s);
+  });
+
+  it("keeps the compact brand visible without horizontal navigation overflow", () => {
+    expect(shellSource).toMatch(/\.collapsed \.sidebar-header\s*\{[^}]*position:\s*relative/s);
+    expect(shellSource).toMatch(
+      /\.collapsed \.collapse-btn\s*\{[^}]*position:\s*absolute[^}]*right:\s*0[^}]*transform:\s*translate\(50%,\s*-50%\)/s,
+    );
+    expect(shellSource).toMatch(/\.nav\s*\{[^}]*overflow-x:\s*hidden/s);
+    expect(shellSource).toMatch(/\.collapsed \.nav-label\s*\{[^}]*display:\s*none/s);
   });
 });

@@ -224,6 +224,13 @@ async function onLogout(): Promise<void> {
   gap: 0.5rem;
 }
 
+.collapsed .sidebar-header {
+  position: relative;
+  justify-content: center;
+  padding: 1rem 0.75rem;
+  gap: 0;
+}
+
 .brand {
   font-size: 1.125rem;
   font-weight: 650;
@@ -270,12 +277,49 @@ async function onLogout(): Promise<void> {
   outline-offset: 2px;
 }
 
+.collapsed .collapse-btn {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  z-index: 10;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  transform: translate(50%, -50%);
+}
+
+.collapsed .collapse-btn::before {
+  position: absolute;
+  inset: 4px;
+  content: "";
+  border: 1px solid var(--color-border);
+  border-radius: 50%;
+  background: var(--color-card);
+  box-shadow: var(--shadow-sm);
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.collapsed .collapse-btn :deep(svg) {
+  position: relative;
+  z-index: 1;
+}
+
+.collapsed .collapse-btn:hover {
+  background: transparent;
+}
+
+.collapsed .collapse-btn:hover::before {
+  background: color-mix(in srgb, var(--color-text) 8%, var(--color-card));
+  border-color: color-mix(in srgb, var(--color-text) 18%, var(--color-border));
+}
+
 .nav {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
   padding: 0.75rem;
   flex: 1;
+  overflow-x: hidden;
   overflow-y: auto;
 }
 
@@ -329,24 +373,7 @@ async function onLogout(): Promise<void> {
 }
 
 .collapsed .nav-label {
-  position: absolute;
-  left: 100%;
-  margin-left: 0.75rem;
-  padding: 0.375rem 0.75rem;
-  background: var(--color-text);
-  color: var(--color-sidebar);
-  border-radius: 6px;
-  font-size: 0.875rem;
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s;
-  z-index: 100;
-}
-
-.collapsed .nav-link:hover .nav-label,
-.collapsed .nav-link:focus-visible .nav-label {
-  opacity: 1;
+  display: none;
 }
 
 .sidebar-foot {
@@ -515,12 +542,20 @@ async function onLogout(): Promise<void> {
     display: none;
   }
 
+  .sidebar.collapsed .sidebar-header {
+    flex-direction: row;
+    justify-content: space-between;
+    padding: 1rem 1.25rem;
+    gap: 0.5rem;
+  }
+
   .sidebar.collapsed .nav-link {
     justify-content: flex-start;
     padding: 0.75rem;
   }
 
   .sidebar.collapsed .nav-label {
+    display: inline;
     position: static;
     margin-left: 0;
     padding: 0;

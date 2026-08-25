@@ -12,8 +12,8 @@
 *.test
 /bin/
 dist/
-!internal/web/dist/
-!internal/web/dist/**
+internal/web/dist/
+internal/web/dist/**
 web/node_modules/
 web/dist/
 web/test-results/
