@@ -61,6 +61,7 @@ beforeEach(async () => {
             state: "State",
             node: "Node",
             freshness: "Freshness",
+            lastUpdated: "Last updated",
           },
         },
       },
@@ -136,6 +137,8 @@ afterEach(() => {
   while (mounted.length) {
     mounted.pop()?.unmount();
   }
+  vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 describe("OverviewPage", () => {
@@ -256,6 +259,63 @@ describe("OverviewPage", () => {
     expect(links[0].attributes("href")).toBe("/nodes/node%2Fa");
     expect(links[1].text()).toBe("node-b");
     expect(links[1].attributes("href")).toBe("/nodes/node-b");
+  });
+
+  it("shows the update time for live alerts and stale placeholders", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(1_700_000_020_000);
+    const { wrapper } = await mountOverview({}, [], [
+      {
+        alert: {
+          alertId: "a1",
+          fingerprint: "fp1",
+          type: "PROCESS_EXIT",
+          state: "FIRING",
+          nodeId: "n1",
+          lastUnixMs: BigInt(1_700_000_010_000),
+        },
+        sourceNode: "n1",
+        freshness: "LIVE",
+        lastUpdatedUnixMs: BigInt(1_700_000_019_000),
+      },
+      {
+        alert: undefined,
+        sourceNode: "n2",
+        freshness: "STALE",
+        lastUpdatedUnixMs: BigInt(1_700_000_015_000),
+      },
+    ]);
+
+    const table = wrapper.get('[data-testid="recent-alerts-table"]');
+    expect(table.element.parentElement?.classList.contains("table-scroll")).toBe(true);
+    expect(table.findAll("th").map((header) => header.text())).toContain("Last updated");
+    const updateCells = table.findAll('[data-testid="recent-alert-updated"]');
+    expect(updateCells.map((cell) => cell.text())).toEqual(["10s ago", "5s ago"]);
+    expect(updateCells.every((cell) => Boolean(cell.attributes("title")))).toBe(true);
+  });
+
+  it("refreshes a stale placeholder age while query data stays unchanged", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_700_000_020_000);
+    const { wrapper, alertClient } = await mountOverview({}, [], [
+      {
+        alert: undefined,
+        sourceNode: "n2",
+        freshness: "STALE",
+        lastUpdatedUnixMs: BigInt(1_700_000_015_000),
+      },
+    ]);
+    const updateCell = wrapper.get('[data-testid="recent-alert-updated"]');
+    expect(updateCell.text()).toBe("5s ago");
+
+    await vi.advanceTimersByTimeAsync(55_000);
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+
+    expect(alertClient.listAlerts).toHaveBeenCalledTimes(12);
+    const firstData = await alertClient.listAlerts.mock.results[0]?.value;
+    const lastData = await alertClient.listAlerts.mock.results.at(-1)?.value;
+    expect(lastData).toBe(firstData);
+    expect(updateCell.text()).toBe("1m ago");
   });
 
   it("keeps Recent Alerts card when listAlerts fails", async () => {

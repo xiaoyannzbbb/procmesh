@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { useQuery } from "@tanstack/vue-query";
-import { computed } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
-import { LIVE, STALE, UNKNOWN, type Freshness } from "../lib/freshness";
+import { LIVE, STALE, UNKNOWN, formatAge, type Freshness } from "../lib/freshness";
 import { useAlertClient, useBatchClient, useClusterClient, useNodeClient } from "../lib/rpc";
 import { useI18n } from "../lib/useI18n";
 import { formatPercent, mapOverview } from "./clusterView";
@@ -14,6 +14,7 @@ const client = useClusterClient();
 const nodeClient = useNodeClient();
 const batchClient = useBatchClient();
 const alertClient = useAlertClient();
+const nowMs = ref(Date.now());
 
 const query = useQuery({
   queryKey: ["cluster", "overview"],
@@ -56,7 +57,9 @@ const recentAlertHasStale = computed(() =>
   recentAlertEntries.value.some((e) => freshnessOf(e.freshness) === STALE),
 );
 const recentAlertRows = computed(() =>
-  recentAlertEntries.value.map((entry, index) => mapRecentAlert(entry, index, nodeHostnames.value)),
+  recentAlertEntries.value.map((entry, index) =>
+    mapRecentAlert(entry, index, nodeHostnames.value, nowMs.value),
+  ),
 );
 const showRecentAlertsEmpty = computed(
   () =>
@@ -81,16 +84,20 @@ function mapRecentAlert(
       type?: string;
       state?: string;
       nodeId?: string;
+      lastUnixMs?: bigint | number;
     };
     sourceNode?: string;
     freshness?: string;
+    lastUpdatedUnixMs?: bigint | number;
   },
   index: number,
   hostnames: ReadonlyMap<string, string>,
+  currentTimeMs: number,
 ) {
   const alert = entry.alert;
   const freshness = freshnessOf(entry.freshness);
   const nodeId = alert?.nodeId || entry.sourceNode || "";
+  const lastUpdatedUnixMs = Number(alert ? alert.lastUnixMs ?? 0 : entry.lastUpdatedUnixMs ?? 0);
   return {
     key: alert?.alertId || `${entry.sourceNode ?? "node"}:${index}`,
     fingerprint: alert?.fingerprint || "—",
@@ -99,7 +106,33 @@ function mapRecentAlert(
     nodeId,
     node: hostnames.get(nodeId) || nodeId || "—",
     freshness,
+    lastUpdatedUnixMs,
+    lastUpdated: formatAge(currentTimeMs, lastUpdatedUnixMs),
   };
+}
+
+let clockTick: ReturnType<typeof setInterval> | undefined;
+
+onMounted(() => {
+  clockTick = setInterval(() => {
+    nowMs.value = Date.now();
+  }, POLL_MS);
+});
+
+onUnmounted(() => {
+  if (clockTick) {
+    clearInterval(clockTick);
+  }
+});
+
+function formatDate(value: number): string {
+  if (!value) {
+    return t("alert.notAvailable");
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
 }
 
 function alertStateLabel(state: string): string {
@@ -246,44 +279,52 @@ const errorText = computed(() => {
         >
           {{ t("alert.staleBanner") }}
         </div>
-        <table v-if="recentAlertRows.length" class="table">
-          <thead>
-            <tr>
-              <th>{{ t("alert.fingerprint") }}</th>
-              <th>{{ t("alert.type") }}</th>
-              <th>{{ t("alert.state") }}</th>
-              <th>{{ t("alert.node") }}</th>
-              <th>{{ t("alert.freshness") }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="row in recentAlertRows"
-              :key="row.key"
-              :data-freshness="row.freshness"
-              :class="{ 'row-stale': row.freshness === 'STALE' }"
-            >
-              <td class="mono">{{ row.fingerprint }}</td>
-              <td>{{ row.type }}</td>
-              <td>
-                <span
-                  class="alert-state"
-                  :class="{ 'alert-firing': row.state === 'FIRING' }"
-                  :data-state="row.state || undefined"
-                >{{ alertStateLabel(row.state) }}</span>
-              </td>
-              <td class="mono">
-                <RouterLink
-                  v-if="row.nodeId"
-                  data-testid="recent-alert-node"
-                  :to="`/nodes/${encodeURIComponent(row.nodeId)}`"
-                >{{ row.node }}</RouterLink>
-                <span v-else>{{ row.node }}</span>
-              </td>
-              <td><FreshnessBadge :status="row.freshness" /></td>
-            </tr>
-          </tbody>
-        </table>
+        <div v-if="recentAlertRows.length" class="table-scroll">
+          <table class="table recent-alert-table" data-testid="recent-alerts-table">
+            <thead>
+              <tr>
+                <th>{{ t("alert.fingerprint") }}</th>
+                <th>{{ t("alert.type") }}</th>
+                <th>{{ t("alert.state") }}</th>
+                <th>{{ t("alert.node") }}</th>
+                <th>{{ t("alert.freshness") }}</th>
+                <th>{{ t("alert.lastUpdated") }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="row in recentAlertRows"
+                :key="row.key"
+                :data-freshness="row.freshness"
+                :class="{ 'row-stale': row.freshness === 'STALE' }"
+              >
+                <td class="mono">{{ row.fingerprint }}</td>
+                <td>{{ row.type }}</td>
+                <td>
+                  <span
+                    class="alert-state"
+                    :class="{ 'alert-firing': row.state === 'FIRING' }"
+                    :data-state="row.state || undefined"
+                  >{{ alertStateLabel(row.state) }}</span>
+                </td>
+                <td class="mono">
+                  <RouterLink
+                    v-if="row.nodeId"
+                    data-testid="recent-alert-node"
+                    :to="`/nodes/${encodeURIComponent(row.nodeId)}`"
+                  >{{ row.node }}</RouterLink>
+                  <span v-else>{{ row.node }}</span>
+                </td>
+                <td><FreshnessBadge :status="row.freshness" /></td>
+                <td
+                  class="time-cell"
+                  data-testid="recent-alert-updated"
+                  :title="formatDate(row.lastUpdatedUnixMs)"
+                >{{ row.lastUpdated }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
         <p v-else-if="showRecentAlertsEmpty" class="muted">{{ t("alert.noAlerts") }}</p>
       </section>
 
@@ -465,6 +506,15 @@ h3 {
 }
 .alert-firing {
   color: var(--color-danger);
+}
+.table-scroll {
+  overflow-x: auto;
+}
+.recent-alert-table {
+  min-width: 48rem;
+}
+.time-cell {
+  white-space: nowrap;
 }
 .row-stale,
 tr[data-freshness="STALE"] {
