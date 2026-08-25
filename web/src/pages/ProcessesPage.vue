@@ -1232,7 +1232,7 @@ h1 {
 
 .process-table th:nth-child(n + 3),
 .process-table td:nth-child(n + 3) {
-  width: 1%;
+  /* width: 1%; */
   white-space: nowrap;
 }
 
@@ -1264,8 +1264,8 @@ h1 {
 }
 
 .cell-actions {
-  width: 11.5rem;
-  min-width: 11.5rem;
+  width: 9rem;
+  min-width: 9rem;
   text-align: center;
   position: sticky;
   right: 0;

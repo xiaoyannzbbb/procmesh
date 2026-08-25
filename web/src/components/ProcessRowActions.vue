@@ -136,8 +136,8 @@ function titleFor(action: ProcessAction): string {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 40px;
-  min-height: 40px;
+  min-width: 28px;
+  min-height: 28px;
   padding: 0;
   border: 1px solid transparent;
   border-radius: 8px;
