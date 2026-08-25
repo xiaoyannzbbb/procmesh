@@ -33,7 +33,9 @@ testI18n.init({
           disasterReplica: 'Disaster replica',
         },
         actions: {
-          logout: 'Logout'
+          logout: 'Logout',
+          expand: 'Expand sidebar',
+          collapse: 'Collapse sidebar',
         }
       }
     },
@@ -53,7 +55,9 @@ testI18n.init({
           disasterReplica: '灾备副本',
         },
         actions: {
-          logout: '退出登录'
+          logout: '退出登录',
+          expand: '展开侧边栏',
+          collapse: '收起侧边栏',
         }
       }
     }
@@ -266,5 +270,39 @@ describe("AppShell", () => {
     );
     expect(shellSource).toMatch(/\.nav\s*\{[^}]*overflow-x:\s*hidden/s);
     expect(shellSource).toMatch(/\.collapsed \.nav-label\s*\{[^}]*display:\s*none/s);
+  });
+
+  it("shows matching tooltips for collapsed sidebar controls", async () => {
+    await testI18n.changeLanguage("en");
+    localStorage.setItem("procmesh-sidebar-collapsed", "true");
+    const wrapper = await mountShell(me());
+    const overviewLink = wrapper.findAll(".nav-link")[0];
+    const expandButton = wrapper.get(".collapse-btn");
+    const logoutButton = wrapper.get(".logout");
+
+    expect(expandButton.attributes("aria-label")).toBe("Expand sidebar");
+    expect(expandButton.attributes("title")).toBeUndefined();
+    await expandButton.trigger("mouseenter");
+    expect(document.body.querySelector('[role="tooltip"]')?.textContent).toBe("Expand sidebar");
+    await expandButton.trigger("mouseleave");
+
+    expect(overviewLink.attributes("aria-label")).toBe("Overview");
+    expect(overviewLink.attributes("title")).toBeUndefined();
+    await overviewLink.trigger("mouseenter");
+    expect(document.body.querySelector('[role="tooltip"]')?.textContent).toBe("Overview");
+    await overviewLink.trigger("mouseleave");
+    expect(document.body.querySelector('[role="tooltip"]')).toBeNull();
+
+    expect(logoutButton.attributes("aria-label")).toBe("Logout");
+    expect(logoutButton.attributes("title")).toBeUndefined();
+    await logoutButton.trigger("mouseenter");
+    expect(document.body.querySelector('[role="tooltip"]')?.textContent).toBe("Logout");
+    await logoutButton.trigger("mouseleave");
+
+    await overviewLink.trigger("focus");
+    expect(document.body.querySelector('[role="tooltip"]')?.textContent).toBe("Overview");
+    await overviewLink.trigger("blur");
+    expect(document.body.querySelector('[role="tooltip"]')).toBeNull();
+    wrapper.unmount();
   });
 });

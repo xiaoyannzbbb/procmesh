@@ -32,6 +32,7 @@ const { t } = useI18n();
 const COLLAPSED_KEY = "procmesh-sidebar-collapsed";
 const isCollapsed = ref(false);
 const isMobileNavOpen = ref(false);
+const sidebarTooltip = ref<{ label: string; left: number; top: number } | null>(null);
 
 onMounted(() => {
   const stored = localStorage.getItem(COLLAPSED_KEY);
@@ -43,6 +44,9 @@ onMounted(() => {
 function toggleCollapse() {
   isCollapsed.value = !isCollapsed.value;
   localStorage.setItem(COLLAPSED_KEY, String(isCollapsed.value));
+  if (!isCollapsed.value) {
+    hideSidebarTooltip();
+  }
 }
 
 function toggleMobileNav(): void {
@@ -51,6 +55,30 @@ function toggleMobileNav(): void {
 
 function closeMobileNav(): void {
   isMobileNavOpen.value = false;
+}
+
+function showSidebarTooltip(event: MouseEvent | FocusEvent, label: string): void {
+  if (!isCollapsed.value || window.innerWidth <= 768) {
+    return;
+  }
+
+  const target = event.currentTarget;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+
+  const itemRect = target.getBoundingClientRect();
+  const sidebarRect = target.closest(".sidebar")?.getBoundingClientRect();
+  const centerY = itemRect.top + itemRect.height / 2;
+  sidebarTooltip.value = {
+    label,
+    left: Math.max(sidebarRect?.right ?? itemRect.right, itemRect.right) + 8,
+    top: Math.min(Math.max(centerY, 24), window.innerHeight - 24),
+  };
+}
+
+function hideSidebarTooltip(): void {
+  sidebarTooltip.value = null;
 }
 
 watch(
@@ -130,21 +158,28 @@ async function onLogout(): Promise<void> {
           class="collapse-btn"
           @click="toggleCollapse"
           :aria-label="isCollapsed ? t('actions.expand') : t('actions.collapse')"
-          :title="isCollapsed ? t('actions.expand') : t('actions.collapse')"
+          @mouseenter="showSidebarTooltip($event, t('actions.expand'))"
+          @mouseleave="hideSidebarTooltip"
+          @focus="showSidebarTooltip($event, t('actions.expand'))"
+          @blur="hideSidebarTooltip"
         >
           <ChevronLeft v-if="!isCollapsed" :size="20" />
           <ChevronRight v-else :size="20" />
         </button>
       </div>
-      <nav class="nav">
+      <nav class="nav" @scroll.passive="hideSidebarTooltip">
         <RouterLink
           v-for="item in navItems"
           :key="item.to"
           :to="item.to"
           class="nav-link"
           :class="{ active: isActive(item.to) }"
-          :title="isCollapsed ? item.label : ''"
-          @click="closeMobileNav"
+          :aria-label="isCollapsed ? item.label : undefined"
+          @mouseenter="showSidebarTooltip($event, item.label)"
+          @mouseleave="hideSidebarTooltip"
+          @focus="showSidebarTooltip($event, item.label)"
+          @blur="hideSidebarTooltip"
+          @click="closeMobileNav(); hideSidebarTooltip()"
         >
           <component :is="item.icon" :size="20" class="nav-icon" />
           <span class="nav-label">{{ item.label }}</span>
@@ -158,14 +193,29 @@ async function onLogout(): Promise<void> {
         <button
           type="button"
           class="btn logout"
-          @click="onLogout"
-          :title="isCollapsed ? t('actions.logout') : ''"
+          :aria-label="isCollapsed ? t('actions.logout') : undefined"
+          @mouseenter="showSidebarTooltip($event, t('actions.logout'))"
+          @mouseleave="hideSidebarTooltip"
+          @focus="showSidebarTooltip($event, t('actions.logout'))"
+          @blur="hideSidebarTooltip"
+          @click="hideSidebarTooltip(); onLogout()"
         >
           <LogOut :size="18" />
           <span class="btn-label">{{ t("actions.logout") }}</span>
         </button>
       </div>
     </aside>
+    <Teleport to="body">
+      <div
+        v-if="sidebarTooltip"
+        id="sidebar-tooltip"
+        class="sidebar-tooltip"
+        role="tooltip"
+        :style="{ left: `${sidebarTooltip.left}px`, top: `${sidebarTooltip.top}px` }"
+      >
+        {{ sidebarTooltip.label }}
+      </div>
+    </Teleport>
     <main class="content">
       <header class="mobile-topbar">
         <button
@@ -374,6 +424,33 @@ async function onLogout(): Promise<void> {
 
 .collapsed .nav-label {
   display: none;
+}
+
+.sidebar-tooltip {
+  position: fixed;
+  z-index: 1100;
+  padding: 0.375rem 0.625rem;
+  border-radius: 6px;
+  background: var(--color-text);
+  box-shadow: var(--shadow-md);
+  color: var(--color-sidebar);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.25;
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.sidebar-tooltip::before {
+  position: absolute;
+  top: 50%;
+  left: -4px;
+  width: 8px;
+  height: 8px;
+  content: "";
+  background: var(--color-text);
+  transform: translateY(-50%) rotate(45deg);
 }
 
 .sidebar-foot {
