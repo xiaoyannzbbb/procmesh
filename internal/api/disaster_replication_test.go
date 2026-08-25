@@ -186,9 +186,9 @@ func setupMinimalAPI(t *testing.T) (*DisasterReplicationAPI, *control.State, *au
 		PeerStore:  &backup.PeerStore{Root: dir},
 		Members: func() []cluster.NodeSummary {
 			return []cluster.NodeSummary{
-				{NodeID: "node-1", State: cluster.StateAlive, Labels: map[string]string{"host": "host1", "zone": "z1"}},
-				{NodeID: "node-2", State: cluster.StateAlive, Labels: map[string]string{"host": "host2", "zone": "z2"}},
-				{NodeID: "node-3", State: cluster.StateAlive, Labels: map[string]string{"host": "host3", "zone": "z3"}},
+				{NodeID: "node-1", Hostname: "agent-one", State: cluster.StateAlive, Labels: map[string]string{"host": "host1", "zone": "z1"}},
+				{NodeID: "node-2", Hostname: "agent-two", State: cluster.StateAlive, Labels: map[string]string{"host": "host2", "zone": "z2"}},
+				{NodeID: "node-3", Hostname: "agent-three", State: cluster.StateAlive, Labels: map[string]string{"host": "host3", "zone": "z3"}},
 			}
 		},
 	}
@@ -536,8 +536,13 @@ func TestDisasterReplicationAPI_ApplyPolicyDraftRejectsClientRehashedRoutes(t *t
 	}
 }
 
-func TestDisasterReplicationAPI_ApplyPolicyDraftRejectsChangedRoutesWithOriginalHash(t *testing.T) {
-	api, _, authSvc := setupMinimalAPI(t)
+func TestDisasterReplicationAPI_ApplyPolicyDraftAcceptsEditedRoutesWithOriginalHash(t *testing.T) {
+	api, state, authSvc := setupMinimalAPI(t)
+	api.ApplyFn = func(cmd control.Command, timeout time.Duration) error {
+		policy := control.ReplicationPolicy{PolicyID: "rp-changed", Name: "changed", ReplicaFactor: 1, Revision: 1}
+		state.ReplicationPolicies[policy.PolicyID] = policy
+		return nil
+	}
 	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
 	if err != nil {
 		t.Fatal(err)
@@ -546,10 +551,18 @@ func TestDisasterReplicationAPI_ApplyPolicyDraftRejectsChangedRoutesWithOriginal
 	if err != nil {
 		t.Fatal(err)
 	}
-	generated.Msg.Draft.Routes[0].TargetNodeIds = []string{"node-3"}
-	_, err = api.ApplyPolicyDraft(context.Background(), bearerReq(sid, &procmeshv1.ApplyPolicyDraftRequest{PolicyId: "rp-changed", Draft: generated.Msg.Draft, DraftRevision: generated.Msg.Draft.DraftRevision, DraftHash: generated.Msg.Draft.DraftHash, ExpectedRevision: -1, Meta: &procmeshv1.MutationMeta{OperationId: "op-changed"}}))
-	if err == nil || connect.CodeOf(err) != connect.CodeFailedPrecondition {
-		t.Fatalf("changed routes with original hash should conflict, got %v", err)
+	source := generated.Msg.Draft.Routes[0].SourceNodeId
+	editedTarget := "node-3"
+	if source == editedTarget {
+		editedTarget = "node-2"
+	}
+	generated.Msg.Draft.Routes[0].TargetNodeIds = []string{editedTarget}
+	resp, err := api.ApplyPolicyDraft(context.Background(), bearerReq(sid, &procmeshv1.ApplyPolicyDraftRequest{PolicyId: "rp-changed", Draft: generated.Msg.Draft, DraftRevision: generated.Msg.Draft.DraftRevision, DraftHash: generated.Msg.Draft.DraftHash, ExpectedRevision: -1, Meta: &procmeshv1.MutationMeta{OperationId: "op-changed"}}))
+	if err != nil {
+		t.Fatalf("edited routes with original topology hash should apply, got %v", err)
+	}
+	if resp.Msg.PolicyId != "rp-changed" {
+		t.Fatalf("policy id=%q want rp-changed", resp.Msg.PolicyId)
 	}
 }
 
@@ -727,6 +740,7 @@ func TestDisasterReplicationAPI_GetTopology(t *testing.T) {
 	}
 
 	// Check that each node has proper data
+	hostnames := map[string]string{}
 	for _, node := range resp.Msg.Nodes {
 		if node.NodeId == "" {
 			t.Error("expected node ID to be set")
@@ -734,6 +748,10 @@ func TestDisasterReplicationAPI_GetTopology(t *testing.T) {
 		if !node.Alive {
 			t.Error("expected health to be set")
 		}
+		hostnames[node.NodeId] = node.Hostname
+	}
+	if hostnames["node-1"] != "agent-one" || hostnames["node-2"] != "agent-two" || hostnames["node-3"] != "agent-three" {
+		t.Errorf("hostnames=%v want agent-one/agent-two/agent-three", hostnames)
 	}
 }
 

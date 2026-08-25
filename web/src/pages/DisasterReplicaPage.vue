@@ -14,6 +14,7 @@ import { formatRemoteError } from "./processView";
 
 type TopologyNode = {
   nodeId?: string;
+  hostname?: string;
   host?: string;
   rack?: string;
   zone?: string;
@@ -303,7 +304,34 @@ const canApplyDraft = computed(() => {
   if (hasExistingRoutes.value && !replaceCurrent.value) {
     return false;
   }
-  return true;
+  return routesAreValid(draft.value.routes ?? [], draft.value.replicaFactor || 1);
+});
+
+const routeNodeOptions = computed(() => {
+  const seen = new Set<string>();
+  const options: TopologyNode[] = [];
+  for (const node of topologyNodes.value) {
+    const id = node.nodeId || "";
+    if (!id || seen.has(id) || node.admitted === false) {
+      continue;
+    }
+    seen.add(id);
+    options.push(node);
+  }
+  for (const route of draft.value?.routes ?? []) {
+    const source = route.sourceNodeId || "";
+    if (source && !seen.has(source)) {
+      seen.add(source);
+      options.push({ nodeId: source, admitted: true });
+    }
+    for (const target of route.targetNodeIds ?? []) {
+      if (target && !seen.has(target)) {
+        seen.add(target);
+        options.push({ nodeId: target, admitted: true });
+      }
+    }
+  }
+  return options;
 });
 
 const errorText = computed(() => {
@@ -499,6 +527,86 @@ function warningLabel(code: string): string {
 
 function isN1Warning(code: string): boolean {
   return code === "single-node-no-replica";
+}
+
+function nodeName(node: TopologyNode | undefined, fallback = ""): string {
+  const id = node?.nodeId || fallback;
+  return node?.hostname || node?.host || id || "—";
+}
+
+function nodeNameById(nodeId: string): string {
+  return nodeName(
+    topologyNodes.value.find((node) => node.nodeId === nodeId) ??
+      routeNodeOptions.value.find((node) => node.nodeId === nodeId),
+    nodeId,
+  );
+}
+
+function routesAreValid(routes: ReplicaRoute[], replicaFactor: number): boolean {
+  if (!routes.length) {
+    return true;
+  }
+  const seenSources = new Set<string>();
+  for (const route of routes) {
+    const source = route.sourceNodeId || "";
+    if (!source || seenSources.has(source)) {
+      return false;
+    }
+    seenSources.add(source);
+    const targets = route.targetNodeIds ?? [];
+    if (targets.length !== replicaFactor) {
+      return false;
+    }
+    const seenTargets = new Set<string>();
+    for (const target of targets) {
+      if (!target || target === source || seenTargets.has(target)) {
+        return false;
+      }
+      seenTargets.add(target);
+    }
+  }
+  return true;
+}
+
+function recomputeInboundLoad(): void {
+  const current = draft.value;
+  if (!current) {
+    return;
+  }
+  const inboundLoad: Record<string, number> = {};
+  for (const route of current.routes ?? []) {
+    for (const target of route.targetNodeIds ?? []) {
+      if (!target) {
+        continue;
+      }
+      inboundLoad[target] = (inboundLoad[target] ?? 0) + 1;
+    }
+  }
+  current.inboundLoad = inboundLoad;
+}
+
+function onEditRouteSource(index: number, event: Event): void {
+  const current = draft.value;
+  const routes = current?.routes;
+  if (!routes?.[index]) {
+    return;
+  }
+  const nodeId = (event.target as HTMLSelectElement).value;
+  routes[index] = { ...routes[index], sourceNodeId: nodeId };
+  recomputeInboundLoad();
+}
+
+function onEditRouteTarget(index: number, targetIndex: number, event: Event): void {
+  const current = draft.value;
+  const route = current?.routes?.[index];
+  if (!route) {
+    return;
+  }
+  const nodeId = (event.target as HTMLSelectElement).value;
+  const targets = [...(route.targetNodeIds ?? [])];
+  targets[targetIndex] = nodeId;
+  current.routes![index] = { ...route, targetNodeIds: targets };
+  recomputeInboundLoad();
 }
 
 function canRetryRun(run: ReplicaRun | undefined): boolean {
@@ -863,7 +971,12 @@ async function onStartRun(): Promise<void> {
                     :data-admitted="node.admitted ? 'true' : 'false'"
                     :data-alive="node.alive ? 'true' : 'false'"
                   >
-                    <td class="mono">{{ node.nodeId }}</td>
+                    <td>
+                      <div class="node-identity">
+                        <span data-node-name>{{ nodeName(node) }}</span>
+                        <div v-if="nodeName(node) !== node.nodeId" class="mono muted node-id">{{ node.nodeId }}</div>
+                      </div>
+                    </td>
                     <td class="mono">{{ node.host || "—" }}</td>
                     <td>{{ node.rack || "—" }}</td>
                     <td>{{ node.zone || "—" }}</td>
@@ -1091,9 +1204,51 @@ async function onStartRun(): Promise<void> {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="route in draft.routes ?? []" :key="route.sourceNodeId">
-              <td class="mono">{{ route.sourceNodeId }}</td>
-              <td class="mono">{{ (route.targetNodeIds ?? []).join(", ") }}</td>
+            <tr v-for="(route, routeIndex) in draft.routes ?? []" :key="routeIndex">
+              <td>
+                <label class="sr-only" :for="`route-source-${routeIndex}`">{{ t("replica.editSource") }}</label>
+                <select
+                  :id="`route-source-${routeIndex}`"
+                  class="input"
+                  :data-route-source="String(routeIndex)"
+                  :aria-label="t('replica.editSource')"
+                  :value="route.sourceNodeId"
+                  :disabled="acting"
+                  @change="onEditRouteSource(routeIndex, $event)"
+                >
+                  <option
+                    v-for="node in routeNodeOptions"
+                    :key="`source-${routeIndex}-${node.nodeId}`"
+                    :value="node.nodeId"
+                  >
+                    {{ nodeName(node) }}
+                  </option>
+                </select>
+              </td>
+              <td>
+                <div class="target-edits">
+                  <select
+                    v-for="(_, targetIndex) in route.targetNodeIds ?? []"
+                    :id="`route-target-${routeIndex}-${targetIndex}`"
+                    :key="`target-${routeIndex}-${targetIndex}`"
+                    class="input"
+                    :data-route-target="`${routeIndex}-${targetIndex}`"
+                    :aria-label="t('replica.editTarget', { index: targetIndex + 1 })"
+                    :value="(route.targetNodeIds ?? [])[targetIndex]"
+                    :disabled="acting"
+                    @change="onEditRouteTarget(routeIndex, targetIndex, $event)"
+                  >
+                    <option
+                      v-for="node in routeNodeOptions"
+                      :key="`target-${routeIndex}-${targetIndex}-${node.nodeId}`"
+                      :value="node.nodeId"
+                      :disabled="node.nodeId === route.sourceNodeId"
+                    >
+                      {{ nodeName(node) }}
+                    </option>
+                  </select>
+                </div>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -1112,7 +1267,7 @@ async function onStartRun(): Promise<void> {
       <p>{{ t("replica.inboundLoad") }}</p>
       <ul>
         <li v-for="(load, nodeId) in draft.inboundLoad ?? {}" :key="nodeId">
-          <span class="mono">{{ nodeId }}</span>: {{ load }}
+          <span class="mono">{{ nodeNameById(String(nodeId)) }}</span>: {{ load }}
         </li>
       </ul>
       <label v-if="hasExistingRoutes" class="field checkbox" data-replace-current>
@@ -1397,6 +1552,36 @@ h3 {
 .warning-list {
   margin: 0;
   padding-left: 1.25rem;
+}
+.node-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 0;
+}
+.node-id {
+  overflow-wrap: anywhere;
+  font-size: 0.75rem;
+}
+.target-edits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.target-edits .input,
+td .input {
+  min-width: 10rem;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 .btn {
   display: inline-flex;

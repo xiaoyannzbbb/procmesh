@@ -71,6 +71,7 @@ func (d *DisasterReplicationAPI) GetTopology(ctx context.Context, req *connect.R
 	for _, n := range nodes {
 		topologyNodes = append(topologyNodes, &procmeshv1.AgentTopologyNode{
 			NodeId:         n.NodeID,
+			Hostname:       n.Hostname,
 			Host:           n.Host,
 			Rack:           n.Rack,
 			Zone:           n.Zone,
@@ -236,9 +237,7 @@ func (d *DisasterReplicationAPI) ApplyPolicyDraft(ctx context.Context, req *conn
 		TopologyConstraints: req.Msg.Draft.TopologyConstraints,
 	}
 	expectedHash := computeDraftHashForTopology(draftRequest, serverRoutes, currentRevision)
-	submittedHash := computeDraftHashForTopology(draftRequest, req.Msg.Draft.Routes, currentRevision)
-
-	if expectedHash != req.Msg.DraftHash || submittedHash != req.Msg.DraftHash {
+	if expectedHash != req.Msg.DraftHash {
 		return nil, ToConnect(errcode.E(errcode.CONFLICT, "draft hash mismatch"))
 	}
 
@@ -1181,7 +1180,16 @@ func (d *DisasterReplicationAPI) replicationTopology() []backup.AgentTopology {
 			continue
 		}
 		summary := summaries[nodeID]
-		nodes = append(nodes, backup.AgentTopology{NodeID: nodeID, Host: summary.Labels["host"], Rack: summary.Labels["rack"], Zone: summary.Labels["zone"], CapacityWeight: 1, Admitted: true, Alive: summary.State == cluster.StateAlive})
+		nodes = append(nodes, backup.AgentTopology{
+			NodeID:         nodeID,
+			Hostname:       summary.Hostname,
+			Host:           summary.Labels["host"],
+			Rack:           summary.Labels["rack"],
+			Zone:           summary.Labels["zone"],
+			CapacityWeight: 1,
+			Admitted:       true,
+			Alive:          summary.State == cluster.StateAlive,
+		})
 	}
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].NodeID < nodes[j].NodeID })
 	return nodes

@@ -7,6 +7,7 @@ import (
 
 type AgentTopology struct {
 	NodeID         string
+	Hostname       string
 	Host           string
 	Rack           string
 	Zone           string

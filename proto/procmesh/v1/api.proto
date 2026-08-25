@@ -1213,6 +1213,7 @@ message AgentTopologyNode {
   double capacity_weight = 5;
   bool admitted = 6;
   bool alive = 7;
+  string hostname = 8;
 }
 
 message GetTopologyRequest {}

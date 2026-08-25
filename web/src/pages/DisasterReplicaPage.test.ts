@@ -72,6 +72,8 @@ const replicaI18n = {
   concurrency: "Concurrency",
   topologyConstraints: "Topology constraints",
   source: "Source",
+  editSource: "Source node",
+  editTarget: "Target node {{index}}",
   targets: "Targets",
   health: "Health",
   lag: "Lag",
@@ -134,9 +136,36 @@ beforeEach(async () => {
 });
 
 const topologyNodes = [
-  { nodeId: "n1", host: "host-1", rack: "r1", zone: "z1", capacityWeight: 1, admitted: true, alive: true },
-  { nodeId: "n2", host: "host-2", rack: "r2", zone: "z1", capacityWeight: 1, admitted: true, alive: false },
-  { nodeId: "n3", host: "host-3", rack: "r1", zone: "z2", capacityWeight: 1, admitted: true, alive: true },
+  {
+    nodeId: "n1",
+    hostname: "agent-one",
+    host: "host-1",
+    rack: "r1",
+    zone: "z1",
+    capacityWeight: 1,
+    admitted: true,
+    alive: true,
+  },
+  {
+    nodeId: "n2",
+    hostname: "agent-two",
+    host: "host-2",
+    rack: "r2",
+    zone: "z1",
+    capacityWeight: 1,
+    admitted: true,
+    alive: false,
+  },
+  {
+    nodeId: "n3",
+    hostname: "agent-three",
+    host: "host-3",
+    rack: "r1",
+    zone: "z2",
+    capacityWeight: 1,
+    admitted: true,
+    alive: true,
+  },
 ];
 
 const replicaPolicy = {
@@ -438,6 +467,21 @@ describe("DisasterReplicaPage", () => {
     expect(config.get("[data-offline-warning]").text()).toMatch(/offline|topology/i);
   });
 
+  it("shows node names in the topology node column", async () => {
+    const { wrapper } = await mountPage();
+    const config = wrapper.get('[data-section="config"]');
+    expect(config.get('[data-node-id="n1"]').get("[data-node-name]").text()).toBe("agent-one");
+    expect(config.get('[data-node-id="n2"]').get("[data-node-name]").text()).toBe("agent-two");
+    expect(config.get('[data-node-id="n3"]').get("[data-node-name]").text()).toBe("agent-three");
+  });
+
+  it("falls back to node id when hostname is missing", async () => {
+    const { wrapper } = await mountPage({
+      topology: [{ ...topologyNodes[0], hostname: "", host: "" }],
+    });
+    expect(wrapper.get('[data-node-id="n1"]').get("[data-node-name]").text()).toBe("n1");
+  });
+
   it("opens a generate preview with rules, routes, warnings, and inbound load", async () => {
     const { wrapper, replicationClient } = await mountPage();
     await wrapper.get('[data-action="generate"]').trigger("click");
@@ -452,12 +496,44 @@ describe("DisasterReplicaPage", () => {
     const preview = wrapper.get("[data-preview-dialog]");
     expect(preview.text()).toContain("Generation rules");
     expect(preview.text()).toContain("ALL_ADMITTED");
-    expect(preview.text()).toContain("n1");
-    expect(preview.text()).toContain("n3");
     expect(preview.text()).toContain("Inbound load");
     expect(preview.text()).toContain("n2");
     expect(preview.find('input[name="draftHash"]').exists()).toBe(false);
     expect(preview.find('input[name="draftRevision"]').exists()).toBe(false);
+    const sourceSelect = preview.get('[data-route-source="0"]').element as HTMLSelectElement;
+    const targetSelect = preview.get('[data-route-target="0-0"]').element as HTMLSelectElement;
+    expect(sourceSelect.value).toBe("n1");
+    expect(targetSelect.value).toBe("n3");
+  });
+
+  it("lets the operator change preview source and target nodes before apply", async () => {
+    const { wrapper, replicationClient } = await mountPage({
+      policies: [{ ...replicaPolicy, routes: [] }],
+    });
+    await wrapper.get('[data-action="generate"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+    const preview = wrapper.get("[data-preview-dialog]");
+    await preview.get('[data-route-source="0"]').setValue("n2");
+    await preview.get('[data-route-target="0-0"]').setValue("n1");
+    await wrapper.vm.$nextTick();
+    expect((preview.get('[data-route-source="0"]').element as HTMLSelectElement).value).toBe("n2");
+    expect((preview.get('[data-route-target="0-0"]').element as HTMLSelectElement).value).toBe("n1");
+    await wrapper.get('[data-action="apply-draft"]').trigger("click");
+    await flushPromises();
+    expect(replicationClient.applyPolicyDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
+        draftRevision: 7n,
+        draftHash: "draft-hash-7",
+        draft: expect.objectContaining({
+          draftRevision: 7n,
+          draftHash: "draft-hash-7",
+          routes: expect.arrayContaining([
+            expect.objectContaining({ sourceNodeId: "n2", targetNodeIds: ["n1"] }),
+          ]),
+        }),
+      }),
+    );
   });
 
   it("shows the N=1 warning in the generate preview", async () => {

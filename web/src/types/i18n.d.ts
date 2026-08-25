@@ -984,6 +984,8 @@ declare module "i18next" {
         'replica.concurrency': string
         'replica.topologyConstraints': string
         'replica.source': string
+        'replica.editSource': string
+        'replica.editTarget': string
         'replica.targets': string
         'replica.health': string
         'replica.lag': string

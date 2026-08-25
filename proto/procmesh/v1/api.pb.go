@@ -7,12 +7,11 @@
 package procmeshv1
 
 import (
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
-
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -12508,6 +12507,7 @@ type AgentTopologyNode struct {
 	CapacityWeight float64                `protobuf:"fixed64,5,opt,name=capacity_weight,json=capacityWeight,proto3" json:"capacity_weight,omitempty"`
 	Admitted       bool                   `protobuf:"varint,6,opt,name=admitted,proto3" json:"admitted,omitempty"`
 	Alive          bool                   `protobuf:"varint,7,opt,name=alive,proto3" json:"alive,omitempty"`
+	Hostname       string                 `protobuf:"bytes,8,opt,name=hostname,proto3" json:"hostname,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -12589,6 +12589,13 @@ func (x *AgentTopologyNode) GetAlive() bool {
 		return x.Alive
 	}
 	return false
+}
+
+func (x *AgentTopologyNode) GetHostname() string {
+	if x != nil {
+		return x.Hostname
+	}
+	return ""
 }
 
 type GetTopologyRequest struct {
@@ -16005,7 +16012,7 @@ const file_proto_procmesh_v1_api_proto_rawDesc = "" +
 	"created_at\x18\x05 \x01(\x03R\tcreatedAt\x12#\n" +
 	"\rprocess_count\x18\x06 \x01(\x05R\fprocessCount\x12\x1f\n" +
 	"\vprocess_ids\x18\a \x03(\tR\n" +
-	"processIds\"\xc3\x01\n" +
+	"processIds\"\xdf\x01\n" +
 	"\x11AgentTopologyNode\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x12\n" +
 	"\x04host\x18\x02 \x01(\tR\x04host\x12\x12\n" +
@@ -16013,7 +16020,8 @@ const file_proto_procmesh_v1_api_proto_rawDesc = "" +
 	"\x04zone\x18\x04 \x01(\tR\x04zone\x12'\n" +
 	"\x0fcapacity_weight\x18\x05 \x01(\x01R\x0ecapacityWeight\x12\x1a\n" +
 	"\badmitted\x18\x06 \x01(\bR\badmitted\x12\x14\n" +
-	"\x05alive\x18\a \x01(\bR\x05alive\"\x14\n" +
+	"\x05alive\x18\a \x01(\bR\x05alive\x12\x1a\n" +
+	"\bhostname\x18\b \x01(\tR\bhostname\"\x14\n" +
 	"\x12GetTopologyRequest\"j\n" +
 	"\x13GetTopologyResponse\x124\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x1e.procmesh.v1.AgentTopologyNodeR\x05nodes\x12\x1d\n" +
