@@ -1101,6 +1101,8 @@
     "concurrency": "Concurrency",
     "topologyConstraints": "Topology constraints",
     "source": "Source",
+    "editSource": "Source node",
+    "editTarget": "Target node {{index}}",
     "targets": "Targets",
     "health": "Health",
     "lag": "Lag",

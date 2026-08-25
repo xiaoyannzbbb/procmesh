@@ -1101,6 +1101,8 @@
     "concurrency": "并发",
     "topologyConstraints": "拓扑约束",
     "source": "源",
+    "editSource": "源节点",
+    "editTarget": "目标节点 {{index}}",
     "targets": "目标",
     "health": "健康",
     "lag": "延迟",
