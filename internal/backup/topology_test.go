@@ -104,28 +104,88 @@ func TestGenerateRoutes_ThreeNodeRing(t *testing.T) {
 		{NodeID: "node-b", Admitted: true, Alive: true},
 		{NodeID: "node-c", Admitted: true, Alive: true},
 	}
+	result, err := backup.GenerateRoutes(nodes, 1, backup.TopologyConstraints{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := map[string][]string{
+		"node-a": {"node-b"},
+		"node-b": {"node-c"},
+		"node-c": {"node-a"},
+	}
+	if got := routeMap(result); !reflect.DeepEqual(got, want) {
+		t.Fatalf("routes=%v, want ring %v", got, want)
+	}
+
+	full, err := backup.GenerateRoutes(nodes, 2, backup.TopologyConstraints{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantFull := map[string][]string{
+		"node-a": {"node-b", "node-c"},
+		"node-b": {"node-c", "node-a"},
+		"node-c": {"node-a", "node-b"},
+	}
+	if got := routeMap(full); !reflect.DeepEqual(got, wantFull) {
+		t.Fatalf("factor=2 routes=%v, want %v", got, wantFull)
+	}
+}
+
+func TestGenerateRoutes_FourNodeRing(t *testing.T) {
+	nodes := []backup.AgentTopology{
+		{NodeID: "node-d", Admitted: true, Alive: true},
+		{NodeID: "node-a", Admitted: true, Alive: true},
+		{NodeID: "node-c", Admitted: true, Alive: true},
+		{NodeID: "node-b", Admitted: true, Alive: true},
+	}
+	result, err := backup.GenerateRoutes(nodes, 1, backup.TopologyConstraints{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := map[string][]string{
+		"node-a": {"node-b"},
+		"node-b": {"node-c"},
+		"node-c": {"node-d"},
+		"node-d": {"node-a"},
+	}
+	if got := routeMap(result); !reflect.DeepEqual(got, want) {
+		t.Fatalf("factor=1 routes=%v, want ring %v", got, want)
+	}
+
+	factorTwo, err := backup.GenerateRoutes(nodes, 2, backup.TopologyConstraints{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantTwo := map[string][]string{
+		"node-a": {"node-b", "node-c"},
+		"node-b": {"node-c", "node-d"},
+		"node-c": {"node-d", "node-a"},
+		"node-d": {"node-a", "node-b"},
+	}
+	if got := routeMap(factorTwo); !reflect.DeepEqual(got, wantTwo) {
+		t.Fatalf("factor=2 routes=%v, want ring %v", got, wantTwo)
+	}
+}
+
+func TestGenerateRoutes_ZonePrefersRingAmongDifferentDomains(t *testing.T) {
+	nodes := []backup.AgentTopology{
+		{NodeID: "node-a", Zone: "zone-1", Admitted: true, Alive: true},
+		{NodeID: "node-b", Zone: "zone-2", Admitted: true, Alive: true},
+		{NodeID: "node-c", Zone: "zone-1", Admitted: true, Alive: true},
+		{NodeID: "node-d", Zone: "zone-2", Admitted: true, Alive: true},
+	}
 	result, err := backup.GenerateRoutes(nodes, 2, backup.TopologyConstraints{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(result.Routes) != 3 {
-		t.Fatalf("expected 3 routes, got %d", len(result.Routes))
+	want := map[string][]string{
+		"node-a": {"node-b", "node-d"},
+		"node-b": {"node-c", "node-a"},
+		"node-c": {"node-d", "node-b"},
+		"node-d": {"node-a", "node-c"},
 	}
-	routeMap := make(map[string][]string)
-	for _, r := range result.Routes {
-		routeMap[r.SourceNodeID] = r.TargetNodeIDs
-	}
-	// Each node should have 2 targets
-	for _, node := range []string{"node-a", "node-b", "node-c"} {
-		if len(routeMap[node]) != 2 {
-			t.Fatalf("expected %s to have 2 targets, got %d: %v", node, len(routeMap[node]), routeMap[node])
-		}
-		// Source should not be in its own targets
-		for _, target := range routeMap[node] {
-			if target == node {
-				t.Fatalf("%s should not target itself", node)
-			}
-		}
+	if got := routeMap(result); !reflect.DeepEqual(got, want) {
+		t.Fatalf("routes=%v, want cross-zone ring %v", got, want)
 	}
 }
 
@@ -293,4 +353,12 @@ func TestGenerateRoutes_InsufficientCandidates(t *testing.T) {
 	if !hasWarning {
 		t.Fatalf("expected 'insufficient-candidates-degraded' warning, got %v", result.Warnings)
 	}
+}
+
+func routeMap(result backup.RouteDraftResult) map[string][]string {
+	out := make(map[string][]string, len(result.Routes))
+	for _, route := range result.Routes {
+		out[route.SourceNodeID] = route.TargetNodeIDs
+	}
+	return out
 }

@@ -319,8 +319,8 @@ func TestDisasterReplicationAPI_GeneratePolicyDraftGroupSelectorUsesAllAdmittedT
 	if len(routes) != 1 || routes[0].SourceNodeId != "node-2" {
 		t.Fatalf("routes=%+v, want only node-2 source", routes)
 	}
-	if got, want := routes[0].TargetNodeIds, []string{"node-1", "node-3"}; strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("targets=%v, want %v", got, want)
+	if got, want := routes[0].TargetNodeIds, []string{"node-3", "node-1"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("targets=%v, want ring successors %v", got, want)
 	}
 }
 

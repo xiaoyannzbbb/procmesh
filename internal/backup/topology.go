@@ -127,67 +127,142 @@ func GenerateRoutesForSources(nodes []AgentTopology, sourceNodeIDs []string, rep
 	return result, nil
 }
 
+const (
+	capacityScoreScale  = 10.0
+	inboundPenaltyScale = 5.0
+)
+
+// selectTargets walks the sorted node ring after source, then overlays
+// failure-domain anti-affinity and unequal capacity weights. Equal-capacity
+// clusters therefore get a deterministic ring instead of lexicographic pairs.
 func selectTargets(source AgentTopology, eligible []AgentTopology, count int, inboundLoad map[string]int) []string {
-	if count == 0 {
+	if count <= 0 {
 		return []string{}
 	}
-
-	// Build candidate list (exclude source)
-	candidates := make([]AgentTopology, 0, len(eligible)-1)
-	for _, n := range eligible {
-		if n.NodeID != source.NodeID {
-			candidates = append(candidates, n)
-		}
-	}
-
-	if len(candidates) == 0 {
+	successors := ringSuccessors(source, eligible)
+	if len(successors) == 0 {
 		return []string{}
 	}
-
-	// Score candidates by anti-affinity and capacity
-	type scoredCandidate struct {
-		node  AgentTopology
-		score float64
-	}
-	scored := make([]scoredCandidate, 0, len(candidates))
-
-	for _, c := range candidates {
-		score := 0.0
-
-		// Anti-affinity: prefer different zone > rack > host
-		if source.Zone != "" && c.Zone != "" && source.Zone != c.Zone {
-			score += 100.0
-		} else if source.Rack != "" && c.Rack != "" && source.Rack != c.Rack {
-			score += 50.0
-		} else if source.Host != "" && c.Host != "" && source.Host != c.Host {
-			score += 25.0
-		}
-
-		// Capacity weight: higher weight = higher score
-		if c.CapacityWeight > 0 {
-			score += c.CapacityWeight * 10.0
-		}
-
-		// Penalize by current inbound load
-		score -= float64(inboundLoad[c.NodeID]) * 1000.0
-
-		scored = append(scored, scoredCandidate{node: c, score: score})
+	if count > len(successors) {
+		count = len(successors)
 	}
 
-	// Sort by score (descending), then by NodeID (ascending) for stability
-	sort.Slice(scored, func(i, j int) bool {
-		if scored[i].score != scored[j].score {
-			return scored[i].score > scored[j].score
-		}
-		return scored[i].node.NodeID < scored[j].node.NodeID
+	ringIdx := successorIndex(successors)
+	preferred, fallback := partitionByAffinity(source, successors)
+	capacityPool := preferred
+	if len(preferred) < count {
+		capacityPool = append(append([]AgentTopology{}, preferred...), fallback...)
+	}
+	if capacityWeightsDiffer(capacityPool) {
+		preferred = rankByCapacity(preferred, inboundLoad, ringIdx)
+		fallback = rankByCapacity(fallback, inboundLoad, ringIdx)
+	}
+
+	chosen := append(append([]AgentTopology{}, preferred...), fallback...)
+	if len(chosen) > count {
+		chosen = chosen[:count]
+	}
+	sort.SliceStable(chosen, func(i, j int) bool {
+		return ringIdx[chosen[i].NodeID] < ringIdx[chosen[j].NodeID]
 	})
 
-	// Select top N
-	selected := make([]string, 0, count)
-	for i := 0; i < count && i < len(scored); i++ {
-		selected = append(selected, scored[i].node.NodeID)
-		inboundLoad[scored[i].node.NodeID]++
+	selected := make([]string, 0, len(chosen))
+	for _, node := range chosen {
+		selected = append(selected, node.NodeID)
+		inboundLoad[node.NodeID]++
 	}
-
 	return selected
+}
+
+func ringSuccessors(source AgentTopology, eligible []AgentTopology) []AgentTopology {
+	start := -1
+	for i, node := range eligible {
+		if node.NodeID == source.NodeID {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		return nil
+	}
+	out := make([]AgentTopology, 0, len(eligible)-1)
+	for step := 1; step < len(eligible); step++ {
+		node := eligible[(start+step)%len(eligible)]
+		if node.NodeID == source.NodeID {
+			continue
+		}
+		out = append(out, node)
+	}
+	return out
+}
+
+func successorIndex(successors []AgentTopology) map[string]int {
+	idx := make(map[string]int, len(successors))
+	for i, node := range successors {
+		idx[node.NodeID] = i
+	}
+	return idx
+}
+
+func affinityRank(source, candidate AgentTopology) int {
+	if source.Zone != "" && candidate.Zone != "" && source.Zone != candidate.Zone {
+		return 3
+	}
+	if source.Rack != "" && candidate.Rack != "" && source.Rack != candidate.Rack {
+		return 2
+	}
+	if source.Host != "" && candidate.Host != "" && source.Host != candidate.Host {
+		return 1
+	}
+	return 0
+}
+
+func partitionByAffinity(source AgentTopology, successors []AgentTopology) (preferred, fallback []AgentTopology) {
+	best := 0
+	for _, candidate := range successors {
+		if rank := affinityRank(source, candidate); rank > best {
+			best = rank
+		}
+	}
+	if best == 0 {
+		return successors, nil
+	}
+	for _, candidate := range successors {
+		if affinityRank(source, candidate) == best {
+			preferred = append(preferred, candidate)
+		} else {
+			fallback = append(fallback, candidate)
+		}
+	}
+	return preferred, fallback
+}
+
+func capacityWeightsDiffer(nodes []AgentTopology) bool {
+	if len(nodes) < 2 {
+		return false
+	}
+	weight := nodes[0].CapacityWeight
+	for _, node := range nodes[1:] {
+		if node.CapacityWeight != weight {
+			return true
+		}
+	}
+	return false
+}
+
+func capacityScore(node AgentTopology, inbound int) float64 {
+	return node.CapacityWeight*capacityScoreScale - float64(inbound)*inboundPenaltyScale
+}
+
+func rankByCapacity(pool []AgentTopology, inboundLoad map[string]int, ringIdx map[string]int) []AgentTopology {
+	ranked := append([]AgentTopology{}, pool...)
+	sort.SliceStable(ranked, func(i, j int) bool {
+		si := capacityScore(ranked[i], inboundLoad[ranked[i].NodeID])
+		sj := capacityScore(ranked[j], inboundLoad[ranked[j].NodeID])
+		if si != sj {
+			return si > sj
+		}
+		return ringIdx[ranked[i].NodeID] < ringIdx[ranked[j].NodeID]
+	})
+	return ranked
 }
