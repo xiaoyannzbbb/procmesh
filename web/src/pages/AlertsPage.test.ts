@@ -150,6 +150,31 @@ afterEach(() => {
 });
 
 describe("AlertsPage", () => {
+  it("shows the alert event age instead of the source freshness age", async () => {
+    const now = 1_700_000_120_000;
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      const { wrapper } = await mountAlerts({
+        entries: [
+          {
+            ...firingLive,
+            alert: {
+              ...firingLive.alert,
+              lastUnixMs: BigInt(now - 120_000),
+            },
+            lastUpdatedUnixMs: BigInt(now),
+          },
+        ],
+      });
+
+      const timeCell = wrapper.get('[data-freshness="LIVE"] .time-cell');
+      expect(timeCell.text()).toBe("2m ago");
+      expect(timeCell.attributes("title")).toContain("2023");
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
   it("shows STALE badge and banner, not empty inbox, for FIRING LIVE plus STALE placeholder", async () => {
     const { wrapper } = await mountAlerts();
     const text = wrapper.text();

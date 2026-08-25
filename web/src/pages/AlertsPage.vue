@@ -153,8 +153,9 @@ function freshnessOf(raw: string | undefined): Freshness {
 function mapEntry(entry: AlertEntryInput, index: number): AlertRow {
   const alert = entry.alert;
   const freshness = freshnessOf(entry.freshness);
-  const lastUpdatedUnixMs = toNumber(entry.lastUpdatedUnixMs);
   const placeholder = !alert;
+  const lastUnixMs = toNumber(alert?.lastUnixMs);
+  const lastUpdatedUnixMs = placeholder ? toNumber(entry.lastUpdatedUnixMs) : lastUnixMs;
   return {
     key: alert?.alertId || `${entry.sourceNode ?? "node"}:${index}`,
     alertId: alert?.alertId ?? "",
@@ -166,7 +167,7 @@ function mapEntry(entry: AlertEntryInput, index: number): AlertRow {
     process: alert?.processId || "",
     payloadJson: alert?.payloadJson || "",
     firstUnixMs: toNumber(alert?.firstUnixMs),
-    lastUnixMs: toNumber(alert?.lastUnixMs),
+    lastUnixMs,
     notifiedUnixMs: toNumber(alert?.notifiedUnixMs),
     resolvedUnixMs: toNumber(alert?.resolvedUnixMs),
     lastError: alert?.lastError || "",
