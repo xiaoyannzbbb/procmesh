@@ -265,6 +265,8 @@ message Node {
   repeated ProcessSummary processes = 13;
   int64 last_updated_unix_ms = 14;
   repeated string agent_group_ids = 15;
+  string raft_role = 16; // LEADER | VOTER | NON_VOTER | NOT_MEMBER | UNKNOWN
+  string raft_role_freshness = 17; // LIVE | STALE | UNKNOWN
 }
 
 message ListNodesRequest {}

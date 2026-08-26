@@ -433,11 +433,20 @@
       "hostname": "主机名",
       "nodeId": "节点ID",
       "state": "状态",
+      "raftRole": "Raft 角色",
       "version": "版本",
       "resources": "资源",
       "processes": "进程",
       "freshness": "新鲜度",
       "updated": "更新时间"
+    },
+    "raftRole": {
+      "leader": "领导者",
+      "voter": "投票成员",
+      "nonVoter": "非投票成员",
+      "notMember": "非成员",
+      "unknown": "未知",
+      "badgeLabel": "Raft 角色：{{role}}"
     }
   },
   "nodeDetail": {

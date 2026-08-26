@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -17,6 +18,20 @@ import (
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
 
+type failingRaftMembershipReader struct{}
+
+func (failingRaftMembershipReader) RaftMembershipView() (control.RaftMembershipView, error) {
+	return control.RaftMembershipView{}, errors.New("injected membership failure")
+}
+
+type staticRaftMembershipReader struct {
+	view control.RaftMembershipView
+}
+
+func (r staticRaftMembershipReader) RaftMembershipView() (control.RaftMembershipView, error) {
+	return r.view, nil
+}
+
 func TestListNodes_StandaloneLocal(t *testing.T) {
 	e := newClusterEnvOpts(t, false, false)
 	listed, err := e.node.ListNodes(context.Background(), connect.NewRequest(&procmeshv1.ListNodesRequest{}))
@@ -29,6 +44,109 @@ func TestListNodes_StandaloneLocal(t *testing.T) {
 	res := listed.Msg.GetNodes()[0].GetResources()
 	if res == nil || res.GetCpuPercent() != -1 || res.GetMemoryPercent() != -1 || res.GetDiskPercent() != -1 {
 		t.Fatalf("uncollected resources %+v want -1", res)
+	}
+	if got := listed.Msg.GetNodes()[0]; got.GetRaftRole() != "UNKNOWN" || got.GetRaftRoleFreshness() != "UNKNOWN" {
+		t.Fatalf("standalone raft role=%q freshness=%q", got.GetRaftRole(), got.GetRaftRoleFreshness())
+	}
+}
+
+func TestApplyRaftMembershipRoles(t *testing.T) {
+	view := control.RaftMembershipView{
+		Members: map[string]control.RaftSuffrage{
+			"leader":   control.RaftVoter,
+			"voter":    control.RaftVoter,
+			"nonvoter": control.RaftNonVoter,
+		},
+		LeaderID:  "leader",
+		HasQuorum: true,
+	}
+	tests := []struct {
+		name      string
+		nodeID    string
+		view      *control.RaftMembershipView
+		role      string
+		freshness string
+	}{
+		{name: "leader", nodeID: "leader", view: &view, role: "LEADER", freshness: "LIVE"},
+		{name: "voter", nodeID: "voter", view: &view, role: "VOTER", freshness: "LIVE"},
+		{name: "nonvoter", nodeID: "nonvoter", view: &view, role: "NON_VOTER", freshness: "LIVE"},
+		{name: "not member", nodeID: "gossip-only", view: &view, role: "NOT_MEMBER", freshness: "LIVE"},
+		{name: "unknown", nodeID: "leader", view: nil, role: "UNKNOWN", freshness: "UNKNOWN"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			node := &procmeshv1.Node{NodeId: tt.nodeID}
+			applyRaftMembership(node, tt.view)
+			if node.GetRaftRole() != tt.role || node.GetRaftRoleFreshness() != tt.freshness {
+				t.Fatalf("role=%q freshness=%q", node.GetRaftRole(), node.GetRaftRoleFreshness())
+			}
+		})
+	}
+}
+
+func TestApplyRaftMembershipNoQuorumNeverShowsLeader(t *testing.T) {
+	view := control.RaftMembershipView{
+		Members:   map[string]control.RaftSuffrage{"old-leader": control.RaftVoter},
+		LeaderID:  "old-leader",
+		HasQuorum: false,
+	}
+	node := &procmeshv1.Node{NodeId: "old-leader"}
+	applyRaftMembership(node, &view)
+	if node.GetRaftRole() != "VOTER" || node.GetRaftRoleFreshness() != "STALE" {
+		t.Fatalf("role=%q freshness=%q", node.GetRaftRole(), node.GetRaftRoleFreshness())
+	}
+}
+
+func TestListAndGetNodesUseSameLiveRaftMembership(t *testing.T) {
+	ctrl := startTestRaft(t, "visible")
+	api := &NodeAPI{Deps: ClusterDeps{
+		Control: ctrl,
+		Mesh: &staticMesh{members: []cluster.NodeSummary{{
+			NodeID: "visible", Hostname: "visible-host", State: cluster.StateAlive,
+		}}},
+	}}
+
+	listed, err := api.ListNodes(context.Background(), connect.NewRequest(&procmeshv1.ListNodesRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := listed.Msg.GetNodes()[0]
+	if got.GetRaftRole() != "LEADER" || got.GetRaftRoleFreshness() != "LIVE" {
+		t.Fatalf("list role=%q freshness=%q", got.GetRaftRole(), got.GetRaftRoleFreshness())
+	}
+	detail, err := api.GetNode(context.Background(), connect.NewRequest(&procmeshv1.GetNodeRequest{IdOrHostname: "visible"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = detail.Msg.GetNode()
+	if got.GetRaftRole() != "LEADER" || got.GetRaftRoleFreshness() != "LIVE" {
+		t.Fatalf("get role=%q freshness=%q", got.GetRaftRole(), got.GetRaftRoleFreshness())
+	}
+}
+
+func TestListAndGetNodesRaftReadFailureFallsBackToUnknown(t *testing.T) {
+	api := &NodeAPI{Deps: ClusterDeps{
+		RaftMembership: failingRaftMembershipReader{},
+		Mesh: &staticMesh{members: []cluster.NodeSummary{{
+			NodeID: "visible", Hostname: "visible-host", State: cluster.StateAlive,
+		}}},
+	}}
+
+	listed, err := api.ListNodes(context.Background(), connect.NewRequest(&procmeshv1.ListNodesRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := listed.Msg.GetNodes()[0]
+	if got.GetRaftRole() != "UNKNOWN" || got.GetRaftRoleFreshness() != "UNKNOWN" {
+		t.Fatalf("list role=%q freshness=%q", got.GetRaftRole(), got.GetRaftRoleFreshness())
+	}
+	detail, err := api.GetNode(context.Background(), connect.NewRequest(&procmeshv1.GetNodeRequest{IdOrHostname: "visible"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = detail.Msg.GetNode()
+	if got.GetRaftRole() != "UNKNOWN" || got.GetRaftRoleFreshness() != "UNKNOWN" {
+		t.Fatalf("get role=%q freshness=%q", got.GetRaftRole(), got.GetRaftRoleFreshness())
 	}
 }
 
@@ -334,15 +452,25 @@ func TestNodeAPI_FiltersByAgentGroup(t *testing.T) {
 	})
 
 	api := &NodeAPI{
-		Deps: ClusterDeps{Mesh: &staticMesh{members: []cluster.NodeSummary{
-			{
-				NodeID: "node-fin", Hostname: "fin-host",
-				Processes: []cluster.ProcessSummary{{
-					ProcessID: "p-web", Name: "web", Group: "finance",
-				}},
-			},
-			{NodeID: "node-ads", Hostname: "ads-host"},
-		}}},
+		Deps: ClusterDeps{
+			Mesh: &staticMesh{members: []cluster.NodeSummary{
+				{
+					NodeID: "node-fin", Hostname: "fin-host",
+					Processes: []cluster.ProcessSummary{{
+						ProcessID: "p-web", Name: "web", Group: "finance",
+					}},
+				},
+				{NodeID: "node-ads", Hostname: "ads-host"},
+			}},
+			RaftMembership: staticRaftMembershipReader{view: control.RaftMembershipView{
+				Members: map[string]control.RaftSuffrage{
+					"node-fin": control.RaftNonVoter,
+					"node-ads": control.RaftVoter,
+				},
+				LeaderID:  "node-ads",
+				HasQuorum: true,
+			}},
+		},
 		Auth: svc,
 	}
 	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "u-fin", Username: "finop"})
@@ -361,6 +489,9 @@ func TestNodeAPI_FiltersByAgentGroup(t *testing.T) {
 	if len(got.GetProcesses()) != 1 || got.GetProcesses()[0].GetProcessId() != "p-web" || got.GetProcesses()[0].GetGroup() != "finance" {
 		t.Fatalf("process summary %+v", got.GetProcesses())
 	}
+	if got.GetRaftRole() != "NON_VOTER" || got.GetRaftRoleFreshness() != "LIVE" {
+		t.Fatalf("raft role=%q freshness=%q", got.GetRaftRole(), got.GetRaftRoleFreshness())
+	}
 
 	_, err = api.GetNode(ctx, connect.NewRequest(&procmeshv1.GetNodeRequest{IdOrHostname: "node-ads"}))
 	assertDenied(t, err)
@@ -371,5 +502,8 @@ func TestNodeAPI_FiltersByAgentGroup(t *testing.T) {
 	}
 	if gotNode.Msg.GetNode().GetNodeId() != "node-fin" {
 		t.Fatalf("get %+v", gotNode.Msg.GetNode())
+	}
+	if gotNode.Msg.GetNode().GetRaftRole() != "NON_VOTER" {
+		t.Fatalf("get raft role=%q", gotNode.Msg.GetNode().GetRaftRole())
 	}
 }

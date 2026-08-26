@@ -41,6 +41,10 @@ func (s *NodeAPI) ListNodes(ctx context.Context, _ *connect.Request[procmeshv1.L
 		}
 		out.Nodes = append(out.Nodes, nodeToProto(n, s.Auth))
 	}
+	view := readRaftMembership(s.Deps.raftMembershipReader())
+	for _, node := range out.Nodes {
+		applyRaftMembership(node, view)
+	}
 	return connect.NewResponse(out), nil
 }
 
@@ -52,7 +56,9 @@ func (s *NodeAPI) GetNode(ctx context.Context, req *connect.Request[procmeshv1.G
 	if err := requirePermOn(ctx, s.Auth, auth.PermNodeRead, control.CheckTarget{NodeID: n.NodeID}, false, true); err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(&procmeshv1.GetNodeResponse{Node: nodeToProto(n, s.Auth)}), nil
+	node := nodeToProto(n, s.Auth)
+	applyRaftMembership(node, readRaftMembership(s.Deps.raftMembershipReader()))
+	return connect.NewResponse(&procmeshv1.GetNodeResponse{Node: node}), nil
 }
 
 func (s *NodeAPI) CreateJoinToken(ctx context.Context, req *connect.Request[procmeshv1.CreateJoinTokenRequest]) (*connect.Response[procmeshv1.CreateJoinTokenResponse], error) {
@@ -254,7 +260,50 @@ func nodeToProto(n cluster.NodeSummary, svc *auth.Service) *procmeshv1.Node {
 		Processes:         procs,
 		LastUpdatedUnixMs: n.LastUpdatedUnixMs,
 		AgentGroupIds:     agentGroupIDsFor(svc, n.NodeID),
+		RaftRole:          "UNKNOWN",
+		RaftRoleFreshness: "UNKNOWN",
 	}
+}
+
+func readRaftMembership(reader control.RaftMembershipReader) *control.RaftMembershipView {
+	if reader == nil {
+		return nil
+	}
+	view, err := reader.RaftMembershipView()
+	if err != nil {
+		return nil
+	}
+	return &view
+}
+
+func applyRaftMembership(node *procmeshv1.Node, view *control.RaftMembershipView) {
+	node.RaftRole = "UNKNOWN"
+	node.RaftRoleFreshness = "UNKNOWN"
+	if view == nil {
+		return
+	}
+	freshness := "STALE"
+	if view.HasQuorum {
+		freshness = "LIVE"
+	}
+	suffrage, ok := view.Members[node.GetNodeId()]
+	if !ok {
+		node.RaftRole = "NOT_MEMBER"
+		node.RaftRoleFreshness = freshness
+		return
+	}
+	switch suffrage {
+	case control.RaftVoter:
+		node.RaftRole = "VOTER"
+		if view.HasQuorum && view.LeaderID != "" && view.LeaderID == node.GetNodeId() {
+			node.RaftRole = "LEADER"
+		}
+	case control.RaftNonVoter:
+		node.RaftRole = "NON_VOTER"
+	default:
+		return
+	}
+	node.RaftRoleFreshness = freshness
 }
 
 func agentGroupIDsFor(svc *auth.Service, nodeID string) []string {

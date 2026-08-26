@@ -52,6 +52,25 @@ type Node struct {
 	closeErr  error
 }
 
+type RaftSuffrage string
+
+const (
+	RaftVoter    RaftSuffrage = "VOTER"
+	RaftNonVoter RaftSuffrage = "NON_VOTER"
+)
+
+// RaftMembershipView is a request-level snapshot without Raft addresses or
+// HashiCorp-specific types, so API consumers cannot expose control-plane peers.
+type RaftMembershipView struct {
+	Members   map[string]RaftSuffrage
+	LeaderID  string
+	HasQuorum bool
+}
+
+type RaftMembershipReader interface {
+	RaftMembershipView() (RaftMembershipView, error)
+}
+
 func Start(cfg RaftConfig) (*Node, error) {
 	if err := os.MkdirAll(cfg.Dir, 0o750); err != nil {
 		return nil, fmt.Errorf("raft dir: %w", err)
@@ -242,6 +261,40 @@ func (n *Node) HasQuorum() bool {
 		window = QuorumContactProd
 	}
 	return time.Since(last) < window
+}
+
+func (n *Node) RaftMembershipView() (RaftMembershipView, error) {
+	if n == nil || n.raft == nil {
+		return RaftMembershipView{}, errors.New("raft control not configured")
+	}
+	future := n.raft.GetConfiguration()
+	if err := future.Error(); err != nil {
+		return RaftMembershipView{}, fmt.Errorf("read raft configuration: %w", err)
+	}
+	view := RaftMembershipView{
+		Members:   make(map[string]RaftSuffrage, len(future.Configuration().Servers)),
+		HasQuorum: n.HasQuorum(),
+	}
+	for _, server := range future.Configuration().Servers {
+		var suffrage RaftSuffrage
+		switch server.Suffrage {
+		case raft.Voter:
+			suffrage = RaftVoter
+		case raft.Nonvoter, raft.Staging:
+			suffrage = RaftNonVoter
+		default:
+			return RaftMembershipView{}, fmt.Errorf("unknown raft suffrage %d", server.Suffrage)
+		}
+		view.Members[string(server.ID)] = suffrage
+	}
+	if !view.HasQuorum {
+		return view, nil
+	}
+	_, leaderID := n.raft.LeaderWithID()
+	if view.Members[string(leaderID)] == RaftVoter {
+		view.LeaderID = string(leaderID)
+	}
+	return view, nil
 }
 
 func (n *Node) IsLeader() bool {

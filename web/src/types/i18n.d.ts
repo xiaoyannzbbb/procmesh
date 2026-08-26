@@ -415,11 +415,18 @@ declare module "i18next" {
         'nodes.table.hostname': string
         'nodes.table.nodeId': string
         'nodes.table.state': string
+        'nodes.table.raftRole': string
         'nodes.table.version': string
         'nodes.table.resources': string
         'nodes.table.processes': string
         'nodes.table.freshness': string
         'nodes.table.updated': string
+        'nodes.raftRole.leader': string
+        'nodes.raftRole.voter': string
+        'nodes.raftRole.nonVoter': string
+        'nodes.raftRole.notMember': string
+        'nodes.raftRole.unknown': string
+        'nodes.raftRole.badgeLabel': string
         'nodeDetail.back': string
         'nodeDetail.loading': string
         'nodeDetail.removeAgent': string

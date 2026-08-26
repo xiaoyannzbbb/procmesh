@@ -433,11 +433,20 @@
       "hostname": "Hostname",
       "nodeId": "Node ID",
       "state": "State",
+      "raftRole": "Raft role",
       "version": "Version",
       "resources": "Resources",
       "processes": "Processes",
       "freshness": "Freshness",
       "updated": "Updated"
+    },
+    "raftRole": {
+      "leader": "Leader",
+      "voter": "Voter",
+      "nonVoter": "Non-voter",
+      "notMember": "Not member",
+      "unknown": "Unknown",
+      "badgeLabel": "Raft role: {{role}}"
     }
   },
   "nodeDetail": {
