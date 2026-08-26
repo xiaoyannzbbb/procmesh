@@ -414,7 +414,33 @@ func startInmemVoters(t *testing.T, n int) []*control.Node {
 	if n > 1 {
 		waitLeader(t, nodes, 10*time.Second)
 	}
+	waitVoters(t, nodes, 10*time.Second)
 	return nodes
+}
+
+func waitVoters(t *testing.T, nodes []*control.Node, d time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		ready := true
+		for _, n := range nodes {
+			if !n.IsVoter() {
+				ready = false
+				break
+			}
+		}
+		if ready {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	missing := make([]int, 0, len(nodes))
+	for i, n := range nodes {
+		if !n.IsVoter() {
+			missing = append(missing, i+1)
+		}
+	}
+	t.Fatalf("timeout waiting for voters; not voters: %v", missing)
 }
 
 func waitLeader(t *testing.T, nodes []*control.Node, d time.Duration) *control.Node {

@@ -24,8 +24,8 @@ import (
 
 func TestQ4_ProcessKillWritesInbox(t *testing.T) {
 	triggers := newManualRunTriggers()
-	root := t.TempDir()
-	addr, _ := startClusterAgentAtOpts(t, root, Options{triggers: triggers.hooks})
+	// macOS unix socket path cap is ~104 bytes; t.TempDir() is too long for shim sockets.
+	addr, _, _ := startClusterAgentOptsCtl(t, Options{triggers: triggers.hooks})
 	initAndLogin(t, addr)
 
 	spec := writeShortLivedSpec(t)
