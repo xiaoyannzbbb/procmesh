@@ -24,7 +24,7 @@ import (
 // AuthInterceptor installed, so PrincipalFrom(ctx) is populated the same way
 // it is in production. Calling API methods directly (bypassing the mux)
 // would skip the interceptor and make requirePerm() silently allow everything.
-func newDisasterReplicationClient(t *testing.T, api *DisasterReplicationAPI) procmeshv1connect.DisasterReplicationServiceClient {
+func newDisasterReplicationClient(t *testing.T, api *DisasterReplicationAPI, options ...connect.ClientOption) procmeshv1connect.DisasterReplicationServiceClient {
 	t.Helper()
 	mux := http.NewServeMux()
 	h, handlers := procmeshv1connect.NewDisasterReplicationServiceHandler(api,
@@ -32,7 +32,7 @@ func newDisasterReplicationClient(t *testing.T, api *DisasterReplicationAPI) pro
 	mux.Handle(h, handlers)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return procmeshv1connect.NewDisasterReplicationServiceClient(srv.Client(), srv.URL)
+	return procmeshv1connect.NewDisasterReplicationServiceClient(srv.Client(), srv.URL, options...)
 }
 
 // Test helper functions
@@ -112,7 +112,7 @@ func TestReplicationPolicyToProto(t *testing.T) {
 	_ = now
 }
 
-func TestComputeDraftHash(t *testing.T) {
+func TestComputeLegacyDraftHash(t *testing.T) {
 	req := &procmeshv1.GeneratePolicyDraftRequest{
 		Name:           "test-policy",
 		SourceSelector: "ALL_ADMITTED",
@@ -124,7 +124,7 @@ func TestComputeDraftHash(t *testing.T) {
 		{SourceNodeId: "node-2", TargetNodeIds: []string{"node-1", "node-3"}},
 	}
 
-	hash1 := computeDraftHash(req, routes)
+	hash1 := computeLegacyDraftHash(req, routes)
 	if hash1 == "" {
 		t.Error("expected non-empty hash")
 	}
@@ -133,7 +133,7 @@ func TestComputeDraftHash(t *testing.T) {
 	}
 
 	// Same input should produce same hash
-	hash2 := computeDraftHash(req, routes)
+	hash2 := computeLegacyDraftHash(req, routes)
 	if hash1 != hash2 {
 		t.Errorf("hash mismatch: %q != %q", hash1, hash2)
 	}
@@ -142,7 +142,7 @@ func TestComputeDraftHash(t *testing.T) {
 	routes2 := []*procmeshv1.ReplicationRoute{
 		{SourceNodeId: "node-1", TargetNodeIds: []string{"node-2"}},
 	}
-	hash3 := computeDraftHash(req, routes2)
+	hash3 := computeLegacyDraftHash(req, routes2)
 	if hash1 == hash3 {
 		t.Error("expected different hash for different routes")
 	}
@@ -152,9 +152,46 @@ func TestComputeDraftHash(t *testing.T) {
 		{SourceNodeId: "node-2", TargetNodeIds: []string{"node-1", "node-3"}},
 		{SourceNodeId: "node-1", TargetNodeIds: []string{"node-2", "node-3"}},
 	}
-	hash4 := computeDraftHash(req, routes3)
+	hash4 := computeLegacyDraftHash(req, routes3)
 	if hash1 != hash4 {
 		t.Errorf("hash should be same for reordered routes: %q != %q", hash1, hash4)
+	}
+}
+
+func TestComputeLegacyDraftHashMatchesReportedPreRingDraft(t *testing.T) {
+	req := &procmeshv1.GeneratePolicyDraftRequest{
+		Name: "cluster-replica", Enabled: true, SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1,
+		Trigger: "MANUAL", Timezone: "UTC", RetentionKeepLast: 7, RetentionKeepDays: 30,
+		MaxConcurrency: 2, VerifyAfterCopy: true,
+	}
+	routes := []*procmeshv1.ReplicationRoute{
+		{SourceNodeId: "19199351-71be-4045-8542-53711015e262", TargetNodeIds: []string{"49b2c892-955c-4f49-a1a1-e629aeff89e2"}},
+		{SourceNodeId: "49b2c892-955c-4f49-a1a1-e629aeff89e2", TargetNodeIds: []string{"19199351-71be-4045-8542-53711015e262"}},
+		{SourceNodeId: "efcff992-0ebf-49f8-b632-2892d82f1a62", TargetNodeIds: []string{"19199351-71be-4045-8542-53711015e262"}},
+	}
+	const reportedHash = "3842fdc0093371cfb0695f9839aeba63549336223b1bc72c5c0b2d7fa0fbc933"
+	if got := computeLegacyDraftHashForTopology(req, routes, 1462853928305601348); got != reportedHash {
+		t.Fatalf("legacy draft hash=%s, want reported hash %s", got, reportedHash)
+	}
+}
+
+func TestComputePolicyDraftHashIgnoresCollectionRepresentationAndOrder(t *testing.T) {
+	req := &procmeshv1.GeneratePolicyDraftRequest{
+		Name: "test-policy", SourceSelector: "EXPLICIT_NODES", SourceIds: []string{"node-2", "node-1"},
+		PrimaryPolicyIds: []string{"backup-2", "backup-1"}, ReplicaFactor: 1,
+	}
+	hash1 := computePolicyDraftHashForTopology(req, 42)
+	reordered := &procmeshv1.GeneratePolicyDraftRequest{
+		Name: "test-policy", SourceSelector: "EXPLICIT_NODES", SourceIds: []string{"node-1", "node-2"},
+		PrimaryPolicyIds: []string{"backup-1", "backup-2"}, ReplicaFactor: 1,
+		TopologyConstraints: map[string]string{},
+	}
+	if hash2 := computePolicyDraftHashForTopology(reordered, 42); hash1 != hash2 {
+		t.Fatalf("equivalent policy inputs should have the same hash: %s != %s", hash1, hash2)
+	}
+	reordered.ReplicaFactor = 2
+	if hash2 := computePolicyDraftHashForTopology(reordered, 42); hash1 == hash2 {
+		t.Fatal("policy input change should alter the hash")
 	}
 }
 
@@ -466,6 +503,97 @@ func TestDisasterReplicationAPI_ApplyPolicyDraft(t *testing.T) {
 	}
 }
 
+func TestDisasterReplicationAPI_ApplyPolicyDraft_JSONRoundTrip(t *testing.T) {
+	api, state, authSvc := setupMinimalAPI(t)
+	api.Members = func() []cluster.NodeSummary {
+		return []cluster.NodeSummary{
+			{NodeID: "19199351-71be-4045-8542-53711015e262", State: cluster.StateAlive},
+			{NodeID: "49b2c892-955c-4f49-a1a1-e629aeff89e2", State: cluster.StateAlive},
+			{NodeID: "efcff992-0ebf-49f8-b632-2892d82f1a62", State: cluster.StateAlive},
+		}
+	}
+	state.Members = map[string]control.Member{
+		"19199351-71be-4045-8542-53711015e262": {NodeID: "19199351-71be-4045-8542-53711015e262", Status: control.MemberAdmitted},
+		"49b2c892-955c-4f49-a1a1-e629aeff89e2": {NodeID: "49b2c892-955c-4f49-a1a1-e629aeff89e2", Status: control.MemberAdmitted},
+		"efcff992-0ebf-49f8-b632-2892d82f1a62": {NodeID: "efcff992-0ebf-49f8-b632-2892d82f1a62", Status: control.MemberAdmitted},
+	}
+	api.ApplyFn = func(cmd control.Command, _ time.Duration) error {
+		return state.Apply(cmd, time.Now())
+	}
+
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := newDisasterReplicationClient(t, api, connect.WithProtoJSON())
+	generated, err := client.GeneratePolicyDraft(context.Background(), bearerReq(sid, &procmeshv1.GeneratePolicyDraftRequest{
+		Name:              "cluster-replica",
+		Enabled:           true,
+		SourceSelector:    "ALL_ADMITTED",
+		ReplicaFactor:     1,
+		Trigger:           "MANUAL",
+		Timezone:          "UTC",
+		RetentionKeepLast: 7,
+		RetentionKeepDays: 30,
+		MaxConcurrency:    2,
+		VerifyAfterCopy:   true,
+	}))
+	if err != nil {
+		t.Fatalf("GeneratePolicyDraft failed: %v", err)
+	}
+	draft := generated.Msg.GetDraft()
+	_, err = client.ApplyPolicyDraft(context.Background(), bearerReq(sid, &procmeshv1.ApplyPolicyDraftRequest{
+		PolicyId:         "eb117808-94c0-400e-b723-fa2b9a7e5672",
+		Draft:            draft,
+		DraftRevision:    draft.GetDraftRevision(),
+		DraftHash:        draft.GetDraftHash(),
+		ExpectedRevision: -1,
+		Meta:             &procmeshv1.MutationMeta{OperationId: "4c68e25d-f357-4cc9-b2a0-7177cbdbc22f", Operator: "admin"},
+	}))
+	if err != nil {
+		t.Fatalf("ApplyPolicyDraft after JSON round trip failed: %v", err)
+	}
+}
+
+func TestDisasterReplicationAPI_ApplyPolicyDraftAcceptsPreRingDraft(t *testing.T) {
+	api, state, authSvc := setupMinimalAPI(t)
+	api.ApplyFn = func(cmd control.Command, _ time.Duration) error {
+		return state.Apply(cmd, time.Now())
+	}
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := &procmeshv1.GeneratePolicyDraftRequest{
+		Name: "cluster-replica", Enabled: true, SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1,
+		Trigger: "MANUAL", Timezone: "UTC", RetentionKeepLast: 7, RetentionKeepDays: 30,
+		MaxConcurrency: 2, VerifyAfterCopy: true,
+	}
+	generated, err := api.GeneratePolicyDraft(context.Background(), bearerReq(sid, request))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := generated.Msg.Draft.Routes[1].TargetNodeIds; len(got) != 1 || got[0] != "node-3" {
+		t.Fatalf("current ring route node-2 targets=%v, want [node-3]", got)
+	}
+
+	preRingRoutes := []*procmeshv1.ReplicationRoute{
+		{SourceNodeId: "node-1", TargetNodeIds: []string{"node-2"}},
+		{SourceNodeId: "node-2", TargetNodeIds: []string{"node-1"}},
+		{SourceNodeId: "node-3", TargetNodeIds: []string{"node-1"}},
+	}
+	legacyHash := computeLegacyDraftHashForTopology(request, preRingRoutes, generated.Msg.Draft.DraftRevision)
+	generated.Msg.Draft.DraftHash = legacyHash
+	_, err = api.ApplyPolicyDraft(context.Background(), bearerReq(sid, &procmeshv1.ApplyPolicyDraftRequest{
+		PolicyId: "rp-pre-ring", Draft: generated.Msg.Draft, DraftRevision: generated.Msg.Draft.DraftRevision,
+		DraftHash: legacyHash, ExpectedRevision: -1,
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-pre-ring"},
+	}))
+	if err != nil {
+		t.Fatalf("draft generated before route algorithm upgrade should apply: %v", err)
+	}
+}
+
 func TestDisasterReplicationAPI_ApplyPolicyDraft_HashMismatch(t *testing.T) {
 	api, _, authSvc := setupMinimalAPI(t)
 	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
@@ -499,6 +627,30 @@ func TestDisasterReplicationAPI_ApplyPolicyDraft_HashMismatch(t *testing.T) {
 	}
 }
 
+func TestDisasterReplicationAPI_ApplyPolicyDraftRejectsPolicyChangeWithOriginalHash(t *testing.T) {
+	api, _, authSvc := setupMinimalAPI(t)
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated, err := api.GeneratePolicyDraft(context.Background(), bearerReq(sid, &procmeshv1.GeneratePolicyDraftRequest{
+		Name: "protected", SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1,
+		Trigger: "MANUAL", RetentionKeepDays: 30,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft := generated.Msg.Draft
+	draft.RetentionKeepDays++
+	_, err = api.ApplyPolicyDraft(context.Background(), bearerReq(sid, &procmeshv1.ApplyPolicyDraftRequest{
+		PolicyId: "rp-protected", Draft: draft, DraftRevision: draft.DraftRevision, DraftHash: draft.DraftHash,
+		ExpectedRevision: -1, Meta: &procmeshv1.MutationMeta{OperationId: "op-protected"},
+	}))
+	if err == nil || connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("policy change with original hash should conflict, got %v", err)
+	}
+}
+
 func TestDisasterReplicationAPI_ApplyPolicyDraftRejectsStaleTopology(t *testing.T) {
 	api, state, authSvc := setupMinimalAPI(t)
 	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
@@ -528,7 +680,7 @@ func TestDisasterReplicationAPI_ApplyPolicyDraftRejectsClientRehashedRoutes(t *t
 		t.Fatal(err)
 	}
 	generated.Msg.Draft.Routes[0].TargetNodeIds = []string{"node-3"}
-	forgedHash := computeDraftHashForTopology(request, generated.Msg.Draft.Routes, generated.Msg.Draft.DraftRevision)
+	forgedHash := computeLegacyDraftHashForTopology(request, generated.Msg.Draft.Routes, generated.Msg.Draft.DraftRevision)
 	generated.Msg.Draft.DraftHash = forgedHash
 	_, err = api.ApplyPolicyDraft(context.Background(), bearerReq(sid, &procmeshv1.ApplyPolicyDraftRequest{PolicyId: "rp-forged", Draft: generated.Msg.Draft, DraftRevision: generated.Msg.Draft.DraftRevision, DraftHash: forgedHash, ExpectedRevision: -1, Meta: &procmeshv1.MutationMeta{OperationId: "op-forged"}}))
 	if err == nil || connect.CodeOf(err) != connect.CodeFailedPrecondition {

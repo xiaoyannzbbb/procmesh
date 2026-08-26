@@ -310,6 +310,8 @@ Draft 中的节点集合分为两个不同概念：
 
 Topology revision 绑定排序后的 Raft 成员身份及实际参与路由选择的 host/rack/zone/capacity 属性。瞬时 Gossip `Alive` 不进入 revision；它只影响 preview warning 和 topology health。Apply 时成员或路由属性变化返回稳定 conflict，单纯 liveness 波动不使 draft 失效。
 
+Draft hash 绑定规范化后的策略输入和 topology revision。`source_ids`、`primary_policy_ids` 按集合规范化，空数组和空 map 不因 Proto JSON 表示差异产生不同摘要。Route 不进入新版 hash：preview route 允许用户在确认界面显式编辑，且目标选择算法可以独立演进；Apply 仍须在 Leader 上校验 topology revision、策略摘要，并由 FSM 校验最终 route 的 source/target 完整性。升级兼容期内，Apply 可以接受由服务端按同一 topology 重算成功的旧 route-bound hash，但不能接受客户端针对任意 route 自行重算的旧摘要。
+
 ### 10.5 Peer operation authorization state
 
 Peer 写入授权以 Raft 中冻结的 replication run/task 为唯一权威。`PutSnapshot` 除 cluster、run、task、snapshot 和 checksum 外，还必须携带 `policy_id` 与 `policy_revision`。目标 Agent 将这些字段与当前 Raft run、task、run term 和 lease 逐项比较，并验证 mTLS source、local target、snapshot/checksum 及 route 状态；任何不一致都在访问 `PeerStore` 前拒绝。
@@ -379,7 +381,7 @@ FS、S3、Peer 只共享保留意图，不共享删除实现。S3 可以交给 b
 - `VerifyReplica`
 - `ListRecoverableSnapshots`
 
-Draft API 不直接写 Raft；`ApplyPolicyDraft` 必须带 draft revision 和预览摘要 hash，防止用户基于旧拓扑覆盖新成员变化。
+Draft API 不直接写 Raft；`ApplyPolicyDraft` 必须带 draft revision 和规范化策略摘要 hash，防止用户基于旧拓扑或已修改的策略输入覆盖当前状态；可编辑 route 由 FSM 独立校验。
 
 ### 12.3 内部 `PeerReplicationService`
 

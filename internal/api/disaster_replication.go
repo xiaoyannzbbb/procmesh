@@ -142,7 +142,7 @@ func (d *DisasterReplicationAPI) GeneratePolicyDraft(ctx context.Context, req *c
 	}
 
 	// Compute draft hash
-	draftHash := computeDraftHashForTopology(req.Msg, routes, draftRevision)
+	draftHash := computePolicyDraftHashForTopology(req.Msg, draftRevision)
 
 	draft := &procmeshv1.PolicyDraft{
 		Name:                req.Msg.Name,
@@ -236,8 +236,19 @@ func (d *DisasterReplicationAPI) ApplyPolicyDraft(ctx context.Context, req *conn
 		BandwidthLimit:      req.Msg.Draft.BandwidthLimit,
 		TopologyConstraints: req.Msg.Draft.TopologyConstraints,
 	}
-	expectedHash := computeDraftHashForTopology(draftRequest, serverRoutes, currentRevision)
-	if expectedHash != req.Msg.DraftHash {
+	expectedHash := computePolicyDraftHashForTopology(draftRequest, currentRevision)
+	legacyHashMatches := computeLegacyDraftHashForTopology(draftRequest, serverRoutes, currentRevision) == req.Msg.DraftHash
+	if expectedHash != req.Msg.DraftHash && !legacyHashMatches {
+		legacyGenerated, legacyErr := backup.GenerateRoutesForSourcesPreRing(topologyNodes, sources, int(req.Msg.Draft.ReplicaFactor), backup.TopologyConstraints{})
+		if legacyErr == nil {
+			legacyRoutes := make([]*procmeshv1.ReplicationRoute, 0, len(legacyGenerated.Routes))
+			for _, route := range legacyGenerated.Routes {
+				legacyRoutes = append(legacyRoutes, &procmeshv1.ReplicationRoute{SourceNodeId: route.SourceNodeID, TargetNodeIds: route.TargetNodeIDs, Warnings: route.Warnings})
+			}
+			legacyHashMatches = computeLegacyDraftHashForTopology(draftRequest, legacyRoutes, currentRevision) == req.Msg.DraftHash
+		}
+	}
+	if expectedHash != req.Msg.DraftHash && !legacyHashMatches {
 		return nil, ToConnect(errcode.E(errcode.CONFLICT, "draft hash mismatch"))
 	}
 
@@ -1127,11 +1138,54 @@ func replicationPolicyToProto(p control.ReplicationPolicy) *procmeshv1.Replicati
 	}
 }
 
-func computeDraftHash(req *procmeshv1.GeneratePolicyDraftRequest, routes []*procmeshv1.ReplicationRoute) string {
-	return computeDraftHashForTopology(req, routes, 0)
+func computePolicyDraftHashForTopology(req *procmeshv1.GeneratePolicyDraftRequest, topologyRevision int64) string {
+	sourceIDs := append([]string{}, req.SourceIds...)
+	primaryPolicyIDs := append([]string{}, req.PrimaryPolicyIds...)
+	sort.Strings(sourceIDs)
+	sort.Strings(primaryPolicyIDs)
+	topologyConstraints := make(map[string]string, len(req.TopologyConstraints))
+	for key, value := range req.TopologyConstraints {
+		topologyConstraints[key] = value
+	}
+
+	data := struct {
+		Version             int               `json:"version"`
+		Name                string            `json:"name"`
+		Enabled             bool              `json:"enabled"`
+		SourceSelector      string            `json:"source_selector"`
+		SourceIDs           []string          `json:"source_ids"`
+		ReplicaFactor       int32             `json:"replica_factor"`
+		Trigger             string            `json:"trigger"`
+		PrimaryPolicyIDs    []string          `json:"primary_policy_ids"`
+		ScheduleCron        string            `json:"schedule_cron"`
+		Timezone            string            `json:"timezone"`
+		RetentionKeepLast   int32             `json:"retention_keep_last"`
+		RetentionKeepDays   int32             `json:"retention_keep_days"`
+		RetentionMaxBytes   int64             `json:"retention_max_bytes"`
+		MaxConcurrency      int32             `json:"max_concurrency"`
+		VerifyAfterCopy     bool              `json:"verify_after_copy"`
+		BandwidthLimit      int64             `json:"bandwidth_limit"`
+		TopologyConstraints map[string]string `json:"topology_constraints"`
+		TopologyRevision    int64             `json:"topology_revision"`
+	}{
+		Version: 2, Name: req.Name, Enabled: req.Enabled, SourceSelector: req.SourceSelector,
+		SourceIDs: sourceIDs, ReplicaFactor: req.ReplicaFactor, Trigger: req.Trigger,
+		PrimaryPolicyIDs: primaryPolicyIDs, ScheduleCron: req.ScheduleCron, Timezone: req.Timezone,
+		RetentionKeepLast: req.RetentionKeepLast, RetentionKeepDays: req.RetentionKeepDays,
+		RetentionMaxBytes: req.RetentionMaxBytes, MaxConcurrency: req.MaxConcurrency,
+		VerifyAfterCopy: req.VerifyAfterCopy, BandwidthLimit: req.BandwidthLimit,
+		TopologyConstraints: topologyConstraints, TopologyRevision: topologyRevision,
+	}
+	jsonData, _ := json.Marshal(data)
+	hash := sha256.Sum256(jsonData)
+	return hex.EncodeToString(hash[:])
 }
 
-func computeDraftHashForTopology(req *procmeshv1.GeneratePolicyDraftRequest, routes []*procmeshv1.ReplicationRoute, topologyRevision int64) string {
+func computeLegacyDraftHash(req *procmeshv1.GeneratePolicyDraftRequest, routes []*procmeshv1.ReplicationRoute) string {
+	return computeLegacyDraftHashForTopology(req, routes, 0)
+}
+
+func computeLegacyDraftHashForTopology(req *procmeshv1.GeneratePolicyDraftRequest, routes []*procmeshv1.ReplicationRoute, topologyRevision int64) string {
 	// Sort routes for deterministic hash
 	sortedRoutes := make([]*procmeshv1.ReplicationRoute, len(routes))
 	copy(sortedRoutes, routes)

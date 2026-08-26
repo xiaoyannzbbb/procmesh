@@ -44,6 +44,19 @@ func GenerateRoutes(nodes []AgentTopology, replicaFactor int, constraints Topolo
 // GenerateRoutesForSources creates routes only for selected admitted sources while
 // retaining every admitted node as a possible target for those routes.
 func GenerateRoutesForSources(nodes []AgentTopology, sourceNodeIDs []string, replicaFactor int, constraints TopologyConstraints) (RouteDraftResult, error) {
+	return generateRoutesForSources(nodes, sourceNodeIDs, replicaFactor, constraints, selectTargets)
+}
+
+// GenerateRoutesForSourcesPreRing reproduces the pre-ring planner only to validate
+// route-bound draft hashes created before the planner changed. New drafts must
+// use GenerateRoutesForSources.
+func GenerateRoutesForSourcesPreRing(nodes []AgentTopology, sourceNodeIDs []string, replicaFactor int, constraints TopologyConstraints) (RouteDraftResult, error) {
+	return generateRoutesForSources(nodes, sourceNodeIDs, replicaFactor, constraints, selectTargetsPreRing)
+}
+
+type targetSelector func(AgentTopology, []AgentTopology, int, map[string]int) []string
+
+func generateRoutesForSources(nodes []AgentTopology, sourceNodeIDs []string, replicaFactor int, constraints TopologyConstraints, selectTarget targetSelector) (RouteDraftResult, error) {
 	// Admission defines the durable topology; liveness only affects warnings.
 	eligible := make([]AgentTopology, 0, len(nodes))
 	for _, n := range nodes {
@@ -116,7 +129,7 @@ func GenerateRoutesForSources(nodes []AgentTopology, sourceNodeIDs []string, rep
 
 	// Generate routes for each source
 	for _, source := range sources {
-		targets := selectTargets(source, eligible, actualReplicas, inboundLoad)
+		targets := selectTarget(source, eligible, actualReplicas, inboundLoad)
 		result.Routes = append(result.Routes, RouteDraft{
 			SourceNodeID:  source.NodeID,
 			TargetNodeIDs: targets,
@@ -125,6 +138,52 @@ func GenerateRoutesForSources(nodes []AgentTopology, sourceNodeIDs []string, rep
 	}
 
 	return result, nil
+}
+
+func selectTargetsPreRing(source AgentTopology, eligible []AgentTopology, count int, inboundLoad map[string]int) []string {
+	if count <= 0 {
+		return []string{}
+	}
+
+	type scoredCandidate struct {
+		node  AgentTopology
+		score float64
+	}
+	scored := make([]scoredCandidate, 0, len(eligible)-1)
+	for _, candidate := range eligible {
+		if candidate.NodeID == source.NodeID {
+			continue
+		}
+		score := 0.0
+		switch {
+		case source.Zone != "" && candidate.Zone != "" && source.Zone != candidate.Zone:
+			score += 100
+		case source.Rack != "" && candidate.Rack != "" && source.Rack != candidate.Rack:
+			score += 50
+		case source.Host != "" && candidate.Host != "" && source.Host != candidate.Host:
+			score += 25
+		}
+		if candidate.CapacityWeight > 0 {
+			score += candidate.CapacityWeight * 10
+		}
+		score -= float64(inboundLoad[candidate.NodeID]) * 1000
+		scored = append(scored, scoredCandidate{node: candidate, score: score})
+	}
+	sort.Slice(scored, func(i, j int) bool {
+		if scored[i].score != scored[j].score {
+			return scored[i].score > scored[j].score
+		}
+		return scored[i].node.NodeID < scored[j].node.NodeID
+	})
+	if count > len(scored) {
+		count = len(scored)
+	}
+	selected := make([]string, 0, count)
+	for _, candidate := range scored[:count] {
+		selected = append(selected, candidate.node.NodeID)
+		inboundLoad[candidate.node.NodeID]++
+	}
+	return selected
 }
 
 const (

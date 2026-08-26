@@ -4,6 +4,9 @@ args:
   - -c
   - while true; do date; sleep 5; done
 working_directory: /tmp/test
+environment:
+  APP_ENV: demo
+  LOG_LEVEL: info
 instances: 1
 autostart: true
 
