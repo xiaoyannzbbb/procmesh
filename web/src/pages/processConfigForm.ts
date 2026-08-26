@@ -1,4 +1,5 @@
 import { create, fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import {
   BackoffSchema,
   HealthCheckSchema,
@@ -341,12 +342,13 @@ export function processConfigFormToSpec(form: ProcessConfigFormState): ProcessSp
   });
 }
 
-export function stringifyProcessConfigJson(spec: ProcessSpec): string {
-  return JSON.stringify(toJson(ProcessSpecSchema, spec), null, 2);
+export function stringifyProcessConfigYaml(spec: ProcessSpec): string {
+  return stringifyYaml(toJson(ProcessSpecSchema, spec, { useProtoFieldName: true }), { lineWidth: 0 });
 }
 
-export function parseProcessConfigJson(text: string): ProcessSpec {
-  return fromJson(ProcessSpecSchema, JSON.parse(text) as JsonValue);
+export function parseProcessConfigYaml(text: string): ProcessSpec {
+  const value = parseYaml(text, { maxAliasCount: 100, prettyErrors: true });
+  return fromJson(ProcessSpecSchema, value as JsonValue);
 }
 
 function addIssue(issues: ProcessConfigIssue[], path: string, code: ProcessConfigIssueCode): void {

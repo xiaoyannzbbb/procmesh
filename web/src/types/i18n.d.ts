@@ -453,7 +453,7 @@ declare module "i18next" {
         'processConfig.logPathPending': string
         'processConfig.editor.modeLabel': string
         'processConfig.editor.mode.form': string
-        'processConfig.editor.mode.json': string
+        'processConfig.editor.mode.yaml': string
         'processConfig.editor.section.identity': string
         'processConfig.editor.section.execution': string
         'processConfig.editor.section.runtime': string
@@ -566,7 +566,7 @@ declare module "i18next" {
         'processConfig.config.save': string
         'processConfig.config.saving': string
         'processConfig.config.unsavedConfirm': string
-        'processConfig.config.invalidJson': string
+        'processConfig.config.invalidYaml': string
         'processConfig.config.empty': string
         'processConfig.config.enabled': string
         'processConfig.config.disabled': string
@@ -587,7 +587,7 @@ declare module "i18next" {
         'processConfig.config.healthCheck': string
         'processConfig.config.logPolicy': string
         'processConfig.config.resources': string
-        'processConfig.config.fullJson': string
+        'processConfig.config.fullYaml': string
         'processConfig.config.sections.identity': string
         'processConfig.config.sections.execution': string
         'processConfig.config.sections.runtime': string

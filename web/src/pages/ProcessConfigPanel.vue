@@ -2,7 +2,8 @@
 import { create, toJson } from "@bufbuild/protobuf";
 import { useQuery, useQueryClient } from "@tanstack/vue-query";
 import { computed, nextTick, ref, watch, type ComponentPublicInstance } from "vue";
-import { Braces, Pencil, RefreshCw } from "lucide-vue-next";
+import { FileCode2, Pencil, RefreshCw } from "lucide-vue-next";
+import { stringify as stringifyYaml } from "yaml";
 import Drawer from "../components/Drawer.vue";
 import { ProcessSpecSchema, type ProcessSpec } from "../gen/procmesh/v1/api_pb";
 import { isConflict } from "../lib/connecterr";
@@ -13,10 +14,10 @@ import { session } from "../lib/session";
 import { useI18n } from "../lib/useI18n";
 import ProcessConfigForm from "./ProcessConfigForm.vue";
 import {
-  parseProcessConfigJson,
+  parseProcessConfigYaml,
   processConfigFormToSpec,
   specToProcessConfigForm,
-  stringifyProcessConfigJson,
+  stringifyProcessConfigYaml,
   validateProcessConfigForm,
   validateProcessSpec,
   type ProcessConfigFormState,
@@ -42,15 +43,15 @@ const POLICY_KEYS = {
   resources: "resources",
 } as const;
 const EDITOR_IDS = {
-  json: "process-config-json",
-  jsonError: "process-config-json-error",
+  yaml: "process-config-yaml",
+  yamlError: "process-config-yaml-error",
   comment: "process-config-comment",
 } as const;
-const EDITOR_FIELDS = { json: "config-json" } as const;
-const EDITOR_MODE = { form: "form", json: "json" } as const;
-const EDITOR_MODES = [EDITOR_MODE.form, EDITOR_MODE.json] as const;
+const EDITOR_FIELDS = { yaml: "config-yaml" } as const;
+const EDITOR_MODE = { form: "form", yaml: "yaml" } as const;
+const EDITOR_MODES = [EDITOR_MODE.form, EDITOR_MODE.yaml] as const;
 const DRAWER_SIZE = "wide" as const;
-type EditorMode = "form" | "json";
+type EditorMode = "form" | "yaml";
 type ProcessConfigFormHandle = {
   focusIssue(path: string): Promise<void>;
 };
@@ -82,8 +83,8 @@ const editorBaseline = ref("");
 const editorOpen = ref(false);
 const formIssues = ref<ProcessConfigIssue[]>([]);
 const validateRequested = ref(0);
-const jsonError = ref("");
-const jsonTextarea = ref<HTMLTextAreaElement | null>(null);
+const yamlError = ref("");
+const yamlTextarea = ref<HTMLTextAreaElement | null>(null);
 const comment = ref("");
 const loadedSpec = ref<ProcessSpec | null>(null);
 const conflictText = ref("");
@@ -148,17 +149,17 @@ const historyPending = computed(() => historyQuery.isPending.value);
 const diffPending = computed(() => diffQuery.isPending.value);
 const diffError = computed(() => diffQuery.error.value);
 const diffText = computed(() => diffQuery.data.value?.diff ?? "");
-const displayJson = computed(() => {
+const displayYaml = computed(() => {
   if (!loadedSpec.value) {
     return "";
   }
-  return JSON.stringify(toJson(ProcessSpecSchema, loadedSpec.value), null, 2);
+  return stringifyProcessConfigYaml(loadedSpec.value);
 });
 const displayObject = computed<Record<string, unknown>>(() => {
-  if (!displayJson.value) {
+  if (!loadedSpec.value) {
     return {};
   }
-  return JSON.parse(displayJson.value) as Record<string, unknown>;
+  return toJson(ProcessSpecSchema, loadedSpec.value, { useProtoFieldName: true }) as Record<string, unknown>;
 });
 const environmentEntries = computed(() => Object.entries(loadedSpec.value?.environment ?? {}));
 
@@ -189,7 +190,7 @@ const normalizedDraft = computed(() => {
     }
   }
   try {
-    return semanticSpecJson(parseProcessConfigJson(editorText.value));
+    return semanticSpecJson(parseProcessConfigYaml(editorText.value));
   } catch {
     return editorText.value;
   }
@@ -214,7 +215,7 @@ watch(
     editorBaseline.value = "";
     formIssues.value = [];
     validateRequested.value = 0;
-    jsonError.value = "";
+    yamlError.value = "";
     comment.value = "";
     conflictText.value = "";
     actionError.value = "";
@@ -288,7 +289,7 @@ function applySpec(spec: ProcessSpec | undefined): void {
   }
   const next = create(ProcessSpecSchema, spec);
   loadedSpec.value = next;
-  editorText.value = stringifyProcessConfigJson(next);
+  editorText.value = stringifyProcessConfigYaml(next);
 }
 
 function openEditor(): void {
@@ -298,12 +299,12 @@ function openEditor(): void {
   const openingSpec = create(ProcessSpecSchema, loadedSpec.value);
   editorMode.value = "form";
   formDraft.value = specToProcessConfigForm(openingSpec);
-  editorText.value = stringifyProcessConfigJson(openingSpec);
+  editorText.value = stringifyProcessConfigYaml(openingSpec);
   editorBaseline.value = semanticSpecJson(openingSpec);
   formIssues.value = [];
   validateRequested.value = 0;
   comment.value = "";
-  jsonError.value = "";
+  yamlError.value = "";
   actionError.value = "";
   conflictText.value = "";
   editorOpen.value = true;
@@ -317,7 +318,7 @@ function closeEditor(): void {
     return;
   }
   editorOpen.value = false;
-  jsonError.value = "";
+  yamlError.value = "";
   actionError.value = "";
 }
 
@@ -349,13 +350,13 @@ function showFormIssues(issues: ProcessConfigIssue[]): void {
   }
 }
 
-function showJsonError(message: string): void {
-  jsonError.value = message;
-  void nextTick(() => jsonTextarea.value?.focus());
+function showYamlError(message: string): void {
+  yamlError.value = message;
+  void nextTick(() => yamlTextarea.value?.focus());
 }
 
-function setJsonTextarea(element: Element | ComponentPublicInstance | null): void {
-  jsonTextarea.value = element instanceof HTMLTextAreaElement ? element : null;
+function setYamlTextarea(element: Element | ComponentPublicInstance | null): void {
+  yamlTextarea.value = element instanceof HTMLTextAreaElement ? element : null;
 }
 
 function setFormEditor(element: Element | ComponentPublicInstance | null): void {
@@ -374,21 +375,21 @@ function synchronizeActiveMode(synchronizeInactiveDraft = true): ProcessSpec | n
     }
     const spec = processConfigFormToSpec(formDraft.value);
     if (synchronizeInactiveDraft) {
-      editorText.value = stringifyProcessConfigJson(spec);
+      editorText.value = stringifyProcessConfigYaml(spec);
     }
     return spec;
   }
 
   let spec: ProcessSpec;
   try {
-    spec = parseProcessConfigJson(editorText.value);
+    spec = parseProcessConfigYaml(editorText.value);
   } catch (err) {
-    showJsonError(err instanceof Error ? err.message : t("processConfig.config.invalidJson"));
+    showYamlError(err instanceof Error ? err.message : t("processConfig.config.invalidYaml"));
     return null;
   }
   const issues = validateProcessSpec(spec);
   if (issues.length > 0) {
-    showJsonError(issueMessage(issues[0]));
+    showYamlError(issueMessage(issues[0]));
     return null;
   }
   if (synchronizeInactiveDraft) {
@@ -405,16 +406,16 @@ function switchEditorMode(next: EditorMode): void {
     return;
   }
   formIssues.value = [];
-  jsonError.value = "";
+  yamlError.value = "";
   editorMode.value = next;
 }
 
-function nestedJson(key: string): string {
+function nestedYaml(key: string): string {
   const value = displayObject.value[key];
   if (value === undefined || value === null) {
     return t("processConfig.config.empty");
   }
-  return JSON.stringify(value, null, 2);
+  return stringifyYaml(value, { lineWidth: 0 }).trimEnd();
 }
 
 function textOrEmpty(value: string): string {
@@ -467,7 +468,7 @@ function formatTime(ms: bigint | number | undefined): string {
 async function onSave(): Promise<void> {
   conflictText.value = "";
   actionError.value = "";
-  jsonError.value = "";
+  yamlError.value = "";
   if (!canUpdate.value || !loadedSpec.value) {
     return;
   }
@@ -687,19 +688,19 @@ async function onRollback(toRevision: bigint | number): Promise<void> {
         <div class="policy-grid">
           <div>
             <h4>{{ t("processConfig.config.restartPolicy") }}</h4>
-            <pre>{{ nestedJson(POLICY_KEYS.restart) }}</pre>
+            <pre>{{ nestedYaml(POLICY_KEYS.restart) }}</pre>
           </div>
           <div>
             <h4>{{ t("processConfig.config.healthCheck") }}</h4>
-            <pre>{{ nestedJson(POLICY_KEYS.health) }}</pre>
+            <pre>{{ nestedYaml(POLICY_KEYS.health) }}</pre>
           </div>
           <div>
             <h4>{{ t("processConfig.config.logPolicy") }}</h4>
-            <pre>{{ nestedJson(POLICY_KEYS.log) }}</pre>
+            <pre>{{ nestedYaml(POLICY_KEYS.log) }}</pre>
           </div>
           <div>
             <h4>{{ t("processConfig.config.resources") }}</h4>
-            <pre>{{ nestedJson(POLICY_KEYS.resources) }}</pre>
+            <pre>{{ nestedYaml(POLICY_KEYS.resources) }}</pre>
           </div>
         </div>
       </div>
@@ -727,12 +728,12 @@ async function onRollback(toRevision: bigint | number): Promise<void> {
         </div>
       </div>
 
-      <details class="json-details">
+      <details class="yaml-details">
         <summary>
-          <Braces :size="16" aria-hidden="true" />
-          {{ t("processConfig.config.fullJson") }}
+          <FileCode2 :size="16" aria-hidden="true" />
+          {{ t("processConfig.config.fullYaml") }}
         </summary>
-        <pre class="config-json-viewer">{{ displayJson }}</pre>
+        <pre class="config-yaml-viewer">{{ displayYaml }}</pre>
       </details>
     </section>
 
@@ -771,30 +772,30 @@ async function onRollback(toRevision: bigint | number): Promise<void> {
           @update:model-value="updateFormDraft"
           @blur-field="validateFormField"
         />
-        <div v-else-if="editorMode === EDITOR_MODE.json" class="json-editor">
-          <label class="field" :for="EDITOR_IDS.json">
+        <div v-else-if="editorMode === EDITOR_MODE.yaml" class="yaml-editor">
+          <label class="field" :for="EDITOR_IDS.yaml">
             <span>{{ t("processConfig.config.specLabel") }}</span>
             <textarea
-              :id="EDITOR_IDS.json"
-              :ref="setJsonTextarea"
+              :id="EDITOR_IDS.yaml"
+              :ref="setYamlTextarea"
               v-model="editorText"
               class="input editor"
-              :data-field="EDITOR_FIELDS.json"
+              :data-field="EDITOR_FIELDS.yaml"
               spellcheck="false"
               rows="24"
-              :aria-invalid="Boolean(jsonError)"
-              :aria-describedby="jsonError ? EDITOR_IDS.jsonError : undefined"
-              @input="jsonError = ''"
+              :aria-invalid="Boolean(yamlError)"
+              :aria-describedby="yamlError ? EDITOR_IDS.yamlError : undefined"
+              @input="yamlError = ''"
             />
           </label>
           <p
-            v-if="jsonError"
-            :id="EDITOR_IDS.jsonError"
+            v-if="yamlError"
+            :id="EDITOR_IDS.yamlError"
             class="field-error"
-            :data-error="EDITOR_FIELDS.json"
+            :data-error="EDITOR_FIELDS.yaml"
             role="alert"
           >
-            {{ jsonError }}
+            {{ yamlError }}
           </p>
         </div>
         <div class="drawer-actions">
@@ -1043,7 +1044,7 @@ h4 {
   min-width: 0;
 }
 .policy-grid pre,
-.config-json-viewer {
+.config-yaml-viewer {
   margin: 0.375rem 0 0;
   border: 1px solid var(--color-border);
   border-radius: 8px;
@@ -1107,11 +1108,11 @@ h4 {
 .empty-state {
   margin: 0;
 }
-.json-details {
+.yaml-details {
   border-top: 1px solid var(--color-border);
   padding-top: 1rem;
 }
-.json-details summary {
+.yaml-details summary {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -1122,10 +1123,10 @@ h4 {
   font-size: 0.8125rem;
   font-weight: 600;
 }
-.json-details summary::marker {
+.yaml-details summary::marker {
   color: var(--color-muted);
 }
-.config-json-viewer {
+.config-yaml-viewer {
   max-height: 28rem;
   white-space: pre;
 }
@@ -1183,7 +1184,7 @@ h4 {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
-.json-editor {
+.yaml-editor {
   display: flex;
   min-width: 0;
   flex-direction: column;

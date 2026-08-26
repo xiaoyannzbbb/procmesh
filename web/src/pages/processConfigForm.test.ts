@@ -2,10 +2,10 @@ import { create } from "@bufbuild/protobuf";
 import { describe, expect, it } from "vitest";
 import { ProcessSpecSchema } from "../gen/procmesh/v1/api_pb";
 import {
-  parseProcessConfigJson,
+  parseProcessConfigYaml,
   processConfigFormToSpec,
   specToProcessConfigForm,
-  stringifyProcessConfigJson,
+  stringifyProcessConfigYaml,
   validateProcessConfigForm,
   validateProcessSpec,
   type ProcessConfigFormState,
@@ -117,8 +117,21 @@ describe("ProcessSpec form conversion", () => {
     expect(processConfigFormToSpec(specToProcessConfigForm(fullSpec))).toEqual(fullSpec);
   });
 
-  it("preserves every ProcessSpec leaf through protobuf JSON", () => {
-    expect(parseProcessConfigJson(stringifyProcessConfigJson(fullSpec))).toEqual(fullSpec);
+  it("preserves every ProcessSpec leaf through CLI-compatible YAML", () => {
+    const yaml = stringifyProcessConfigYaml(fullSpec);
+
+    expect(yaml).toContain("process_id: p1");
+    expect(yaml).toContain("working_directory: /srv/api");
+    expect(yaml).toContain('stop_timeout_ms: "10000"');
+    expect(yaml).not.toContain("processId:");
+    expect(parseProcessConfigYaml(yaml)).toEqual(fullSpec);
+  });
+
+  it("parses YAML comments and rejects unknown fields", () => {
+    expect(parseProcessConfigYaml("# process config\nname: api\ncommand: /bin/api\ninstances: 1\n")).toEqual(
+      create(ProcessSpecSchema, { name: "api", command: "/bin/api", instances: 1 }),
+    );
+    expect(() => parseProcessConfigYaml("name: api\nunknown_field: true\n")).toThrow();
   });
 
   it("enumerates every ProcessSpec leaf, including read-only values", () => {
