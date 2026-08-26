@@ -439,7 +439,7 @@ const (
 	logHopTimeout                 = time.Duration(0)
 	auditHopTimeout               = 2 * time.Second
 	metricsHopTimeout             = rpc.UnaryTimeout
-	alertHopTimeout               = 2 * time.Second
+	alertHopTimeout               = rpc.MutationTimeout
 	backupHopTimeout              = rpc.MutationTimeout
 	clusterBackupHopTimeout       = rpc.MutationTimeout
 	disasterReplicationHopTimeout = rpc.MutationTimeout

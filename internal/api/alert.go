@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -27,16 +28,18 @@ var _ procmeshv1connect.AlertServiceHandler = (*AlertAPI)(nil)
 const alertHopTimeout = 2 * time.Second
 
 type AlertAPI struct {
-	Store     *store.Store
-	Auth      *auth.Service
-	Engine    *alert.Engine // 可空；List 不需要
-	Sender    alert.Sender
-	LocalOnly bool
-	LocalID   string
-	Router    *Router
-	Forward   Forwarder
-	Members   func() []cluster.NodeSummary
-	Now       func() time.Time
+	Store       *store.Store
+	Auth        *auth.Service
+	Engine      *alert.Engine // 可空；List 不需要
+	Sender      alert.Sender
+	LocalOnly   bool
+	LocalID     string
+	Router      *Router
+	Forward     Forwarder
+	Members     func() []cluster.NodeSummary
+	Now         func() time.Time
+	IsLeader    func() bool
+	LeaderRoute func() (Route, error)
 }
 
 func (s *AlertAPI) ListAlerts(ctx context.Context, req *connect.Request[procmeshv1.ListAlertsRequest]) (*connect.Response[procmeshv1.ListAlertsResponse], error) {
@@ -252,6 +255,12 @@ func (s *AlertAPI) PutAlertChannel(ctx context.Context, req *connect.Request[pro
 	if _, _, err := metaOf(req.Msg.GetMeta()); err != nil {
 		return nil, err
 	}
+	if local, cli, err := s.forwardMutation(ctx, req.Header()); !local {
+		if err != nil {
+			return nil, err
+		}
+		return cli.PutAlertChannel(ctx, req)
+	}
 	id := strings.TrimSpace(req.Msg.GetChannelId())
 	if id == "" {
 		var err error
@@ -287,6 +296,12 @@ func (s *AlertAPI) DeleteAlertChannel(ctx context.Context, req *connect.Request[
 	}
 	if _, _, err := metaOf(req.Msg.GetMeta()); err != nil {
 		return nil, err
+	}
+	if local, cli, err := s.forwardMutation(ctx, req.Header()); !local {
+		if err != nil {
+			return nil, err
+		}
+		return cli.DeleteAlertChannel(ctx, req)
 	}
 	if err := applyAuth(s.Auth, control.CmdAlertChannelDelete, control.AlertChannelDeleteBody{
 		ChannelID: req.Msg.GetChannelId(),
@@ -363,6 +378,12 @@ func (s *AlertAPI) PutAlertPolicy(ctx context.Context, req *connect.Request[proc
 	if p == nil {
 		return nil, ToConnect(errcode.E(errcode.INVALID, "policy required"))
 	}
+	if local, cli, err := s.forwardMutation(ctx, req.Header()); !local {
+		if err != nil {
+			return nil, err
+		}
+		return cli.PutAlertPolicy(ctx, req)
+	}
 	if err := applyAuth(s.Auth, control.CmdAlertPolicyPut, control.AlertPolicyPutBody{
 		DedupWindowSec:      p.GetDedupWindowSec(),
 		NotifyOnResolve:     p.GetNotifyOnResolve(),
@@ -377,6 +398,39 @@ func (s *AlertAPI) PutAlertPolicy(ctx context.Context, req *connect.Request[proc
 	return connect.NewResponse(&procmeshv1.PutAlertPolicyResponse{
 		Policy: alertPolicyToProto(s.Auth.Store().View().AlertPolicy),
 	}), nil
+}
+
+func (s *AlertAPI) isLeader() bool {
+	if s.IsLeader != nil {
+		return s.IsLeader()
+	}
+	return true
+}
+
+func (s *AlertAPI) forwardMutation(ctx context.Context, header http.Header) (bool, procmeshv1connect.AlertServiceClient, error) {
+	if s.LocalOnly || s.isLeader() {
+		return true, nil, nil
+	}
+	if s.Forward == nil || s.LeaderRoute == nil {
+		return false, nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "raft leader unavailable"))
+	}
+	rt, err := s.LeaderRoute()
+	if err != nil || rt.NodeID == "" {
+		return false, nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "raft leader unavailable"))
+	}
+	if rt.Local {
+		return true, nil, nil
+	}
+	if rt.RPC == "" {
+		return false, nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "raft leader unavailable"))
+	}
+	stampHop(header, s.LocalID, rt.NodeID)
+	stampIdentity(header, ctx)
+	cli, err := s.Forward.Alert(ctx, rt)
+	if err != nil {
+		return false, nil, ToConnect(rpc.MapDialError(err))
+	}
+	return false, cli, nil
 }
 
 func (s *AlertAPI) memberList() []cluster.NodeSummary {

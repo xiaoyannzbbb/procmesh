@@ -85,6 +85,24 @@ func TestQ4_LostQuorumRejectsPutChannelOwnerStillWritesInbox(t *testing.T) {
 	}
 }
 
+func TestQ4_PutChannelThroughFollower(t *testing.T) {
+	addrA, _ := startClusterAgent(t, "")
+	addrC, _ := startClusterAgent(t, "")
+	password := joinTwoAndPassword(t, addrA, addrC)
+	loginAdmin(t, addrC, password)
+
+	out := mustCLI(t, addrC, "alert", "channel", "put",
+		"--type", "WEBHOOK", "--name", "from-follower",
+		"--config", `{"url":"http://127.0.0.1/hook"}`)
+	if !strings.Contains(out, "from-follower") {
+		t.Fatalf("put through follower: %s", out)
+	}
+	listA := mustCLI(t, addrA, "alert", "channel", "list")
+	if !strings.Contains(listA, "from-follower") {
+		t.Fatalf("leader missing forwarded channel: %s", listA)
+	}
+}
+
 func TestQ4_LeaderFailedNotSentByEveryFollower(t *testing.T) {
 	addrA, rootA, cancelA := startClusterAgentCtl(t, "")
 	triggers := newManualRunTriggers()

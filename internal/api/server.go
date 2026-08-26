@@ -499,6 +499,11 @@ func newAlertAPI(opts Options) *AlertAPI {
 		Router:    opts.Router,
 		Forward:   opts.Forward,
 		Members:   members,
+		IsLeader: func() bool {
+			n := opts.Cluster.controlNode()
+			return n == nil || n.IsLeader()
+		},
+		LeaderRoute: opts.LoginLeaderRoute,
 	}
 }
 

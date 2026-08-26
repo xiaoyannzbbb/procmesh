@@ -493,3 +493,140 @@ func TestAlertAPI_PutChannelNoQuorumUnavailable(t *testing.T) {
 		t.Fatalf("code=%v detail=%s err=%v", code, detail, err)
 	}
 }
+
+func TestAlertAPI_NonLeaderForwardsPutChannel(t *testing.T) {
+	e := newRBACEnv(t)
+	rec := &recordingAlertClient{}
+	api := &AlertAPI{
+		Auth: e.svc, LocalID: "node-a",
+		IsLeader: func() bool { return false },
+		LeaderRoute: func() (Route, error) {
+			return Route{NodeID: "node-b", RPC: "127.0.0.1:9003"}, nil
+		},
+		Forward: &fakeForwarder{alert: rec},
+	}
+	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-admin", Username: "admin"})
+	resp, err := api.PutAlertChannel(ctx, connect.NewRequest(&procmeshv1.PutAlertChannelRequest{
+		Meta:       &procmeshv1.MutationMeta{OperationId: "op-forward", Operator: "admin"},
+		Type:       "WEBHOOK",
+		Name:       "hook",
+		Enabled:    true,
+		ConfigJson: `{"url":"https://hooks.example.com"}`,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.putCalls != 1 {
+		t.Fatalf("forward put calls=%d want 1", rec.putCalls)
+	}
+	if rec.lastPut == nil || rec.lastPut.GetName() != "hook" {
+		t.Fatalf("forwarded request=%+v", rec.lastPut)
+	}
+	if resp.Msg.GetChannel().GetName() != "hook" {
+		t.Fatalf("response=%+v", resp.Msg.GetChannel())
+	}
+	if _, ok := e.svc.Store().View().AlertChannels[resp.Msg.GetChannel().GetChannelId()]; ok {
+		t.Fatal("follower applied channel locally instead of forwarding")
+	}
+}
+
+func TestAlertAPI_NonLeaderForwardsDeleteChannel(t *testing.T) {
+	e := newRBACEnv(t)
+	rec := &recordingAlertClient{}
+	api := nonLeaderAlertAPI(e.svc, rec)
+	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-admin", Username: "admin"})
+	if _, err := api.DeleteAlertChannel(ctx, connect.NewRequest(&procmeshv1.DeleteAlertChannelRequest{
+		Meta:      &procmeshv1.MutationMeta{OperationId: "op-del-fwd", Operator: "admin"},
+		ChannelId: "ch-1",
+	})); err != nil {
+		t.Fatal(err)
+	}
+	if rec.deleteCalls != 1 {
+		t.Fatalf("forward delete calls=%d want 1", rec.deleteCalls)
+	}
+}
+
+func TestAlertAPI_NonLeaderForwardsPutPolicy(t *testing.T) {
+	e := newRBACEnv(t)
+	rec := &recordingAlertClient{}
+	api := nonLeaderAlertAPI(e.svc, rec)
+	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-admin", Username: "admin"})
+	if _, err := api.PutAlertPolicy(ctx, connect.NewRequest(&procmeshv1.PutAlertPolicyRequest{
+		Meta:   &procmeshv1.MutationMeta{OperationId: "op-pol-fwd", Operator: "admin"},
+		Policy: &procmeshv1.AlertPolicy{DedupWindowSec: 60},
+	})); err != nil {
+		t.Fatal(err)
+	}
+	if rec.policyCalls != 1 {
+		t.Fatalf("forward policy calls=%d want 1", rec.policyCalls)
+	}
+}
+
+func TestAlertAPI_NonLeaderWithoutLeaderUnavailable(t *testing.T) {
+	e := newRBACEnv(t)
+	api := &AlertAPI{Auth: e.svc, LocalID: "node-a", IsLeader: func() bool { return false }}
+	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-admin", Username: "admin"})
+	_, err := api.PutAlertChannel(ctx, connect.NewRequest(&procmeshv1.PutAlertChannelRequest{
+		Meta:       &procmeshv1.MutationMeta{OperationId: "op-no-leader", Operator: "admin"},
+		Type:       "WEBHOOK",
+		Name:       "hook",
+		Enabled:    true,
+		ConfigJson: `{"url":"https://hooks.example.com"}`,
+	}))
+	code, detail := connectDetail(t, err)
+	if code != connect.CodeUnavailable || detail != "UNAVAILABLE" {
+		t.Fatalf("code=%v detail=%s err=%v", code, detail, err)
+	}
+	if err != nil && strings.Contains(err.Error(), "not raft leader") {
+		t.Fatalf("leaked internal raft error: %v", err)
+	}
+}
+
+func nonLeaderAlertAPI(svc *auth.Service, rec *recordingAlertClient) *AlertAPI {
+	return &AlertAPI{
+		Auth: svc, LocalID: "node-a",
+		IsLeader: func() bool { return false },
+		LeaderRoute: func() (Route, error) {
+			return Route{NodeID: "node-b", RPC: "127.0.0.1:9003"}, nil
+		},
+		Forward: &fakeForwarder{alert: rec},
+	}
+}
+
+type recordingAlertClient struct {
+	putCalls    int
+	deleteCalls int
+	policyCalls int
+	lastPut     *procmeshv1.PutAlertChannelRequest
+}
+
+func (c *recordingAlertClient) ListAlerts(context.Context, *connect.Request[procmeshv1.ListAlertsRequest]) (*connect.Response[procmeshv1.ListAlertsResponse], error) {
+	return connect.NewResponse(&procmeshv1.ListAlertsResponse{}), nil
+}
+func (c *recordingAlertClient) GetAlert(context.Context, *connect.Request[procmeshv1.GetAlertRequest]) (*connect.Response[procmeshv1.GetAlertResponse], error) {
+	return connect.NewResponse(&procmeshv1.GetAlertResponse{}), nil
+}
+func (c *recordingAlertClient) ListAlertChannels(context.Context, *connect.Request[procmeshv1.ListAlertChannelsRequest]) (*connect.Response[procmeshv1.ListAlertChannelsResponse], error) {
+	return connect.NewResponse(&procmeshv1.ListAlertChannelsResponse{}), nil
+}
+func (c *recordingAlertClient) PutAlertChannel(_ context.Context, req *connect.Request[procmeshv1.PutAlertChannelRequest]) (*connect.Response[procmeshv1.PutAlertChannelResponse], error) {
+	c.putCalls++
+	c.lastPut = req.Msg
+	return connect.NewResponse(&procmeshv1.PutAlertChannelResponse{Channel: &procmeshv1.AlertChannel{
+		ChannelId: "ch-forwarded", Type: req.Msg.GetType(), Name: req.Msg.GetName(), Enabled: req.Msg.GetEnabled(),
+	}}), nil
+}
+func (c *recordingAlertClient) DeleteAlertChannel(context.Context, *connect.Request[procmeshv1.DeleteAlertChannelRequest]) (*connect.Response[procmeshv1.DeleteAlertChannelResponse], error) {
+	c.deleteCalls++
+	return connect.NewResponse(&procmeshv1.DeleteAlertChannelResponse{}), nil
+}
+func (c *recordingAlertClient) TestAlertChannel(context.Context, *connect.Request[procmeshv1.TestAlertChannelRequest]) (*connect.Response[procmeshv1.TestAlertChannelResponse], error) {
+	return connect.NewResponse(&procmeshv1.TestAlertChannelResponse{}), nil
+}
+func (c *recordingAlertClient) GetAlertPolicy(context.Context, *connect.Request[procmeshv1.GetAlertPolicyRequest]) (*connect.Response[procmeshv1.GetAlertPolicyResponse], error) {
+	return connect.NewResponse(&procmeshv1.GetAlertPolicyResponse{}), nil
+}
+func (c *recordingAlertClient) PutAlertPolicy(context.Context, *connect.Request[procmeshv1.PutAlertPolicyRequest]) (*connect.Response[procmeshv1.PutAlertPolicyResponse], error) {
+	c.policyCalls++
+	return connect.NewResponse(&procmeshv1.PutAlertPolicyResponse{Policy: &procmeshv1.AlertPolicy{}}), nil
+}
