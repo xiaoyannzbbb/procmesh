@@ -57,7 +57,7 @@ ProcMesh 没有独立的中心服务器。每个节点都运行一个 Agent，�
 构建机需要：
 
 - Go 1.25 或更高版本；
-- Node.js 22.13.0 或更高版本，推荐 Node.js 22 LTS；
+- Node.js 22.20.0 或更高的 22.x 版本（低于 23）；
 - npm；
 - GNU Make。
 
