@@ -23,7 +23,7 @@ ProcMesh 是一个 **Local-First、Agent-Owned、Peer-Managed** 的分布式进�
 ### 前置条件
 
 - Go 1.25+
-- Node.js 18+ (前端开发)
+- Node.js 22.13.0+ (前端开发，推荐 Node.js 22 LTS)
 - protoc + 插件 (修改 proto 时需要)
 
 ### 常用命令

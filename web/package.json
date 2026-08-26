@@ -2,6 +2,9 @@
   "name": "procmesh-web",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
   "scripts": {
     "predev": "npm run i18n:types",
     "dev": "vite",
