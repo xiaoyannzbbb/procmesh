@@ -64,7 +64,7 @@ function processConfigTranslationKeys(): string[] {
     ...schemaKeys,
     "processConfig.editor.modeLabel",
     "processConfig.editor.mode.form",
-    "processConfig.editor.mode.json",
+    "processConfig.editor.mode.yaml",
     "processConfig.editor.add.argument",
     "processConfig.editor.add.healthArgument",
     "processConfig.editor.add.environment",

@@ -6,7 +6,7 @@ Scope: Process configuration editor in the Web UI
 
 ## 1. Goal
 
-Replace the JSON-only process configuration editor with a schema-driven field form while retaining a full JSON editing mode. Both modes must cover every editable field in `procmesh.v1.ProcessSpec`, preserve protobuf JSON semantics, and submit through the existing revision-based `UpdateConfig` flow.
+Replace the source-only process configuration editor with a schema-driven field form while retaining a full YAML editing mode. Both modes must cover every editable field in `procmesh.v1.ProcessSpec`, preserve protobuf field and numeric semantics, and submit through the existing revision-based `UpdateConfig` flow.
 
 The editor remains a wide right-side drawer. The existing read-only configuration view, revision history, diff, rollback, conflict handling, and permission checks remain in place.
 
@@ -21,7 +21,7 @@ This is preferred over descriptor-generated forms because protobuf descriptors c
 ### 3.1 Modules
 
 - `processConfigSchema.ts`: section and field metadata, option sets, unit labels, visibility rules, and the complete editable-field inventory.
-- `processConfigForm.ts`: form-state types, `ProcessSpec` conversion, protobuf JSON conversion, normalization, and validation.
+- `processConfigForm.ts`: form-state types, `ProcessSpec` conversion, CLI-compatible YAML conversion, normalization, and validation.
 - `ProcessConfigForm.vue`: section layout and specialized collection editors for arguments, environment variables, and dependencies.
 - `ProcessConfigPanel.vue`: server state, drawer lifecycle, mode synchronization, saving, conflicts, and unsaved-change protection.
 
@@ -33,8 +33,8 @@ The drawer owns one canonical `ProcessSpec` draft plus the active mode:
 
 1. Opening the drawer clones the last accepted server spec.
 2. Form controls edit a form representation derived from the canonical draft.
-3. Entering JSON mode serializes the canonical draft with `toJson(ProcessSpecSchema, draft)`.
-4. Leaving JSON mode parses with `fromJson(ProcessSpecSchema, JSON.parse(text))` and validates the result.
+3. Entering YAML mode converts the canonical draft with `toJson(ProcessSpecSchema, draft, { useProtoFieldName: true })`, then serializes that value as YAML.
+4. Leaving YAML mode parses the YAML document, converts it with `fromJson(ProcessSpecSchema, value)`, and validates the result.
 5. A failed parse or validation blocks the mode switch and retains the current content.
 6. Saving first synchronizes the active mode, then restores server-owned `processId` and `latestRevision` from the loaded spec before calling `UpdateConfig`.
 
@@ -42,7 +42,7 @@ This avoids independent drafts and silent last-writer-wins behavior between mode
 
 ## 4. Drawer Experience
 
-The drawer header contains a two-option segmented control: Field form and JSON. The form is the default mode.
+The drawer header contains a two-option segmented control: Field form and YAML. The form is the default mode.
 
 The form uses progressive disclosure with the following sections:
 
@@ -115,7 +115,7 @@ The drawer footer remains sticky and contains comment, cancel, and the single pr
 | `Dependency` | `process_name` | Required text, unique per dependency list |
 | `Dependency` | `condition` | `STARTED` or `HEALTHY` |
 
-Fields hidden by a health-check type remain in the draft and JSON representation. Changing the type does not erase them, so switching modes cannot lose values.
+Fields hidden by a health-check type remain in the draft and YAML representation. Changing the type does not erase them, so switching modes cannot lose values.
 
 ## 6. Validation and Errors
 
@@ -128,9 +128,9 @@ Validation mirrors known backend rules and adds only structural constraints requ
 - A nonzero backoff multiplier must be at least 1.
 - HTTP checks require an `http` or `https` URL; TCP checks require an address; exec checks require a command.
 - Environment keys and dependency process names cannot be duplicated.
-- Numeric protobuf fields must be finite integers in their declared `int32` or safe `int64` range. The UI does not accept scientific notation for integer fields.
+- Numeric protobuf fields must be finite integers in their declared `int32` or full `int64` range. The UI does not accept scientific notation for integer fields.
 
-Validation runs on blur for individual fields and on mode switch/save for the whole form. Inline errors are associated with their controls. A failed full validation shows a focusable summary linked to invalid fields and focuses the first invalid item. JSON parse or protobuf conversion errors remain directly below the JSON editor.
+Validation runs on blur for individual fields and on mode switch/save for the whole form. Inline errors are associated with their controls. A failed full validation shows a focusable summary linked to invalid fields and focuses the first invalid item. YAML parse or protobuf conversion errors remain directly below the YAML editor as a localized summary; third-party parser details are not exposed as user-facing text.
 
 Server errors and revision conflicts use the existing banners. A conflict does not replace either draft or expected revision until the user explicitly reloads.
 
@@ -138,14 +138,15 @@ Server errors and revision conflicts use the existing banners. A conflict does n
 
 The editor does not invent or apply backend defaults. Zero and empty values received from the API remain visible and round-trip unchanged. Help text may describe effective defaults, but saving an untouched spec must produce an equivalent protobuf message.
 
-Protobuf JSON remains the JSON mode contract, including camelCase field names and string encoding for `int64` values where emitted by Buf. Unknown JSON fields continue to be rejected by `fromJson`.
+The YAML mode uses protobuf field names (`snake_case`) so its output matches CLI process files. Buf's protobuf JSON conversion remains the typed intermediate contract. Before YAML serialization, descriptor-identified 64-bit integer strings are converted to `bigint` so YAML emits unquoted integer scalars accepted by the Go CLI; numeric-looking string fields remain quoted. YAML parsing enables BigInt integers and converts them to decimal strings before `fromJson`, preserving the full 64-bit range without routing through JavaScript `number`. Unknown fields remain rejected. YAML comments and formatting are accepted, while semantic dirty checks compare canonical protobuf values.
 
 ## 8. Testing
 
 Pure utility tests will:
 
 - Construct a fully populated `ProcessSpec` containing every field and verify spec-to-form-to-spec equality.
-- Verify protobuf JSON round trips, including `int64`, maps, repeated fields, and nested messages.
+- Verify CLI-compatible YAML round trips, including `int64`, maps, repeated fields, nested messages, comments, and unknown-field rejection.
+- Use one shared golden YAML file in Web and Go tests to prove Web output is accepted by CLI `Load` and CLI integer scalars round-trip through Web without precision loss.
 - Exercise every validation rule and health-type visibility rule.
 - Assert that the schema inventory covers all editable `ProcessSpec` paths.
 
@@ -154,7 +155,7 @@ Component tests will verify:
 - The form is the default mode and renders all sections.
 - Collection rows add and remove correctly.
 - Valid edits survive both mode switches.
-- Invalid form or JSON content blocks switching and saving with accessible errors.
+- Invalid form or YAML content blocks switching and saving with accessible, localized errors.
 - Read-only fields cannot be edited and are restored before submission.
 - Save, conflict, refetch protection, unsaved-close confirmation, and revision behavior continue to work.
 
@@ -164,5 +165,5 @@ Finally, run the focused Vitest suite, the full Web test suite, i18n validation,
 
 - Changing protobuf messages or backend validation/default semantics.
 - Adding automatic unit conversion or human-readable storage size parsing.
-- Adding an external JSON-schema dependency or code editor package.
+- Adding an external schema or code editor package.
 - Changing revision history, diff, rollback, or the read-only page layout beyond adjustments needed to host the new editor.

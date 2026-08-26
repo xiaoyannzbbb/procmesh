@@ -486,7 +486,7 @@
       "modeLabel": "编辑模式",
       "mode": {
         "form": "表单",
-        "json": "JSON"
+        "yaml": "YAML"
       },
       "section": {
         "identity": "标识信息",
@@ -612,17 +612,17 @@
       "reload": "重新加载",
       "edit": "编辑配置",
       "editTitle": "编辑进程配置",
-      "editHint": "使用表单或 JSON 编辑 ProcessSpec；保存时进程 ID 和最新版本仍保持只读。",
+      "editHint": "使用表单或 YAML 编辑 ProcessSpec；保存时进程 ID 和最新版本仍保持只读。",
       "processId": "进程ID",
       "latestRevision": "最新版本",
       "revision": "版本 {{revision}}",
       "readOnlyNote": "process_id 和 latest_revision 是只读的。",
-      "specLabel": "ProcessSpec JSON",
+      "specLabel": "ProcessSpec YAML",
       "commentLabel": "备注",
       "save": "保存修改",
       "saving": "保存中…",
       "unsavedConfirm": "放弃尚未保存的配置修改？",
-      "invalidJson": "请输入有效的 JSON。",
+      "invalidYaml": "请输入有效的 YAML。",
       "empty": "未配置",
       "enabled": "已启用",
       "disabled": "未启用",
@@ -643,7 +643,7 @@
       "healthCheck": "健康检查",
       "logPolicy": "日志策略",
       "resources": "资源限制",
-      "fullJson": "查看完整 JSON",
+      "fullYaml": "查看完整 YAML",
       "sections": {
         "identity": "标识信息",
         "execution": "执行配置",

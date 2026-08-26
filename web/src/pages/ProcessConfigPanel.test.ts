@@ -5,6 +5,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import i18next from "i18next";
 import I18NextVue from "i18next-vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import zhCommon from "../../public/locales/zh/common.json";
 import { ErrorInfoSchema, ProcessSpecSchema } from "../gen/procmesh/v1/api_pb";
 import { session } from "../lib/session";
 import ProcessConfigPanel from "./ProcessConfigPanel.vue";
@@ -30,13 +31,15 @@ beforeEach(async () => {
               processId: "Process ID",
               latestRevision: "Latest Revision",
               readOnlyNote: "process_id and latest_revision are read-only.",
-              specLabel: "ProcessSpec JSON",
+              specLabel: "ProcessSpec YAML",
+              fullYaml: "View full YAML",
+              invalidYaml: "Enter valid YAML.",
               commentLabel: "Comment",
               save: "Save",
             },
             editor: {
               modeLabel: "Editor mode",
-              mode: { form: "Form", json: "JSON" },
+              mode: { form: "Form", yaml: "YAML" },
               errorSummary: "Fix the following errors",
               validation: {
                 invalidName: "Enter a valid process name",
@@ -65,6 +68,7 @@ beforeEach(async () => {
           },
         },
       },
+      zh: { common: zhCommon },
     },
   });
 });
@@ -213,7 +217,7 @@ async function openEditor(wrapper: Awaited<ReturnType<typeof mountPanel>>["wrapp
 }
 
 function editorTextarea(): HTMLTextAreaElement {
-  return document.querySelector<HTMLTextAreaElement>('[data-field="config-json"]')!;
+  return document.querySelector<HTMLTextAreaElement>('[data-field="config-yaml"]')!;
 }
 
 function drawerField(path: string): HTMLInputElement | HTMLSelectElement {
@@ -227,18 +231,18 @@ async function setDrawerField(path: string, value: string): Promise<void> {
   await flushPromises();
 }
 
-function editorMode(mode: "form" | "json"): HTMLButtonElement {
+function editorMode(mode: "form" | "yaml"): HTMLButtonElement {
   return document.querySelector<HTMLButtonElement>(`[data-editor-mode="${mode}"]`)!;
 }
 
-async function switchEditorMode(mode: "form" | "json"): Promise<void> {
+async function switchEditorMode(mode: "form" | "yaml"): Promise<void> {
   editorMode(mode).click();
   await flushPromises();
 }
 
-function activeEditorMode(): "form" | "json" | undefined {
+function activeEditorMode(): "form" | "yaml" | undefined {
   return document.querySelector<HTMLButtonElement>('[data-editor-mode][aria-pressed="true"]')?.dataset
-    .editorMode as "form" | "json" | undefined;
+    .editorMode as "form" | "yaml" | undefined;
 }
 
 function setEditorText(value: string): void {
@@ -262,15 +266,20 @@ afterEach(() => {
 
 describe("ProcessConfigPanel", () => {
   it("shows a structured read-only configuration before editing", async () => {
-    const { wrapper } = await mountPanel();
+    const { wrapper } = await mountPanel({ spec: fullSampleSpec() });
 
     expect(wrapper.find("form.config-form").exists()).toBe(false);
     expect(wrapper.find("textarea").exists()).toBe(false);
-    expect(wrapper.get('[data-section="execution"]').text()).toContain("sleep");
-    expect(wrapper.get('[data-section="execution"]').text()).toContain("30");
+    expect(wrapper.get('[data-section="execution"]').text()).toContain("/usr/bin/web");
+    expect(wrapper.get('[data-section="execution"]').text()).toContain("serve");
     expect(wrapper.get('[data-section="environment"]').text()).toContain("PORT");
     expect(wrapper.get('[data-section="environment"]').text()).toContain("8080");
-    expect(wrapper.get(".config-json-viewer").text()).toContain('"name": "web"');
+    expect(wrapper.get(".config-yaml-viewer").text()).toContain("name: web");
+    expect(wrapper.get(".config-yaml-viewer").text()).toContain("working_directory: /srv/web");
+    expect(wrapper.get(".policy-grid").text()).toContain("mode: on-failure");
+    expect(wrapper.get(".policy-grid").text()).toContain("retry_window_ms: 60000");
+    expect(wrapper.get(".policy-grid").text()).not.toContain('retry_window_ms: "60000"');
+    expect(wrapper.get("details summary").text()).toContain("View full YAML");
   });
 
   it("opens form-first with an accessible segmented mode control and footer controls", async () => {
@@ -281,7 +290,7 @@ describe("ProcessConfigPanel", () => {
     expect(document.querySelector(".drawer-panel-wide")).not.toBeNull();
     expect(activeEditorMode()).toBe("form");
     expect(editorMode("form").getAttribute("aria-pressed")).toBe("true");
-    expect(editorMode("json").getAttribute("aria-pressed")).toBe("false");
+    expect(editorMode("yaml").getAttribute("aria-pressed")).toBe("false");
     expect(editorMode("form").parentElement?.getAttribute("aria-label")).toBe("Editor mode");
     expect(drawerField("name").value).toBe("web");
     expect(document.querySelector(".drawer-content .drawer-actions")).not.toBeNull();
@@ -291,7 +300,7 @@ describe("ProcessConfigPanel", () => {
   it("keeps drawer editor styles sticky, overflow-safe, touch-sized, and on the spacing grid", () => {
     expect(panelSource).toMatch(/\.drawer-actions\s*\{(?=[^}]*position:\s*sticky)(?=[^}]*bottom:\s*-1\.5rem)[^}]*\}/s);
     expect(panelSource).toMatch(/\.drawer-form\s*\{(?=[^}]*min-width:\s*0)[^}]*\}/s);
-    expect(panelSource).toMatch(/\.json-editor\s*\{(?=[^}]*min-width:\s*0)[^}]*\}/s);
+    expect(panelSource).toMatch(/\.yaml-editor\s*\{(?=[^}]*min-width:\s*0)[^}]*\}/s);
     expect(panelSource).toMatch(/\.editor\s*\{(?=[^}]*box-sizing:\s*border-box)(?=[^}]*max-width:\s*100%)[^}]*\}/s);
     expect(panelSource).toMatch(/@media \(max-width:\s*720px\)[\s\S]*\.editor-mode-button,[\s\S]*\.drawer-actions \.btn\s*\{[^}]*min-height:\s*44px/s);
     expect(panelSource).toMatch(/@media \(max-width:\s*720px\)[\s\S]*\.drawer-comment\s*\{[^}]*flex:\s*0 1 auto/s);
@@ -304,17 +313,17 @@ describe("ProcessConfigPanel", () => {
 
     await openEditor(wrapper);
     await setDrawerField("name", "api");
-    await switchEditorMode("json");
-    expect(activeEditorMode()).toBe("json");
-    expect(editorTextarea().value).toContain('"name": "api"');
+    await switchEditorMode("yaml");
+    expect(activeEditorMode()).toBe("yaml");
+    expect(editorTextarea().value).toContain("name: api");
 
-    setEditorText(editorTextarea().value.replace('"instances": 2', '"instances": 3'));
+    setEditorText(editorTextarea().value.replace("instances: 2", "instances: 3"));
     await switchEditorMode("form");
     expect(activeEditorMode()).toBe("form");
     expect(drawerField("instances").value).toBe("3");
   });
 
-  it("closes after a successful save from JSON mode", async () => {
+  it("closes after a successful save from YAML mode", async () => {
     const saved = create(ProcessSpecSchema, {
       ...sampleSpec(),
       name: "api",
@@ -323,37 +332,53 @@ describe("ProcessConfigPanel", () => {
     const { wrapper } = await mountPanel({ updateConfig: vi.fn().mockResolvedValue({ spec: saved }) });
 
     await openEditor(wrapper);
-    await switchEditorMode("json");
+    await switchEditorMode("yaml");
     const textarea = editorTextarea();
-    expect(textarea.value).toContain('"name": "web"');
-    setEditorText(textarea.value.replace('"name": "web"', '"name": "api"'));
+    expect(textarea.value).toContain("name: web");
+    setEditorText(textarea.value.replace("name: web", "name: api"));
     submitEditor();
     await flushPromises();
     await wrapper.vm.$nextTick();
 
     expect(document.querySelector('[role="dialog"]')).toBeNull();
-    expect(wrapper.get(".config-json-viewer").text()).toContain('"name": "api"');
+    expect(wrapper.get(".config-yaml-viewer").text()).toContain("name: api");
   });
 
-  it("keeps invalid JSON in the drawer and shows an inline error", async () => {
+  it("keeps invalid YAML in the drawer and shows an inline error", async () => {
     const updateConfig = vi.fn().mockResolvedValue({ spec: sampleSpec() });
     const { wrapper } = await mountPanel({ updateConfig });
     await openEditor(wrapper);
-    await switchEditorMode("json");
+    await switchEditorMode("yaml");
 
-    setEditorText("{");
+    setEditorText("name: [");
     await switchEditorMode("form");
-    expect(activeEditorMode()).toBe("json");
+    expect(activeEditorMode()).toBe("yaml");
     expect(document.activeElement).toBe(editorTextarea());
-    expect(editorTextarea().getAttribute("aria-describedby")).toBe("process-config-json-error");
+    expect(editorTextarea().getAttribute("aria-describedby")).toBe("process-config-yaml-error");
 
     submitEditor();
     await flushPromises();
 
     expect(updateConfig).not.toHaveBeenCalled();
-    expect(document.querySelector('[data-error="config-json"]')?.textContent).toBeTruthy();
+    expect(document.querySelector('[data-error="config-yaml"]')?.textContent).toBe("Enter valid YAML.");
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
     expect(document.activeElement).toBe(editorTextarea());
+  });
+
+  it("localizes YAML and protobuf conversion errors without exposing parser details", async () => {
+    await i18n.changeLanguage("zh");
+    const updateConfig = vi.fn().mockResolvedValue({ spec: sampleSpec() });
+    const { wrapper } = await mountPanel({ updateConfig });
+    await openEditor(wrapper);
+    await switchEditorMode("yaml");
+
+    setEditorText("name: web\nunknown_field: true\n");
+    submitEditor();
+    await flushPromises();
+
+    expect(updateConfig).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-error="config-yaml"]')?.textContent).toBe("请输入有效的 YAML。");
+    expect(wrapper.text()).not.toContain("unknown_field");
   });
 
   it("blocks switching and saving an invalid form, keeps its summary, and focuses the first issue", async () => {
@@ -362,7 +387,7 @@ describe("ProcessConfigPanel", () => {
     await openEditor(wrapper);
 
     await setDrawerField("name", "1bad");
-    await switchEditorMode("json");
+    await switchEditorMode("yaml");
 
     expect(activeEditorMode()).toBe("form");
     expect(document.querySelector('[data-error="name"]')).not.toBeNull();
@@ -390,7 +415,7 @@ describe("ProcessConfigPanel", () => {
     expect(document.querySelector("[data-error-summary]")).toBeNull();
   });
 
-  it("asks before closing form and JSON drafts with semantic unsaved changes", async () => {
+  it("asks before closing form and YAML drafts with semantic unsaved changes", async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     const { wrapper } = await mountPanel({ updateConfig: vi.fn().mockResolvedValue({ spec: sampleSpec() }) });
     await openEditor(wrapper);
@@ -410,22 +435,21 @@ describe("ProcessConfigPanel", () => {
     confirm.mockClear();
     confirm.mockReturnValue(false);
     await openEditor(wrapper);
-    await switchEditorMode("json");
-    setEditorText(editorTextarea().value.replace('"name": "web"', '"name": "api"'));
+    await switchEditorMode("yaml");
+    setEditorText(editorTextarea().value.replace("name: web", "name: api"));
     document.querySelector<HTMLButtonElement>('[data-action="cancel-config-edit"]')!.click();
     await wrapper.vm.$nextTick();
     expect(confirm).toHaveBeenCalledTimes(1);
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
   });
 
-  it("ignores JSON formatting and whitespace-only comments when checking dirty state", async () => {
+  it("ignores YAML comments and whitespace-only change comments when checking dirty state", async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     const { wrapper } = await mountPanel();
     await openEditor(wrapper);
-    await switchEditorMode("json");
+    await switchEditorMode("yaml");
 
-    const normalized = JSON.parse(editorTextarea().value) as object;
-    setEditorText(JSON.stringify(normalized));
+    setEditorText(`# unchanged config\n${editorTextarea().value}`);
     const commentInput = document.querySelector<HTMLInputElement>("#process-config-comment")!;
     commentInput.value = "   ";
     commentInput.dispatchEvent(new Event("input", { bubbles: true }));
@@ -436,15 +460,16 @@ describe("ProcessConfigPanel", () => {
     expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
 
-  it("ignores protobuf map insertion order in JSON-originated dirty checks", async () => {
+  it("ignores protobuf map insertion order in YAML-originated dirty checks", async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     const { wrapper } = await mountPanel({ spec: fullSampleSpec() });
     await openEditor(wrapper);
-    await switchEditorMode("json");
+    await switchEditorMode("yaml");
 
-    const reordered = JSON.parse(editorTextarea().value) as { environment: Record<string, string> };
-    reordered.environment = { PORT: "8080", MODE: "prod" };
-    setEditorText(JSON.stringify(reordered));
+    setEditorText(editorTextarea().value.replace(
+      'environment:\n  MODE: prod\n  PORT: "8080"',
+      'environment:\n  PORT: "8080"\n  MODE: prod',
+    ));
     document.querySelector<HTMLButtonElement>('[data-action="cancel-config-edit"]')!.click();
     await wrapper.vm.$nextTick();
 
@@ -482,12 +507,12 @@ describe("ProcessConfigPanel", () => {
     const updateConfig = vi.fn().mockResolvedValue({ spec: saved });
     const { wrapper } = await mountPanel({ spec: loaded, updateConfig });
     await openEditor(wrapper);
-    await switchEditorMode("json");
+    await switchEditorMode("yaml");
     setEditorText(
       editorTextarea().value
-        .replace('"processId": "p1"', '"processId": "other"')
-        .replace('"name": "web"', '"name": "api"')
-        .replace('"latestRevision": "3"', '"latestRevision": "99"'),
+        .replace("process_id: p1", "process_id: other")
+        .replace("name: web", "name: api")
+        .replace("latest_revision: 3", "latest_revision: 99"),
     );
     await switchEditorMode("form");
 
@@ -547,10 +572,8 @@ describe("ProcessConfigPanel", () => {
   it("does not overwrite textarea or expected_revision on refetch while editing or after 409", async () => {
     const { wrapper, updateConfig, configClient, queryClient } = await mountPanel();
     await openEditor(wrapper);
-    await switchEditorMode("json");
-    const editedObject = JSON.parse(editorTextarea().value) as Record<string, unknown>;
-    editedObject.name = "api";
-    const edited = JSON.stringify(editedObject);
+    await switchEditorMode("yaml");
+    const edited = editorTextarea().value.replace("name: web", "name: api");
     setEditorText(edited);
 
     const newer = create(ProcessSpecSchema, {
@@ -599,8 +622,8 @@ describe("ProcessConfigPanel", () => {
     await flushPromises();
     await wrapper.vm.$nextTick();
 
-    expect(wrapper.get(".config-json-viewer").text()).toContain('"processId": "p2"');
-    expect(wrapper.get(".config-json-viewer").text()).toContain('"name": "api"');
+    expect(wrapper.get(".config-yaml-viewer").text()).toContain("process_id: p2");
+    expect(wrapper.get(".config-yaml-viewer").text()).toContain("name: api");
     await openEditor(wrapper);
     submitEditor();
     await flushPromises();
@@ -673,7 +696,7 @@ describe("ProcessConfigPanel", () => {
     ]);
     expect(targetACache?.spec.name).toBe("web-saved");
     expect(targetBCache?.spec.name).toBe("api");
-    expect(wrapper.get(".config-json-viewer").text()).toContain('"name": "api"');
+    expect(wrapper.get(".config-yaml-viewer").text()).toContain("name: api");
     expect(targetBDialog.isConnected).toBe(true);
     expect(targetBDialog.querySelector<HTMLInputElement>("#process-config-comment")?.value).toBe("target B comment");
     expect(targetBDialog.querySelector<HTMLButtonElement>('form.config-form button[type="submit"]')?.disabled).toBe(true);
@@ -727,7 +750,7 @@ describe("ProcessConfigPanel", () => {
     const requestOptions = configClient.rollback.mock.calls[0][1] as { headers: Record<string, string> };
     expect(configClient.rollback.mock.calls[0][0].idOrName).toBe("web");
     expect(requestOptions.headers["Procmesh-Target-Node"]).toBe("n1");
-    expect(wrapper.get(".config-json-viewer").text()).toContain('"name": "api"');
+    expect(wrapper.get(".config-yaml-viewer").text()).toContain("name: api");
     expect(wrapper.find(".banner.conflict").exists()).toBe(false);
     expect(wrapper.find('p.error[role="alert"]').exists()).toBe(false);
   });
@@ -784,7 +807,7 @@ describe("ProcessConfigPanel", () => {
     expect(currentDialog.querySelector<HTMLInputElement>('[data-field="name"]')?.value).toBe("current-a-draft");
     expect(currentDialog.querySelector<HTMLInputElement>("#process-config-comment")?.value).toBe("current A comment");
     expect(currentDialog.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true);
-    expect(wrapper.get(".config-json-viewer").text()).not.toContain('"name": "earlier-a-saved"');
+    expect(wrapper.get(".config-yaml-viewer").text()).not.toContain("name: earlier-a-saved");
 
     currentSave.resolve({
       spec: create(ProcessSpecSchema, {
@@ -889,7 +912,7 @@ describe("ProcessConfigPanel", () => {
     ]);
     expect(cached?.spec.latestRevision).toBe(5n);
     expect(cached?.spec.name).toBe("newer-a-saved");
-    expect(wrapper.get(".config-json-viewer").text()).toContain('"name": "newer-a-saved"');
+    expect(wrapper.get(".config-yaml-viewer").text()).toContain("name: newer-a-saved");
   });
 
   it("remount after save uses new latest as expected_revision", async () => {
@@ -904,7 +927,7 @@ describe("ProcessConfigPanel", () => {
     await setDrawerField("name", "api");
     submitEditor();
     await flushPromises();
-    expect(first.wrapper.get(".config-json-viewer").text()).toContain('"name": "api"');
+    expect(first.wrapper.get(".config-yaml-viewer").text()).toContain("name: api");
     expect(first.wrapper.text()).toContain("Latest Revision4");
 
     first.wrapper.unmount();
@@ -918,7 +941,7 @@ describe("ProcessConfigPanel", () => {
       updateConfig,
       spec: sampleSpec(),
     });
-    expect(second.wrapper.get(".config-json-viewer").text()).toContain('"name": "api"');
+    expect(second.wrapper.get(".config-yaml-viewer").text()).toContain("name: api");
     expect(second.wrapper.text()).toContain("Latest Revision4");
     await openEditor(second.wrapper);
     submitEditor();
