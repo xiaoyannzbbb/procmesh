@@ -85,3 +85,41 @@ func TestLoad_LogDirectoryAndRedirect(t *testing.T) {
 		t.Fatal("redirect_stderr=false")
 	}
 }
+
+func TestLoad_WebGeneratedYAMLContract(t *testing.T) {
+	spec, err := Load(filepath.Join("testdata", "web_process_config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const aboveJSSafeInteger int64 = 9_007_199_254_740_993
+	const maxInt64 int64 = 9_223_372_036_854_775_807
+	int64Fields := []struct {
+		name string
+		got  int64
+		want int64
+	}{
+		{"stop_timeout_ms", spec.GetStopTimeoutMs(), aboveJSSafeInteger},
+		{"restart.retry_window_ms", spec.GetRestart().GetRetryWindowMs(), maxInt64},
+		{"restart.backoff.initial_ms", spec.GetRestart().GetBackoff().GetInitialMs(), aboveJSSafeInteger},
+		{"restart.backoff.max_ms", spec.GetRestart().GetBackoff().GetMaxMs(), maxInt64},
+		{"health.initial_delay_ms", spec.GetHealth().GetInitialDelayMs(), aboveJSSafeInteger},
+		{"health.interval_ms", spec.GetHealth().GetIntervalMs(), maxInt64},
+		{"health.timeout_ms", spec.GetHealth().GetTimeoutMs(), aboveJSSafeInteger},
+		{"health.restart_cooldown_ms", spec.GetHealth().GetRestartCooldownMs(), maxInt64},
+		{"log.max_size", spec.GetLog().GetMaxSize(), aboveJSSafeInteger},
+		{"log.max_age_seconds", spec.GetLog().GetMaxAgeSeconds(), maxInt64},
+		{"resources.cpu_quota_millis", spec.GetResources().GetCpuQuotaMillis(), aboveJSSafeInteger},
+		{"resources.memory_bytes", spec.GetResources().GetMemoryBytes(), maxInt64},
+		{"resources.open_files", spec.GetResources().GetOpenFiles(), aboveJSSafeInteger},
+		{"latest_revision", spec.GetLatestRevision(), maxInt64},
+	}
+	for _, field := range int64Fields {
+		if field.got != field.want {
+			t.Errorf("%s=%d, want %d", field.name, field.got, field.want)
+		}
+	}
+	if spec.GetArgs()[0] != "9007199254740993" || spec.GetEnvironment()["LIMIT"] != "9223372036854775807" {
+		t.Fatalf("numeric-looking strings changed type: args=%q environment=%q", spec.GetArgs(), spec.GetEnvironment())
+	}
+}

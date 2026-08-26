@@ -1,4 +1,11 @@
-import { create, fromJson, toJson, type JsonValue } from "@bufbuild/protobuf";
+import {
+  create,
+  fromJson,
+  ScalarType,
+  toJson,
+  type DescMessage,
+  type JsonValue,
+} from "@bufbuild/protobuf";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import {
   BackoffSchema,
@@ -342,13 +349,95 @@ export function processConfigFormToSpec(form: ProcessConfigFormState): ProcessSp
   });
 }
 
+const PROTOBUF_64_BIT_INTEGER_TYPES = new Set<ScalarType>([
+  ScalarType.INT64,
+  ScalarType.UINT64,
+  ScalarType.FIXED64,
+  ScalarType.SFIXED64,
+  ScalarType.SINT64,
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function protobufJsonToYamlValue(schema: DescMessage, value: Record<string, unknown>): Record<string, unknown> {
+  const result = { ...value };
+  for (const field of schema.fields) {
+    const fieldValue = value[field.name];
+    if (fieldValue === undefined || fieldValue === null) {
+      continue;
+    }
+    if (field.fieldKind === "scalar" && PROTOBUF_64_BIT_INTEGER_TYPES.has(field.scalar)) {
+      result[field.name] = BigInt(fieldValue as string);
+      continue;
+    }
+    if (field.fieldKind === "message" && isRecord(fieldValue)) {
+      result[field.name] = protobufJsonToYamlValue(field.message, fieldValue);
+      continue;
+    }
+    if (field.fieldKind === "list" && Array.isArray(fieldValue)) {
+      if (field.listKind === "scalar" && PROTOBUF_64_BIT_INTEGER_TYPES.has(field.scalar)) {
+        result[field.name] = fieldValue.map((entry) => BigInt(entry as string));
+      } else if (field.listKind === "message") {
+        result[field.name] = fieldValue.map((entry) => (
+          isRecord(entry) ? protobufJsonToYamlValue(field.message, entry) : entry
+        ));
+      }
+      continue;
+    }
+    if (field.fieldKind === "map" && isRecord(fieldValue)) {
+      if (field.mapKind === "scalar" && PROTOBUF_64_BIT_INTEGER_TYPES.has(field.scalar)) {
+        result[field.name] = Object.fromEntries(
+          Object.entries(fieldValue).map(([key, entry]) => [key, BigInt(entry as string)]),
+        );
+      } else if (field.mapKind === "message") {
+        result[field.name] = Object.fromEntries(
+          Object.entries(fieldValue).map(([key, entry]) => [
+            key,
+            isRecord(entry) ? protobufJsonToYamlValue(field.message, entry) : entry,
+          ]),
+        );
+      }
+    }
+  }
+  return result;
+}
+
+function yamlIntegersToProtobufJson(value: unknown): JsonValue {
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  if (Array.isArray(value)) {
+    return value.map(yamlIntegersToProtobufJson);
+  }
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, yamlIntegersToProtobufJson(entry)]),
+    );
+  }
+  return value as JsonValue;
+}
+
+export function processConfigToYamlValue(spec: ProcessSpec): Record<string, unknown> {
+  const protobufJson = toJson(ProcessSpecSchema, spec, { useProtoFieldName: true }) as Record<string, unknown>;
+  return protobufJsonToYamlValue(ProcessSpecSchema, protobufJson);
+}
+
 export function stringifyProcessConfigYaml(spec: ProcessSpec): string {
-  return stringifyYaml(toJson(ProcessSpecSchema, spec, { useProtoFieldName: true }), { lineWidth: 0 });
+  return stringifyYaml(processConfigToYamlValue(spec), {
+    aliasDuplicateObjects: false,
+    lineWidth: 0,
+  });
 }
 
 export function parseProcessConfigYaml(text: string): ProcessSpec {
-  const value = parseYaml(text, { maxAliasCount: 100, prettyErrors: true });
-  return fromJson(ProcessSpecSchema, value as JsonValue);
+  const value: unknown = parseYaml(text, {
+    intAsBigInt: true,
+    maxAliasCount: 100,
+    prettyErrors: true,
+  });
+  return fromJson(ProcessSpecSchema, yamlIntegersToProtobufJson(value));
 }
 
 function addIssue(issues: ProcessConfigIssue[], path: string, code: ProcessConfigIssueCode): void {

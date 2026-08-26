@@ -5,6 +5,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import i18next from "i18next";
 import I18NextVue from "i18next-vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import zhCommon from "../../public/locales/zh/common.json";
 import { ErrorInfoSchema, ProcessSpecSchema } from "../gen/procmesh/v1/api_pb";
 import { session } from "../lib/session";
 import ProcessConfigPanel from "./ProcessConfigPanel.vue";
@@ -32,6 +33,7 @@ beforeEach(async () => {
               readOnlyNote: "process_id and latest_revision are read-only.",
               specLabel: "ProcessSpec YAML",
               fullYaml: "View full YAML",
+              invalidYaml: "Enter valid YAML.",
               commentLabel: "Comment",
               save: "Save",
             },
@@ -66,6 +68,7 @@ beforeEach(async () => {
           },
         },
       },
+      zh: { common: zhCommon },
     },
   });
 });
@@ -274,6 +277,8 @@ describe("ProcessConfigPanel", () => {
     expect(wrapper.get(".config-yaml-viewer").text()).toContain("name: web");
     expect(wrapper.get(".config-yaml-viewer").text()).toContain("working_directory: /srv/web");
     expect(wrapper.get(".policy-grid").text()).toContain("mode: on-failure");
+    expect(wrapper.get(".policy-grid").text()).toContain("retry_window_ms: 60000");
+    expect(wrapper.get(".policy-grid").text()).not.toContain('retry_window_ms: "60000"');
     expect(wrapper.get("details summary").text()).toContain("View full YAML");
   });
 
@@ -355,9 +360,25 @@ describe("ProcessConfigPanel", () => {
     await flushPromises();
 
     expect(updateConfig).not.toHaveBeenCalled();
-    expect(document.querySelector('[data-error="config-yaml"]')?.textContent).toBeTruthy();
+    expect(document.querySelector('[data-error="config-yaml"]')?.textContent).toBe("Enter valid YAML.");
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
     expect(document.activeElement).toBe(editorTextarea());
+  });
+
+  it("localizes YAML and protobuf conversion errors without exposing parser details", async () => {
+    await i18n.changeLanguage("zh");
+    const updateConfig = vi.fn().mockResolvedValue({ spec: sampleSpec() });
+    const { wrapper } = await mountPanel({ updateConfig });
+    await openEditor(wrapper);
+    await switchEditorMode("yaml");
+
+    setEditorText("name: web\nunknown_field: true\n");
+    submitEditor();
+    await flushPromises();
+
+    expect(updateConfig).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-error="config-yaml"]')?.textContent).toBe("请输入有效的 YAML。");
+    expect(wrapper.text()).not.toContain("unknown_field");
   });
 
   it("blocks switching and saving an invalid form, keeps its summary, and focuses the first issue", async () => {
@@ -491,7 +512,7 @@ describe("ProcessConfigPanel", () => {
       editorTextarea().value
         .replace("process_id: p1", "process_id: other")
         .replace("name: web", "name: api")
-        .replace('latest_revision: "3"', 'latest_revision: "99"'),
+        .replace("latest_revision: 3", "latest_revision: 99"),
     );
     await switchEditorMode("form");
 

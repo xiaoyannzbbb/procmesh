@@ -1,4 +1,6 @@
 import { create } from "@bufbuild/protobuf";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ProcessSpecSchema } from "../gen/procmesh/v1/api_pb";
 import {
@@ -63,6 +65,37 @@ const fullSpec = create(ProcessSpecSchema, {
   latestRevision: 7n,
 });
 
+const aboveJSSafeInteger = 9_007_199_254_740_993n;
+const maxInt64 = 9_223_372_036_854_775_807n;
+const crossPlatformSpec = create(ProcessSpecSchema, {
+  processId: "p-big",
+  name: "big-values",
+  command: "/bin/true",
+  args: ["9007199254740993"],
+  environment: { LIMIT: "9223372036854775807" },
+  instances: 1,
+  stopTimeoutMs: aboveJSSafeInteger,
+  restart: {
+    mode: "always",
+    retryWindowMs: maxInt64,
+    backoff: { initialMs: aboveJSSafeInteger, maxMs: maxInt64, multiplier: 2 },
+  },
+  health: {
+    type: "alive",
+    initialDelayMs: aboveJSSafeInteger,
+    intervalMs: maxInt64,
+    timeoutMs: aboveJSSafeInteger,
+    restartCooldownMs: maxInt64,
+  },
+  log: { maxSize: aboveJSSafeInteger, maxAgeSeconds: maxInt64 },
+  resources: { cpuQuotaMillis: aboveJSSafeInteger, memoryBytes: maxInt64, openFiles: aboveJSSafeInteger },
+  latestRevision: maxInt64,
+});
+const webCliContractYaml = readFileSync(
+  join(process.cwd(), "../internal/cli/testdata/web_process_config.yaml"),
+  "utf8",
+);
+
 const expectedAllLeafPaths = [
   "processId",
   "name",
@@ -122,9 +155,14 @@ describe("ProcessSpec form conversion", () => {
 
     expect(yaml).toContain("process_id: p1");
     expect(yaml).toContain("working_directory: /srv/api");
-    expect(yaml).toContain('stop_timeout_ms: "10000"');
+    expect(yaml).toContain("stop_timeout_ms: 10000");
     expect(yaml).not.toContain("processId:");
     expect(parseProcessConfigYaml(yaml)).toEqual(fullSpec);
+  });
+
+  it("shares a lossless int64 YAML contract with the CLI", () => {
+    expect(stringifyProcessConfigYaml(crossPlatformSpec)).toBe(webCliContractYaml);
+    expect(parseProcessConfigYaml(webCliContractYaml)).toEqual(crossPlatformSpec);
   });
 
   it("parses YAML comments and rejects unknown fields", () => {

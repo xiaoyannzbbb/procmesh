@@ -15,6 +15,7 @@ import { useI18n } from "../lib/useI18n";
 import ProcessConfigForm from "./ProcessConfigForm.vue";
 import {
   parseProcessConfigYaml,
+  processConfigToYamlValue,
   processConfigFormToSpec,
   specToProcessConfigForm,
   stringifyProcessConfigYaml,
@@ -159,7 +160,7 @@ const displayObject = computed<Record<string, unknown>>(() => {
   if (!loadedSpec.value) {
     return {};
   }
-  return toJson(ProcessSpecSchema, loadedSpec.value, { useProtoFieldName: true }) as Record<string, unknown>;
+  return processConfigToYamlValue(loadedSpec.value);
 });
 const environmentEntries = computed(() => Object.entries(loadedSpec.value?.environment ?? {}));
 
@@ -383,8 +384,8 @@ function synchronizeActiveMode(synchronizeInactiveDraft = true): ProcessSpec | n
   let spec: ProcessSpec;
   try {
     spec = parseProcessConfigYaml(editorText.value);
-  } catch (err) {
-    showYamlError(err instanceof Error ? err.message : t("processConfig.config.invalidYaml"));
+  } catch {
+    showYamlError(t("processConfig.config.invalidYaml"));
     return null;
   }
   const issues = validateProcessSpec(spec);

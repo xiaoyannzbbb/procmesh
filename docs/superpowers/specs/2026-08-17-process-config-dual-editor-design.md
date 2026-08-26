@@ -128,9 +128,9 @@ Validation mirrors known backend rules and adds only structural constraints requ
 - A nonzero backoff multiplier must be at least 1.
 - HTTP checks require an `http` or `https` URL; TCP checks require an address; exec checks require a command.
 - Environment keys and dependency process names cannot be duplicated.
-- Numeric protobuf fields must be finite integers in their declared `int32` or safe `int64` range. The UI does not accept scientific notation for integer fields.
+- Numeric protobuf fields must be finite integers in their declared `int32` or full `int64` range. The UI does not accept scientific notation for integer fields.
 
-Validation runs on blur for individual fields and on mode switch/save for the whole form. Inline errors are associated with their controls. A failed full validation shows a focusable summary linked to invalid fields and focuses the first invalid item. YAML parse or protobuf conversion errors remain directly below the YAML editor.
+Validation runs on blur for individual fields and on mode switch/save for the whole form. Inline errors are associated with their controls. A failed full validation shows a focusable summary linked to invalid fields and focuses the first invalid item. YAML parse or protobuf conversion errors remain directly below the YAML editor as a localized summary; third-party parser details are not exposed as user-facing text.
 
 Server errors and revision conflicts use the existing banners. A conflict does not replace either draft or expected revision until the user explicitly reloads.
 
@@ -138,7 +138,7 @@ Server errors and revision conflicts use the existing banners. A conflict does n
 
 The editor does not invent or apply backend defaults. Zero and empty values received from the API remain visible and round-trip unchanged. Help text may describe effective defaults, but saving an untouched spec must produce an equivalent protobuf message.
 
-The YAML mode uses protobuf field names (`snake_case`) so its output matches CLI process files. Buf's protobuf JSON conversion remains the typed intermediate contract, including string encoding for `int64` values, and `fromJson` continues to reject unknown fields. YAML comments and formatting are accepted, while semantic dirty checks compare canonical protobuf values.
+The YAML mode uses protobuf field names (`snake_case`) so its output matches CLI process files. Buf's protobuf JSON conversion remains the typed intermediate contract. Before YAML serialization, descriptor-identified 64-bit integer strings are converted to `bigint` so YAML emits unquoted integer scalars accepted by the Go CLI; numeric-looking string fields remain quoted. YAML parsing enables BigInt integers and converts them to decimal strings before `fromJson`, preserving the full 64-bit range without routing through JavaScript `number`. Unknown fields remain rejected. YAML comments and formatting are accepted, while semantic dirty checks compare canonical protobuf values.
 
 ## 8. Testing
 
@@ -146,6 +146,7 @@ Pure utility tests will:
 
 - Construct a fully populated `ProcessSpec` containing every field and verify spec-to-form-to-spec equality.
 - Verify CLI-compatible YAML round trips, including `int64`, maps, repeated fields, nested messages, comments, and unknown-field rejection.
+- Use one shared golden YAML file in Web and Go tests to prove Web output is accepted by CLI `Load` and CLI integer scalars round-trip through Web without precision loss.
 - Exercise every validation rule and health-type visibility rule.
 - Assert that the schema inventory covers all editable `ProcessSpec` paths.
 
@@ -154,7 +155,7 @@ Component tests will verify:
 - The form is the default mode and renders all sections.
 - Collection rows add and remove correctly.
 - Valid edits survive both mode switches.
-- Invalid form or YAML content blocks switching and saving with accessible errors.
+- Invalid form or YAML content blocks switching and saving with accessible, localized errors.
 - Read-only fields cannot be edited and are restored before submission.
 - Save, conflict, refetch protection, unsaved-close confirmation, and revision behavior continue to work.
 

@@ -1,0 +1,30 @@
+process_id: p-big
+name: big-values
+command: /bin/true
+args:
+  - "9007199254740993"
+environment:
+  LIMIT: "9223372036854775807"
+instances: 1
+stop_timeout_ms: 9007199254740993
+restart:
+  mode: always
+  retry_window_ms: 9223372036854775807
+  backoff:
+    initial_ms: 9007199254740993
+    max_ms: 9223372036854775807
+    multiplier: 2
+health:
+  type: alive
+  initial_delay_ms: 9007199254740993
+  interval_ms: 9223372036854775807
+  timeout_ms: 9007199254740993
+  restart_cooldown_ms: 9223372036854775807
+log:
+  max_size: 9007199254740993
+  max_age_seconds: 9223372036854775807
+resources:
+  cpu_quota_millis: 9007199254740993
+  memory_bytes: 9223372036854775807
+  open_files: 9007199254740993
+latest_revision: 9223372036854775807
