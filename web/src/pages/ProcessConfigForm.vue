@@ -12,11 +12,14 @@ import {
   type ProcessConfigSectionId,
 } from "./processConfigSchema";
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   modelValue: ProcessConfigFormState;
   issues: ProcessConfigIssue[];
   validateRequested: number;
-}>();
+  hiddenPaths?: readonly ProcessConfigFieldPath[];
+}>(), {
+  hiddenPaths: () => [],
+});
 
 const emit = defineEmits<{
   "update:modelValue": [value: ProcessConfigFormState];
@@ -40,13 +43,19 @@ const executionFieldOrder = new Map<ProcessConfigFieldPath, number>([
   ["command", 2],
 ]);
 
+const hiddenPaths = computed(() => new Set(props.hiddenPaths ?? []));
+
 const fieldsBySection = computed(() => {
   const sections = new Map<ProcessConfigSectionId, ProcessConfigField[]>();
   for (const section of PROCESS_CONFIG_SECTIONS) {
     sections.set(section.id, []);
   }
   for (const field of PROCESS_CONFIG_FIELDS) {
-    if (!collectionPaths.has(field.path) && (!field.visible || field.visible(props.modelValue))) {
+    if (
+      !hiddenPaths.value.has(field.path)
+      && !collectionPaths.has(field.path)
+      && (!field.visible || field.visible(props.modelValue))
+    ) {
       sections.get(field.section)?.push(field);
     }
   }

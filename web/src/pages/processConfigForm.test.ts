@@ -2,12 +2,15 @@ import { create } from "@bufbuild/protobuf";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { parse as parseYaml } from "yaml";
 import { ProcessSpecSchema } from "../gen/procmesh/v1/api_pb";
 import {
   parseProcessConfigYaml,
   processConfigFormToSpec,
   specToProcessConfigForm,
+  stringifyProcessConfigDraftYaml,
   stringifyProcessConfigYaml,
+  emptyProcessConfigForm,
   validateProcessConfigForm,
   validateProcessSpec,
   type ProcessConfigFormState,
@@ -163,6 +166,68 @@ describe("ProcessSpec form conversion", () => {
   it("shares a lossless int64 YAML contract with the CLI", () => {
     expect(stringifyProcessConfigYaml(crossPlatformSpec)).toBe(webCliContractYaml);
     expect(parseProcessConfigYaml(webCliContractYaml)).toEqual(crossPlatformSpec);
+  });
+
+  it("emits every create-visible field with empty or default values", () => {
+    const yaml = stringifyProcessConfigDraftYaml(emptyProcessConfigForm(), [
+      "process_id",
+      "owner_agent_id",
+      "latest_revision",
+    ]);
+    const value = parseYaml(yaml) as Record<string, unknown>;
+
+    expect(value).toEqual({
+      name: "",
+      group: "",
+      command: "",
+      args: [],
+      working_directory: "",
+      run_as_user: "",
+      environment: {},
+      instances: 0,
+      autostart: false,
+      stop_signal: "",
+      kill_signal: "",
+      stop_timeout_ms: 0,
+      startup_priority: 0,
+      restart: {
+        mode: "",
+        max_retries: 0,
+        retry_window_ms: 0,
+        backoff: { initial_ms: 0, max_ms: 0, multiplier: 0 },
+      },
+      health: {
+        type: "",
+        url: "",
+        method: "",
+        address: "",
+        command: "",
+        expected_status: 0,
+        args: [],
+        initial_delay_ms: 0,
+        interval_ms: 0,
+        timeout_ms: 0,
+        failure_threshold: 0,
+        success_threshold: 0,
+        restart_on_failure: false,
+        restart_cooldown_ms: 0,
+      },
+      log: {
+        directory: "",
+        redirect_stderr: false,
+        max_size: 0,
+        max_files: 0,
+        max_age_seconds: 0,
+        compress: false,
+      },
+      resources: {
+        cpu_quota_millis: 0,
+        memory_bytes: 0,
+        open_files: 0,
+      },
+      dependencies: [],
+    });
+    expect(parseProcessConfigYaml(yaml).command).toBe("");
   });
 
   it("parses YAML comments and rejects unknown fields", () => {

@@ -388,14 +388,25 @@ declare module "i18next" {
         'processes.create.actionOnNode': string
         'processes.create.title': string
         'processes.create.hint': string
+        'processes.create.back': string
+        'processes.create.spec': string
         'processes.create.submit': string
+        'processes.create.submitBusy': string
         'processes.create.owners': string
         'processes.create.ownersHint': string
+        'processes.create.ownersSelected': string
+        'processes.create.ownersLoading': string
+        'processes.create.ownersError': string
         'processes.create.ownerDisabled': string
         'processes.create.ownerUnknown': string
+        'processes.create.ownerNodeId': string
+        'processes.create.ownerProcesses': string
         'processes.create.needOwner': string
         'processes.create.noNodes': string
         'processes.create.noPermission': string
+        'processes.create.commentHint': string
+        'processes.create.yamlHint': string
+        'processes.create.errorTitle': string
         'processes.create.createdOne': string
         'processes.create.partial': string
         'processes.bulk.selected': string

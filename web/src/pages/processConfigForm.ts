@@ -435,6 +435,103 @@ export function stringifyProcessConfigYaml(spec: ProcessSpec): string {
   });
 }
 
+function yamlInteger(value: string): number | bigint {
+  if (!INTEGER_TEXT.test(value)) {
+    return 0;
+  }
+  const parsed = BigInt(value);
+  if (parsed >= BigInt(Number.MIN_SAFE_INTEGER) && parsed <= BigInt(Number.MAX_SAFE_INTEGER)) {
+    return Number(parsed);
+  }
+  return parsed;
+}
+
+function yamlDecimal(value: string): number {
+  if (!DECIMAL_TEXT.test(value)) {
+    return 0;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function processConfigFormToDraftYamlValue(form: ProcessConfigFormState): Record<string, unknown> {
+  return {
+    process_id: form.processId,
+    name: form.name,
+    owner_agent_id: form.ownerAgentId,
+    group: form.group,
+    command: form.command,
+    args: [...form.args],
+    working_directory: form.workingDirectory,
+    run_as_user: form.runAsUser,
+    environment: Object.fromEntries(form.environment.map(({ key, value }) => [key, value])),
+    instances: yamlInteger(form.instances),
+    autostart: form.autostart,
+    stop_signal: form.stopSignal,
+    kill_signal: form.killSignal,
+    stop_timeout_ms: yamlInteger(form.stopTimeoutMs),
+    startup_priority: yamlInteger(form.startupPriority),
+    restart: {
+      mode: form.restart.mode,
+      max_retries: yamlInteger(form.restart.maxRetries),
+      retry_window_ms: yamlInteger(form.restart.retryWindowMs),
+      backoff: {
+        initial_ms: yamlInteger(form.restart.backoff.initialMs),
+        max_ms: yamlInteger(form.restart.backoff.maxMs),
+        multiplier: yamlDecimal(form.restart.backoff.multiplier),
+      },
+    },
+    health: {
+      type: form.health.type,
+      url: form.health.url,
+      method: form.health.method,
+      address: form.health.address,
+      command: form.health.command,
+      expected_status: yamlInteger(form.health.expectedStatus),
+      args: [...form.health.args],
+      initial_delay_ms: yamlInteger(form.health.initialDelayMs),
+      interval_ms: yamlInteger(form.health.intervalMs),
+      timeout_ms: yamlInteger(form.health.timeoutMs),
+      failure_threshold: yamlInteger(form.health.failureThreshold),
+      success_threshold: yamlInteger(form.health.successThreshold),
+      restart_on_failure: form.health.restartOnFailure,
+      restart_cooldown_ms: yamlInteger(form.health.restartCooldownMs),
+    },
+    log: {
+      directory: form.log.directory,
+      redirect_stderr: form.log.redirectStderr,
+      max_size: yamlInteger(form.log.maxSize),
+      max_files: yamlInteger(form.log.maxFiles),
+      max_age_seconds: yamlInteger(form.log.maxAgeSeconds),
+      compress: form.log.compress,
+    },
+    resources: {
+      cpu_quota_millis: yamlInteger(form.resources.cpuQuotaMillis),
+      memory_bytes: yamlInteger(form.resources.memoryBytes),
+      open_files: yamlInteger(form.resources.openFiles),
+    },
+    dependencies: form.dependencies.map(({ processName, condition }) => ({
+      process_name: processName,
+      condition,
+    })),
+    latest_revision: yamlInteger(form.latestRevision),
+  };
+}
+
+export function stringifyProcessConfigDraftYaml(
+  form: ProcessConfigFormState,
+  omitKeys: readonly string[] = [],
+): string {
+  const value = processConfigFormToDraftYamlValue(form);
+  for (const key of omitKeys) {
+    delete value[key];
+  }
+  return stringifyYaml(value, {
+    aliasDuplicateObjects: false,
+    lineWidth: 0,
+  });
+}
+
 export function parseProcessConfigYaml(text: string): ProcessSpec {
   const value: unknown = parseYaml(text, {
     intAsBigInt: true,
