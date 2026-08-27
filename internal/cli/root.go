@@ -47,7 +47,7 @@ commands:
   node token revoke TOKEN_ID
   node remove NODE_ID
   node promote NODE_ID
-  login [--user NAME] [--password PASS]
+  login [--user NAME] [--password PASS] [--ttl DURATION]
   logout
   user list
   user create --user NAME --password PASS [--display NAME] [--email E]
@@ -127,6 +127,7 @@ type options struct {
 	seed      string
 	token     string
 	ttl       time.Duration
+	ttlSet    bool
 	uses      int32
 
 	authToken   string
@@ -250,7 +251,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		runErr = runNode(c, rest[0], rest[1:], opt, stdout)
 	case "login":
-		runErr = runLogin(c, opt, stdin, stdout)
+		runErr = runLogin(c, opt, stdin, stdout, stderr)
 	case "logout":
 		if len(rest) != 0 {
 			return printUsage(stderr, usageError("unexpected arguments"))
@@ -417,11 +418,12 @@ func applyFlag(opt *options, name, val string) error {
 	case "token":
 		opt.token = val
 	case "ttl":
-		d, err := time.ParseDuration(val)
+		d, err := parseDuration(val)
 		if err != nil {
 			return usageError("invalid --ttl")
 		}
 		opt.ttl = d
+		opt.ttlSet = true
 	case "uses":
 		n, err := strconv.ParseInt(val, 10, 32)
 		if err != nil {
@@ -617,6 +619,25 @@ func parseBoolFlag(val string) (bool, error) {
 	default:
 		return false, fmt.Errorf("invalid bool")
 	}
+}
+
+func parseDuration(val string) (time.Duration, error) {
+	if i := strings.IndexByte(val, 'd'); i >= 0 {
+		days, err := strconv.ParseFloat(val[:i], 64)
+		if err != nil {
+			return 0, err
+		}
+		d := time.Duration(days * 24 * float64(time.Hour))
+		if rest := val[i+1:]; rest != "" {
+			more, err := time.ParseDuration(rest)
+			if err != nil {
+				return 0, err
+			}
+			d += more
+		}
+		return d, nil
+	}
+	return time.ParseDuration(val)
 }
 
 func parseUnixOrRFC3339(val string) (int64, error) {

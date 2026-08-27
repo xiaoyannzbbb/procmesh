@@ -21,6 +21,7 @@ import (
 const (
 	MinPasswordLen      = 10
 	SessionTTL          = 12 * time.Hour
+	MaxSessionTTL       = 30 * 24 * time.Hour
 	LockAfter           = 10
 	LockFor             = 15 * time.Minute
 	DefaultRBACCacheTTL = 5 * time.Minute

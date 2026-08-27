@@ -43,6 +43,7 @@ func TestProto_P4ServicesGenerated(t *testing.T) {
 	}
 	_ = (&procmeshv1.JoinClusterRequest{}).GetRaftAddress
 	_ = (&procmeshv1.LoginResponse{}).GetSessionId
+	_ = (&procmeshv1.LoginRequest{}).GetTtlSeconds
 	_ = (&procmeshv1.RemoveNodeRequest{}).GetNodeId
 	_ = (&procmeshv1.PromoteNodeRequest{}).GetNodeId
 	_ = (&procmeshv1.ClusterOverviewResponse{}).GetControlQuorum

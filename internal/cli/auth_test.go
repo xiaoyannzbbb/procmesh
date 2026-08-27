@@ -75,6 +75,9 @@ func TestCLI_LoginInteractivePasswordIsNotEchoed(t *testing.T) {
 	if result.err != nil && !strings.Contains(result.err.Error(), "file already closed") {
 		t.Fatalf("read PTY: %v", result.err)
 	}
+	if !strings.Contains(string(result.output), "Password:") {
+		t.Fatalf("terminal missing password prompt: %q", result.output)
+	}
 	if strings.Contains(string(result.output), password) {
 		t.Fatalf("terminal echoed password: %q", result.output)
 	}
@@ -248,6 +251,40 @@ func TestCLI_LoginRejectsMissingPassword(t *testing.T) {
 	}
 }
 
+func TestCLI_LoginPromptsForPasswordOnTerminal(t *testing.T) {
+	origIsTerminal := isTerminalFn
+	origReadPassword := readPasswordFn
+	t.Cleanup(func() {
+		isTerminalFn = origIsTerminal
+		readPasswordFn = origReadPassword
+	})
+
+	input, err := os.CreateTemp(t.TempDir(), "terminal-input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = input.Close() })
+
+	isTerminalFn = func(int) bool { return true }
+	readPasswordFn = func(int) ([]byte, error) { return []byte("admin-pass-ok"), nil }
+
+	t.Setenv("PROCMESH_PASSWORD", "")
+	t.Setenv("PROCMESH_SESSION", filepath.Join(t.TempDir(), "session"))
+
+	srv := newAuthUserServer(t, &sync.Mutex{}, new(string))
+	var stdout, stderr bytes.Buffer
+	code := Main([]string{"--server", srv.URL, "login", "--user", "admin"}, input, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("login exit=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "Password:") {
+		t.Fatalf("stderr=%q want Password prompt", stderr.String())
+	}
+	if strings.Contains(stdout.String(), "Password:") {
+		t.Fatalf("password prompt leaked to stdout: %q", stdout.String())
+	}
+}
+
 func TestResolvePasswordReportsTerminalReadError(t *testing.T) {
 	origIsTerminal := isTerminalFn
 	origReadPassword := readPasswordFn
@@ -266,7 +303,7 @@ func TestResolvePasswordReportsTerminalReadError(t *testing.T) {
 	isTerminalFn = func(int) bool { return true }
 	readPasswordFn = func(int) ([]byte, error) { return nil, wantErr }
 
-	_, err = resolvePassword("", input)
+	_, err = resolvePassword("", input, io.Discard)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("error=%v, want wrapped %v", err, wantErr)
 	}
@@ -290,6 +327,55 @@ type errorReader struct{}
 
 func (errorReader) Read([]byte) (int, error) { return 0, errors.New("read failed") }
 
+func TestCLI_LoginSendsTTL(t *testing.T) {
+	if !strings.Contains(usageText, "login [--user NAME] [--password PASS] [--ttl DURATION]") {
+		t.Fatal("usage missing login --ttl")
+	}
+
+	for _, tc := range []struct {
+		name    string
+		ttl     string
+		want    int64
+		wantErr string
+	}{
+		{name: "default omits ttl", want: 0},
+		{name: "12h", ttl: "12h", want: int64((12 * time.Hour) / time.Second)},
+		{name: "7d", ttl: "7d", want: int64((7 * 24 * time.Hour) / time.Second)},
+		{name: "too short", ttl: "500ms", wantErr: "invalid --ttl"},
+		{name: "negative", ttl: "-1h", wantErr: "invalid --ttl"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("PROCMESH_PASSWORD", "")
+			t.Setenv("PROCMESH_SESSION", filepath.Join(t.TempDir(), "session"))
+			var gotTTL int64 = -1
+			mux := http.NewServeMux()
+			path, handler := procmeshv1connect.NewAuthServiceHandler(loginStub{ttl: &gotTTL})
+			mux.Handle(path, handler)
+			srv := httptest.NewServer(mux)
+			t.Cleanup(srv.Close)
+
+			args := []string{"--server", srv.URL, "login", "--user", "admin", "--password", "admin-pass-ok"}
+			if tc.ttl != "" {
+				args = append(args, "--ttl", tc.ttl)
+			}
+			var stdout, stderr bytes.Buffer
+			code := Main(args, strings.NewReader(""), &stdout, &stderr)
+			if tc.wantErr != "" {
+				if code != 2 || !strings.Contains(stderr.String(), tc.wantErr) {
+					t.Fatalf("exit=%d stderr=%q want %q", code, stderr.String(), tc.wantErr)
+				}
+				return
+			}
+			if code != 0 {
+				t.Fatalf("login exit=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+			}
+			if gotTTL != tc.want {
+				t.Fatalf("ttl_seconds=%d want %d", gotTTL, tc.want)
+			}
+		})
+	}
+}
+
 func TestCLI_UserCreateUsage(t *testing.T) {
 	code, _, errb := runCLI("user", "create")
 	if code != 2 {
@@ -307,11 +393,15 @@ func TestCLI_UserCreateUsage(t *testing.T) {
 type loginStub struct {
 	procmeshv1connect.UnimplementedAuthServiceHandler
 	passwords chan<- string
+	ttl       *int64
 }
 
 func (s loginStub) Login(_ context.Context, req *connect.Request[procmeshv1.LoginRequest]) (*connect.Response[procmeshv1.LoginResponse], error) {
 	if s.passwords != nil {
 		s.passwords <- req.Msg.GetPassword()
+	}
+	if s.ttl != nil {
+		*s.ttl = req.Msg.GetTtlSeconds()
 	}
 	return connect.NewResponse(&procmeshv1.LoginResponse{
 		SessionId:   "pms_cli_session",

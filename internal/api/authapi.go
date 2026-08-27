@@ -84,7 +84,11 @@ func (s *AuthAPI) Login(ctx context.Context, req *connect.Request[procmeshv1.Log
 	if s.HasQuorum != nil && !s.HasQuorum() {
 		return nil, loginUnavailable(loginDetailQuorumUnavailable, "control quorum is unavailable")
 	}
-	sid, csrf, userID, exp, err := s.Auth.Login(req.Msg.GetUsername(), req.Msg.GetPassword())
+	ttl, err := auth.ResolveSessionTTL(req.Msg.GetTtlSeconds())
+	if err != nil {
+		return nil, toLoginConnect(err)
+	}
+	sid, csrf, userID, exp, err := s.Auth.LoginWithTTL(req.Msg.GetUsername(), req.Msg.GetPassword(), ttl)
 	if err != nil {
 		return nil, toLoginConnect(err)
 	}
@@ -95,7 +99,7 @@ func (s *AuthAPI) Login(ctx context.Context, req *connect.Request[procmeshv1.Log
 		ExpiresUnix: exp.Unix(),
 		CsrfToken:   csrf,
 	})
-	setSessionCookie(resp.Header(), sid, sessionCookieMaxAge)
+	setSessionCookie(resp.Header(), sid, int(ttl/time.Second))
 	return resp, nil
 }
 

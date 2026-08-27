@@ -55,6 +55,54 @@ func TestAuthAPI_LoginSetsSessionCookie(t *testing.T) {
 	}
 }
 
+func TestAuthAPI_LoginCustomTTL(t *testing.T) {
+	e := newAuthnEnv(t, true)
+	now := time.Unix(1_700_000_000, 0)
+	ttl := 7 * 24 * time.Hour
+	resp, err := e.authc.Login(context.Background(), connect.NewRequest(&procmeshv1.LoginRequest{
+		Username:   "admin",
+		Password:   testAdminPass,
+		TtlSeconds: int64(ttl / time.Second),
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantExp := now.Add(ttl).Unix()
+	if resp.Msg.GetExpiresUnix() != wantExp {
+		t.Fatalf("expires=%d want %d", resp.Msg.GetExpiresUnix(), wantExp)
+	}
+	cookie := resp.Header().Get("Set-Cookie")
+	if !strings.Contains(cookie, "Max-Age=604800") {
+		t.Fatalf("cookie age: %q", cookie)
+	}
+
+	resp, err = e.authc.Login(context.Background(), connect.NewRequest(&procmeshv1.LoginRequest{
+		Username: "admin",
+		Password: testAdminPass,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Msg.GetExpiresUnix() != now.Add(control.SessionTTL).Unix() {
+		t.Fatalf("default expires=%d", resp.Msg.GetExpiresUnix())
+	}
+
+	_, err = e.authc.Login(context.Background(), connect.NewRequest(&procmeshv1.LoginRequest{
+		Username: "admin", Password: testAdminPass, TtlSeconds: -1,
+	}))
+	code, _ := connectDetail(t, err)
+	if code != connect.CodeInvalidArgument {
+		t.Fatalf("negative ttl code=%v err=%v", code, err)
+	}
+	_, err = e.authc.Login(context.Background(), connect.NewRequest(&procmeshv1.LoginRequest{
+		Username: "admin", Password: testAdminPass, TtlSeconds: int64((control.MaxSessionTTL + time.Second) / time.Second),
+	}))
+	code, _ = connectDetail(t, err)
+	if code != connect.CodeInvalidArgument {
+		t.Fatalf("max ttl code=%v err=%v", code, err)
+	}
+}
+
 func TestAuthAPI_LoginRateLimitHasStableDetail(t *testing.T) {
 	e := newAuthnEnv(t, true)
 	for i := 0; i < 5; i++ {

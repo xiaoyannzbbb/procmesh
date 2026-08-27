@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"connectrpc.com/connect"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
@@ -72,7 +73,7 @@ func readSession(path string) (fileSession, error) {
 	return s, nil
 }
 
-func runLogin(c *client, opt options, stdin io.Reader, stdout io.Writer) error {
+func runLogin(c *client, opt options, stdin io.Reader, stdout, stderr io.Writer) error {
 	if len(opt.args) != 1 {
 		return usageError("unexpected arguments")
 	}
@@ -80,13 +81,21 @@ func runLogin(c *client, opt options, stdin io.Reader, stdout io.Writer) error {
 	if user == "" {
 		user = "admin"
 	}
-	pass, err := resolvePassword(opt.password, stdin)
+	pass, err := resolvePassword(opt.password, stdin, stderr)
 	if err != nil {
 		return err
 	}
+	var ttlSeconds int64
+	if opt.ttlSet {
+		if opt.ttl < time.Second {
+			return usageError("invalid --ttl")
+		}
+		ttlSeconds = int64(opt.ttl / time.Second)
+	}
 	resp, err := c.auth.Login(context.Background(), connect.NewRequest(&procmeshv1.LoginRequest{
-		Username: user,
-		Password: pass,
+		Username:   user,
+		Password:   pass,
+		TtlSeconds: ttlSeconds,
 	}))
 	if err != nil {
 		return err
@@ -113,7 +122,7 @@ func runLogout(c *client) error {
 	return err
 }
 
-func resolvePassword(flag string, stdin io.Reader) (string, error) {
+func resolvePassword(flag string, stdin io.Reader, stderr io.Writer) (string, error) {
 	if flag != "" {
 		return flag, nil
 	}
@@ -124,7 +133,13 @@ func resolvePassword(flag string, stdin io.Reader) (string, error) {
 		return "", usageError("login requires a password")
 	}
 	if input, ok := stdin.(*os.File); ok && isTerminalFn(int(input.Fd())) {
+		if stderr != nil {
+			fmt.Fprint(stderr, "Password: ")
+		}
 		password, err := readPasswordFn(int(input.Fd()))
+		if stderr != nil {
+			fmt.Fprintln(stderr)
+		}
 		if err != nil {
 			return "", usageErrorWithCause{message: "login could not read password", cause: err}
 		}

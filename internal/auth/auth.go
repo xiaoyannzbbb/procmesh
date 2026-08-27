@@ -84,8 +84,30 @@ func ValidPassword(pw string) error {
 }
 
 func (s *Service) Login(username, password string) (sessionID, csrf, userID string, expires time.Time, err error) {
+	return s.LoginWithTTL(username, password, 0)
+}
+
+func ResolveSessionTTL(ttlSeconds int64) (time.Duration, error) {
+	if ttlSeconds == 0 {
+		return control.SessionTTL, nil
+	}
+	if ttlSeconds < 0 {
+		return 0, errcode.E(errcode.INVALID, "ttl must be positive")
+	}
+	maxSec := int64(control.MaxSessionTTL / time.Second)
+	if ttlSeconds > maxSec {
+		return 0, errcode.E(errcode.INVALID, "ttl exceeds maximum")
+	}
+	return time.Duration(ttlSeconds) * time.Second, nil
+}
+
+func (s *Service) LoginWithTTL(username, password string, ttl time.Duration) (sessionID, csrf, userID string, expires time.Time, err error) {
 	if username == "" || password == "" {
 		return "", "", "", time.Time{}, errcode.E(errcode.INVALID, "username and password required")
+	}
+	ttl, err = resolveTTL(ttl)
+	if err != nil {
+		return "", "", "", time.Time{}, err
 	}
 	now := s.now()
 	if !s.limit.allow(username, now) {
@@ -119,7 +141,7 @@ func (s *Service) Login(username, password string) (sessionID, csrf, userID stri
 	if err != nil {
 		return "", "", "", time.Time{}, err
 	}
-	exp := now.Add(control.SessionTTL)
+	exp := now.Add(ttl)
 	if err := s.apply(control.CmdLoginOK, control.LoginOKBody{Username: username}); err != nil {
 		return "", "", "", time.Time{}, err
 	}
@@ -282,6 +304,19 @@ func userByID(st control.State, id string) (control.User, bool) {
 	}
 	u, ok := st.Users[name]
 	return u, ok
+}
+
+func resolveTTL(ttl time.Duration) (time.Duration, error) {
+	if ttl < 0 {
+		return 0, errcode.E(errcode.INVALID, "ttl must be positive")
+	}
+	if ttl == 0 {
+		return control.SessionTTL, nil
+	}
+	if ttl > control.MaxSessionTTL {
+		return 0, errcode.E(errcode.INVALID, "ttl exceeds maximum")
+	}
+	return ttl, nil
 }
 
 // expired reports whether expiresUnix has passed. Zero means never (API tokens).

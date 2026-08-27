@@ -177,6 +177,42 @@ func TestLogin_SuccessAndBearer(t *testing.T) {
 	}
 }
 
+func TestLogin_CustomTTL(t *testing.T) {
+	svc, store, clk := newTestSvc(t)
+	ttl := 7 * 24 * time.Hour
+	_, _, _, exp, err := svc.LoginWithTTL("admin", adminPass, ttl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantExp := clk.Now().Add(ttl)
+	if !exp.Equal(wantExp) {
+		t.Fatalf("exp=%s want=%s", exp, wantExp)
+	}
+
+	_, _, _, exp, err = svc.LoginWithTTL("admin", adminPass, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDefault := clk.Now().Add(control.SessionTTL)
+	if !exp.Equal(wantDefault) {
+		t.Fatalf("default exp=%s want=%s", exp, wantDefault)
+	}
+
+	_, _, _, _, err = svc.LoginWithTTL("admin", adminPass, -time.Hour)
+	requireCode(t, err, errcode.INVALID, "ttl must be positive")
+	_, _, _, _, err = svc.LoginWithTTL("admin", adminPass, control.MaxSessionTTL+time.Second)
+	requireCode(t, err, errcode.INVALID, "ttl exceeds maximum")
+
+	sid, _, _, _, err := svc.LoginWithTTL("admin", adminPass, 12*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, ok := store.state.SessionByID(sid)
+	if !ok || sess.ExpiresUnix != clk.Now().Add(12*time.Hour).Unix() {
+		t.Fatalf("stored=%+v ok=%v", sess, ok)
+	}
+}
+
 func TestLogin_BadPassword(t *testing.T) {
 	svc, store, _ := newTestSvc(t)
 	_, _, _, _, err := svc.Login("admin", "wrong-password")

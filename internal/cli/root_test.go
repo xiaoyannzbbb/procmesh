@@ -248,6 +248,39 @@ func TestCLI_UsageIncludesMetricsHistory(t *testing.T) {
 	}
 }
 
+func TestCLI_ParseTTLDuration(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		want time.Duration
+	}{
+		{raw: "12h", want: 12 * time.Hour},
+		{raw: "7d", want: 7 * 24 * time.Hour},
+		{raw: "7d12h", want: 7*24*time.Hour + 12*time.Hour},
+		{raw: "90m", want: 90 * time.Minute},
+	} {
+		t.Run(tc.raw, func(t *testing.T) {
+			opt, err := parseArgs([]string{"login", "--ttl", tc.raw})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !opt.ttlSet || opt.ttl != tc.want {
+				t.Fatalf("ttlSet=%v ttl=%s want %s", opt.ttlSet, opt.ttl, tc.want)
+			}
+		})
+	}
+
+	if _, err := parseArgs([]string{"login", "--ttl", "nope"}); err == nil || !strings.Contains(err.Error(), "invalid --ttl") {
+		t.Fatalf("err=%v", err)
+	}
+	opt, err := parseArgs([]string{"login", "--user", "admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opt.ttlSet {
+		t.Fatal("ttl must be unset by default")
+	}
+}
+
 func TestCLI_ParseSinceUntil(t *testing.T) {
 	opt, err := parseArgs([]string{"--since", "1700000000", "--until", "2026-08-16T00:00:00Z", "metrics", "history", "node", "n1"})
 	if err != nil {
