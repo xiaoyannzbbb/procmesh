@@ -386,9 +386,28 @@
       "stop": "停止",
       "restart": "重启",
       "forceStop": "强制停止",
+      "delete": "删除",
       "busy": "已有操作正在执行",
       "disabledNoOwner": "该进程没有所属节点",
-      "disabledNoPermission": "你没有执行此操作的权限"
+      "disabledNoPermission": "你没有执行此操作的权限",
+      "disabledRemoteDelete": "该节点不允许远程删除进程",
+      "disabledNotStopped": "请先停止进程再删除"
+    },
+    "create": {
+      "action": "新建进程",
+      "actionOnNode": "在此节点新建进程",
+      "title": "新建进程",
+      "hint": "选择一个或多个 Owner 节点后提交规格。每个选中节点会创建一份独立进程。",
+      "submit": "创建",
+      "owners": "Owner 节点",
+      "ownersHint": "禁止远程添加的节点仍会显示，但不能勾选。",
+      "ownerDisabled": "该节点不允许远程添加进程",
+      "ownerUnknown": "节点开关过期或未知",
+      "needOwner": "请至少选择一个 Owner 节点。",
+      "noNodes": "没有可用节点。",
+      "noPermission": "你没有创建进程的权限。",
+      "createdOne": "已创建 {{name}}",
+      "partial": "已创建 {{success}} / {{total}}：{{detail}}"
     },
     "bulk": {
       "selected": "已选择 {{count}} 个",
@@ -408,13 +427,17 @@
       "bulkForceStopTitle": "强制停止所选进程？",
       "bulkForceStopMessage": "确定强制停止选中的 {{count}} 个进程？每个目标都会立即收到 kill 信号。",
       "confirmStop": "停止",
-      "confirmForceStop": "强制停止"
+      "confirmForceStop": "强制停止",
+      "deleteTitle": "删除进程？",
+      "deleteMessage": "确定删除「{{name}}」？将从 Owner 节点移除该进程规格。",
+      "confirmDelete": "删除"
     },
     "toast": {
       "startOne": "已启动 {{name}}",
       "stopOne": "已停止 {{name}}",
       "restartOne": "已重启 {{name}}",
       "forceStopOne": "已强制停止 {{name}}",
+      "deleteOne": "已删除 {{name}}",
       "startMany": "已启动 {{count}} 个进程",
       "stopMany": "已停止 {{count}} 个进程",
       "restartMany": "已重启 {{count}} 个进程",
@@ -734,7 +757,8 @@
       "start": "启动",
       "stop": "停止",
       "restart": "重启",
-      "forceStop": "强制停止"
+      "forceStop": "强制停止",
+      "delete": "删除"
     },
     "tabs": {
       "overview": "概览",

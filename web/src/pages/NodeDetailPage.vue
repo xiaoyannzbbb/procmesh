@@ -14,6 +14,7 @@ import {
 } from "../lib/historyChart";
 import { newOperationId } from "../lib/opid";
 import { useMetricsClient, useNodeClient } from "../lib/rpc";
+import { remoteCreateBlocked } from "../lib/remoteProcess";
 import { session } from "../lib/session";
 import { useI18n } from "../lib/useI18n";
 import { useProcessState } from "../lib/useProcessState";
@@ -36,6 +37,7 @@ const range = ref<HistoryRange>("24h");
 
 const id = computed(() => String(route.params.id ?? ""));
 const canRemove = computed(() => (session.value?.permissions ?? []).includes("node.remove"));
+const canCreate = computed(() => (session.value?.permissions ?? []).includes("process.create"));
 
 const query = useQuery({
   queryKey: computed(() => ["nodes", id.value]),
@@ -47,6 +49,18 @@ const query = useQuery({
 const node = computed(() => {
   const raw = query.data.value?.node;
   return raw ? mapNode(raw, Date.now()) : null;
+});
+
+const createBlockedReason = computed(() => {
+  if (!node.value) {
+    return t("processes.create.ownerUnknown");
+  }
+  if (remoteCreateBlocked(node.value)) {
+    return node.value.disableRemoteCreate
+      ? t("processes.create.ownerDisabled")
+      : t("processes.create.ownerUnknown");
+  }
+  return "";
 });
 
 const historyQuery = useQuery({
@@ -196,9 +210,27 @@ function toneForHealth(state: string): string {
           </span>
         </div>
       </div>
-      <button v-if="canRemove && node" type="button" class="btn btn-danger" :disabled="removing" @click="onRemove">
-        {{ t("nodeDetail.removeAgent") }}
-      </button>
+      <div class="head-actions">
+        <button
+          v-if="canCreate && node && createBlockedReason"
+          type="button"
+          class="btn"
+          disabled
+          :title="createBlockedReason"
+        >
+          {{ t("processes.create.actionOnNode") }}
+        </button>
+        <RouterLink
+          v-else-if="canCreate && node"
+          class="btn"
+          :to="{ path: '/processes/new', query: { owners: node.nodeId } }"
+        >
+          {{ t("processes.create.actionOnNode") }}
+        </RouterLink>
+        <button v-if="canRemove && node" type="button" class="btn btn-danger" :disabled="removing" @click="onRemove">
+          {{ t("nodeDetail.removeAgent") }}
+        </button>
+      </div>
     </div>
     <p v-if="query.isPending && !node" class="muted">{{ t("nodeDetail.loading") }}</p>
     <p v-else-if="errorText && !node" class="error" role="alert">{{ errorText }}</p>
@@ -408,6 +440,11 @@ function toneForHealth(state: string): string {
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
+}
+.head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 .heading-row {
   display: flex;

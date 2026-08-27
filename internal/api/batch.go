@@ -29,6 +29,7 @@ type BatchAPI struct {
 	Forward  Forwarder
 	Members  func() []cluster.NodeSummary
 	Degraded func() bool
+	Process  ProcessRemotePolicy
 
 	identMu sync.Mutex
 	idents  map[string]auth.Principal

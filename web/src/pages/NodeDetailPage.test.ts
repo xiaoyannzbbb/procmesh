@@ -116,6 +116,7 @@ async function mountNodeDetailPage(
     routes: [
       { path: "/nodes", component: Blank },
       { path: "/nodes/:id", component: NodeDetailPage },
+      { path: "/processes/new", component: Blank },
       { path: "/processes/:idOrName", component: Blank },
       { path: "/", component: Blank },
     ],

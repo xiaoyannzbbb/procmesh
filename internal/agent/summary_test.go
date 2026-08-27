@@ -3,6 +3,7 @@ package agent
 import (
 	"testing"
 
+	"github.com/qleelulu/procmesh/internal/agentcfg"
 	"github.com/qleelulu/procmesh/internal/logmgr"
 	"github.com/qleelulu/procmesh/internal/metrics"
 )
@@ -53,5 +54,19 @@ func TestLiveSource_ReportsHistoryPauseFromExactDiskUsage(t *testing.T) {
 	}
 	if !resources.HistoryWritesPaused || resources.HistoryPausePercent != 93 {
 		t.Fatalf("history pause resources = %+v", resources)
+	}
+}
+
+func TestLiveSource_SnapshotRemoteProcessFlags(t *testing.T) {
+	src := &liveSource{
+		nodeID: "n1",
+		process: agentcfg.Process{
+			DisableRemoteCreate: true,
+			DisableRemoteDelete: true,
+		},
+	}
+	sum := src.Snapshot()
+	if !sum.DisableRemoteCreate || sum.DisableRemoteUpdate || !sum.DisableRemoteDelete {
+		t.Fatalf("remote flags %+v", sum)
 	}
 }

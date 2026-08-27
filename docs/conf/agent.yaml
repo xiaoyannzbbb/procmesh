@@ -58,6 +58,16 @@ control:
   # 向其他节点公布的地址。留空时使用实际绑定地址；仅填 IP/主机名时沿用 listen 端口。
   advertise: ""
 
+# 远程进程规格写入。默认全部允许；true 后仅本机回环 CLI（Bearer）可做对应操作。
+# Web、跨节点转发、非回环 CLI 都会被拒绝。改完需重启 Agent。
+process:
+  # 禁止远程添加进程（新建 / YAML 创建）。默认：false。
+  disable_remote_create: false
+  # 禁止远程修改进程规格（编辑 / 回滚 / scale）。默认：false。
+  disable_remote_update: false
+  # 禁止远程删除进程。默认：false。
+  disable_remote_delete: false
+
 # 批量操作执行策略。
 batch:
   # 同时执行的目标数，允许范围 1-64。默认：16。

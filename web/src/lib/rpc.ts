@@ -23,7 +23,14 @@ export type ClusterClient = Pick<Client<typeof ClusterService>, "overview">;
 export type NodeClient = Pick<Client<typeof NodeService>, "listNodes" | "getNode" | "removeNode">;
 export type ProcessClient = Pick<
   Client<typeof ProcessService>,
-  "listProcesses" | "getProcess" | "startProcess" | "stopProcess" | "restartProcess" | "killProcess"
+  | "listProcesses"
+  | "getProcess"
+  | "startProcess"
+  | "stopProcess"
+  | "restartProcess"
+  | "killProcess"
+  | "applyProcess"
+  | "deleteProcess"
 >;
 export type MetricsClient = Pick<
   Client<typeof MetricsService>,

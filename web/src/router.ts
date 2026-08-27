@@ -7,6 +7,7 @@ import LoginPage from "./pages/LoginPage.vue";
 import NodeDetailPage from "./pages/NodeDetailPage.vue";
 import NodesPage from "./pages/NodesPage.vue";
 import OverviewPage from "./pages/OverviewPage.vue";
+import ProcessCreatePage from "./pages/ProcessCreatePage.vue";
 import ProcessDetailPage from "./pages/ProcessDetailPage.vue";
 import ProcessesPage from "./pages/ProcessesPage.vue";
 import AlertsPage from "./pages/AlertsPage.vue";
@@ -27,6 +28,7 @@ const routes: RouteRecordRaw[] = [
       { path: "nodes", component: NodesPage },
       { path: "nodes/:id", component: NodeDetailPage },
       { path: "processes", component: ProcessesPage, meta: { i18nNamespaces: ['process'] } },
+      { path: "processes/new", component: ProcessCreatePage, meta: { i18nNamespaces: ['process'] } },
       { path: "processes/:idOrName", component: ProcessDetailPage, meta: { i18nNamespaces: ['process'] } },
       { path: "groups", component: GroupsPage },
       { path: "batches", component: BatchesPage },

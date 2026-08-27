@@ -36,6 +36,7 @@ type ProcessAPI struct {
 	LocalID   string
 	Router    *Router
 	Forward   Forwarder
+	Process   ProcessRemotePolicy
 }
 
 func (s *ProcessAPI) hop(ctx context.Context, header http.Header, idOrName, ownerAgentID string) (local bool, rt Route, err error) {
@@ -250,6 +251,15 @@ func (s *ProcessAPI) ApplyProcess(ctx context.Context, req *connect.Request[proc
 		}
 		return connect.NewResponse(&procmeshv1.ApplyProcessResponse{Spec: SpecToProto(spec)}), nil
 	}
+	action := "create"
+	disabled := s.Process.DisableCreate
+	if exists {
+		action = "update"
+		disabled = s.Process.DisableUpdate
+	}
+	if err := rejectRemoteFromRequest(s.LocalOnly, req, disabled, action); err != nil {
+		return nil, err
+	}
 	spec := ProtoToSpec(req.Msg.GetSpec())
 	if req.Msg.GetExpectedRevision() != 0 {
 		spec, err = s.resolveApplySpec(ctx, req.Msg.GetExpectedRevision(), spec)
@@ -296,6 +306,9 @@ func (s *ProcessAPI) DeleteProcess(ctx context.Context, req *connect.Request[pro
 	}
 	if done {
 		return connect.NewResponse(&procmeshv1.DeleteProcessResponse{}), nil
+	}
+	if err := rejectRemoteFromRequest(s.LocalOnly, req, s.Process.DisableDelete, "delete"); err != nil {
+		return nil, err
 	}
 	spec, err := s.Mgr.Resolve(ctx, req.Msg.GetIdOrName())
 	if err != nil {

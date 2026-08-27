@@ -145,6 +145,10 @@ function parseDecimal(value: string, path: string): number {
   return parsed;
 }
 
+export function emptyProcessConfigForm(): ProcessConfigFormState {
+  return specToProcessConfigForm(create(ProcessSpecSchema));
+}
+
 export function specToProcessConfigForm(spec: ProcessSpec): ProcessConfigFormState {
   const restart = spec.restart;
   const health = spec.health;

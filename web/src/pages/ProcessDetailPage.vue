@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
 import { computed, ref } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
+import ConfirmDialog from "../components/ConfirmDialog.vue";
 import HistoryChart from "../components/HistoryChart.vue";
 import { withTarget } from "../lib/headers";
 import {
@@ -11,11 +12,13 @@ import {
   stepSecForLayer,
   type HistoryRange,
 } from "../lib/historyChart";
+import { processDeletable, remoteDeleteBlocked, remoteUpdateBlocked } from "../lib/remoteProcess";
 import { newOperationId } from "../lib/opid";
 import { useMetricsClient, useNodeClient, useProcessClient } from "../lib/rpc";
 import { session } from "../lib/session";
 import { useI18n } from "../lib/useI18n";
 import { useProcessState } from "../lib/useProcessState";
+import { mapNode } from "./clusterView";
 import {
   flattenClusterProcesses,
   formatRemoteError,
@@ -31,6 +34,7 @@ const { translateDesiredState, translateObservedState, translateHealthState } = 
 const POLL_MS = 5000;
 const HISTORY_POLL_MS = 60_000;
 const route = useRoute();
+const router = useRouter();
 const nodes = useNodeClient();
 const processes = useProcessClient();
 const metrics = useMetricsClient();
@@ -49,6 +53,8 @@ const perms = computed(() => new Set(session.value?.permissions ?? []));
 const canStart = computed(() => perms.value.has("process.start"));
 const canStop = computed(() => perms.value.has("process.stop"));
 const canRestart = computed(() => perms.value.has("process.restart"));
+const canDelete = computed(() => perms.value.has("process.delete"));
+const pendingDelete = ref(false);
 
 const nodesQuery = useQuery({
   queryKey: ["nodes"],
@@ -84,6 +90,12 @@ const ownerHostname = computed(() => (
 const ownerLabel = computed(() => {
   return ownerHostname.value || ownerNodeId.value;
 });
+
+const ownerNode = computed(() => {
+  const raw = nodesQuery.data.value?.nodes.find((node) => node.nodeId === ownerNodeId.value);
+  return raw ? mapNode(raw, Date.now()) : undefined;
+});
+const allowRemoteUpdate = computed(() => !remoteUpdateBlocked(ownerNode.value));
 
 const targetOpts = computed(() => ({ headers: withTarget(ownerNodeId.value) }));
 
@@ -127,6 +139,16 @@ const detail = computed(() => {
   return mapProcessDetail(raw, metricsQuery.data.value, Date.now(), ownerLabel.value);
 });
 
+const deleteBlockedReason = computed(() => {
+  if (remoteDeleteBlocked(ownerNode.value)) {
+    return t("processes.actions.disabledRemoteDelete");
+  }
+  if (!processDeletable(detail.value?.observed ?? "", detail.value?.desired ?? "")) {
+    return t("processes.actions.disabledNotStopped");
+  }
+  return "";
+});
+
 const errorText = computed(() => {
   if (actionError.value) {
     return actionError.value;
@@ -162,7 +184,8 @@ const acting = computed(
     startMut.isPending.value ||
     stopMut.isPending.value ||
     restartMut.isPending.value ||
-    killMut.isPending.value,
+    killMut.isPending.value ||
+    deleteMut.isPending.value,
 );
 
 async function invalidateProcess(): Promise<void> {
@@ -199,6 +222,23 @@ const killMut = useMutation({
   onSuccess: invalidateProcess,
   onError: onActionError,
 });
+const deleteMut = useMutation({
+  mutationFn: () =>
+    processes.deleteProcess(
+      {
+        meta: mutationMeta(),
+        idOrName: idOrName.value,
+        expectedRevision: BigInt(detail.value?.latestRevision ?? 0),
+      },
+      targetOpts.value,
+    ),
+  onSuccess: async () => {
+    await queryClient.invalidateQueries({ queryKey: ["processes"] });
+    await queryClient.invalidateQueries({ queryKey: ["nodes"] });
+    await router.push("/processes");
+  },
+  onError: onActionError,
+});
 
 async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> {
   actionError.value = "";
@@ -223,6 +263,16 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
         <button type="button" class="btn" :disabled="!canRestart || acting || !ownerNodeId" @click="run(restartMut)">{{ t("processDetail.actions.restart") }}</button>
         <button type="button" class="btn btn-danger" :disabled="!canStop || acting || !ownerNodeId" @click="run(killMut)">
           {{ t("processDetail.actions.forceStop") }}
+        </button>
+        <button
+          v-if="canDelete"
+          type="button"
+          class="btn btn-danger"
+          :disabled="acting || !ownerNodeId || Boolean(deleteBlockedReason)"
+          :title="deleteBlockedReason"
+          @click="pendingDelete = true"
+        >
+          {{ t("processDetail.actions.delete") }}
         </button>
       </div>
     </div>
@@ -274,6 +324,7 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
         :id-or-name="idOrName"
         :target-node-id="ownerNodeId"
         :owner-node-hostname="ownerHostname"
+        :allow-remote-update="allowRemoteUpdate"
       />
       <ProcessLogsPanel
         v-else-if="tab === 'logs'"
@@ -450,6 +501,16 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
       </section>
       </template>
     </template>
+    <ConfirmDialog
+      :open="pendingDelete"
+      :title="t('processes.confirm.deleteTitle')"
+      :message="t('processes.confirm.deleteMessage', { name: detail?.name || idOrName })"
+      :confirm-label="t('processes.confirm.confirmDelete')"
+      :cancel-label="t('actions.cancel')"
+      :pending="acting"
+      @cancel="pendingDelete = false"
+      @confirm="run(deleteMut); pendingDelete = false"
+    />
   </div>
 </template>
 

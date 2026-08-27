@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { OctagonX, Play, RotateCw, Square } from "lucide-vue-next";
+import { OctagonX, Play, RotateCw, Square, Trash2 } from "lucide-vue-next";
 import { computed } from "vue";
 import { useI18n } from "../lib/useI18n";
 import type { ClusterProcessRow } from "../pages/processView";
@@ -12,10 +12,13 @@ const props = defineProps<{
   canStart: boolean;
   canStop: boolean;
   canRestart: boolean;
+  canDelete?: boolean;
+  deleteReason?: string;
 }>();
 
 const emit = defineEmits<{
   action: [action: ProcessAction];
+  delete: [];
 }>();
 
 const { t } = useI18n();
@@ -74,6 +77,10 @@ function label(action: ProcessAction): string {
 function titleFor(action: ProcessAction): string {
   return reason(action) || label(action);
 }
+
+function onDelete(): void {
+  emit("delete");
+}
 </script>
 
 <template>
@@ -120,6 +127,17 @@ function titleFor(action: ProcessAction): string {
       @click.stop="emit('action', 'kill')"
     >
       <OctagonX :size="16" />
+    </button>
+    <button
+      v-if="canDelete"
+      type="button"
+      class="icon-btn danger"
+      :disabled="Boolean(acting) || Boolean(deleteReason)"
+      :title="deleteReason || t('processes.actions.delete')"
+      :aria-label="t('processes.actions.delete')"
+      @click.stop="onDelete"
+    >
+      <Trash2 :size="16" />
     </button>
   </div>
 </template>

@@ -67,11 +67,15 @@ type MutationTarget = {
   processKey: readonly ["process", string, string];
 };
 
-const props = defineProps<{
-  idOrName: string;
-  targetNodeId: string;
-  ownerNodeHostname?: string;
-}>();
+const props = withDefaults(
+  defineProps<{
+    idOrName: string;
+    targetNodeId: string;
+    ownerNodeHostname?: string;
+    allowRemoteUpdate?: boolean;
+  }>(),
+  { allowRemoteUpdate: true },
+);
 
 const config = useConfigClient();
 const processes = useProcessClient();
@@ -96,7 +100,10 @@ const rollingBack = ref(false);
 let selectionGeneration = 0;
 let activeMutationToken: symbol | null = null;
 
-const canUpdate = computed(() => (session.value?.permissions ?? []).includes("process.config.update"));
+const canUpdate = computed(
+  () =>
+    (session.value?.permissions ?? []).includes("process.config.update") && props.allowRemoteUpdate !== false,
+);
 const targetOpts = computed(() => ({ headers: withTarget(props.targetNodeId) }));
 const enabled = computed(() => props.idOrName.length > 0 && props.targetNodeId.length > 0);
 

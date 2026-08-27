@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useQuery, useQueryClient } from "@tanstack/vue-query";
-import { ArrowDown, ArrowUp, Layers, LoaderCircle, RefreshCw, Search, X } from "lucide-vue-next";
+import { ArrowDown, ArrowUp, Layers, LoaderCircle, Plus, RefreshCw, Search, X } from "lucide-vue-next";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import ConfirmDialog from "../components/ConfirmDialog.vue";
@@ -8,6 +8,7 @@ import FreshnessBadge from "../components/FreshnessBadge.vue";
 import ProcessRowActions from "../components/ProcessRowActions.vue";
 import Toast from "../components/Toast.vue";
 import { STALE } from "../lib/freshness";
+import { processDeletable, remoteDeleteBlocked } from "../lib/remoteProcess";
 import { withTarget } from "../lib/headers";
 import { newOperationId } from "../lib/opid";
 import { useNodeClient, useProcessClient } from "../lib/rpc";
@@ -92,6 +93,9 @@ const perms = computed(() => new Set(session.value?.permissions ?? []));
 const canStart = computed(() => perms.value.has("process.start"));
 const canStop = computed(() => perms.value.has("process.stop"));
 const canRestart = computed(() => perms.value.has("process.restart"));
+const canCreate = computed(() => perms.value.has("process.create"));
+const canDelete = computed(() => perms.value.has("process.delete"));
+const pendingDelete = ref<ClusterProcessRow | null>(null);
 
 const allRows = computed(() => {
   const now = Date.now();
@@ -108,6 +112,16 @@ const allRows = computed(() => {
     ...row,
     ownerHostname: row.ownerHostname || hosts.get(row.ownerNodeId) || "",
   }));
+});
+
+const nodeById = computed(() => {
+  const now = Date.now();
+  return new Map(
+    (nodesQuery.data.value?.nodes ?? []).map((raw) => {
+      const node = mapNode(raw, now);
+      return [node.nodeId, node] as const;
+    }),
+  );
 });
 
 const groupOptions = computed(() =>
@@ -207,7 +221,7 @@ const selectedRows = computed(() => {
 });
 
 const acting = computed(() => actingKeys.value.length > 0);
-const confirmOpen = computed(() => Boolean(pending.value));
+const confirmOpen = computed(() => Boolean(pending.value || pendingDelete.value));
 const confirmIsForce = computed(() => pending.value?.action === "kill");
 const confirmTitle = computed(() => {
   const current = pending.value;
@@ -543,6 +557,52 @@ function successToast(action: ProcessAction, targets: ClusterProcessRow[], succe
   return t("processes.toast.forceStopMany", { count: success });
 }
 
+function rowDeleteReason(row: ClusterProcessRow): string {
+  if (remoteDeleteBlocked(nodeById.value.get(row.ownerNodeId))) {
+    return t("processes.actions.disabledRemoteDelete");
+  }
+  if (!processDeletable(row.observed, row.desired)) {
+    return t("processes.actions.disabledNotStopped");
+  }
+  return "";
+}
+
+function requestDelete(row: ClusterProcessRow): void {
+  if (acting.value || !canDelete.value || rowDeleteReason(row)) {
+    return;
+  }
+  pendingDelete.value = row;
+}
+
+async function confirmDelete(): Promise<void> {
+  const row = pendingDelete.value;
+  if (!row || acting.value) {
+    return;
+  }
+  pendingDelete.value = null;
+  actingKeys.value = [rowKey(row)];
+  try {
+    await processes.deleteProcess(
+      {
+        meta: {
+          operationId: newOperationId(),
+          operator: session.value?.username ?? "",
+        },
+        idOrName: row.processId || row.name,
+        expectedRevision: BigInt(row.latestRevision),
+      },
+      { headers: withTarget(row.ownerNodeId) },
+    );
+    notify(t("processes.toast.deleteOne", { name: row.name }), "success");
+  } catch (err) {
+    notify(t("processes.toast.failed", { detail: formatRemoteError(err) }), "error");
+  } finally {
+    actingKeys.value = [];
+    await queryClient.invalidateQueries({ queryKey: ["processes"] });
+    await queryClient.invalidateQueries({ queryKey: ["nodes"] });
+  }
+}
+
 function requestAction(action: ProcessAction, targets: ClusterProcessRow[]): void {
   if (acting.value || !targets.length) {
     return;
@@ -557,6 +617,7 @@ function requestAction(action: ProcessAction, targets: ClusterProcessRow[]): voi
 function cancelPending(): void {
   if (!acting.value) {
     pending.value = null;
+    pendingDelete.value = null;
   }
 }
 
@@ -618,6 +679,10 @@ onUnmounted(() => {
       </div>
       <div class="header-actions">
         <span class="updated">{{ t("processes.lastUpdated", { age: lastUpdatedLabel }) }}</span>
+        <RouterLink v-if="canCreate" class="btn btn-primary new-process" to="/processes/new">
+          <Plus :size="16" aria-hidden="true" />
+          {{ t("processes.create.action") }}
+        </RouterLink>
         <button type="button" class="btn" :disabled="refreshing || loading" @click="refresh">
           <LoaderCircle v-if="refreshing" class="spin" :size="16" aria-hidden="true" />
           <RefreshCw v-else :size="16" aria-hidden="true" />
@@ -793,7 +858,10 @@ onUnmounted(() => {
             :can-start="canStart"
             :can-stop="canStop"
             :can-restart="canRestart"
+            :can-delete="canDelete"
+            :delete-reason="rowDeleteReason(row)"
             @action="requestAction($event, [row])"
+            @delete="requestDelete(row)"
           />
         </li>
       </ul>
@@ -939,7 +1007,10 @@ onUnmounted(() => {
                 :can-start="canStart"
                 :can-stop="canStop"
                 :can-restart="canRestart"
+                :can-delete="canDelete"
+                :delete-reason="rowDeleteReason(row)"
                 @action="requestAction($event, [row])"
+                @delete="requestDelete(row)"
               />
             </td>
           </tr>
@@ -1021,7 +1092,7 @@ onUnmounted(() => {
     </Transition>
 
     <ConfirmDialog
-      :open="confirmOpen"
+      :open="Boolean(pending)"
       :title="confirmTitle"
       :message="confirmMessage"
       :confirm-label="confirmLabel"
@@ -1029,6 +1100,16 @@ onUnmounted(() => {
       :pending="acting"
       @cancel="cancelPending"
       @confirm="confirmPending"
+    />
+    <ConfirmDialog
+      :open="Boolean(pendingDelete)"
+      :title="t('processes.confirm.deleteTitle')"
+      :message="t('processes.confirm.deleteMessage', { name: pendingDelete?.name ?? '' })"
+      :confirm-label="t('processes.confirm.confirmDelete')"
+      :cancel-label="t('actions.cancel')"
+      :pending="acting"
+      @cancel="cancelPending"
+      @confirm="confirmDelete"
     />
 
     <Toast :show="showToast" :message="toastMessage" :type="toastType" @close="showToast = false" />
@@ -1197,6 +1278,10 @@ h1 {
   margin: 0;
   color: var(--color-danger);
   font-size: 0.875rem;
+}
+
+.new-process {
+  color: #fff;
 }
 
 .card {

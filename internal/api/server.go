@@ -68,6 +68,7 @@ type Options struct {
 	Backup              *backup.Engine
 	BackupDispatch      func(backup.FrozenRun)
 	ReplicationDispatch func(backup.FrozenReplicationRun)
+	Process             ProcessRemotePolicy
 }
 
 func NewServer(opts Options) (*Server, error) {
@@ -118,11 +119,13 @@ func NewServer(opts Options) (*Server, error) {
 	pp, ph := procmeshv1connect.NewProcessServiceHandler(&ProcessAPI{
 		Mgr: opts.Mgr, Auth: opts.Auth, Degraded: degraded,
 		LocalOnly: opts.LocalOnly, LocalID: opts.LocalID, Router: opts.Router, Forward: opts.Forward,
+		Process: opts.Process,
 	}, intercept)
 	mountConnect(engine, pp, ph)
 	cp, ch := procmeshv1connect.NewConfigServiceHandler(&ConfigAPI{
 		Mgr: opts.Mgr, Auth: opts.Auth, Revs: opts.Store, Degraded: degraded,
 		LocalOnly: opts.LocalOnly, LocalID: opts.LocalID, Router: opts.Router, Forward: opts.Forward,
+		Process: opts.Process,
 	}, intercept)
 	mountConnect(engine, cp, ch)
 	lp, lh := procmeshv1connect.NewLogServiceHandler(&LogAPI{
@@ -216,7 +219,7 @@ func NewServer(opts Options) (*Server, error) {
 		bapi := &BatchAPI{
 			Auth: opts.Auth, Engine: opts.Batch, Store: batchAuditStore(opts),
 			LocalID: opts.LocalID, Mgr: opts.Mgr, Router: opts.Router, Forward: opts.Forward,
-			Members: members, Degraded: s.isDegraded,
+			Members: members, Degraded: s.isDegraded, Process: opts.Process,
 		}
 		if opts.Batch.Exec == nil {
 			opts.Batch.Exec = &batchExecutor{api: bapi}

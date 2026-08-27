@@ -22,6 +22,13 @@ type Config struct {
 	BreakGlass BreakGlass
 	Batch      Batch
 	Backup     Backup
+	Process    Process
+}
+
+type Process struct {
+	DisableRemoteCreate bool
+	DisableRemoteUpdate bool
+	DisableRemoteDelete bool
 }
 
 type Backup struct {
@@ -82,6 +89,7 @@ type file struct {
 	BreakGlass *breakGlassFile `yaml:"break_glass"`
 	Batch      *batchFile      `yaml:"batch"`
 	Backup     *backupFile     `yaml:"backup"`
+	Process    *processFile    `yaml:"process"`
 }
 
 type pprofFile struct {
@@ -120,6 +128,12 @@ type breakGlassFile struct {
 type batchFile struct {
 	MaxConcurrency *int   `yaml:"max_concurrency"`
 	TargetTimeout  string `yaml:"target_timeout"`
+}
+
+type processFile struct {
+	DisableRemoteCreate bool `yaml:"disable_remote_create"`
+	DisableRemoteUpdate bool `yaml:"disable_remote_update"`
+	DisableRemoteDelete bool `yaml:"disable_remote_delete"`
 }
 
 type backupFile struct {
@@ -257,6 +271,13 @@ func LoadAll(path string, required bool) (Config, error) {
 	if bg := f.BreakGlass; bg != nil {
 		cfg.BreakGlass.Socket = bg.Socket
 		cfg.BreakGlass.Group = bg.Group
+	}
+	if pf := f.Process; pf != nil {
+		cfg.Process = Process{
+			DisableRemoteCreate: pf.DisableRemoteCreate,
+			DisableRemoteUpdate: pf.DisableRemoteUpdate,
+			DisableRemoteDelete: pf.DisableRemoteDelete,
+		}
 	}
 	if bf := f.Backup; bf != nil {
 		cfg.Backup.FSDir = bf.FSDir

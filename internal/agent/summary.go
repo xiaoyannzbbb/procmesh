@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/qleelulu/procmesh/internal/agentcfg"
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/logmgr"
 	"github.com/qleelulu/procmesh/internal/metrics"
@@ -28,6 +29,7 @@ type liveSource struct {
 	mgr        *process.Manager
 	metrics    nodeMetricsSource
 	diskPolicy logmgr.Policy
+	process    agentcfg.Process
 }
 
 type nodeMetricsSource interface {
@@ -73,19 +75,22 @@ func (s *liveSource) Snapshot() cluster.NodeSummary {
 	res.HistoryPausePercent = s.diskPolicy.EmergencyPercent
 
 	return cluster.NodeSummary{
-		NodeID:            s.nodeID,
-		ClusterID:         clusterID,
-		Hostname:          s.hostname,
-		BootID:            s.bootID,
-		State:             cluster.StateAlive,
-		AgentVersion:      version.Agent,
-		ProtocolVersion:   version.Protocol,
-		APIAddress:        s.apiAddr,
-		RPCAddress:        s.rpcAddr,
-		GossipAddress:     s.gossip,
-		Processes:         processSummaries(s.mgr),
-		Resources:         res,
-		LastUpdatedUnixMs: time.Now().UnixMilli(),
+		NodeID:              s.nodeID,
+		ClusterID:           clusterID,
+		Hostname:            s.hostname,
+		BootID:              s.bootID,
+		State:               cluster.StateAlive,
+		AgentVersion:        version.Agent,
+		ProtocolVersion:     version.Protocol,
+		APIAddress:          s.apiAddr,
+		RPCAddress:          s.rpcAddr,
+		GossipAddress:       s.gossip,
+		Processes:           processSummaries(s.mgr),
+		Resources:           res,
+		LastUpdatedUnixMs:   time.Now().UnixMilli(),
+		DisableRemoteCreate: s.process.DisableRemoteCreate,
+		DisableRemoteUpdate: s.process.DisableRemoteUpdate,
+		DisableRemoteDelete: s.process.DisableRemoteDelete,
 	}
 }
 

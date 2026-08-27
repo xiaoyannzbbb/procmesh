@@ -285,3 +285,40 @@ func TestLoadAll_BackupNamedS3Profiles(t *testing.T) {
 		t.Fatalf("local profile = %+v", local)
 	}
 }
+
+func TestLoadAll_ProcessRemoteDefaultsAllow(t *testing.T) {
+	cfg, err := agentcfg.LoadAll(filepath.Join(t.TempDir(), "nope.yaml"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Process.DisableRemoteCreate || cfg.Process.DisableRemoteUpdate || cfg.Process.DisableRemoteDelete {
+		t.Fatalf("defaults must allow remote: %+v", cfg.Process)
+	}
+
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	if err := os.WriteFile(path, []byte("listen: 127.0.0.1:18680\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = agentcfg.LoadAll(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Process.DisableRemoteCreate || cfg.Process.DisableRemoteUpdate || cfg.Process.DisableRemoteDelete {
+		t.Fatalf("omitted process section must allow remote: %+v", cfg.Process)
+	}
+}
+
+func TestLoadAll_ProcessRemoteDisableFlags(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	body := "process:\n  disable_remote_create: true\n  disable_remote_update: true\n  disable_remote_delete: true\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := agentcfg.LoadAll(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Process.DisableRemoteCreate || !cfg.Process.DisableRemoteUpdate || !cfg.Process.DisableRemoteDelete {
+		t.Fatalf("explicit disable flags: %+v", cfg.Process)
+	}
+}

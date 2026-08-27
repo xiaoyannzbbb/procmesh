@@ -378,9 +378,26 @@ declare module "i18next" {
         'processes.actions.stop': string
         'processes.actions.restart': string
         'processes.actions.forceStop': string
+        'processes.actions.delete': string
         'processes.actions.busy': string
         'processes.actions.disabledNoOwner': string
         'processes.actions.disabledNoPermission': string
+        'processes.actions.disabledRemoteDelete': string
+        'processes.actions.disabledNotStopped': string
+        'processes.create.action': string
+        'processes.create.actionOnNode': string
+        'processes.create.title': string
+        'processes.create.hint': string
+        'processes.create.submit': string
+        'processes.create.owners': string
+        'processes.create.ownersHint': string
+        'processes.create.ownerDisabled': string
+        'processes.create.ownerUnknown': string
+        'processes.create.needOwner': string
+        'processes.create.noNodes': string
+        'processes.create.noPermission': string
+        'processes.create.createdOne': string
+        'processes.create.partial': string
         'processes.bulk.selected': string
         'processes.bulk.clear': string
         'processes.bulk.start': string
@@ -397,10 +414,14 @@ declare module "i18next" {
         'processes.confirm.bulkForceStopMessage': string
         'processes.confirm.confirmStop': string
         'processes.confirm.confirmForceStop': string
+        'processes.confirm.deleteTitle': string
+        'processes.confirm.deleteMessage': string
+        'processes.confirm.confirmDelete': string
         'processes.toast.startOne': string
         'processes.toast.stopOne': string
         'processes.toast.restartOne': string
         'processes.toast.forceStopOne': string
+        'processes.toast.deleteOne': string
         'processes.toast.startMany': string
         'processes.toast.stopMany': string
         'processes.toast.restartMany': string
@@ -659,6 +680,7 @@ declare module "i18next" {
         'processDetail.actions.stop': string
         'processDetail.actions.restart': string
         'processDetail.actions.forceStop': string
+        'processDetail.actions.delete': string
         'processDetail.tabs.overview': string
         'processDetail.tabs.config': string
         'processDetail.tabs.logs': string

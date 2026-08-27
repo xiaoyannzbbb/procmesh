@@ -38,6 +38,7 @@ async function mountProcessesPage(nodes: unknown[] = [], processes: unknown[] = 
     history: createMemoryHistory(),
     routes: [
       { path: "/processes", component: ProcessesPage },
+      { path: "/processes/new", component: Blank },
       { path: "/processes/:idOrName", component: Blank },
       { path: "/nodes/:id", component: Blank },
     ],

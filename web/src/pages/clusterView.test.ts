@@ -226,6 +226,22 @@ describe("mapProcess / mapNode", () => {
     expect(nonvoter.raftRoleFreshness).toBe(STALE);
   });
 
+  it("maps remote process mutation flags", () => {
+    const node = mapNode(
+      {
+        nodeId: "n1",
+        state: "ALIVE",
+        lastUpdatedUnixMs: nowMs,
+        disableRemoteCreate: true,
+        disable_remote_delete: true,
+      },
+      nowMs,
+    );
+    expect(node.disableRemoteCreate).toBe(true);
+    expect(node.disableRemoteUpdate).toBe(false);
+    expect(node.disableRemoteDelete).toBe(true);
+  });
+
   it("normalizes missing or invalid Raft role fields to UNKNOWN", () => {
     const missing = mapNode({ nodeId: "old-server" }, nowMs);
     const invalid = mapNode(

@@ -337,6 +337,7 @@ func Run(ctx context.Context, opt Options) error {
 		mgr:        mgr,
 		metrics:    collector,
 		diskPolicy: cfg.Disk,
+		process:    cfg.Process,
 	}
 
 	if control.AlreadyInited(layout.ClusterDir) || agentCertExists(layout.ClusterDir) {
@@ -629,6 +630,17 @@ func (r *rpcRuntime) memberList() []cluster.NodeSummary {
 	return nil
 }
 
+func processRemotePolicy(src *liveSource) api.ProcessRemotePolicy {
+	if src == nil {
+		return api.ProcessRemotePolicy{}
+	}
+	return api.ProcessRemotePolicy{
+		DisableCreate: src.process.DisableRemoteCreate,
+		DisableUpdate: src.process.DisableRemoteUpdate,
+		DisableDelete: src.process.DisableRemoteDelete,
+	}
+}
+
 func newBatchEngine(st *store.Store, cfg agentcfg.Config, nodeID string) *batch.Engine {
 	if st == nil {
 		return nil
@@ -694,6 +706,7 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		started:     started,
 		logger:      opt.Logger,
 		metrics:     collector,
+		process:     processRemotePolicy(src),
 	}
 	rt.backup = newBackupEngine(opt, mgr, st, collector, rt, fwd)
 	rt.backupCoord = backup.NewCoordinator(backup.CoordinatorConfig{
@@ -810,6 +823,7 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		ReplicationDispatch: func(run backup.FrozenReplicationRun) {
 			go rt.replicationCoord.DispatchRun(ctx, run)
 		},
+		Process: rt.process,
 	})
 	if err != nil {
 		_ = ln.Close()

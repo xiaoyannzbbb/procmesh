@@ -386,9 +386,28 @@
       "stop": "Stop",
       "restart": "Restart",
       "forceStop": "Force stop",
+      "delete": "Delete",
       "busy": "An action is already running",
       "disabledNoOwner": "This process has no owner node",
-      "disabledNoPermission": "You do not have permission for this action"
+      "disabledNoPermission": "You do not have permission for this action",
+      "disabledRemoteDelete": "This node does not allow remote process deletion",
+      "disabledNotStopped": "Stop the process before deleting it"
+    },
+    "create": {
+      "action": "New process",
+      "actionOnNode": "Create process on this node",
+      "title": "Create process",
+      "hint": "Select one or more owner nodes, then submit the spec. Each selected node gets its own process.",
+      "submit": "Create",
+      "owners": "Owner nodes",
+      "ownersHint": "Nodes that disable remote create stay visible but cannot be selected.",
+      "ownerDisabled": "This node does not allow remote process creation",
+      "ownerUnknown": "Node flags are stale or unknown",
+      "needOwner": "Select at least one owner node.",
+      "noNodes": "No nodes available.",
+      "noPermission": "You do not have permission to create processes.",
+      "createdOne": "Created {{name}}",
+      "partial": "Created {{success}} of {{total}}: {{detail}}"
     },
     "bulk": {
       "selected": "{{count}} selected",
@@ -408,13 +427,17 @@
       "bulkForceStopTitle": "Force stop selected processes?",
       "bulkForceStopMessage": "Force stop {{count}} selected processes? Each target receives a kill signal immediately.",
       "confirmStop": "Stop",
-      "confirmForceStop": "Force stop"
+      "confirmForceStop": "Force stop",
+      "deleteTitle": "Delete process?",
+      "deleteMessage": "Delete “{{name}}”? This removes the process spec from the owner node.",
+      "confirmDelete": "Delete"
     },
     "toast": {
       "startOne": "Started {{name}}",
       "stopOne": "Stopped {{name}}",
       "restartOne": "Restarted {{name}}",
       "forceStopOne": "Force-stopped {{name}}",
+      "deleteOne": "Deleted {{name}}",
       "startMany": "Started {{count}} processes",
       "stopMany": "Stopped {{count}} processes",
       "restartMany": "Restarted {{count}} processes",
@@ -734,7 +757,8 @@
       "start": "Start",
       "stop": "Stop",
       "restart": "Restart",
-      "forceStop": "Force Stop"
+      "forceStop": "Force Stop",
+      "delete": "Delete"
     },
     "tabs": {
       "overview": "Overview",

@@ -123,6 +123,7 @@ func (s *BatchAPI) processAPI() *ProcessAPI {
 	return &ProcessAPI{
 		Mgr: s.Mgr, Auth: s.Auth, Degraded: s.Degraded,
 		LocalID: s.LocalID, Router: s.Router, Forward: s.Forward,
+		Process: s.Process,
 	}
 }
 
@@ -134,5 +135,6 @@ func (s *BatchAPI) configAPI() *ConfigAPI {
 	return &ConfigAPI{
 		Mgr: s.Mgr, Auth: s.Auth, Revs: revs, Degraded: s.Degraded,
 		LocalID: s.LocalID, Router: s.Router, Forward: s.Forward,
+		Process: s.Process,
 	}
 }

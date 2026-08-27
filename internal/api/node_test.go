@@ -32,6 +32,17 @@ func (r staticRaftMembershipReader) RaftMembershipView() (control.RaftMembership
 	return r.view, nil
 }
 
+func TestNodeToProto_ProcessRemoteFlags(t *testing.T) {
+	got := nodeToProto(cluster.NodeSummary{
+		NodeID:              "n1",
+		DisableRemoteCreate: true,
+		DisableRemoteDelete: true,
+	}, nil)
+	if !got.GetDisableRemoteCreate() || got.GetDisableRemoteUpdate() || !got.GetDisableRemoteDelete() {
+		t.Fatalf("%+v", got)
+	}
+}
+
 func TestListNodes_StandaloneLocal(t *testing.T) {
 	e := newClusterEnvOpts(t, false, false)
 	listed, err := e.node.ListNodes(context.Background(), connect.NewRequest(&procmeshv1.ListNodesRequest{}))

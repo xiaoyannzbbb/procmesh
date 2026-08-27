@@ -29,6 +29,7 @@ type ConfigAPI struct {
 	LocalID   string
 	Router    *Router
 	Forward   Forwarder
+	Process   ProcessRemotePolicy
 }
 
 func (s *ConfigAPI) hop(ctx context.Context, header http.Header, idOrName, ownerAgentID string) (local bool, rt Route, err error) {
@@ -100,6 +101,9 @@ func (s *ConfigAPI) UpdateConfig(ctx context.Context, req *connect.Request[procm
 		return out, nil
 	}
 	if err := s.rejectMutation(); err != nil {
+		return nil, err
+	}
+	if err := rejectRemoteFromRequest(s.LocalOnly, req, s.Process.DisableUpdate, "update"); err != nil {
 		return nil, err
 	}
 	opID, operator, err := metaOf(req.Msg.GetMeta())
@@ -234,6 +238,9 @@ func (s *ConfigAPI) Rollback(ctx context.Context, req *connect.Request[procmeshv
 		return out, nil
 	}
 	if err := s.rejectMutation(); err != nil {
+		return nil, err
+	}
+	if err := rejectRemoteFromRequest(s.LocalOnly, req, s.Process.DisableUpdate, "update"); err != nil {
 		return nil, err
 	}
 	opID, operator, err := metaOf(req.Msg.GetMeta())

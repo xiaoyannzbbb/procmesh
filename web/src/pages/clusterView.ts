@@ -59,6 +59,9 @@ export type NodeView = {
   freshness: Freshness;
   lastUpdatedUnixMs: number;
   lastUpdated: string;
+  disableRemoteCreate: boolean;
+  disableRemoteUpdate: boolean;
+  disableRemoteDelete: boolean;
 };
 
 export type OverviewView = {
@@ -302,5 +305,8 @@ export function mapNode(input: unknown, nowMs: number): NodeView {
     freshness: classify(nowMs, lastUpdatedUnixMs, state),
     lastUpdatedUnixMs,
     lastUpdated: formatAge(nowMs, lastUpdatedUnixMs),
+    disableRemoteCreate: toBool(pick(input, "disableRemoteCreate", "disable_remote_create")),
+    disableRemoteUpdate: toBool(pick(input, "disableRemoteUpdate", "disable_remote_update")),
+    disableRemoteDelete: toBool(pick(input, "disableRemoteDelete", "disable_remote_delete")),
   };
 }

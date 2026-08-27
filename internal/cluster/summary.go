@@ -33,20 +33,23 @@ type ResourceSummary struct {
 }
 
 type NodeSummary struct {
-	NodeID            string            `json:"node_id"`
-	ClusterID         string            `json:"cluster_id"`
-	Hostname          string            `json:"hostname"`
-	BootID            string            `json:"boot_id"`
-	State             State             `json:"state"`
-	AgentVersion      string            `json:"agent_version"`
-	ProtocolVersion   int               `json:"protocol_version"`
-	APIAddress        string            `json:"api_address"`
-	RPCAddress        string            `json:"rpc_address"`
-	GossipAddress     string            `json:"gossip_address"`
-	Labels            map[string]string `json:"labels,omitempty"`
-	Resources         ResourceSummary   `json:"resources"`
-	Processes         []ProcessSummary  `json:"processes,omitempty"`
-	LastUpdatedUnixMs int64             `json:"last_updated_unix_ms"`
+	NodeID              string            `json:"node_id"`
+	ClusterID           string            `json:"cluster_id"`
+	Hostname            string            `json:"hostname"`
+	BootID              string            `json:"boot_id"`
+	State               State             `json:"state"`
+	AgentVersion        string            `json:"agent_version"`
+	ProtocolVersion     int               `json:"protocol_version"`
+	APIAddress          string            `json:"api_address"`
+	RPCAddress          string            `json:"rpc_address"`
+	GossipAddress       string            `json:"gossip_address"`
+	Labels              map[string]string `json:"labels,omitempty"`
+	Resources           ResourceSummary   `json:"resources"`
+	Processes           []ProcessSummary  `json:"processes,omitempty"`
+	LastUpdatedUnixMs   int64             `json:"last_updated_unix_ms"`
+	DisableRemoteCreate bool              `json:"disable_remote_create,omitempty"`
+	DisableRemoteUpdate bool              `json:"disable_remote_update,omitempty"`
+	DisableRemoteDelete bool              `json:"disable_remote_delete,omitempty"`
 }
 
 type SummarySource interface {

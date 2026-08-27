@@ -267,6 +267,9 @@ message Node {
   repeated string agent_group_ids = 15;
   string raft_role = 16; // LEADER | VOTER | NON_VOTER | NOT_MEMBER | UNKNOWN
   string raft_role_freshness = 17; // LIVE | STALE | UNKNOWN
+  bool disable_remote_create = 18;
+  bool disable_remote_update = 19;
+  bool disable_remote_delete = 20;
 }
 
 message ListNodesRequest {}

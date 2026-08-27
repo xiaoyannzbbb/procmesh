@@ -53,6 +53,7 @@ type rpcRuntime struct {
 	backup           *backup.Engine
 	backupCoord      *backup.Coordinator
 	replicationCoord *backup.ReplicationCoordinator
+	process          api.ProcessRemotePolicy
 }
 
 func (r *rpcRuntime) startRPC() error {
@@ -210,12 +211,12 @@ func (r *rpcRuntime) localHandler() http.Handler {
 	mux.Handle(authp, authh)
 	pp, ph := procmeshv1connect.NewProcessServiceHandler(&api.ProcessAPI{
 		Mgr: r.mgr, Auth: r.auth, Degraded: degraded,
-		LocalOnly: true, LocalID: r.nodeID,
+		LocalOnly: true, LocalID: r.nodeID, Process: r.process,
 	}, opts...)
 	mux.Handle(pp, ph)
 	cp, ch := procmeshv1connect.NewConfigServiceHandler(&api.ConfigAPI{
 		Mgr: r.mgr, Auth: r.auth, Revs: revs, Degraded: degraded,
-		LocalOnly: true, LocalID: r.nodeID,
+		LocalOnly: true, LocalID: r.nodeID, Process: r.process,
 	}, opts...)
 	mux.Handle(cp, ch)
 	lp, lh := procmeshv1connect.NewLogServiceHandler(&api.LogAPI{
