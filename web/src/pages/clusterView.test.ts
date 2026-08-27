@@ -213,6 +213,30 @@ describe("mapProcess / mapNode", () => {
     expect(formatResources(node.resources)).toBe("CPU unknown · Mem unknown · Disk unknown");
     expect(formatPercent(node.resources.cpuPercent)).toBe("unknown");
   });
+
+  it("maps Raft role fields from camelCase and snake_case", () => {
+    const leader = mapNode({ nodeId: "n1", raftRole: "LEADER", raftRoleFreshness: "LIVE" }, nowMs);
+    const nonvoter = mapNode(
+      { node_id: "n2", raft_role: "NON_VOTER", raft_role_freshness: "STALE" },
+      nowMs,
+    );
+    expect(leader.raftRole).toBe("LEADER");
+    expect(leader.raftRoleFreshness).toBe(LIVE);
+    expect(nonvoter.raftRole).toBe("NON_VOTER");
+    expect(nonvoter.raftRoleFreshness).toBe(STALE);
+  });
+
+  it("normalizes missing or invalid Raft role fields to UNKNOWN", () => {
+    const missing = mapNode({ nodeId: "old-server" }, nowMs);
+    const invalid = mapNode(
+      { nodeId: "future-server", raftRole: "WITNESS", raftRoleFreshness: "FUTURE" },
+      nowMs,
+    );
+    expect(missing.raftRole).toBe("UNKNOWN");
+    expect(missing.raftRoleFreshness).toBe(UNKNOWN);
+    expect(invalid.raftRole).toBe("UNKNOWN");
+    expect(invalid.raftRoleFreshness).toBe(UNKNOWN);
+  });
 });
 
 describe("workloadFreshness", () => {

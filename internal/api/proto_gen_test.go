@@ -46,6 +46,8 @@ func TestProto_P4ServicesGenerated(t *testing.T) {
 	_ = (&procmeshv1.RemoveNodeRequest{}).GetNodeId
 	_ = (&procmeshv1.PromoteNodeRequest{}).GetNodeId
 	_ = (&procmeshv1.ClusterOverviewResponse{}).GetControlQuorum
+	_ = (&procmeshv1.Node{}).GetRaftRole
+	_ = (&procmeshv1.Node{}).GetRaftRoleFreshness
 }
 
 func TestProto_P5ServicesGenerated(t *testing.T) {

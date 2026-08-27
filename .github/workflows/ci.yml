@@ -13,10 +13,10 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Setup Node.js
+      - name: Setup minimum supported Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '18'
+          node-version: '22.20.0'
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
 
@@ -32,5 +32,5 @@ jobs:
       - name: Run tests
         run: cd web && npm test
 
-      - name: Build
-        run: cd web && npm run build
+      - name: Type-check and build
+        run: cd web && npm run build:check

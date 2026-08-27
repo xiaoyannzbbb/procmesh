@@ -70,6 +70,84 @@ func TestRaft_BootstrapApplyVisible(t *testing.T) {
 	}
 }
 
+func TestRaft_MembershipViewLeaderAndNonvoter(t *testing.T) {
+	addr0, trans0 := raft.NewInmemTransport("")
+	addr1, trans1 := raft.NewInmemTransport("")
+	trans0.Connect(addr1, trans1)
+	trans1.Connect(addr0, trans0)
+
+	voter, err := control.StartInmem("voter", control.NewFSM(), trans0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = voter.Shutdown() })
+	nonvoter, err := control.StartInmem("nonvoter", control.NewFSM(), trans1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = nonvoter.Shutdown() })
+
+	if err := voter.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	waitLeader(t, []*control.Node{voter}, 10*time.Second)
+	if err := voter.AddNonvoter("nonvoter", string(addr1)); err != nil {
+		t.Fatal(err)
+	}
+
+	var view control.RaftMembershipView
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		view, err = voter.RaftMembershipView()
+		if err == nil && view.Members["nonvoter"] == control.RaftNonVoter {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !view.HasQuorum || view.LeaderID != "voter" {
+		t.Fatalf("view=%+v", view)
+	}
+	if view.Members["voter"] != control.RaftVoter {
+		t.Fatalf("voter role=%q", view.Members["voter"])
+	}
+	if view.Members["nonvoter"] != control.RaftNonVoter {
+		t.Fatalf("nonvoter role=%q", view.Members["nonvoter"])
+	}
+}
+
+func TestRaft_MembershipViewClearsLeaderWithoutQuorum(t *testing.T) {
+	nodes := startInmemVoters(t, 3)
+	leader := waitLeader(t, nodes, 10*time.Second)
+	for _, node := range nodes {
+		if node != leader {
+			if err := node.Shutdown(); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for leader.HasQuorum() {
+		if time.Now().After(deadline) {
+			t.Fatal("leader still reports quorum")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	view, err := leader.RaftMembershipView()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.HasQuorum || view.LeaderID != "" {
+		t.Fatalf("view=%+v", view)
+	}
+	if len(view.Members) != 3 {
+		t.Fatalf("members=%+v", view.Members)
+	}
+}
+
 func TestRaft_ClaimBackupFireExistingIsNotCreated(t *testing.T) {
 	_, trans := raft.NewInmemTransport("")
 	n, err := control.StartInmem("solo-fire", control.NewFSM(), trans)

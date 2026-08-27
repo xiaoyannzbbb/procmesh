@@ -28,10 +28,25 @@ export type ProcessView = {
   freshnessUnixMs: number;
 };
 
+export const RAFT_LEADER = "LEADER";
+export const RAFT_VOTER = "VOTER";
+export const RAFT_NON_VOTER = "NON_VOTER";
+export const RAFT_NOT_MEMBER = "NOT_MEMBER";
+export const RAFT_ROLE_UNKNOWN = "UNKNOWN";
+
+export type RaftRole =
+  | typeof RAFT_LEADER
+  | typeof RAFT_VOTER
+  | typeof RAFT_NON_VOTER
+  | typeof RAFT_NOT_MEMBER
+  | typeof RAFT_ROLE_UNKNOWN;
+
 export type NodeView = {
   nodeId: string;
   hostname: string;
   state: string;
+  raftRole: RaftRole;
+  raftRoleFreshness: Freshness;
   agentVersion: string;
   bootId: string;
   apiAddress: string;
@@ -123,6 +138,32 @@ function toStr(v: unknown): string {
 
 function toBool(v: unknown): boolean {
   return v === true;
+}
+
+function toRaftRole(v: unknown): RaftRole {
+  switch (toStr(v).toUpperCase()) {
+    case RAFT_LEADER:
+      return RAFT_LEADER;
+    case RAFT_VOTER:
+      return RAFT_VOTER;
+    case RAFT_NON_VOTER:
+      return RAFT_NON_VOTER;
+    case RAFT_NOT_MEMBER:
+      return RAFT_NOT_MEMBER;
+    default:
+      return RAFT_ROLE_UNKNOWN;
+  }
+}
+
+function toFreshness(v: unknown): Freshness {
+  switch (toStr(v).toUpperCase()) {
+    case "LIVE":
+      return "LIVE";
+    case "STALE":
+      return "STALE";
+    default:
+      return UNKNOWN;
+  }
 }
 
 export function formatUnixSecondsISO(unix: unknown): string {
@@ -229,10 +270,20 @@ export function mapNode(input: unknown, nowMs: number): NodeView {
   const labels = Object.entries(asRecord(pick(input, "labels")))
     .map(([key, value]) => ({ key, value: toStr(value) }))
     .sort((a, b) => a.key.localeCompare(b.key));
+  let raftRole = toRaftRole(pick(input, "raftRole", "raft_role"));
+  let raftRoleFreshness = toFreshness(
+    pick(input, "raftRoleFreshness", "raft_role_freshness"),
+  );
+  if (raftRole === RAFT_ROLE_UNKNOWN || raftRoleFreshness === UNKNOWN) {
+    raftRole = RAFT_ROLE_UNKNOWN;
+    raftRoleFreshness = UNKNOWN;
+  }
   return {
     nodeId: toStr(pick(input, "nodeId", "node_id")),
     hostname: toStr(pick(input, "hostname")),
     state,
+    raftRole,
+    raftRoleFreshness,
     agentVersion: toStr(pick(input, "agentVersion", "agent_version")),
     bootId: toStr(pick(input, "bootId", "boot_id")),
     apiAddress: toStr(pick(input, "apiAddress", "api_address")),

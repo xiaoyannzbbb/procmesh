@@ -43,7 +43,7 @@ ProcMesh 包含三个二进制程序：
 ## 环境要求
 
 - Go 1.25 或更高版本。
-- Node.js 18 或更高版本，推荐 Node.js 20 LTS；仅构建或开发 Web UI 时需要。
+- Node.js 22.20.0 或更高的 22.x 版本（低于 23），仅构建或开发 Web UI 时需要。
 - GNU Make。
 - Linux 用于生产部署。macOS 可用于本地开发与功能验证，但不具备 systemd、cgroup 等完整生产能力。
 - 修改 Protocol Buffers 定义时，还需要 `protoc` 及相应 Go/TypeScript 插件。

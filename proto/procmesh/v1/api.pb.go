@@ -2666,6 +2666,8 @@ type Node struct {
 	Processes         []*ProcessSummary      `protobuf:"bytes,13,rep,name=processes,proto3" json:"processes,omitempty"`
 	LastUpdatedUnixMs int64                  `protobuf:"varint,14,opt,name=last_updated_unix_ms,json=lastUpdatedUnixMs,proto3" json:"last_updated_unix_ms,omitempty"`
 	AgentGroupIds     []string               `protobuf:"bytes,15,rep,name=agent_group_ids,json=agentGroupIds,proto3" json:"agent_group_ids,omitempty"`
+	RaftRole          string                 `protobuf:"bytes,16,opt,name=raft_role,json=raftRole,proto3" json:"raft_role,omitempty"`                              // LEADER | VOTER | NON_VOTER | NOT_MEMBER | UNKNOWN
+	RaftRoleFreshness string                 `protobuf:"bytes,17,opt,name=raft_role_freshness,json=raftRoleFreshness,proto3" json:"raft_role_freshness,omitempty"` // LIVE | STALE | UNKNOWN
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -2803,6 +2805,20 @@ func (x *Node) GetAgentGroupIds() []string {
 		return x.AgentGroupIds
 	}
 	return nil
+}
+
+func (x *Node) GetRaftRole() string {
+	if x != nil {
+		return x.RaftRole
+	}
+	return ""
+}
+
+func (x *Node) GetRaftRoleFreshness() string {
+	if x != nil {
+		return x.RaftRoleFreshness
+	}
+	return ""
 }
 
 type ListNodesRequest struct {
@@ -15239,7 +15255,7 @@ const file_proto_procmesh_v1_api_proto_rawDesc = "" +
 	"\x11freshness_unix_ms\x18\a \x01(\x03R\x0ffreshnessUnixMs\x12\x1d\n" +
 	"\n" +
 	"process_id\x18\b \x01(\tR\tprocessId\x12\x14\n" +
-	"\x05group\x18\t \x01(\tR\x05group\"\x84\x05\n" +
+	"\x05group\x18\t \x01(\tR\x05group\"\xd1\x05\n" +
 	"\x04Node\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x1d\n" +
 	"\n" +
@@ -15259,7 +15275,9 @@ const file_proto_procmesh_v1_api_proto_rawDesc = "" +
 	"\tresources\x18\f \x01(\v2\x1c.procmesh.v1.ResourceSummaryR\tresources\x129\n" +
 	"\tprocesses\x18\r \x03(\v2\x1b.procmesh.v1.ProcessSummaryR\tprocesses\x12/\n" +
 	"\x14last_updated_unix_ms\x18\x0e \x01(\x03R\x11lastUpdatedUnixMs\x12&\n" +
-	"\x0fagent_group_ids\x18\x0f \x03(\tR\ragentGroupIds\x1a9\n" +
+	"\x0fagent_group_ids\x18\x0f \x03(\tR\ragentGroupIds\x12\x1b\n" +
+	"\traft_role\x18\x10 \x01(\tR\braftRole\x12.\n" +
+	"\x13raft_role_freshness\x18\x11 \x01(\tR\x11raftRoleFreshness\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x12\n" +

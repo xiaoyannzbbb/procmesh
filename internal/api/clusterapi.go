@@ -27,28 +27,29 @@ import (
 var _ procmeshv1connect.ClusterServiceHandler = (*ClusterAPI)(nil)
 
 type ClusterDeps struct {
-	Dir           string           // layout.ClusterDir
-	Store         ClusterMetaStore // GetOrCreateNodeID, SetClusterID, GetClusterID
-	Mesh          NodeLister       // Members(); nil → List uses Local
-	Local         func() cluster.NodeSummary
-	GossipAddr    func() string // local advertise, returned by seed Join
-	Now           func() time.Time
-	NodeID        string
-	Hostname      string
-	BootID        string
-	APIAddr       string
-	HTTPClient    *http.Client
-	OnReady       func() error // called after Init/RequestJoin persist certs and before SetClusterID; failure is logged, Store must be attached
-	Control       *control.Node
-	ControlFn     func() *control.Node                // 晚绑定；优先于 Control
-	OnAdmit       func(nodeID, raftAddr string) error // leader AddNonvoter；nil 忽略
-	LeaderAPI     func() string                       // 非 leader 转发 Join 的 API 地址
-	RaftAddr      func() string                       // 本机 Raft advertise，RequestJoin 填入
-	SetRaftLeader func(addr string)                   // RequestJoin 记下 seed 返回的 leader
-	RPCHealthy    func() bool                         // nil → true
-	GossipHealthy func() bool                         // nil → Mesh != nil
-	CertExpires   func() int64                        // nil → parse agent.crt
-	CAExpires     func() int64                        // nil → parse ca.crt
+	Dir            string           // layout.ClusterDir
+	Store          ClusterMetaStore // GetOrCreateNodeID, SetClusterID, GetClusterID
+	Mesh           NodeLister       // Members(); nil → List uses Local
+	Local          func() cluster.NodeSummary
+	GossipAddr     func() string // local advertise, returned by seed Join
+	Now            func() time.Time
+	NodeID         string
+	Hostname       string
+	BootID         string
+	APIAddr        string
+	HTTPClient     *http.Client
+	OnReady        func() error // called after Init/RequestJoin persist certs and before SetClusterID; failure is logged, Store must be attached
+	Control        *control.Node
+	ControlFn      func() *control.Node                // 晚绑定；优先于 Control
+	RaftMembership control.RaftMembershipReader        // nil → use ControlFn/Control
+	OnAdmit        func(nodeID, raftAddr string) error // leader AddNonvoter；nil 忽略
+	LeaderAPI      func() string                       // 非 leader 转发 Join 的 API 地址
+	RaftAddr       func() string                       // 本机 Raft advertise，RequestJoin 填入
+	SetRaftLeader  func(addr string)                   // RequestJoin 记下 seed 返回的 leader
+	RPCHealthy     func() bool                         // nil → true
+	GossipHealthy  func() bool                         // nil → Mesh != nil
+	CertExpires    func() int64                        // nil → parse agent.crt
+	CAExpires      func() int64                        // nil → parse ca.crt
 }
 
 type ClusterMetaStore interface {
@@ -577,6 +578,13 @@ func (d ClusterDeps) controlNode() *control.Node {
 		}
 	}
 	return d.Control
+}
+
+func (d ClusterDeps) raftMembershipReader() control.RaftMembershipReader {
+	if d.RaftMembership != nil {
+		return d.RaftMembership
+	}
+	return d.controlNode()
 }
 
 func (d ClusterDeps) admission() *control.Admission {
