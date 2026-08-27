@@ -410,8 +410,45 @@ declare module "i18next" {
         'processes.toast.missingOwner': string
         'processes.toast.noPermission': string
         'nodes.title': string
+        'nodes.subtitle': string
+        'nodes.showing': string
+        'nodes.eyebrow': string
         'nodes.loading': string
         'nodes.noNodes': string
+        'nodes.emptyHint': string
+        'nodes.emptyNone': string
+        'nodes.emptyClear': string
+        'nodes.search': string
+        'nodes.searchPlaceholder': string
+        'nodes.clearFilters': string
+        'nodes.refresh': string
+        'nodes.lastUpdated': string
+        'nodes.updatedJustNow': string
+        'nodes.updatedSeconds': string
+        'nodes.updatedMinutes': string
+        'nodes.openRow': string
+        'nodes.staleBanner': string
+        'nodes.processesMore': string
+        'nodes.processCount': string
+        'nodes.diskPaused': string
+        'nodes.stats.total': string
+        'nodes.stats.alive': string
+        'nodes.stats.suspect': string
+        'nodes.stats.failed': string
+        'nodes.stats.stale': string
+        'nodes.state.alive': string
+        'nodes.state.suspect': string
+        'nodes.state.failed': string
+        'nodes.state.left': string
+        'nodes.state.removed': string
+        'nodes.state.revoked': string
+        'nodes.state.unknown': string
+        'nodes.state.badgeLabel': string
+        'nodes.resources.cpu': string
+        'nodes.resources.memory': string
+        'nodes.resources.disk': string
+        'nodes.resources.unknown': string
+        'nodes.resources.meterLabel': string
         'nodes.table.hostname': string
         'nodes.table.nodeId': string
         'nodes.table.state': string

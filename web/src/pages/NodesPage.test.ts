@@ -3,7 +3,11 @@ import { flushPromises, mount } from "@vue/test-utils";
 import i18next from "i18next";
 import I18NextVue from "i18next-vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { defineComponent, h } from "vue";
+import { createMemoryHistory, createRouter } from "vue-router";
 import NodesPage from "./NodesPage.vue";
+
+const Blank = defineComponent({ setup: () => () => h("div") });
 
 let i18n: typeof i18next;
 
@@ -24,30 +28,34 @@ beforeEach(async () => {
 
 const mounted: Array<{ unmount: () => void }> = [];
 
-async function mountNodesPage(nodes: unknown[] = []) {
+async function mountNodesPage(nodes: unknown[] = [], query: Record<string, string> = {}) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   const nodeClient = { listNodes: vi.fn().mockResolvedValue({ nodes }) };
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: "/nodes", component: NodesPage },
+      { path: "/nodes/:id", component: Blank },
+    ],
+  });
+  await router.push({ path: "/nodes", query });
+  await router.isReady();
   const wrapper = mount(NodesPage, {
     global: {
       plugins: [
         [VueQueryPlugin, { queryClient }],
         [I18NextVue, { i18next: i18n }],
+        router,
       ],
       provide: { nodeClient },
-      stubs: {
-        RouterLink: {
-          props: ["to"],
-          template: `<a :href="typeof to === 'string' ? to : to?.path"><slot /></a>`,
-        },
-      },
     },
   });
   mounted.push(wrapper);
   await flushPromises();
   await wrapper.vm.$nextTick();
-  return wrapper;
+  return { wrapper, nodeClient, router };
 }
 
 afterEach(() => {
@@ -62,8 +70,53 @@ async function addNodesTranslations(language: "en" | "zh") {
   await i18n.addResourceBundle(language, "common", {
     nodes: {
       title: chinese ? "节点" : "Nodes",
+      subtitle: chinese ? "共 {{count}} 个节点" : "{{count}} total",
+      showing: chinese ? "显示 {{shown}} / {{total}}" : "Showing {{shown}} of {{total}}",
+      eyebrow: chinese ? "集群成员" : "Cluster members",
       loading: chinese ? "加载中…" : "Loading…",
       noNodes: chinese ? "无节点" : "No nodes",
+      emptyHint: chinese ? "没有符合当前筛选条件的节点。" : "No nodes match the current filters.",
+      emptyNone: chinese ? "集群尚未加入任何 Agent。" : "No agents have joined this cluster yet.",
+      emptyClear: chinese ? "清除筛选" : "Clear filters",
+      search: chinese ? "搜索" : "Search",
+      searchPlaceholder: chinese ? "搜索主机名或节点 ID" : "Search hostname or node ID",
+      clearFilters: chinese ? "清除筛选" : "Clear filters",
+      refresh: chinese ? "刷新" : "Refresh",
+      lastUpdated: chinese ? "更新于 {{age}}" : "Updated {{age}}",
+      updatedJustNow: chinese ? "刚刚" : "just now",
+      updatedSeconds: chinese ? "{{count}} 秒前" : "{{count}}s ago",
+      updatedMinutes: chinese ? "{{count}} 分钟前" : "{{count}}m ago",
+      openRow: chinese ? "打开 {{name}}" : "Open {{name}}",
+      staleBanner: chinese
+        ? "部分节点数据为 STALE，不能当作实时健康状态。"
+        : "Some node data is STALE. Do not treat it as live health.",
+      processesMore: chinese ? "还有 {{count}} 个" : "+{{count}} more",
+      processCount: chinese ? "{{count}} 个进程" : "{{count}} processes",
+      diskPaused: chinese ? "历史写入已暂停" : "History writes paused",
+      stats: {
+        total: chinese ? "全部" : "Total",
+        alive: chinese ? "存活" : "Alive",
+        suspect: chinese ? "可疑" : "Suspect",
+        failed: chinese ? "失败" : "Failed",
+        stale: chinese ? "过期" : "Stale",
+      },
+      state: {
+        alive: chinese ? "存活" : "Alive",
+        suspect: chinese ? "可疑" : "Suspect",
+        failed: chinese ? "失败" : "Failed",
+        left: chinese ? "已离开" : "Left",
+        removed: chinese ? "已移除" : "Removed",
+        revoked: chinese ? "已吊销" : "Revoked",
+        unknown: chinese ? "未知" : "Unknown",
+        badgeLabel: chinese ? "节点状态：{{state}}" : "Node state: {{state}}",
+      },
+      resources: {
+        cpu: chinese ? "CPU" : "CPU",
+        memory: chinese ? "内存" : "Memory",
+        disk: chinese ? "磁盘" : "Disk",
+        unknown: chinese ? "未知" : "unknown",
+        meterLabel: "{{name}} {{value}}",
+      },
       table: {
         hostname: chinese ? "主机名" : "Hostname",
         nodeId: chinese ? "节点ID" : "Node ID",
@@ -88,11 +141,51 @@ async function addNodesTranslations(language: "en" | "zh") {
   });
 }
 
+function sampleNodes(now = Date.now()) {
+  return [
+    {
+      nodeId: "n-a",
+      hostname: "agent-a",
+      state: "ALIVE",
+      raftRole: "LEADER",
+      raftRoleFreshness: "LIVE",
+      agentVersion: "0.1.15",
+      lastUpdatedUnixMs: now,
+      resources: { cpuPercent: 12, memoryPercent: 34, diskPercent: 56 },
+      processes: [
+        { name: "api", observed: "RUNNING", freshnessUnixMs: now },
+        { name: "worker", observed: "STOPPED", freshnessUnixMs: now },
+      ],
+    },
+    {
+      nodeId: "n-b",
+      hostname: "agent-b",
+      state: "SUSPECT",
+      raftRole: "VOTER",
+      raftRoleFreshness: "STALE",
+      agentVersion: "0.1.14",
+      lastUpdatedUnixMs: now - 30_000,
+      resources: { cpuPercent: 80, memoryPercent: 86, diskPercent: 91 },
+      processes: [],
+    },
+    {
+      nodeId: "n-c",
+      hostname: "agent-c",
+      state: "FAILED",
+      raftRole: "VOTER",
+      raftRoleFreshness: "STALE",
+      lastUpdatedUnixMs: now - 60_000,
+      resources: { cpuPercent: 1, memoryPercent: 2, diskPercent: 3 },
+      processes: [{ name: "sleep", observed: "RUNNING", freshnessUnixMs: now - 60_000 }],
+    },
+  ];
+}
+
 describe("NodesPage i18n", () => {
   it("should render in English", async () => {
     await addNodesTranslations("en");
 
-    const wrapper = await mountNodesPage([]);
+    const { wrapper } = await mountNodesPage([]);
     const text = wrapper.text();
     expect(text).toContain("Nodes");
     expect(text).toContain("Hostname");
@@ -105,7 +198,7 @@ describe("NodesPage i18n", () => {
   it("should render in Chinese", async () => {
     await addNodesTranslations("zh");
 
-    const wrapper = await mountNodesPage([]);
+    const { wrapper } = await mountNodesPage([]);
     const text = wrapper.text();
     expect(text).toContain("节点");
     expect(text).toContain("主机名");
@@ -119,7 +212,7 @@ describe("NodesPage identity column", () => {
   it("shows hostname and node id stacked in the same column", async () => {
     await addNodesTranslations("en");
 
-    const wrapper = await mountNodesPage([
+    const { wrapper } = await mountNodesPage([
       {
         nodeId: "n-a",
         hostname: "agent-a",
@@ -134,7 +227,7 @@ describe("NodesPage identity column", () => {
     expect(headers).not.toContain("Node ID");
     expect(headers).toHaveLength(8);
 
-    const identity = wrapper.get("tbody tr td");
+    const identity = wrapper.get("tbody tr.data-row td");
     expect(identity.get("a").text()).toBe("agent-a");
     expect(identity.get("a").attributes("href")).toBe("/nodes/n-a");
     expect(identity.get(".node-id").text()).toBe("n-a");
@@ -143,7 +236,7 @@ describe("NodesPage identity column", () => {
   it("shows localized accessible Raft badges and stale freshness independently", async () => {
     await addNodesTranslations("en");
 
-    const wrapper = await mountNodesPage([
+    const { wrapper } = await mountNodesPage([
       {
         nodeId: "n-a",
         hostname: "agent-a",
@@ -158,6 +251,100 @@ describe("NodesPage identity column", () => {
     expect(badge.text()).toBe("Voter");
     expect(badge.attributes("aria-label")).toBe("Raft role: Voter");
     expect(wrapper.get(".raft-role-cell").text()).toContain("STALE");
-    expect(wrapper.text()).toContain("FAILED");
+    const statePill = wrapper.get(".state-pill");
+    expect(statePill.text()).toBe("Failed");
+    expect(statePill.attributes("data-state")).toBe("FAILED");
+    expect(statePill.classes()).toContain("danger");
+    expect(statePill.classes()).not.toContain("ok");
+  });
+});
+
+describe("NodesPage cluster summary", () => {
+  it("shows membership and freshness counts without painting stale as healthy", async () => {
+    await addNodesTranslations("en");
+    const { wrapper } = await mountNodesPage(sampleNodes());
+
+    expect(wrapper.get('[data-stat="total"] .summary-value').text()).toBe("3");
+    expect(wrapper.get('[data-stat="alive"] .summary-value').text()).toBe("1");
+    expect(wrapper.get('[data-stat="suspect"] .summary-value').text()).toBe("1");
+    expect(wrapper.get('[data-stat="failed"] .summary-value').text()).toBe("1");
+    expect(wrapper.get('[data-stat="stale"] .summary-value').text()).toBe("2");
+    expect(wrapper.get('[data-stat="stale"] .summary-value').classes()).toContain("warn");
+    expect(wrapper.get('[data-stat="stale"] .summary-value').classes()).not.toContain("ok");
+    expect(wrapper.get('[role="status"]').text()).toContain("STALE");
+  });
+
+  it("filters by failed membership from the summary chips", async () => {
+    await addNodesTranslations("en");
+    const { wrapper } = await mountNodesPage(sampleNodes());
+
+    await wrapper.get('[data-stat="failed"]').trigger("click");
+    await wrapper.vm.$nextTick();
+
+    const rows = wrapper.findAll("tbody tr.data-row");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.text()).toContain("agent-c");
+    expect(wrapper.text()).toContain("Showing 1 of 3");
+  });
+
+  it("filters by hostname search", async () => {
+    await addNodesTranslations("en");
+    const { wrapper } = await mountNodesPage(sampleNodes());
+
+    await wrapper.get('input[name="search"]').setValue("agent-b");
+    await wrapper.vm.$nextTick();
+
+    const rows = wrapper.findAll("tbody tr.data-row");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.text()).toContain("agent-b");
+    expect(rows[0]?.text()).not.toContain("agent-a");
+  });
+});
+
+describe("NodesPage resources and processes", () => {
+  it("renders resource meters with numeric labels and threshold tones", async () => {
+    await addNodesTranslations("en");
+    const { wrapper } = await mountNodesPage(sampleNodes());
+
+    const cpu = wrapper.get('[data-resource="cpu"]');
+    expect(cpu.text()).toContain("12%");
+    expect(cpu.attributes("aria-label")).toContain("CPU");
+
+    const disk = wrapper.findAll('[data-resource="disk"]')[1];
+    expect(disk?.text()).toContain("91%");
+    expect(disk?.classes()).toContain("danger");
+    expect(disk?.classes()).not.toContain("ok");
+  });
+
+  it("shows compact process chips instead of a raw nested dump", async () => {
+    await addNodesTranslations("en");
+    const { wrapper } = await mountNodesPage(sampleNodes());
+
+    const rows = wrapper.findAll("tbody tr.data-row");
+    const firstRow = rows[0];
+    expect(firstRow?.text()).toContain("api");
+    expect(firstRow?.text()).toContain("worker");
+    expect(firstRow?.find(".proc-chip").exists()).toBe(true);
+    const staleChip = rows[2]?.get(".proc-chip");
+    expect(staleChip?.text()).toContain("sleep");
+    expect(staleChip?.classes()).toContain("warn");
+    expect(staleChip?.classes()).not.toContain("ok");
+  });
+});
+
+describe("NodesPage empty and navigation", () => {
+  it("explains an unfiltered empty cluster", async () => {
+    await addNodesTranslations("en");
+    const { wrapper } = await mountNodesPage([]);
+    expect(wrapper.text()).toContain("No agents have joined this cluster yet.");
+  });
+
+  it("opens the node detail route from a row click", async () => {
+    await addNodesTranslations("en");
+    const { wrapper, router } = await mountNodesPage(sampleNodes());
+    await wrapper.get("tbody tr.data-row").trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+    expect(router.currentRoute.value.path).toBe("/nodes/n-a");
   });
 });
