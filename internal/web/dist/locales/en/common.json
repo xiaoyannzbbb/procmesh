@@ -433,11 +433,20 @@
       "hostname": "Hostname",
       "nodeId": "Node ID",
       "state": "State",
+      "raftRole": "Raft role",
       "version": "Version",
       "resources": "Resources",
       "processes": "Processes",
       "freshness": "Freshness",
       "updated": "Updated"
+    },
+    "raftRole": {
+      "leader": "Leader",
+      "voter": "Voter",
+      "nonVoter": "Non-voter",
+      "notMember": "Not member",
+      "unknown": "Unknown",
+      "badgeLabel": "Raft role: {{role}}"
     }
   },
   "nodeDetail": {
@@ -486,7 +495,7 @@
       "modeLabel": "Editor mode",
       "mode": {
         "form": "Form",
-        "json": "JSON"
+        "yaml": "YAML"
       },
       "section": {
         "identity": "Identity",
@@ -612,17 +621,17 @@
       "reload": "Reload",
       "edit": "Edit config",
       "editTitle": "Edit process config",
-      "editHint": "Edit the ProcessSpec in the form or as JSON. Process ID and latest revision remain read-only when saved.",
+      "editHint": "Edit the ProcessSpec in the form or as YAML. Process ID and latest revision remain read-only when saved.",
       "processId": "Process ID",
       "latestRevision": "Latest Revision",
       "revision": "Revision {{revision}}",
       "readOnlyNote": "process_id and latest_revision are read-only.",
-      "specLabel": "ProcessSpec JSON",
+      "specLabel": "ProcessSpec YAML",
       "commentLabel": "Comment",
       "save": "Save changes",
       "saving": "Saving…",
       "unsavedConfirm": "Discard your unsaved configuration changes?",
-      "invalidJson": "Enter valid JSON.",
+      "invalidYaml": "Enter valid YAML.",
       "empty": "Not configured",
       "enabled": "Enabled",
       "disabled": "Disabled",
@@ -643,7 +652,7 @@
       "healthCheck": "Health check",
       "logPolicy": "Log policy",
       "resources": "Resource limits",
-      "fullJson": "View full JSON",
+      "fullYaml": "View full YAML",
       "sections": {
         "identity": "Identity",
         "execution": "Execution",
