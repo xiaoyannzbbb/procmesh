@@ -192,7 +192,6 @@ function toneForHealth(state: string): string {
             :data-state="node.state"
             :aria-label="t('nodes.state.badgeLabel', { state: stateLabel(node.state) })"
           >
-            <span class="status-dot" aria-hidden="true" />
             {{ stateLabel(node.state) }}
           </span>
         </div>
@@ -242,7 +241,6 @@ function toneForHealth(state: string): string {
                 :data-state="node.state"
                 :aria-label="t('nodes.state.badgeLabel', { state: stateLabel(node.state) })"
               >
-                <span class="status-dot" aria-hidden="true" />
                 {{ stateLabel(node.state) }}
               </span>
               <span v-else>—</span>
@@ -368,21 +366,18 @@ function toneForHealth(state: string): string {
               </td>
               <td>
                 <span v-if="proc.desired" class="state-pill" :class="toneForDesired(proc.desired)">
-                  <span class="status-dot" aria-hidden="true" />
                   {{ translateDesiredState(proc.desired) }}
                 </span>
                 <span v-else class="muted">—</span>
               </td>
               <td>
                 <span v-if="proc.observed" class="state-pill" :class="toneForObserved(proc.observed)">
-                  <span class="status-dot" aria-hidden="true" />
                   {{ translateObservedState(proc.observed) }}
                 </span>
                 <span v-else class="muted">—</span>
               </td>
               <td>
                 <span v-if="proc.health" class="state-pill" :class="toneForHealth(proc.health)">
-                  <span class="status-dot" aria-hidden="true" />
                   {{ translateHealthState(proc.health) }}
                 </span>
                 <span v-else class="muted">—</span>
@@ -564,19 +559,12 @@ a:not(.back):hover {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  border-radius: 999px;
+  border-radius: 3px;
   padding: 0.2rem 0.55rem;
   font-size: 0.75rem;
   font-weight: 650;
   line-height: 1.4;
   white-space: nowrap;
-}
-.status-dot {
-  width: 0.45rem;
-  height: 0.45rem;
-  border-radius: 999px;
-  background: currentColor;
-  flex: none;
 }
 .state-pill.ok {
   background: var(--color-live);
