@@ -16,9 +16,11 @@ import { newOperationId } from "../lib/opid";
 import { useMetricsClient, useNodeClient } from "../lib/rpc";
 import { session } from "../lib/session";
 import { useI18n } from "../lib/useI18n";
+import { useProcessState } from "../lib/useProcessState";
 import { formatPercent, mapNode, REMOVE_CONFIRM } from "./clusterView";
 
 const { t } = useI18n();
+const { translateDesiredState, translateObservedState, translateHealthState } = useProcessState();
 
 const POLL_MS = 5000;
 const HISTORY_POLL_MS = 60_000;
@@ -112,6 +114,68 @@ async function onRemove(): Promise<void> {
   actionError.value = "";
   await remove.mutateAsync(node.value.nodeId);
 }
+
+function stateLabel(state: string): string {
+  switch (state.toUpperCase()) {
+    case "ALIVE":
+      return t("nodes.state.alive");
+    case "SUSPECT":
+      return t("nodes.state.suspect");
+    case "FAILED":
+      return t("nodes.state.failed");
+    case "LEFT":
+      return t("nodes.state.left");
+    case "REMOVED":
+      return t("nodes.state.removed");
+    case "REVOKED":
+      return t("nodes.state.revoked");
+    default:
+      return t("nodes.state.unknown");
+  }
+}
+
+function stateTone(state: string): string {
+  switch (state.toUpperCase()) {
+    case "ALIVE":
+      return "ok";
+    case "SUSPECT":
+      return "warn";
+    case "FAILED":
+      return "danger";
+    default:
+      return "neutral";
+  }
+}
+
+function toneForDesired(state: string): string {
+  return state === "RUNNING" ? "ok" : "neutral";
+}
+
+function toneForObserved(state: string): string {
+  switch (state) {
+    case "RUNNING":
+      return "ok";
+    case "STARTING":
+    case "STOPPING":
+    case "BACKOFF":
+    case "EXITED":
+      return "warn";
+    case "FATAL":
+      return "danger";
+    default:
+      return "neutral";
+  }
+}
+
+function toneForHealth(state: string): string {
+  if (state === "HEALTHY") {
+    return "ok";
+  }
+  if (state === "UNHEALTHY") {
+    return "danger";
+  }
+  return "neutral";
+}
 </script>
 
 <template>
@@ -119,7 +183,19 @@ async function onRemove(): Promise<void> {
     <div class="head">
       <div>
         <RouterLink class="back" to="/nodes">{{ t("nodeDetail.back") }}</RouterLink>
-        <h1>{{ node?.hostname || id }}</h1>
+        <div class="heading-row">
+          <h1>{{ node?.hostname || id }}</h1>
+          <span
+            v-if="node?.state"
+            class="state-pill"
+            :class="stateTone(node.state)"
+            :data-state="node.state"
+            :aria-label="t('nodes.state.badgeLabel', { state: stateLabel(node.state) })"
+          >
+            <span class="status-dot" aria-hidden="true" />
+            {{ stateLabel(node.state) }}
+          </span>
+        </div>
       </div>
       <button v-if="canRemove && node" type="button" class="btn btn-danger" :disabled="removing" @click="onRemove">
         {{ t("nodeDetail.removeAgent") }}
@@ -158,7 +234,19 @@ async function onRemove(): Promise<void> {
           </div>
           <div>
             <dt>{{ t("nodeDetail.node.status") }}</dt>
-            <dd>{{ node.state || "—" }}</dd>
+            <dd>
+              <span
+                v-if="node.state"
+                class="state-pill"
+                :class="stateTone(node.state)"
+                :data-state="node.state"
+                :aria-label="t('nodes.state.badgeLabel', { state: stateLabel(node.state) })"
+              >
+                <span class="status-dot" aria-hidden="true" />
+                {{ stateLabel(node.state) }}
+              </span>
+              <span v-else>—</span>
+            </dd>
           </div>
           <div>
             <dt>{{ t("nodeDetail.node.bootId") }}</dt>
@@ -278,9 +366,27 @@ async function onRemove(): Promise<void> {
                   {{ proc.name }}
                 </RouterLink>
               </td>
-              <td>{{ proc.desired || "—" }}</td>
-              <td>{{ proc.observed || "—" }}</td>
-              <td>{{ proc.health || "—" }}</td>
+              <td>
+                <span v-if="proc.desired" class="state-pill" :class="toneForDesired(proc.desired)">
+                  <span class="status-dot" aria-hidden="true" />
+                  {{ translateDesiredState(proc.desired) }}
+                </span>
+                <span v-else class="muted">—</span>
+              </td>
+              <td>
+                <span v-if="proc.observed" class="state-pill" :class="toneForObserved(proc.observed)">
+                  <span class="status-dot" aria-hidden="true" />
+                  {{ translateObservedState(proc.observed) }}
+                </span>
+                <span v-else class="muted">—</span>
+              </td>
+              <td>
+                <span v-if="proc.health" class="state-pill" :class="toneForHealth(proc.health)">
+                  <span class="status-dot" aria-hidden="true" />
+                  {{ translateHealthState(proc.health) }}
+                </span>
+                <span v-else class="muted">—</span>
+              </td>
               <td>{{ proc.activeRevision }} / {{ proc.latestRevision }}</td>
               <td>
                 <FreshnessBadge :status="proc.freshness" />
@@ -308,8 +414,15 @@ async function onRemove(): Promise<void> {
   justify-content: space-between;
   gap: 1rem;
 }
+.heading-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-top: 0.25rem;
+}
 h1 {
-  margin: 0.25rem 0 0;
+  margin: 0;
   font-size: 1.35rem;
   font-weight: 650;
 }
@@ -442,5 +555,43 @@ a:not(.back):hover {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 0.85rem;
+}
+.table td {
+  vertical-align: middle;
+  padding: 0.5rem 0.4rem;
+}
+.state-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.75rem;
+  font-weight: 650;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.status-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: currentColor;
+  flex: none;
+}
+.state-pill.ok {
+  background: var(--color-live);
+  color: var(--color-live-fg);
+}
+.state-pill.warn {
+  background: var(--color-stale);
+  color: var(--color-stale-fg);
+}
+.state-pill.neutral {
+  background: var(--color-unknown);
+  color: var(--color-unknown-fg);
+}
+.state-pill.danger {
+  background: color-mix(in srgb, var(--color-danger) 14%, var(--color-card));
+  color: var(--color-danger);
 }
 </style>
