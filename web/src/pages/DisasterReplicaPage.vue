@@ -8,6 +8,7 @@ import FreshnessBadge from "../components/FreshnessBadge.vue";
 import { LIVE, STALE, UNKNOWN, formatAge, type Freshness } from "../lib/freshness";
 import { newOperationId } from "../lib/opid";
 import { useReplicationClient } from "../lib/rpc";
+import { timezoneLabel, timezonePickerOptions } from "../lib/timezones";
 import { session } from "../lib/session";
 import { useI18n } from "../lib/useI18n";
 import { formatRemoteError } from "./processView";
@@ -115,6 +116,7 @@ const { t } = useI18n();
 const POLL_MS = 5000;
 const PREVIEW_PANEL_STYLE = { width: "min(100%, 56rem)", maxHeight: "90vh" } as const;
 const previewTitleId = useId();
+const timezoneHintId = useId();
 const client = useReplicationClient();
 const queryClient = useQueryClient();
 const actionError = ref("");
@@ -531,6 +533,8 @@ function showNextRunHint(
 ): boolean {
   return Boolean(policy?.enabled && (policy.scheduleCron ?? "").trim());
 }
+
+const timezonePicker = computed(() => timezonePickerOptions(draft.value?.timezone));
 
 function warningLabel(code: string): string {
   if (code === "single-node-no-replica") {
@@ -1247,15 +1251,35 @@ async function onStartRun(): Promise<void> {
               <div>
                 <dt>{{ t("replica.timezone") }}</dt>
                 <dd>
-                  <input
+                  <select
                     v-model="draft.timezone"
                     class="input"
-                    type="text"
                     data-field="timezone"
-                    autocomplete="off"
                     :aria-label="t('replica.timezone')"
+                    :aria-describedby="timezoneHintId"
                     :disabled="acting"
-                  />
+                  >
+                    <optgroup :label="t('replica.timezoneSuggested')">
+                      <option :value="timezonePicker.browser">
+                        {{ t("replica.timezoneBrowser", { zone: timezonePicker.browser }) }}
+                      </option>
+                      <option
+                        v-for="zone in timezonePicker.suggested"
+                        :key="`suggested-${zone}`"
+                        :value="zone"
+                      >
+                        {{ timezoneLabel(zone) }}
+                      </option>
+                    </optgroup>
+                    <optgroup :label="t('replica.timezoneAll')">
+                      <option v-for="zone in timezonePicker.remaining" :key="zone" :value="zone">
+                        {{ timezoneLabel(zone) }}
+                      </option>
+                    </optgroup>
+                  </select>
+                  <p :id="timezoneHintId" class="muted preview-hint" data-timezone-hint>
+                    {{ t("replica.timezoneHint") }}
+                  </p>
                 </dd>
               </div>
               <div>

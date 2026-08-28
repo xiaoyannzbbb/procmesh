@@ -70,6 +70,10 @@ const replicaI18n = {
   schedule: "Schedule",
   scheduleCron: "Cron",
   timezone: "Timezone",
+  timezoneHint: "Cron and day-based retention use this timezone. New policies default to this browser.",
+  timezoneSuggested: "Suggested",
+  timezoneAll: "All timezones",
+  timezoneBrowser: "This browser · {{zone}}",
   nextRun: "Next run",
   manualOnly: "Manual only",
   scheduleDisabled: "Schedule disabled",
@@ -838,6 +842,44 @@ describe("DisasterReplicaPage", () => {
       }),
     );
     expect(wrapper.get('[data-field="schedule-cron"]').exists()).toBe(true);
+    const timezone = wrapper.get('[data-field="timezone"]');
+    expect(timezone.element.tagName).toBe("SELECT");
+    expect((timezone.element as HTMLSelectElement).value).toBeTruthy();
+    expect(timezone.text()).toMatch(/This browser|UTC|Asia\//);
+  });
+
+  it("lets the operator pick a timezone from IANA options", async () => {
+    const { wrapper } = await mountPage({
+      draft: { ...policyDraft, scheduleCron: "0 2 * * *", timezone: "Asia/Shanghai" },
+    });
+    await wrapper.get('[data-action="generate"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+    const timezone = wrapper.get("[data-preview-dialog]").get('[data-field="timezone"]');
+    expect((timezone.element as HTMLSelectElement).value).toBe("Asia/Shanghai");
+    const optionValues = timezone.findAll("option").map((option) => option.attributes("value"));
+    expect(new Set(optionValues).size).toBe(optionValues.length);
+    await timezone.setValue("UTC");
+    await wrapper.vm.$nextTick();
+    expect((timezone.element as HTMLSelectElement).value).toBe("UTC");
+    expect(wrapper.get("[data-preview-dialog]").get("[data-next-run]").text()).toContain("UTC");
+  });
+
+  it("keeps timezone editable without cron because retention still uses it", async () => {
+    const { wrapper } = await mountPage({
+      draft: { ...policyDraft, scheduleCron: "0 2 * * *", timezone: "Asia/Shanghai" },
+    });
+    await wrapper.get('[data-action="generate"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+    const preview = wrapper.get("[data-preview-dialog]");
+    await preview.get('[data-field="schedule-cron"]').setValue("");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+    const updatedPreview = wrapper.get("[data-preview-dialog]");
+    expect(updatedPreview.get("[data-next-run]").text()).toMatch(/manual/i);
+    expect(updatedPreview.get("[data-timezone-hint]").text()).toMatch(/retention/i);
+    expect((updatedPreview.get('[data-field="timezone"]').element as HTMLSelectElement).disabled).toBe(false);
   });
 
   it("shows manual-only when cron is cleared in preview", async () => {

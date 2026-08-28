@@ -22,6 +22,7 @@ import { withTarget } from "../lib/headers";
 import { newOperationId } from "../lib/opid";
 import { useBackupClient, useClusterBackupClient, useNodeClient, useProcessClient } from "../lib/rpc";
 import { session } from "../lib/session";
+import { browserTimezone, timezoneLabel, timezonePickerOptions } from "../lib/timezones";
 import { useI18n } from "../lib/useI18n";
 import { formatRemoteError, rowsFromProcessViews } from "./processView";
 
@@ -148,6 +149,7 @@ const policyConcurrency = ref("0");
 const policyUnavailable = ref<UnavailablePolicy>("RECORD_AND_CONTINUE");
 const policyRevision = ref(0n);
 const selectedRunId = ref("");
+const policyTimezonePicker = computed(() => timezonePickerOptions(policyTimezone.value));
 
 async function collectAlivePeerIds(): Promise<string[]> {
   try {
@@ -366,11 +368,7 @@ const restoreReady = computed(() => {
 });
 
 function defaultTimezone(): string {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  } catch {
-    return "UTC";
-  }
+  return browserTimezone();
 }
 
 function mutationMeta() {
@@ -1860,8 +1858,31 @@ async function onRetryFailed(): Promise<void> {
           </label>
           <label class="field">
             {{ t("backup.timezone") }}
-            <input v-model="policyTimezone" class="input" name="timezone" type="text" autocomplete="off" />
-            <span class="field-hint">{{ t("backup.timezoneHint") }}</span>
+            <select
+              v-model="policyTimezone"
+              class="input"
+              name="timezone"
+              aria-describedby="backup-timezone-hint"
+            >
+              <optgroup :label="t('backup.timezoneSuggested')">
+                <option :value="policyTimezonePicker.browser">
+                  {{ t("backup.timezoneBrowser", { zone: policyTimezonePicker.browser }) }}
+                </option>
+                <option
+                  v-for="zone in policyTimezonePicker.suggested"
+                  :key="`suggested-${zone}`"
+                  :value="zone"
+                >
+                  {{ timezoneLabel(zone) }}
+                </option>
+              </optgroup>
+              <optgroup :label="t('backup.timezoneAll')">
+                <option v-for="zone in policyTimezonePicker.remaining" :key="zone" :value="zone">
+                  {{ timezoneLabel(zone) }}
+                </option>
+              </optgroup>
+            </select>
+            <span id="backup-timezone-hint" class="field-hint">{{ t("backup.timezoneHint") }}</span>
           </label>
         </fieldset>
 

@@ -991,6 +991,9 @@ declare module "i18next" {
         'backup.scheduleHint': string
         'backup.timezone': string
         'backup.timezoneHint': string
+        'backup.timezoneSuggested': string
+        'backup.timezoneAll': string
+        'backup.timezoneBrowser': string
         'backup.targetSet': string
         'backup.targetSelector': string
         'backup.targetSelectorHint': string
@@ -1059,6 +1062,10 @@ declare module "i18next" {
         'replica.schedule': string
         'replica.scheduleCron': string
         'replica.timezone': string
+        'replica.timezoneHint': string
+        'replica.timezoneSuggested': string
+        'replica.timezoneAll': string
+        'replica.timezoneBrowser': string
         'replica.nextRun': string
         'replica.manualOnly': string
         'replica.scheduleDisabled': string

@@ -66,6 +66,10 @@ const backupI18n = {
   retentionMaxBytes: "Max bytes",
   scheduleCron: "Cron",
   timezone: "Timezone",
+  timezoneHint: "Cron and day-based retention use this timezone. New policies default to this browser.",
+  timezoneSuggested: "Suggested",
+  timezoneAll: "All timezones",
+  timezoneBrowser: "This browser · {{zone}}",
   targetSet: "Target set",
   targetSelector: "Target selector",
   targetNodeIds: "Target IDs",
@@ -578,9 +582,14 @@ describe("BackupPage", () => {
     expect(sinks).not.toContain("peer");
     expect(form.find('input[name="accessKey"]').exists()).toBe(false);
     expect(form.find('input[name="secretKey"]').exists()).toBe(false);
+    const timezone = form.get('select[name="timezone"]');
+    expect(timezone.element.tagName).toBe("SELECT");
+    expect((timezone.element as HTMLSelectElement).value).toBeTruthy();
+    const timezoneValues = timezone.findAll("option").map((option) => option.attributes("value"));
+    expect(new Set(timezoneValues).size).toBe(timezoneValues.length);
     await form.get('input[name="policyName"]').setValue("nightly");
     await form.get('input[name="scheduleCron"]').setValue("0 2 * * *");
-    await form.get('input[name="timezone"]').setValue("UTC");
+    await timezone.setValue("Asia/Shanghai");
     await form.get('input[name="retentionKeepLast"]').setValue("7");
     await form.get('input[name="retentionKeepDays"]').setValue("30");
     await form.trigger("submit");
@@ -593,7 +602,7 @@ describe("BackupPage", () => {
           targetSelector: "ALL_ADMITTED",
           sink: "fs",
           scheduleCron: "0 2 * * *",
-          timezone: "UTC",
+          timezone: "Asia/Shanghai",
           retentionKeepLast: 7,
           retentionKeepDays: 30,
         }),
