@@ -1649,7 +1649,85 @@ func TestDisasterReplicationAPI_RetryFailedRoutes(t *testing.T) {
 	}
 }
 
-func TestDisasterReplicationAPI_RetryFailedRoutesExcludesTasksWithoutFrozenRefs(t *testing.T) {
+func TestDisasterReplicationAPI_RetryFailedRoutes_RecaptureAndCopy(t *testing.T) {
+	api, state, authSvc := setupMinimalAPI(t)
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	state.ReplicationRuns["run-retry-mix"] = control.ClusterBackupRun{
+		RunID: "run-retry-mix", PolicyID: "policy-retry-mix", PolicyRevision: 1, Status: "PARTIAL",
+	}
+	copyTask := control.ClusterBackupTask{
+		RunID: "run-retry-mix", TaskID: "task-copy", NodeID: "node-2", SourceNodeID: "node-1",
+		SnapshotID: "snap-copy", SHA256: sha, Status: "FAILED",
+	}
+	captureTask := control.ClusterBackupTask{
+		RunID: "run-retry-mix", TaskID: "task-capture", NodeID: "node-3", SourceNodeID: "node-1",
+		Status: "FAILED",
+	}
+	succeededTask := control.ClusterBackupTask{
+		RunID: "run-retry-mix", TaskID: "task-ok", NodeID: "node-2", SourceNodeID: "node-1",
+		SnapshotID: "snap-ok", SHA256: strings.Repeat("b", 64), Status: "SUCCEEDED",
+	}
+	state.ReplicationTasks["run-retry-mix:task-copy"] = copyTask
+	state.ReplicationTasks["run-retry-mix:task-capture"] = captureTask
+	state.ReplicationTasks["run-retry-mix:task-ok"] = succeededTask
+	api.Now = func() time.Time { return time.Unix(1_800_000_000, 0) }
+	api.LeaderTerm = func() uint64 { return 4 }
+	api.ApplyFn = func(cmd control.Command, _ time.Duration) error {
+		return state.Apply(cmd, api.Now())
+	}
+	var dispatched backup.FrozenReplicationRun
+	api.DispatchRun = func(run backup.FrozenReplicationRun) { dispatched = run }
+
+	resp, err := api.RetryFailedRoutes(context.Background(), bearerReq(sid, &procmeshv1.RetryFailedRoutesRequest{
+		RunId: "run-retry-mix",
+		Meta:  &procmeshv1.MutationMeta{OperationId: "op-retry-recapture"},
+	}))
+	if err != nil {
+		t.Fatalf("RetryFailedRoutes failed: %v", err)
+	}
+	if resp.Msg.RetriedCount != 2 {
+		t.Fatalf("retried count = %d, want 2 (copy-failed + capture-failed)", resp.Msg.RetriedCount)
+	}
+
+	gotCopy := state.ReplicationTasks["run-retry-mix:task-copy"]
+	if gotCopy.Status != "PENDING" || gotCopy.SnapshotID != "snap-copy" || gotCopy.SHA256 != sha {
+		t.Fatalf("copy-failed task after retry = %+v, want PENDING with frozen snapshot", gotCopy)
+	}
+	gotCapture := state.ReplicationTasks["run-retry-mix:task-capture"]
+	if gotCapture.Status != "PENDING" || gotCapture.SnapshotID != "" || gotCapture.SHA256 != "" {
+		t.Fatalf("capture-failed task after retry = %+v, want PENDING empty snapshot", gotCapture)
+	}
+	gotOK := state.ReplicationTasks["run-retry-mix:task-ok"]
+	if gotOK.Status != "SUCCEEDED" || gotOK.SnapshotID != "snap-ok" {
+		t.Fatalf("succeeded task after retry = %+v, want untouched SUCCEEDED", gotOK)
+	}
+
+	if dispatched.RunID != "run-retry-mix" || dispatched.PolicyID != "policy-retry-mix" || dispatched.LeaderTerm != 4 {
+		t.Fatalf("dispatched = %+v, want run-retry-mix policy-retry-mix term=4", dispatched)
+	}
+	byID := make(map[string]backup.FrozenReplicationTask, len(dispatched.Tasks))
+	for _, task := range dispatched.Tasks {
+		byID[task.TaskID] = task
+	}
+	if len(byID) != 2 {
+		t.Fatalf("dispatched tasks = %+v, want copy + recapture only", dispatched.Tasks)
+	}
+	if got, ok := byID["task-copy"]; !ok || got.Status != "PENDING" || got.SnapshotID != "snap-copy" || got.SHA256 != sha || got.SourceNodeID != "node-1" || got.TargetNodeID != "node-2" {
+		t.Fatalf("dispatched copy task = %+v, want PENDING frozen snapshot", got)
+	}
+	if got, ok := byID["task-capture"]; !ok || got.Status != "PENDING" || got.SnapshotID != "" || got.SHA256 != "" || got.SourceNodeID != "node-1" || got.TargetNodeID != "node-3" {
+		t.Fatalf("dispatched recapture task = %+v, want PENDING empty snapshot", got)
+	}
+	if _, ok := byID["task-ok"]; ok {
+		t.Fatalf("SUCCEEDED task must not be in frozen dispatch: %+v", dispatched.Tasks)
+	}
+}
+
+func TestDisasterReplicationAPI_RetryFailedRoutesIncludesTasksWithoutFrozenRefs(t *testing.T) {
 	api, _, authSvc := setupMinimalAPI(t)
 	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
 	if err != nil {
@@ -1666,8 +1744,8 @@ func TestDisasterReplicationAPI_RetryFailedRoutesExcludesTasksWithoutFrozenRefs(
 	if err != nil {
 		t.Fatalf("RetryFailedRoutes failed: %v", err)
 	}
-	if resp.Msg.RetriedCount != 1 {
-		t.Fatalf("retried count = %d, want 1 eligible frozen route", resp.Msg.RetriedCount)
+	if resp.Msg.RetriedCount != 2 {
+		t.Fatalf("retried count = %d, want 2 including empty-snapshot route", resp.Msg.RetriedCount)
 	}
 }
 

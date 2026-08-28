@@ -789,11 +789,7 @@ func (d *DisasterReplicationAPI) RetryFailedRoutes(ctx context.Context, req *con
 	}
 	retriedCount := 0
 	for _, task := range st.ReplicationTasks {
-		if task.RunID == run.RunID &&
-			(task.Status == "FAILED" || task.Status == "TIMEOUT" ||
-				task.Status == "UNAVAILABLE" || task.Status == "CONFIG_MISSING" ||
-				task.Status == "RETENTION_FAILED" || task.Status == "SKIPPED") &&
-			task.SnapshotID != "" && task.SHA256 != "" {
+		if task.RunID == run.RunID && retryableReplicationFailure(task.Status) {
 			retriedCount++
 		}
 	}
@@ -825,9 +821,10 @@ func (d *DisasterReplicationAPI) RetryFailedRoutes(ctx context.Context, req *con
 		run = st.ReplicationRuns[run.RunID]
 		frozen := make([]backup.FrozenReplicationTask, 0)
 		for _, task := range st.ReplicationTasks {
-			if task.RunID == run.RunID && task.Status == "PENDING" && task.SnapshotID != "" && task.SHA256 != "" {
-				frozen = append(frozen, backup.FrozenReplicationTask{TaskID: task.TaskID, SourceNodeID: task.SourceNodeID, TargetNodeID: task.NodeID, SnapshotID: task.SnapshotID, SHA256: task.SHA256, Status: task.Status})
+			if task.RunID != run.RunID || !dispatchableRetriedReplicationTask(task) {
+				continue
 			}
+			frozen = append(frozen, backup.FrozenReplicationTask{TaskID: task.TaskID, SourceNodeID: task.SourceNodeID, TargetNodeID: task.NodeID, SnapshotID: task.SnapshotID, SHA256: task.SHA256, Status: task.Status})
 		}
 		if len(frozen) > 0 {
 			d.DispatchRun(backup.FrozenReplicationRun{RunID: run.RunID, PolicyID: run.PolicyID, PolicyRevision: run.PolicyRevision, LeaderTerm: term, LeaseExpiresUnix: run.LeaseUntilUnix, MaxConcurrency: run.MaxConcurrency, Tasks: frozen})
@@ -836,6 +833,24 @@ func (d *DisasterReplicationAPI) RetryFailedRoutes(ctx context.Context, req *con
 	return connect.NewResponse(&procmeshv1.RetryFailedRoutesResponse{
 		RetriedCount: int32(retriedCount),
 	}), nil
+}
+
+func retryableReplicationFailure(status string) bool {
+	switch status {
+	case "FAILED", "TIMEOUT", "UNAVAILABLE", "CONFIG_MISSING", "RETENTION_FAILED", "SKIPPED":
+		return true
+	default:
+		return false
+	}
+}
+
+func dispatchableRetriedReplicationTask(task control.ClusterBackupTask) bool {
+	if task.Status != "PENDING" {
+		return false
+	}
+	complete := task.SnapshotID != "" && task.SHA256 != ""
+	empty := task.SnapshotID == "" && task.SHA256 == ""
+	return complete || empty
 }
 
 func (d *DisasterReplicationAPI) audit(ctx context.Context, rec controlMutation, err error) {
