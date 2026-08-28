@@ -542,6 +542,33 @@ func TestFSM_BeginReplicationTask(t *testing.T) {
 		return state.UpdateTask(control.UpdateTaskBody{OperationID: "begin", Task: task, LeaderTerm: term, Replication: true})
 	}
 
+	t.Run("terminal update does not blank captured snapshot", func(t *testing.T) {
+		state := control.NewState()
+		state.ReplicationRuns["run"] = control.ClusterBackupRun{RunID: "run", PolicyID: "policy", PolicyRevision: 3, Status: "RUNNING", LeaseUntilUnix: now.Add(time.Minute).Unix()}
+		state.ReplicationRunTerms["run"] = 7
+		state.ReplicationTasks["run:task"] = control.ClusterBackupTask{
+			RunID: "run", TaskID: "task", SourceNodeID: "source", NodeID: "target", Status: "PENDING", LeaderTerm: 7,
+		}
+		if err := begin(state, 7, state.ReplicationTasks["run:task"]); err != nil {
+			t.Fatal(err)
+		}
+		frozen := state.ReplicationTasks["run:task"]
+		frozen.SnapshotID, frozen.SHA256 = "snapshot", sha
+		if err := begin(state, 7, frozen); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.UpdateTask(control.UpdateTaskBody{
+			OperationID: "fail-empty", LeaderTerm: 7, Replication: true,
+			Task: control.ClusterBackupTask{RunID: "run", TaskID: "task", SourceNodeID: "source", NodeID: "target", Status: "UNAVAILABLE", ErrorCode: "UNAVAILABLE", UpdatedUnix: now.Unix()},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		got := state.ReplicationTasks["run:task"]
+		if got.Status != "UNAVAILABLE" || got.SnapshotID != "snapshot" || got.SHA256 != sha {
+			t.Fatalf("blanked captured snapshot: %+v", got)
+		}
+	})
+
 	t.Run("allows empty snapshot pending capture", func(t *testing.T) {
 		state := control.NewState()
 		state.ReplicationRuns["run"] = control.ClusterBackupRun{RunID: "run", PolicyID: "policy", PolicyRevision: 3, Status: "RUNNING", LeaseUntilUnix: now.Add(time.Minute).Unix()}

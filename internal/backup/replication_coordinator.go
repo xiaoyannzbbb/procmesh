@@ -183,11 +183,46 @@ func (c *ReplicationCoordinator) DispatchRun(ctx context.Context, run FrozenRepl
 					return
 				}
 				status, code, summary := ClassifyReplicationFailure(err, leaseCtx.Err())
-				_ = c.Control.UpdateReplicationTask(ctx, ReplicationTaskUpdate{RunID: req.RunID, TaskID: req.TaskID, SourceNodeID: req.SourceNodeID, TargetNodeID: req.TargetNodeID, SnapshotID: req.SnapshotID, SHA256: req.SHA256, Status: status, ErrorCode: code, ErrorSummary: summary, LeaderTerm: req.LeaderTerm})
+				snapshotID, sha256 := replicationIdentityFromDispatch(err, req.SnapshotID, req.SHA256)
+				_ = c.Control.UpdateReplicationTask(ctx, ReplicationTaskUpdate{RunID: req.RunID, TaskID: req.TaskID, SourceNodeID: req.SourceNodeID, TargetNodeID: req.TargetNodeID, SnapshotID: snapshotID, SHA256: sha256, Status: status, ErrorCode: code, ErrorSummary: summary, LeaderTerm: req.LeaderTerm})
 			}
 		}()
 	}
 	wg.Wait()
+}
+
+func replicationIdentityFromDispatch(err error, fallbackID, fallbackSHA string) (snapshotID, sha256 string) {
+	snapshotID, sha256 = fallbackID, fallbackSHA
+	var captured *CapturedReplicationError
+	if errors.As(err, &captured) {
+		if captured.SnapshotID != "" {
+			snapshotID = captured.SnapshotID
+		}
+		if captured.SHA256 != "" {
+			sha256 = captured.SHA256
+		}
+	}
+	if snap, sha := SnapshotIdentityFromConnectError(err); snap != "" {
+		snapshotID, sha256 = snap, sha
+	}
+	return snapshotID, sha256
+}
+
+func SnapshotIdentityFromConnectError(err error) (snapshotID, sha256 string) {
+	var connectErr *connect.Error
+	if !errors.As(err, &connectErr) {
+		return "", ""
+	}
+	for _, detail := range connectErr.Details() {
+		value, detailErr := detail.Value()
+		if detailErr != nil {
+			continue
+		}
+		if resp, ok := value.(*procmeshv1.ReplicateSnapshotResponse); ok {
+			return resp.GetSnapshotId(), resp.GetSha256()
+		}
+	}
+	return "", ""
 }
 
 func ClassifyReplicationFailure(err, contextErr error) (status, code, summary string) {

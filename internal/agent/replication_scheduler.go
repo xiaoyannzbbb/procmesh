@@ -354,7 +354,11 @@ type peerReplicationForwarder interface {
 	PeerReplication(context.Context, api.Route) (procmeshv1connect.PeerReplicationServiceClient, error)
 }
 
-type localReplicationDispatcher struct{ runtime *rpcRuntime }
+type localReplicationDispatcher struct {
+	runtime   *rpcRuntime
+	fwd       peerReplicationForwarder
+	sourceRPC func(nodeID string) string
+}
 
 func (d localReplicationDispatcher) DispatchReplicationTask(ctx context.Context, task backup.ReplicationTaskRequest) error {
 	if d.runtime == nil || d.runtime.backup == nil {
@@ -393,21 +397,41 @@ func (d localReplicationDispatcher) captureLocalReplicationSnapshot(ctx context.
 	return nil
 }
 
+func (d localReplicationDispatcher) sourceAddr(nodeID string) string {
+	if d.sourceRPC != nil {
+		return d.sourceRPC(nodeID)
+	}
+	if d.runtime == nil {
+		return ""
+	}
+	for _, member := range d.runtime.memberList() {
+		if member.NodeID == nodeID {
+			return member.RPCAddress
+		}
+	}
+	return ""
+}
+
+func (d localReplicationDispatcher) peerForwarder() peerReplicationForwarder {
+	if d.fwd != nil {
+		return d.fwd
+	}
+	if d.runtime != nil {
+		return d.runtime.fwd
+	}
+	return nil
+}
+
 func (d localReplicationDispatcher) dispatchRemoteReplicationTask(ctx context.Context, task backup.ReplicationTaskRequest) error {
 	captured := task
 	var last error
 	for range 80 {
-		addr := ""
-		for _, member := range d.runtime.memberList() {
-			if member.NodeID == task.SourceNodeID {
-				addr = member.RPCAddress
-				break
-			}
-		}
-		if addr == "" || d.runtime.fwd == nil {
+		addr := d.sourceAddr(task.SourceNodeID)
+		fwd := d.peerForwarder()
+		if addr == "" || fwd == nil {
 			last = errcode.E(errcode.UNAVAILABLE, "source agent rpc unavailable")
 		} else {
-			client, err := d.runtime.fwd.PeerReplication(ctx, api.Route{NodeID: task.SourceNodeID, RPC: addr})
+			client, err := fwd.PeerReplication(ctx, api.Route{NodeID: task.SourceNodeID, RPC: addr})
 			if err != nil {
 				last = err
 			} else {
@@ -457,26 +481,17 @@ func (d localReplicationDispatcher) finishReplicationTask(ctx context.Context, t
 		RunID: task.RunID, TaskID: task.TaskID, SourceNodeID: task.SourceNodeID, TargetNodeID: task.TargetNodeID,
 		SnapshotID: task.SnapshotID, SHA256: task.SHA256, Status: status, ErrorCode: code, ErrorSummary: summary, LeaderTerm: task.LeaderTerm,
 	}); updateErr != nil {
-		return updateErr
+		return &backup.CapturedReplicationError{SnapshotID: task.SnapshotID, SHA256: task.SHA256, Err: updateErr}
 	}
 	return &backup.TaskOutcomeError{Status: status}
 }
 
 func capturedSnapshotFromError(err error) (snapshotID, sha256 string) {
-	var connectErr *connect.Error
-	if !errors.As(err, &connectErr) {
-		return "", ""
+	var captured *backup.CapturedReplicationError
+	if errors.As(err, &captured) && captured.SnapshotID != "" {
+		return captured.SnapshotID, captured.SHA256
 	}
-	for _, detail := range connectErr.Details() {
-		value, detailErr := detail.Value()
-		if detailErr != nil {
-			continue
-		}
-		if resp, ok := value.(*procmeshv1.ReplicateSnapshotResponse); ok {
-			return resp.GetSnapshotId(), resp.GetSha256()
-		}
-	}
-	return "", ""
+	return backup.SnapshotIdentityFromConnectError(err)
 }
 
 func (r *rpcRuntime) authorizeReplicationTask(leaderNodeID string, msg *procmeshv1.ReplicateSnapshotRequest) error {

@@ -155,6 +155,75 @@ func TestReplicationCoordinator_BeginsEmptySnapshotCapturePending(t *testing.T) 
 	}
 }
 
+func TestReplicationCoordinator_DispatchFallbackKeepsCapturedSnapshot(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	fsm := control.NewFSM()
+	for _, nodeID := range []string{"source", "target"} {
+		applyReplicationFSMCommand(t, fsm, now, control.CmdMemberPut, control.MemberPutBody{NodeID: nodeID, Status: control.MemberAdmitted})
+	}
+	applyReplicationFSMCommand(t, fsm, now, control.CmdReplicationPolicyPut, control.ReplicationPolicyPutBody{
+		OperationID: "policy", PolicyID: "policy", Name: "policy", Enabled: true,
+		SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"source"}, ReplicaFactor: 1,
+		Routes:  []control.ReplicationRoute{{SourceNodeID: "source", TargetNodeIDs: []string{"target"}}},
+		Trigger: "MANUAL", ExpectedRevision: -1,
+	})
+	run := control.ClusterBackupRun{
+		RunID: "run", PolicyID: "policy", PolicyRevision: 1, TargetNodeIDs: []string{"source"}, Status: "RUNNING",
+		CreatedUnix: now.Unix(), StartedUnix: now.Unix(), LeaseUntilUnix: now.Add(time.Minute).Unix(),
+	}
+	task := control.ClusterBackupTask{RunID: run.RunID, TaskID: "task", SourceNodeID: "source", NodeID: "target", Status: "PENDING"}
+	applyReplicationFSMCommand(t, fsm, now, control.CmdBackupRunCreate, control.CreateRunBody{OperationID: "create", Run: run, Tasks: []control.ClusterBackupTask{task}, LeaderTerm: 7, Replication: true})
+
+	controlPlane := &replicationFSMControl{fsm: fsm, now: now}
+	dispatcher := replicationDispatcherFunc(func(_ context.Context, request backup.ReplicationTaskRequest) error {
+		if err := controlPlane.BeginReplicationTask(context.Background(), backup.ReplicationTaskUpdate{
+			RunID: request.RunID, TaskID: request.TaskID, SourceNodeID: request.SourceNodeID, TargetNodeID: request.TargetNodeID,
+			SnapshotID: "snap-captured", SHA256: sha, Status: "RUNNING", LeaderTerm: request.LeaderTerm,
+		}); err != nil {
+			return err
+		}
+		got := fsm.View().ReplicationTasks[request.RunID+":"+request.TaskID]
+		if got.SnapshotID != "snap-captured" || got.SHA256 != sha {
+			return fmt.Errorf("dispatcher did not store snapshot: %+v", got)
+		}
+		return errcode.E(errcode.UNAVAILABLE, "copy failed after capture")
+	})
+	coordinator := backup.NewReplicationCoordinator(backup.ReplicationCoordinatorConfig{Control: controlPlane, Dispatcher: dispatcher, Now: func() time.Time { return now }})
+	coordinator.DispatchRun(context.Background(), backup.FrozenReplicationRun{
+		RunID: run.RunID, PolicyID: run.PolicyID, PolicyRevision: run.PolicyRevision, LeaderTerm: 7,
+		LeaseExpiresUnix: run.LeaseUntilUnix,
+		Tasks:            []backup.FrozenReplicationTask{{TaskID: task.TaskID, SourceNodeID: task.SourceNodeID, TargetNodeID: task.NodeID, Status: task.Status}},
+	})
+	got := fsm.View().ReplicationTasks[run.RunID+":"+task.TaskID]
+	if got.SnapshotID != "snap-captured" || got.SHA256 != sha {
+		t.Fatalf("coordinator cleared captured snapshot: %+v", got)
+	}
+	if got.Status != "UNAVAILABLE" && got.Status != "FAILED" {
+		t.Fatalf("status=%s, want UNAVAILABLE or FAILED", got.Status)
+	}
+}
+
+func TestReplicationCoordinator_DispatchFallbackUsesCapturedErrorIdentity(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	controlPlane := &replicationControlFake{}
+	dispatcher := replicationDispatcherFunc(func(context.Context, backup.ReplicationTaskRequest) error {
+		return &backup.CapturedReplicationError{
+			SnapshotID: "snap-captured", SHA256: sha,
+			Err: errcode.E(errcode.UNAVAILABLE, "update after copy failed"),
+		}
+	})
+	c := backup.NewReplicationCoordinator(backup.ReplicationCoordinatorConfig{Control: controlPlane, Dispatcher: dispatcher, Now: func() time.Time { return now }})
+	c.DispatchRun(context.Background(), backup.FrozenReplicationRun{
+		RunID: "run", PolicyID: "p", LeaderTerm: 1, LeaseExpiresUnix: now.Add(time.Minute).Unix(),
+		Tasks: []backup.FrozenReplicationTask{{TaskID: "t", SourceNodeID: "s", TargetNodeID: "d", Status: "PENDING"}},
+	})
+	if len(controlPlane.updates) != 1 || controlPlane.updates[0].SnapshotID != "snap-captured" || controlPlane.updates[0].SHA256 != sha {
+		t.Fatalf("fallback updates=%+v, want captured snapshot", controlPlane.updates)
+	}
+}
+
 func TestReplicationCoordinator_BeginsRetryBeforeDispatch(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

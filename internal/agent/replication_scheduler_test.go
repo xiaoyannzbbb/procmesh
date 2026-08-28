@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/api"
 	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/control"
@@ -17,6 +18,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/store"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
+	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
 
 const replicationTestSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -865,6 +867,99 @@ func TestDispatchReplicationTask_ReusesStableSnapshotForSecondRoute(t *testing.T
 	if f.puts[0].TargetNodeID == f.puts[1].TargetNodeID {
 		t.Fatalf("expected two routes, puts=%+v", f.puts)
 	}
+}
+
+func TestDispatchReplicationTask_RemoteCopyFailureKeepsSnapshot(t *testing.T) {
+	f := startDispatchReplicationFixture(t, "source", []string{"target"})
+	f.runtime.nodeID = "leader"
+	f.engine.NodeID = "leader"
+	f.engine.DiskPercent = func() float64 { return 95 }
+	wantID := backup.StableReplicationSnapshotID("run-1", "source")
+	const sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	client := &fakePeerReplicationClient{replicate: func(context.Context, *connect.Request[procmeshv1.ReplicateSnapshotRequest]) (*connect.Response[procmeshv1.ReplicateSnapshotResponse], error) {
+		ce := connect.NewError(connect.CodeFailedPrecondition, errors.New("copy failed"))
+		detail, err := connect.NewErrorDetail(&procmeshv1.ReplicateSnapshotResponse{SnapshotId: wantID, Sha256: sha})
+		if err != nil {
+			return nil, err
+		}
+		ce.AddDetail(detail)
+		return nil, ce
+	}}
+	d := localReplicationDispatcher{
+		runtime:   f.runtime,
+		fwd:       stubPeerReplicationForwarder{client: client},
+		sourceRPC: func(string) string { return "127.0.0.1:9" },
+	}
+	task := backup.ReplicationTaskRequest{
+		RunID: "run-1", TaskID: "task-1", PolicyID: "rp", PolicyRevision: 1,
+		SourceNodeID: "source", TargetNodeID: "target", LeaderTerm: f.term,
+	}
+	if err := d.DispatchReplicationTask(context.Background(), task); err == nil {
+		t.Fatal("remote copy failure returned nil")
+	}
+	if len(client.calls) != 1 || client.calls[0].GetSnapshotId() != "" || client.calls[0].GetSha256() != "" {
+		t.Fatalf("leader RPC must send empty snapshot, got %+v", client.calls)
+	}
+	got := f.node.View().ReplicationTasks["run-1:task-1"]
+	if got.SnapshotID != wantID || got.SHA256 != sha {
+		t.Fatalf("leader did not store captured snapshot from copy failure: %+v", got)
+	}
+	if _, err := f.engine.Store.GetBackup(context.Background(), wantID); !errcode.Is(err, errcode.NOT_FOUND) {
+		t.Fatalf("leader captured a replica: %v", err)
+	}
+}
+
+func TestDispatchReplicationTask_RemoteSourceDoesNotCaptureOnLeader(t *testing.T) {
+	f := startDispatchReplicationFixture(t, "source", []string{"target"})
+	f.runtime.nodeID = "leader"
+	f.engine.NodeID = "leader"
+	f.engine.DiskPercent = func() float64 { return 95 }
+	wantID := backup.StableReplicationSnapshotID("run-1", "source")
+	const sha = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	client := &fakePeerReplicationClient{replicate: func(_ context.Context, req *connect.Request[procmeshv1.ReplicateSnapshotRequest]) (*connect.Response[procmeshv1.ReplicateSnapshotResponse], error) {
+		if req.Msg.GetSnapshotId() != "" || req.Msg.GetSha256() != "" {
+			t.Fatalf("leader sent snapshot to source: %+v", req.Msg)
+		}
+		return connect.NewResponse(&procmeshv1.ReplicateSnapshotResponse{SnapshotId: wantID, Sha256: sha, Bytes: 12}), nil
+	}}
+	d := localReplicationDispatcher{
+		runtime:   f.runtime,
+		fwd:       stubPeerReplicationForwarder{client: client},
+		sourceRPC: func(string) string { return "127.0.0.1:9" },
+	}
+	task := backup.ReplicationTaskRequest{
+		RunID: "run-1", TaskID: "task-1", PolicyID: "rp", PolicyRevision: 1,
+		SourceNodeID: "source", TargetNodeID: "target", LeaderTerm: f.term,
+	}
+	if err := d.DispatchReplicationTask(context.Background(), task); err != nil {
+		t.Fatal(err)
+	}
+	got := f.node.View().ReplicationTasks["run-1:task-1"]
+	if got.Status != "SUCCEEDED" || got.SnapshotID != wantID || got.SHA256 != sha {
+		t.Fatalf("task=%+v", got)
+	}
+	if _, err := f.engine.Store.GetBackup(context.Background(), wantID); !errcode.Is(err, errcode.NOT_FOUND) {
+		t.Fatalf("leader CaptureReplicationSnapshot wrote a replica: %v", err)
+	}
+}
+
+type fakePeerReplicationClient struct {
+	procmeshv1connect.PeerReplicationServiceClient
+	replicate func(context.Context, *connect.Request[procmeshv1.ReplicateSnapshotRequest]) (*connect.Response[procmeshv1.ReplicateSnapshotResponse], error)
+	calls     []*procmeshv1.ReplicateSnapshotRequest
+}
+
+func (f *fakePeerReplicationClient) ReplicateSnapshot(ctx context.Context, req *connect.Request[procmeshv1.ReplicateSnapshotRequest]) (*connect.Response[procmeshv1.ReplicateSnapshotResponse], error) {
+	f.calls = append(f.calls, req.Msg)
+	return f.replicate(ctx, req)
+}
+
+type stubPeerReplicationForwarder struct {
+	client procmeshv1connect.PeerReplicationServiceClient
+}
+
+func (s stubPeerReplicationForwarder) PeerReplication(context.Context, api.Route) (procmeshv1connect.PeerReplicationServiceClient, error) {
+	return s.client, nil
 }
 
 type dispatchReplicationFixture struct {

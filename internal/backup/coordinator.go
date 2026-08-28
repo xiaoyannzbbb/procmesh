@@ -76,6 +76,27 @@ type TaskOutcomeError struct{ Status string }
 
 func (e *TaskOutcomeError) Error() string { return "backup task completed with status " + e.Status }
 
+// CapturedReplicationError is a dispatch failure after the source captured a
+// snapshot. Coordinator fallback must persist SnapshotID/SHA256.
+type CapturedReplicationError struct {
+	SnapshotID, SHA256 string
+	Err                error
+}
+
+func (e *CapturedReplicationError) Error() string {
+	if e == nil || e.Err == nil {
+		return "replication capture identity retained"
+	}
+	return e.Err.Error()
+}
+
+func (e *CapturedReplicationError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
 // BackupRunRequest is optional coordinator wiring for adapters that need the
 // scheduler to persist a run record after ClaimFire.
 type BackupRunRequest struct {

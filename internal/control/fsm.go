@@ -1539,6 +1539,14 @@ func (s *State) applyUpdateTask(b UpdateTaskBody, now time.Time) error {
 		if terminalTaskStatus(current.Status) {
 			return nil
 		}
+		if b.Replication {
+			if b.Task.SnapshotID == "" {
+				b.Task.SnapshotID = current.SnapshotID
+			}
+			if b.Task.SHA256 == "" {
+				b.Task.SHA256 = current.SHA256
+			}
+		}
 	}
 	b.Task.LeaderTerm = b.LeaderTerm
 	tasks[key] = b.Task

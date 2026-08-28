@@ -14,11 +14,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/rpc"
+	"github.com/qleelulu/procmesh/internal/store"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 	"github.com/stretchr/testify/require"
@@ -47,6 +50,108 @@ func newPeerReplicationClient(t *testing.T, api *PeerReplicationAPI, tlsState *t
 func computeSHA256(data []byte) string {
 	hash := sha256.Sum256(data)
 	return hex.EncodeToString(hash[:])
+}
+
+func TestPeerReplicationAPI_ReplicateSnapshot_CapturesThenPuts(t *testing.T) {
+	eng, puts := newSourceReplicationEngine(t)
+	creds := genAgentCreds(t, eng.ClusterID, "leader")
+	client := newPeerReplicationClient(t, &PeerReplicationAPI{
+		ClusterID:  eng.ClusterID,
+		NodeID:     eng.NodeID,
+		Replicator: eng,
+		AuthorizeReplication: func(string, *procmeshv1.ReplicateSnapshotRequest) error {
+			return nil
+		},
+	}, &tls.ConnectionState{PeerCertificates: []*x509.Certificate{creds.Cert}})
+	resp, err := client.ReplicateSnapshot(context.Background(), connect.NewRequest(&procmeshv1.ReplicateSnapshotRequest{
+		RunId: "run-1", TaskId: "task-1", PolicyId: "rp-1", SourceNodeId: eng.NodeID, TargetNodeId: "peer-b",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantID := backup.StableReplicationSnapshotID("run-1", eng.NodeID)
+	rec, recErr := eng.Store.GetBackup(context.Background(), wantID)
+	if recErr != nil || rec.Sink != backup.ReplicaSinkName {
+		t.Fatalf("source replica missing: %+v err=%v", rec, recErr)
+	}
+	if resp.Msg.GetSnapshotId() != wantID || resp.Msg.GetSha256() != rec.SHA256 || resp.Msg.GetBytes() <= 0 {
+		t.Fatalf("response=%+v want %s/%s", resp.Msg, wantID, rec.SHA256)
+	}
+	if len(*puts) != 1 || (*puts)[0].SnapshotID != wantID || (*puts)[0].TargetNodeID != "peer-b" {
+		t.Fatalf("source Put not called: %+v", *puts)
+	}
+}
+
+func TestPeerReplicationAPI_ReplicateSnapshot_CopyFailureKeepsCapturedSnapshot(t *testing.T) {
+	eng, _ := newSourceReplicationEngine(t)
+	eng.ReplicationPush = backup.ReplicationPeerPushFunc(func(context.Context, backup.ReplicationPushRequest, []byte) error {
+		return errcode.E(errcode.UNAVAILABLE, "target unavailable")
+	})
+	creds := genAgentCreds(t, eng.ClusterID, "leader")
+	client := newPeerReplicationClient(t, &PeerReplicationAPI{
+		ClusterID:  eng.ClusterID,
+		NodeID:     eng.NodeID,
+		Replicator: eng,
+		AuthorizeReplication: func(string, *procmeshv1.ReplicateSnapshotRequest) error {
+			return nil
+		},
+	}, &tls.ConnectionState{PeerCertificates: []*x509.Certificate{creds.Cert}})
+	_, err := client.ReplicateSnapshot(context.Background(), connect.NewRequest(&procmeshv1.ReplicateSnapshotRequest{
+		RunId: "run-1", TaskId: "task-1", PolicyId: "rp-1", SourceNodeId: eng.NodeID, TargetNodeId: "peer-b",
+	}))
+	if err == nil {
+		t.Fatal("copy failure returned nil")
+	}
+	wantID := backup.StableReplicationSnapshotID("run-1", eng.NodeID)
+	rec, recErr := eng.Store.GetBackup(context.Background(), wantID)
+	if recErr != nil || rec.SHA256 == "" {
+		t.Fatalf("source replica missing after copy failure: %+v err=%v", rec, recErr)
+	}
+	var ce *connect.Error
+	if !errors.As(err, &ce) {
+		t.Fatalf("want connect error, got %T %v", err, err)
+	}
+	var gotID, gotSHA string
+	for _, detail := range ce.Details() {
+		value, detailErr := detail.Value()
+		if detailErr != nil {
+			continue
+		}
+		if resp, ok := value.(*procmeshv1.ReplicateSnapshotResponse); ok {
+			gotID, gotSHA = resp.GetSnapshotId(), resp.GetSha256()
+		}
+	}
+	if gotID != wantID || gotSHA != rec.SHA256 {
+		t.Fatalf("copy failure details snapshot=%s/%s want %s/%s", gotID, gotSHA, wantID, rec.SHA256)
+	}
+}
+
+func newSourceReplicationEngine(t *testing.T) (*backup.Engine, *[]backup.ReplicationPushRequest) {
+	t.Helper()
+	st, err := store.Open(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if _, err := st.PutSpec(context.Background(), process.ProcessSpec{ProcessID: "p1", Name: "web", Command: "/bin/true"}, 0, "t", "create"); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	puts := &[]backup.ReplicationPushRequest{}
+	eng := &backup.Engine{
+		Store: st, NodeID: "source", ClusterID: "cluster-1",
+		Sinks: map[string]backup.Sink{
+			"fs":                   backup.NewFSSink(filepath.Join(root, "backup", "fs")),
+			backup.ReplicaSinkName: backup.NewFSSink(filepath.Join(root, "backup", "replica")),
+		},
+		PeerStore: &backup.PeerStore{Root: root},
+		Now:       func() time.Time { return time.Unix(1_700_000_000, 0).UTC() },
+		ReplicationPush: backup.ReplicationPeerPushFunc(func(_ context.Context, req backup.ReplicationPushRequest, _ []byte) error {
+			*puts = append(*puts, req)
+			return nil
+		}),
+	}
+	return eng, puts
 }
 
 // CRITICAL #2: Test that PeerReplicationService requires mTLS
