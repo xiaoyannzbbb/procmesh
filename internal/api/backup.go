@@ -218,6 +218,9 @@ func (s *BackupAPI) listLocal(ctx context.Context, sink string, now time.Time) (
 	nowMs := now.UnixMilli()
 	out := make([]*procmeshv1.BackupEntry, 0, len(metas))
 	for _, m := range metas {
+		if m.Sink == backup.ReplicaSinkName && sink != backup.ReplicaSinkName {
+			continue
+		}
 		if sink != "" && m.Sink != sink {
 			continue
 		}

@@ -105,6 +105,69 @@ func TestBackupAPI_CreateFSAndListLIVE(t *testing.T) {
 	}
 }
 
+func TestBackupAPI_ListBackupsHidesReplicaSnapshots(t *testing.T) {
+	ctx := context.Background()
+	e, _ := testBackupEngine(t, "node-a")
+	e.Sinks[backup.ReplicaSinkName] = backup.NewFSSink(filepath.Join(t.TempDir(), "backup", "replica"))
+	now := time.Unix(1_700_000_000, 0).UTC()
+	api := &BackupAPI{Engine: e, LocalID: "node-a", Now: func() time.Time { return now }}
+	if _, err := api.CreateBackup(ctx, connect.NewRequest(&procmeshv1.CreateBackupRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-bak", Operator: "t"},
+		Sink: "fs",
+	})); err != nil {
+		t.Fatal(err)
+	}
+	replicaID := backup.StableReplicationSnapshotID("run-1", "node-a")
+	replica, err := e.CaptureReplicationSnapshot(ctx, backup.ReplicationCaptureRequest{
+		RunID: "run-1", PolicyID: "rp-1", SourceNodeID: e.NodeID, SnapshotID: replicaID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	indexed, err := e.ListLocal(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var haveReplica bool
+	for _, m := range indexed {
+		if m.Sink == backup.ReplicaSinkName && m.SnapshotID == replica.SnapshotID {
+			haveReplica = true
+			break
+		}
+	}
+	if !haveReplica {
+		t.Fatalf("Engine.ListLocal must still index replica snapshots: %+v", indexed)
+	}
+
+	page, err := api.ListBackups(ctx, connect.NewRequest(&procmeshv1.ListBackupsRequest{IncludeS3: true}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ent := range page.Msg.GetEntries() {
+		snap := ent.GetSnapshot()
+		if snap != nil && (snap.GetSink() == backup.ReplicaSinkName || snap.GetSnapshotId() == replicaID) {
+			t.Fatalf("replica snapshot leaked into default ListBackups: %+v", ent)
+		}
+	}
+
+	replicaList, err := api.ListBackups(ctx, connect.NewRequest(&procmeshv1.ListBackupsRequest{Sink: backup.ReplicaSinkName}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, ent := range replicaList.Msg.GetEntries() {
+		snap := ent.GetSnapshot()
+		if snap != nil && snap.GetSnapshotId() == replicaID && snap.GetSink() == backup.ReplicaSinkName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("sink=replica ListBackups missing replica snapshot: %+v", replicaList.Msg.GetEntries())
+	}
+}
+
 func TestBackupAPI_ListMarksS3FailureSTALE(t *testing.T) {
 	e, _ := testBackupEngine(t, "node-a")
 	e.Sinks["s3"] = failSink{}
