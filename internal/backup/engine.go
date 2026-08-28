@@ -386,6 +386,15 @@ func (e *Engine) CaptureReplicationSnapshot(ctx context.Context, req Replication
 	if req.SnapshotID == "" {
 		req.SnapshotID = StableReplicationSnapshotID(req.RunID, req.SourceNodeID)
 	}
+	if e.Store != nil {
+		rec, err := e.Store.GetBackup(ctx, req.SnapshotID)
+		if err == nil && rec.Sink == ReplicaSinkName {
+			return metaFromRecord(rec)
+		}
+		if err != nil && !errcode.Is(err, errcode.NOT_FOUND) {
+			return Meta{}, err
+		}
+	}
 	return e.CreateCluster(ctx, ClusterCreateOpts{
 		RunID:      req.RunID,
 		TaskID:     "capture:" + req.SourceNodeID,

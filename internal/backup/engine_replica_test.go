@@ -55,6 +55,32 @@ func TestEngine_CaptureReplicationSnapshot_IdempotentPerRunAndSource(t *testing.
 	}
 }
 
+func TestEngine_CaptureReplicationSnapshot_FreezeOnceIgnoresLaterSpecChange(t *testing.T) {
+	eng := testEngineWithProcess(t)
+	id := backup.StableReplicationSnapshotID("run-1", eng.NodeID)
+	ctx := context.Background()
+	first, err := eng.CaptureReplicationSnapshot(ctx, backup.ReplicationCaptureRequest{
+		RunID: "run-1", PolicyID: "rp-1", SourceNodeID: eng.NodeID, SnapshotID: id,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := eng.Store.GetSpec(ctx, "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.Command = "/bin/changed"
+	if _, err := eng.Store.PutSpec(ctx, spec, spec.LatestRevision, "t", "changed after capture"); err != nil {
+		t.Fatal(err)
+	}
+	second, err := eng.CaptureReplicationSnapshot(ctx, backup.ReplicationCaptureRequest{
+		RunID: "run-1", PolicyID: "rp-1", SourceNodeID: eng.NodeID, SnapshotID: id,
+	})
+	if err != nil || second.SHA256 != first.SHA256 || second.SnapshotID != first.SnapshotID {
+		t.Fatalf("second=%+v err=%v firstSHA=%s", second, err, first.SHA256)
+	}
+}
+
 func TestEngine_ReplicateSnapshot_ReadsReplicaSink(t *testing.T) {
 	eng := testEngineWithProcessAndPeerPush(t)
 	cap, err := eng.CaptureReplicationSnapshot(context.Background(), backup.ReplicationCaptureRequest{
