@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -360,12 +361,40 @@ func (d localReplicationDispatcher) DispatchReplicationTask(ctx context.Context,
 		return fmt.Errorf("replication runtime unavailable")
 	}
 	if task.SourceNodeID == d.runtime.nodeID {
-		bytes, err := d.runtime.backup.ReplicateSnapshot(ctx, task)
-		if err != nil {
-			return err
-		}
-		return (raftReplicationControl{runtime: d.runtime}).UpdateReplicationTask(ctx, backup.ReplicationTaskUpdate{RunID: task.RunID, TaskID: task.TaskID, SourceNodeID: task.SourceNodeID, TargetNodeID: task.TargetNodeID, SnapshotID: task.SnapshotID, SHA256: task.SHA256, Status: "SUCCEEDED", Bytes: bytes, LeaderTerm: task.LeaderTerm})
+		return d.dispatchLocalReplicationTask(ctx, task)
 	}
+	return d.dispatchRemoteReplicationTask(ctx, task)
+}
+
+func (d localReplicationDispatcher) dispatchLocalReplicationTask(ctx context.Context, task backup.ReplicationTaskRequest) error {
+	if err := d.captureLocalReplicationSnapshot(ctx, &task); err != nil {
+		return d.finishReplicationTask(ctx, task, 0, err)
+	}
+	bytes, err := d.runtime.backup.ReplicateSnapshot(ctx, task)
+	return d.finishReplicationTask(ctx, task, bytes, err)
+}
+
+func (d localReplicationDispatcher) captureLocalReplicationSnapshot(ctx context.Context, task *backup.ReplicationTaskRequest) error {
+	if task.SnapshotID != "" && task.SHA256 != "" {
+		return nil
+	}
+	meta, err := d.runtime.backup.CaptureReplicationSnapshot(ctx, backup.ReplicationCaptureRequest{
+		RunID: task.RunID, PolicyID: task.PolicyID, SourceNodeID: task.SourceNodeID,
+		SnapshotID: backup.StableReplicationSnapshotID(task.RunID, task.SourceNodeID),
+	})
+	if err != nil {
+		return err
+	}
+	task.SnapshotID, task.SHA256 = meta.SnapshotID, meta.SHA256
+	_ = (raftReplicationControl{runtime: d.runtime}).BeginReplicationTask(ctx, backup.ReplicationTaskUpdate{
+		RunID: task.RunID, TaskID: task.TaskID, SourceNodeID: task.SourceNodeID, TargetNodeID: task.TargetNodeID,
+		SnapshotID: task.SnapshotID, SHA256: task.SHA256, Status: "RUNNING", LeaderTerm: task.LeaderTerm,
+	})
+	return nil
+}
+
+func (d localReplicationDispatcher) dispatchRemoteReplicationTask(ctx context.Context, task backup.ReplicationTaskRequest) error {
+	captured := task
 	var last error
 	for range 80 {
 		addr := ""
@@ -384,24 +413,70 @@ func (d localReplicationDispatcher) DispatchReplicationTask(ctx context.Context,
 			} else {
 				resp, err := client.ReplicateSnapshot(ctx, connect.NewRequest(&procmeshv1.ReplicateSnapshotRequest{RunId: task.RunID, TaskId: task.TaskID, PolicyId: task.PolicyID, PolicyRevision: task.PolicyRevision, SourceNodeId: task.SourceNodeID, TargetNodeId: task.TargetNodeID, SnapshotId: task.SnapshotID, Sha256: task.SHA256, LeaderTerm: task.LeaderTerm, LeaseExpiresUnix: task.LeaseExpiresUnix}))
 				if err == nil {
-					return (raftReplicationControl{runtime: d.runtime}).UpdateReplicationTask(ctx, backup.ReplicationTaskUpdate{RunID: task.RunID, TaskID: task.TaskID, SourceNodeID: task.SourceNodeID, TargetNodeID: task.TargetNodeID, SnapshotID: task.SnapshotID, SHA256: task.SHA256, Status: "SUCCEEDED", Bytes: resp.Msg.GetBytes(), LeaderTerm: task.LeaderTerm})
+					snapshotID, sha := resp.Msg.GetSnapshotId(), resp.Msg.GetSha256()
+					if snapshotID == "" {
+						snapshotID = captured.SnapshotID
+					}
+					if sha == "" {
+						sha = captured.SHA256
+					}
+					captured.SnapshotID, captured.SHA256 = snapshotID, sha
+					return d.finishReplicationTask(ctx, captured, resp.Msg.GetBytes(), nil)
 				}
 				last = err
+				if snap, sha := capturedSnapshotFromError(err); snap != "" {
+					captured.SnapshotID, captured.SHA256 = snap, sha
+				}
 				if !retryableBackupDispatch(err) {
-					return err
+					return d.finishReplicationTask(ctx, captured, 0, err)
 				}
 			}
 		}
 		select {
 		case <-ctx.Done():
-			if last != nil {
-				return last
+			if last == nil {
+				last = ctx.Err()
 			}
-			return ctx.Err()
+			return d.finishReplicationTask(ctx, captured, 0, last)
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
-	return last
+	return d.finishReplicationTask(ctx, captured, 0, last)
+}
+
+func (d localReplicationDispatcher) finishReplicationTask(ctx context.Context, task backup.ReplicationTaskRequest, bytes int64, err error) error {
+	ctrl := raftReplicationControl{runtime: d.runtime}
+	if err == nil {
+		return ctrl.UpdateReplicationTask(ctx, backup.ReplicationTaskUpdate{
+			RunID: task.RunID, TaskID: task.TaskID, SourceNodeID: task.SourceNodeID, TargetNodeID: task.TargetNodeID,
+			SnapshotID: task.SnapshotID, SHA256: task.SHA256, Status: "SUCCEEDED", Bytes: bytes, LeaderTerm: task.LeaderTerm,
+		})
+	}
+	status, code, summary := backup.ClassifyReplicationFailure(err, ctx.Err())
+	if updateErr := ctrl.UpdateReplicationTask(ctx, backup.ReplicationTaskUpdate{
+		RunID: task.RunID, TaskID: task.TaskID, SourceNodeID: task.SourceNodeID, TargetNodeID: task.TargetNodeID,
+		SnapshotID: task.SnapshotID, SHA256: task.SHA256, Status: status, ErrorCode: code, ErrorSummary: summary, LeaderTerm: task.LeaderTerm,
+	}); updateErr != nil {
+		return updateErr
+	}
+	return &backup.TaskOutcomeError{Status: status}
+}
+
+func capturedSnapshotFromError(err error) (snapshotID, sha256 string) {
+	var connectErr *connect.Error
+	if !errors.As(err, &connectErr) {
+		return "", ""
+	}
+	for _, detail := range connectErr.Details() {
+		value, detailErr := detail.Value()
+		if detailErr != nil {
+			continue
+		}
+		if resp, ok := value.(*procmeshv1.ReplicateSnapshotResponse); ok {
+			return resp.GetSnapshotId(), resp.GetSha256()
+		}
+	}
+	return "", ""
 }
 
 func (r *rpcRuntime) authorizeReplicationTask(leaderNodeID string, msg *procmeshv1.ReplicateSnapshotRequest) error {
@@ -457,10 +532,15 @@ func (r *rpcRuntime) authorizePeerOperation(peerNodeID string, operation api.Pee
 		return nil
 	}
 	for _, task := range state.ReplicationTasks {
-		if task.SourceNodeID != peerNodeID || task.NodeID != r.nodeID || task.SnapshotID != operation.SnapshotID {
+		if task.SourceNodeID != peerNodeID || task.NodeID != r.nodeID {
 			continue
 		}
-		if operation.SHA256 != "" && task.SHA256 != operation.SHA256 {
+		if task.SnapshotID != operation.SnapshotID {
+			if operation.Kind != "PUT" || task.SnapshotID != "" || operation.SnapshotID == "" || (task.Status != "PENDING" && task.Status != "RUNNING") {
+				continue
+			}
+		}
+		if operation.SHA256 != "" && task.SHA256 != "" && task.SHA256 != operation.SHA256 {
 			continue
 		}
 		if operation.Kind == "PUT" {

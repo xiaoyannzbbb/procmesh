@@ -542,6 +542,45 @@ func TestFSM_BeginReplicationTask(t *testing.T) {
 		return state.UpdateTask(control.UpdateTaskBody{OperationID: "begin", Task: task, LeaderTerm: term, Replication: true})
 	}
 
+	t.Run("allows empty snapshot pending capture", func(t *testing.T) {
+		state := control.NewState()
+		state.ReplicationRuns["run"] = control.ClusterBackupRun{RunID: "run", PolicyID: "policy", PolicyRevision: 3, Status: "RUNNING", LeaseUntilUnix: now.Add(time.Minute).Unix()}
+		state.ReplicationRunTerms["run"] = 7
+		state.ReplicationTasks["run:task"] = control.ClusterBackupTask{
+			RunID: "run", TaskID: "task", SourceNodeID: "source", NodeID: "target", Status: "PENDING", LeaderTerm: 7,
+		}
+		if err := begin(state, 7, state.ReplicationTasks["run:task"]); err != nil {
+			t.Fatal(err)
+		}
+		got := state.ReplicationTasks["run:task"]
+		if got.Status != "RUNNING" || got.SnapshotID != "" || got.SHA256 != "" {
+			t.Fatalf("empty capture begin=%+v", got)
+		}
+	})
+
+	t.Run("freezes captured identity onto empty running task", func(t *testing.T) {
+		state := control.NewState()
+		state.ReplicationRuns["run"] = control.ClusterBackupRun{RunID: "run", PolicyID: "policy", PolicyRevision: 3, Status: "RUNNING", LeaseUntilUnix: now.Add(time.Minute).Unix()}
+		state.ReplicationRunTerms["run"] = 7
+		state.ReplicationTasks["run:task"] = control.ClusterBackupTask{
+			RunID: "run", TaskID: "task", SourceNodeID: "source", NodeID: "target", Status: "RUNNING", LeaderTerm: 7,
+		}
+		frozen := state.ReplicationTasks["run:task"]
+		frozen.SnapshotID, frozen.SHA256 = "snapshot", sha
+		if err := begin(state, 7, frozen); err != nil {
+			t.Fatal(err)
+		}
+		got := state.ReplicationTasks["run:task"]
+		if got.Status != "RUNNING" || got.SnapshotID != "snapshot" || got.SHA256 != sha {
+			t.Fatalf("frozen running task=%+v", got)
+		}
+		changed := got
+		changed.SnapshotID = "other"
+		if err := begin(state, 7, changed); !errcode.Is(err, errcode.CONFLICT) {
+			t.Fatalf("changed frozen identity error=%v, want CONFLICT", err)
+		}
+	})
+
 	t.Run("moves retryable task to running without changing identity", func(t *testing.T) {
 		state := newState()
 		if err := begin(state, 7, state.ReplicationTasks["run:task"]); err != nil {

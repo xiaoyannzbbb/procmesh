@@ -173,12 +173,16 @@ func (c *ReplicationCoordinator) DispatchRun(ctx context.Context, run FrozenRepl
 				if abortErr == nil {
 					abortErr = context.DeadlineExceeded
 				}
-				status, code, summary := classifyReplicationFailure(abortErr, abortErr)
+				status, code, summary := ClassifyReplicationFailure(abortErr, abortErr)
 				_ = c.Control.UpdateReplicationTask(ctx, ReplicationTaskUpdate{RunID: req.RunID, TaskID: req.TaskID, SourceNodeID: req.SourceNodeID, TargetNodeID: req.TargetNodeID, SnapshotID: req.SnapshotID, SHA256: req.SHA256, Status: status, ErrorCode: code, ErrorSummary: summary, LeaderTerm: req.LeaderTerm})
 				return
 			}
 			if err := c.Dispatcher.DispatchReplicationTask(leaseCtx, req); err != nil {
-				status, code, summary := classifyReplicationFailure(err, leaseCtx.Err())
+				var outcome *TaskOutcomeError
+				if errors.As(err, &outcome) {
+					return
+				}
+				status, code, summary := ClassifyReplicationFailure(err, leaseCtx.Err())
 				_ = c.Control.UpdateReplicationTask(ctx, ReplicationTaskUpdate{RunID: req.RunID, TaskID: req.TaskID, SourceNodeID: req.SourceNodeID, TargetNodeID: req.TargetNodeID, SnapshotID: req.SnapshotID, SHA256: req.SHA256, Status: status, ErrorCode: code, ErrorSummary: summary, LeaderTerm: req.LeaderTerm})
 			}
 		}()
@@ -186,7 +190,7 @@ func (c *ReplicationCoordinator) DispatchRun(ctx context.Context, run FrozenRepl
 	wg.Wait()
 }
 
-func classifyReplicationFailure(err, contextErr error) (status, code, summary string) {
+func ClassifyReplicationFailure(err, contextErr error) (status, code, summary string) {
 	if errors.Is(contextErr, context.DeadlineExceeded) || errcode.Is(err, errcode.TIMEOUT) {
 		return "TIMEOUT", "TIMEOUT", "replication route timed out"
 	}

@@ -108,6 +108,53 @@ func applyReplicationFSMCommand(t *testing.T, fsm *control.FSM, now time.Time, t
 	}
 }
 
+func TestReplicationCoordinator_BeginsEmptySnapshotCapturePending(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	fsm := control.NewFSM()
+	for _, nodeID := range []string{"source", "target"} {
+		applyReplicationFSMCommand(t, fsm, now, control.CmdMemberPut, control.MemberPutBody{NodeID: nodeID, Status: control.MemberAdmitted})
+	}
+	applyReplicationFSMCommand(t, fsm, now, control.CmdReplicationPolicyPut, control.ReplicationPolicyPutBody{
+		OperationID: "policy", PolicyID: "policy", Name: "policy", Enabled: true,
+		SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"source"}, ReplicaFactor: 1,
+		Routes:  []control.ReplicationRoute{{SourceNodeID: "source", TargetNodeIDs: []string{"target"}}},
+		Trigger: "MANUAL", ExpectedRevision: -1,
+	})
+	run := control.ClusterBackupRun{
+		RunID: "run", PolicyID: "policy", PolicyRevision: 1, TargetNodeIDs: []string{"source"}, Status: "RUNNING",
+		CreatedUnix: now.Unix(), StartedUnix: now.Unix(), LeaseUntilUnix: now.Add(time.Minute).Unix(),
+	}
+	task := control.ClusterBackupTask{RunID: run.RunID, TaskID: "capture", SourceNodeID: "source", NodeID: "target", Status: "PENDING"}
+	applyReplicationFSMCommand(t, fsm, now, control.CmdBackupRunCreate, control.CreateRunBody{OperationID: "create", Run: run, Tasks: []control.ClusterBackupTask{task}, LeaderTerm: 7, Replication: true})
+
+	controlPlane := &replicationFSMControl{fsm: fsm, now: now}
+	var begun backup.ReplicationTaskRequest
+	dispatcher := replicationDispatcherFunc(func(_ context.Context, request backup.ReplicationTaskRequest) error {
+		begun = request
+		got := fsm.View().ReplicationTasks[request.RunID+":"+request.TaskID]
+		if got.Status != "RUNNING" || got.SnapshotID != "" || got.SHA256 != "" {
+			return errcode.E(errcode.CONFLICT, "empty snapshot was not begun")
+		}
+		return controlPlane.UpdateReplicationTask(context.Background(), backup.ReplicationTaskUpdate{
+			RunID: request.RunID, TaskID: request.TaskID, SourceNodeID: request.SourceNodeID, TargetNodeID: request.TargetNodeID,
+			SnapshotID: "snap-captured", SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Status: "SUCCEEDED", LeaderTerm: request.LeaderTerm,
+		})
+	})
+	coordinator := backup.NewReplicationCoordinator(backup.ReplicationCoordinatorConfig{Control: controlPlane, Dispatcher: dispatcher, Now: func() time.Time { return now }})
+	coordinator.DispatchRun(context.Background(), backup.FrozenReplicationRun{
+		RunID: run.RunID, PolicyID: run.PolicyID, PolicyRevision: run.PolicyRevision, LeaderTerm: 7,
+		LeaseExpiresUnix: run.LeaseUntilUnix,
+		Tasks:            []backup.FrozenReplicationTask{{TaskID: task.TaskID, SourceNodeID: task.SourceNodeID, TargetNodeID: task.NodeID, Status: task.Status}},
+	})
+	if begun.TaskID != "capture" || begun.SnapshotID != "" {
+		t.Fatalf("dispatched %+v, want empty snapshot capture-pending", begun)
+	}
+	got := fsm.View().ReplicationTasks[run.RunID+":"+task.TaskID]
+	if got.Status != "SUCCEEDED" || got.SnapshotID != "snap-captured" {
+		t.Fatalf("task=%+v", got)
+	}
+}
+
 func TestReplicationCoordinator_BeginsRetryBeforeDispatch(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

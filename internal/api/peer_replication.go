@@ -68,7 +68,8 @@ func (p *PeerReplicationAPI) PutSnapshot(ctx context.Context, req *connect.Reque
 }
 
 // ReplicateSnapshot authorizes the Leader to instruct this source Agent to
-// reload an immutable indexed payload and push it under its own mTLS identity.
+// capture if needed, reload the immutable payload, and push it under its own
+// mTLS identity. SnapshotId/Sha256 may be empty; capture happens on this source.
 func (p *PeerReplicationAPI) ReplicateSnapshot(ctx context.Context, req *connect.Request[procmeshv1.ReplicateSnapshotRequest]) (*connect.Response[procmeshv1.ReplicateSnapshotResponse], error) {
 	tlsState, err := rpc.TLSStateFromContext(ctx)
 	if err != nil {
@@ -86,11 +87,28 @@ func (p *PeerReplicationAPI) ReplicateSnapshot(ctx context.Context, req *connect
 	if p.Replicator == nil {
 		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "replication source unavailable"))
 	}
-	bytes, err := p.Replicator.ReplicateSnapshot(ctx, backup.ReplicationTaskRequest{RunID: req.Msg.RunId, TaskID: req.Msg.TaskId, PolicyID: req.Msg.PolicyId, PolicyRevision: req.Msg.PolicyRevision, SourceNodeID: req.Msg.SourceNodeId, TargetNodeID: req.Msg.TargetNodeId, SnapshotID: req.Msg.SnapshotId, SHA256: req.Msg.Sha256, LeaderTerm: req.Msg.LeaderTerm, LeaseExpiresUnix: req.Msg.LeaseExpiresUnix})
-	if err != nil {
-		return nil, ToConnect(err)
+	snapshotID, sha256 := req.Msg.GetSnapshotId(), req.Msg.GetSha256()
+	if snapshotID == "" || sha256 == "" {
+		capturer, ok := p.Replicator.(interface {
+			CaptureReplicationSnapshot(context.Context, backup.ReplicationCaptureRequest) (backup.Meta, error)
+		})
+		if !ok {
+			return nil, ToConnect(errcode.E(errcode.INVALID, "invalid replication source request"))
+		}
+		meta, err := capturer.CaptureReplicationSnapshot(ctx, backup.ReplicationCaptureRequest{
+			RunID: req.Msg.GetRunId(), PolicyID: req.Msg.GetPolicyId(), SourceNodeID: req.Msg.GetSourceNodeId(),
+			SnapshotID: backup.StableReplicationSnapshotID(req.Msg.GetRunId(), req.Msg.GetSourceNodeId()),
+		})
+		if err != nil {
+			return nil, ToConnect(err)
+		}
+		snapshotID, sha256 = meta.SnapshotID, meta.SHA256
 	}
-	return connect.NewResponse(&procmeshv1.ReplicateSnapshotResponse{SnapshotId: req.Msg.SnapshotId, Sha256: req.Msg.Sha256, Bytes: bytes}), nil
+	bytes, err := p.Replicator.ReplicateSnapshot(ctx, backup.ReplicationTaskRequest{RunID: req.Msg.RunId, TaskID: req.Msg.TaskId, PolicyID: req.Msg.PolicyId, PolicyRevision: req.Msg.PolicyRevision, SourceNodeID: req.Msg.SourceNodeId, TargetNodeID: req.Msg.TargetNodeId, SnapshotID: snapshotID, SHA256: sha256, LeaderTerm: req.Msg.LeaderTerm, LeaseExpiresUnix: req.Msg.LeaseExpiresUnix})
+	if err != nil {
+		return nil, toConnectWithCapturedSnapshot(err, snapshotID, sha256)
+	}
+	return connect.NewResponse(&procmeshv1.ReplicateSnapshotResponse{SnapshotId: snapshotID, Sha256: sha256, Bytes: bytes}), nil
 }
 
 // CheckSnapshot checks if a snapshot exists with the expected checksum.

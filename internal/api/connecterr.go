@@ -27,6 +27,25 @@ func ToConnect(err error) error {
 	return toConnectWithDetailCode(err, string(CodeOf(err)))
 }
 
+func toConnectWithCapturedSnapshot(err error, snapshotID, sha256 string) error {
+	if err == nil {
+		return nil
+	}
+	converted := ToConnect(err)
+	if snapshotID == "" && sha256 == "" {
+		return converted
+	}
+	var ce *connect.Error
+	if !errors.As(converted, &ce) {
+		return converted
+	}
+	detail, detailErr := connect.NewErrorDetail(&procmeshv1.ReplicateSnapshotResponse{SnapshotId: snapshotID, Sha256: sha256})
+	if detailErr == nil {
+		ce.AddDetail(detail)
+	}
+	return ce
+}
+
 func toConnectWithDetailCode(err error, detailCode string) error {
 	if err == nil {
 		return nil

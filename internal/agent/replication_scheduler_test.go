@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,6 +14,8 @@ import (
 	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/process"
+	"github.com/qleelulu/procmesh/internal/store"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 )
 
@@ -732,6 +736,23 @@ func TestAuthorizePeerOperationPutFencing(t *testing.T) {
 		t.Fatalf("live put rejected: %v", err)
 	}
 
+	apply(control.CmdBackupRunCreate, control.CreateRunBody{
+		OperationID: "run-capture", LeaderTerm: term, Replication: true,
+		Run:   control.ClusterBackupRun{RunID: "run-capture", PolicyID: "rp", PolicyRevision: 1, TargetNodeIDs: []string{"source"}, Status: "RUNNING", LeaseUntilUnix: now.Add(time.Hour).Unix()},
+		Tasks: []control.ClusterBackupTask{{RunID: "run-capture", TaskID: "task-capture", SourceNodeID: "source", NodeID: "target", Status: "PENDING"}},
+	})
+	apply(control.CmdBackupTaskUpdate, control.UpdateTaskBody{
+		OperationID: "begin-capture", LeaderTerm: term, Replication: true,
+		Task: control.ClusterBackupTask{RunID: "run-capture", TaskID: "task-capture", SourceNodeID: "source", NodeID: "target", Status: "RUNNING", UpdatedUnix: now.Unix()},
+	})
+	if err := runtime.authorizePeerOperation("source", api.PeerOperation{
+		Kind: "PUT", ClusterID: "cluster", SourceNodeID: "source", TargetNodeID: "target",
+		SnapshotID: "snapshot-captured", SHA256: replicationTestSHA, RunID: "run-capture", TaskID: "task-capture",
+		PolicyID: "rp", PolicyRevision: 1,
+	}); err != nil {
+		t.Fatalf("capture-pending put rejected: %v", err)
+	}
+
 	for _, tc := range []struct {
 		name string
 		op   api.PeerOperation
@@ -762,4 +783,163 @@ func (a *recordingReplicationApplier) Apply(command control.Command, _ time.Dura
 		a.afterApply()
 	}
 	return a.err
+}
+
+func TestDispatchReplicationTask_CapturesThenCopies(t *testing.T) {
+	f := startDispatchReplicationFixture(t, "source", []string{"target"})
+	task := backup.ReplicationTaskRequest{
+		RunID: "run-1", TaskID: "task-1", PolicyID: "rp", PolicyRevision: 1,
+		SourceNodeID: "source", TargetNodeID: "target", LeaderTerm: f.term,
+	}
+	if err := (localReplicationDispatcher{runtime: f.runtime}).DispatchReplicationTask(context.Background(), task); err != nil {
+		t.Fatal(err)
+	}
+	wantID := backup.StableReplicationSnapshotID("run-1", "source")
+	rec, err := f.engine.Store.GetBackup(context.Background(), wantID)
+	if err != nil || rec.Sink != backup.ReplicaSinkName || rec.SHA256 == "" {
+		t.Fatalf("local replica missing: %+v err=%v", rec, err)
+	}
+	if len(f.puts) != 1 || f.puts[0].SnapshotID != wantID || f.puts[0].SHA256 != rec.SHA256 || f.puts[0].TargetNodeID != "target" {
+		t.Fatalf("peer Put not called with captured snapshot: %+v", f.puts)
+	}
+	got := f.node.View().ReplicationTasks["run-1:task-1"]
+	if got.Status != "SUCCEEDED" || got.SnapshotID != wantID || got.SHA256 != rec.SHA256 {
+		t.Fatalf("succeeded task=%+v want snapshot %s sha %s", got, wantID, rec.SHA256)
+	}
+}
+
+func TestDispatchReplicationTask_CopyFailureKeepsSnapshot(t *testing.T) {
+	f := startDispatchReplicationFixture(t, "source", []string{"target"})
+	f.setPutErr(errcode.E(errcode.UNAVAILABLE, "target unavailable"))
+	task := backup.ReplicationTaskRequest{
+		RunID: "run-1", TaskID: "task-1", PolicyID: "rp", PolicyRevision: 1,
+		SourceNodeID: "source", TargetNodeID: "target", LeaderTerm: f.term,
+	}
+	err := (localReplicationDispatcher{runtime: f.runtime}).DispatchReplicationTask(context.Background(), task)
+	if err == nil {
+		t.Fatal("copy failure returned nil")
+	}
+	wantID := backup.StableReplicationSnapshotID("run-1", "source")
+	rec, recErr := f.engine.Store.GetBackup(context.Background(), wantID)
+	if recErr != nil || rec.SHA256 == "" {
+		t.Fatalf("captured replica missing after copy failure: %+v err=%v", rec, recErr)
+	}
+	got := f.node.View().ReplicationTasks["run-1:task-1"]
+	if got.SnapshotID == "" || got.SHA256 == "" {
+		t.Fatalf("copy failure dropped snapshot: %+v", got)
+	}
+	if got.SnapshotID != wantID || got.SHA256 != rec.SHA256 {
+		t.Fatalf("copy failure snapshot=%+v want %s/%s", got, wantID, rec.SHA256)
+	}
+	if got.Status != "UNAVAILABLE" && got.Status != "FAILED" {
+		t.Fatalf("status=%s, want UNAVAILABLE or FAILED", got.Status)
+	}
+}
+
+func TestDispatchReplicationTask_ReusesStableSnapshotForSecondRoute(t *testing.T) {
+	f := startDispatchReplicationFixture(t, "source", []string{"target", "target-2"})
+	d := localReplicationDispatcher{runtime: f.runtime}
+	first := backup.ReplicationTaskRequest{
+		RunID: "run-1", TaskID: "task-1", PolicyID: "rp", PolicyRevision: 1,
+		SourceNodeID: "source", TargetNodeID: "target", LeaderTerm: f.term,
+	}
+	second := backup.ReplicationTaskRequest{
+		RunID: "run-1", TaskID: "task-2", PolicyID: "rp", PolicyRevision: 1,
+		SourceNodeID: "source", TargetNodeID: "target-2", LeaderTerm: f.term,
+	}
+	if err := d.DispatchReplicationTask(context.Background(), first); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.DispatchReplicationTask(context.Background(), second); err != nil {
+		t.Fatal(err)
+	}
+	wantID := backup.StableReplicationSnapshotID("run-1", "source")
+	a := f.node.View().ReplicationTasks["run-1:task-1"]
+	b := f.node.View().ReplicationTasks["run-1:task-2"]
+	if a.SnapshotID != wantID || b.SnapshotID != wantID || a.SHA256 == "" || a.SHA256 != b.SHA256 {
+		t.Fatalf("routes did not share frozen snapshot: a=%+v b=%+v want %s", a, b, wantID)
+	}
+	if len(f.puts) != 2 || f.puts[0].SnapshotID != wantID || f.puts[1].SnapshotID != wantID || f.puts[0].SHA256 != f.puts[1].SHA256 {
+		t.Fatalf("puts=%+v", f.puts)
+	}
+	if f.puts[0].TargetNodeID == f.puts[1].TargetNodeID {
+		t.Fatalf("expected two routes, puts=%+v", f.puts)
+	}
+}
+
+type dispatchReplicationFixture struct {
+	runtime *rpcRuntime
+	engine  *backup.Engine
+	node    *control.Node
+	term    uint64
+	mu      sync.Mutex
+	puts    []backup.ReplicationPushRequest
+	putErr  error
+}
+
+func (f *dispatchReplicationFixture) setPutErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.putErr = err
+}
+
+func startDispatchReplicationFixture(t *testing.T, sourceID string, targets []string) *dispatchReplicationFixture {
+	t.Helper()
+	node, apply := startBackupSchedulerControl(t, "cluster-replication-dispatch", sourceID)
+	apply(control.CmdMemberPut, control.MemberPutBody{NodeID: sourceID, Status: control.MemberAdmitted})
+	for _, target := range targets {
+		apply(control.CmdMemberPut, control.MemberPutBody{NodeID: target, Status: control.MemberAdmitted})
+	}
+	routes := []control.ReplicationRoute{{SourceNodeID: sourceID, TargetNodeIDs: append([]string(nil), targets...)}}
+	apply(control.CmdReplicationPolicyPut, control.ReplicationPolicyPutBody{
+		OperationID: "policy", PolicyID: "rp", Name: "rp", Enabled: true,
+		SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{sourceID}, ReplicaFactor: len(targets),
+		Routes: routes, Trigger: "MANUAL", ExpectedRevision: -1,
+	})
+	term := node.CurrentTerm()
+	now := time.Now()
+	tasks := make([]control.ClusterBackupTask, 0, len(targets))
+	for i, target := range targets {
+		tasks = append(tasks, control.ClusterBackupTask{
+			RunID: "run-1", TaskID: "task-" + strconv.Itoa(i+1), SourceNodeID: sourceID, NodeID: target, Status: "PENDING",
+		})
+	}
+	apply(control.CmdBackupRunCreate, control.CreateRunBody{
+		OperationID: "run", LeaderTerm: term, Replication: true,
+		Run: control.ClusterBackupRun{
+			RunID: "run-1", PolicyID: "rp", PolicyRevision: 1, TargetNodeIDs: []string{sourceID},
+			Status: "RUNNING", LeaseUntilUnix: now.Add(time.Minute).Unix(),
+		},
+		Tasks: tasks,
+	})
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	spec := process.ProcessSpec{ProcessID: "p1", Name: "web", Command: "/bin/true"}
+	if _, err := st.PutSpec(context.Background(), spec, 0, "t", "create"); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	f := &dispatchReplicationFixture{node: node, term: term}
+	engine := &backup.Engine{
+		Store: st, NodeID: sourceID, ClusterID: "cluster-replication-dispatch",
+		Sinks: map[string]backup.Sink{
+			"fs":                   backup.NewFSSink(filepath.Join(root, "backup", "fs")),
+			backup.ReplicaSinkName: backup.NewFSSink(filepath.Join(root, "backup", "replica")),
+		},
+		PeerStore: &backup.PeerStore{Root: root},
+		Now:       func() time.Time { return time.Unix(1_700_000_000, 0).UTC() },
+		ReplicationPush: backup.ReplicationPeerPushFunc(func(_ context.Context, req backup.ReplicationPushRequest, _ []byte) error {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			f.puts = append(f.puts, req)
+			return f.putErr
+		}),
+	}
+	f.engine = engine
+	f.runtime = &rpcRuntime{nodeID: sourceID, clusterID: "cluster-replication-dispatch", node: node, backup: engine}
+	return f
 }
