@@ -4,6 +4,7 @@
 .agents/
 .agent_context/
 .multica/
+.codebuddy/
 
 .DS_Store
 /procmesh

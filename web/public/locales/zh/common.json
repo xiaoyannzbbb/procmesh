@@ -1195,6 +1195,7 @@
     "concurrency": "并发",
     "topologyConstraints": "拓扑约束",
     "source": "源",
+    "to": "到",
     "editSource": "源节点",
     "editTarget": "目标节点 {{index}}",
     "targets": "目标",

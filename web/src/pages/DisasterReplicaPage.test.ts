@@ -122,6 +122,7 @@ const replicaI18n = {
   verifyValid: "Replica checksum matches",
   verifyInvalid: "Replica checksum mismatch",
   sourceSelector: "Source selector",
+  to: "to",
 };
 
 beforeEach(async () => {
@@ -508,10 +509,19 @@ describe("DisasterReplicaPage", () => {
     expect(preview.text()).toContain("n2");
     expect(preview.find('input[name="draftHash"]').exists()).toBe(false);
     expect(preview.find('input[name="draftRevision"]').exists()).toBe(false);
-    const sourceSelect = preview.get('[data-route-source="0"]').element as HTMLSelectElement;
-    const targetSelect = preview.get('[data-route-target="0-0"]').element as HTMLSelectElement;
+    const routes = preview.get("[data-preview-routes]");
+    expect(routes.element.closest(".card")).toBeNull();
+    expect(routes.get('[data-route-source="0"]').exists()).toBe(true);
+    expect(routes.get('[data-route-target="0-0"]').exists()).toBe(true);
+    expect(routes.get('[data-route-source="1"]').exists()).toBe(true);
+    const sourceSelect = routes.get('[data-route-source="0"]').element as HTMLSelectElement;
+    const targetSelect = routes.get('[data-route-target="0-0"]').element as HTMLSelectElement;
     expect(sourceSelect.value).toBe("n1");
     expect(targetSelect.value).toBe("n3");
+    expect(preview.get("[data-preview-header]").exists()).toBe(true);
+    expect(preview.get("[data-preview-body]").exists()).toBe(true);
+    expect(preview.get("[data-preview-footer]").exists()).toBe(true);
+    expect(preview.get("[data-preview-footer]").get('[data-action="apply-draft"]').exists()).toBe(true);
   });
 
   it("lets the operator change preview source and target nodes before apply", async () => {
@@ -555,6 +565,7 @@ describe("DisasterReplicaPage", () => {
     await wrapper.vm.$nextTick();
     const preview = wrapper.get("[data-preview-dialog]");
     expect(preview.get("[data-n1-warning]").text()).toMatch(/single-node|no replica/i);
+    expect(preview.get("[data-preview-routes]").text()).toMatch(/no replica routes/i);
   });
 
   it("applies the server draft revision and hash, then shows the policy revision", async () => {
@@ -809,7 +820,9 @@ describe("DisasterReplicaPage", () => {
     expect(dialog.classes().join(" ")).toMatch(/preview-panel/);
     const style = (dialog.attributes("style") ?? "").toLowerCase();
     expect(style).toMatch(/min\(100%/);
-    expect(style).toMatch(/overflow:\s*auto/);
+    expect(style).toMatch(/max-height:\s*90vh/);
+    expect(dialog.get("[data-preview-body]").classes().join(" ")).toMatch(/preview-body/);
+    expect(dialog.get("[data-preview-routes]").exists()).toBe(true);
   });
 
   it("prefills cron and timezone when generating a draft", async () => {

@@ -1195,6 +1195,7 @@
     "concurrency": "Concurrency",
     "topologyConstraints": "Topology constraints",
     "source": "Source",
+    "to": "to",
     "editSource": "Source node",
     "editTarget": "Target node {{index}}",
     "targets": "Targets",

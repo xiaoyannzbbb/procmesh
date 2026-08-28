@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
-import { CopyPlus, ShieldCheck } from "lucide-vue-next";
-import { computed, ref } from "vue";
+import { ArrowRight, CopyPlus, ShieldCheck, TriangleAlert, X } from "lucide-vue-next";
+import { computed, ref, useId, watch } from "vue";
 import { RouterLink } from "vue-router";
 import Drawer from "../components/Drawer.vue";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
@@ -113,7 +113,8 @@ type RecoverableSnapshot = {
 
 const { t } = useI18n();
 const POLL_MS = 5000;
-const PREVIEW_PANEL_STYLE = { width: "min(100%, 40rem)", maxHeight: "90vh", overflow: "auto" } as const;
+const PREVIEW_PANEL_STYLE = { width: "min(100%, 56rem)", maxHeight: "90vh" } as const;
+const previewTitleId = useId();
 const client = useReplicationClient();
 const queryClient = useQueryClient();
 const actionError = ref("");
@@ -793,6 +794,24 @@ function closePreview(): void {
   previewOpen.value = false;
 }
 
+watch(previewOpen, (open, _previous, onCleanup) => {
+  if (!open) {
+    return;
+  }
+  const onKeydown = (event: KeyboardEvent) => {
+    if (event.key === "Escape") {
+      closePreview();
+    }
+  };
+  const previousOverflow = document.body.style.overflow;
+  document.addEventListener("keydown", onKeydown);
+  document.body.style.overflow = "hidden";
+  onCleanup(() => {
+    document.removeEventListener("keydown", onKeydown);
+    document.body.style.overflow = previousOverflow;
+  });
+});
+
 function openRun(runId: string): void {
   if (!runId) {
     return;
@@ -1174,181 +1193,225 @@ async function onStartRun(): Promise<void> {
       </section>
     </template>
 
-  <div v-if="previewOpen && draft" class="preview-backdrop">
-    <section
-      class="preview-panel"
-      data-preview-dialog
-      data-responsive="true"
-      role="dialog"
-      :aria-modal="true"
-      :aria-label="t('replica.preview')"
-      :style="PREVIEW_PANEL_STYLE"
-    >
-      <h2>{{ t("replica.preview") }}</h2>
-      <h3>{{ t("replica.generationRules") }}</h3>
-      <dl class="facts">
-        <div>
-          <dt>{{ t("replica.sourceSelector") }}</dt>
-          <dd>{{ draft.sourceSelector }}</dd>
-        </div>
-        <div>
-          <dt>{{ t("replica.replicaFactor") }}</dt>
-          <dd>{{ draft.replicaFactor }}</dd>
-        </div>
-        <div>
-          <dt>{{ t("replica.scheduleCron") }}</dt>
-          <dd>
-            <input
-              v-model="draft.scheduleCron"
-              class="input"
-              type="text"
-              data-field="schedule-cron"
-              autocomplete="off"
-              :aria-label="t('replica.scheduleCron')"
-              :disabled="acting"
-            />
-          </dd>
-        </div>
-        <div>
-          <dt>{{ t("replica.timezone") }}</dt>
-          <dd>
-            <input
-              v-model="draft.timezone"
-              class="input"
-              type="text"
-              data-field="timezone"
-              autocomplete="off"
-              :aria-label="t('replica.timezone')"
-              :disabled="acting"
-            />
-          </dd>
-        </div>
-        <div>
-          <dt>{{ t("replica.schedule") }}</dt>
-          <dd>
-            <label class="field checkbox">
-              <input v-model="draft.enabled" type="checkbox" data-field="enabled" :disabled="acting" />
-              {{ t("replica.schedule") }}
-            </label>
-          </dd>
-        </div>
-        <div>
-          <dt>{{ t("replica.nextRun") }}</dt>
-          <dd data-next-run>
-            {{ nextRunLabel(draft) }}
-            <p v-if="showNextRunHint(draft)" class="muted">{{ t("replica.nextRunHint") }}</p>
-          </dd>
-        </div>
-        <div>
-          <dt>{{ t("replica.retention") }}</dt>
-          <dd>
-            {{
-              t("replica.retentionSummary", {
-                last: draft.retentionKeepLast ?? 0,
-                days: draft.retentionKeepDays ?? 0,
-              })
-            }}
-          </dd>
-        </div>
-      </dl>
-      <h3>{{ t("replica.routeTable") }}</h3>
-      <div class="card">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>{{ t("replica.source") }}</th>
-              <th>{{ t("replica.targets") }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(route, routeIndex) in draft.routes ?? []" :key="routeIndex">
-              <td>
-                <label class="sr-only" :for="`route-source-${routeIndex}`">{{ t("replica.editSource") }}</label>
-                <select
-                  :id="`route-source-${routeIndex}`"
-                  class="input"
-                  :data-route-source="String(routeIndex)"
-                  :aria-label="t('replica.editSource')"
-                  :value="route.sourceNodeId"
-                  :disabled="acting"
-                  @change="onEditRouteSource(routeIndex, $event)"
-                >
-                  <option
-                    v-for="node in routeNodeOptions"
-                    :key="`source-${routeIndex}-${node.nodeId}`"
-                    :value="node.nodeId"
-                  >
-                    {{ nodeName(node) }}
-                  </option>
-                </select>
-              </td>
-              <td>
-                <div class="target-edits">
-                  <select
-                    v-for="(_, targetIndex) in route.targetNodeIds ?? []"
-                    :id="`route-target-${routeIndex}-${targetIndex}`"
-                    :key="`target-${routeIndex}-${targetIndex}`"
+  <Teleport to="body">
+    <div v-if="previewOpen && draft" class="preview-backdrop" @click.self="closePreview">
+      <section
+        class="preview-panel"
+        data-preview-dialog
+        data-responsive="true"
+        role="dialog"
+        :aria-modal="true"
+        :aria-labelledby="previewTitleId"
+        tabindex="-1"
+        :style="PREVIEW_PANEL_STYLE"
+      >
+        <header class="preview-header" data-preview-header>
+          <h2 :id="previewTitleId">{{ t("replica.preview") }}</h2>
+          <button
+            type="button"
+            class="preview-close"
+            :aria-label="t('actions.close')"
+            :disabled="acting"
+            @click="closePreview"
+          >
+            <X :size="18" aria-hidden="true" />
+          </button>
+        </header>
+        <div class="preview-body" data-preview-body>
+          <section class="preview-section">
+            <h3>{{ t("replica.generationRules") }}</h3>
+            <div class="preview-facts-card">
+            <dl class="facts preview-facts">
+              <div>
+                <dt>{{ t("replica.sourceSelector") }}</dt>
+                <dd>{{ draft.sourceSelector }}</dd>
+              </div>
+              <div>
+                <dt>{{ t("replica.replicaFactor") }}</dt>
+                <dd>{{ draft.replicaFactor }}</dd>
+              </div>
+              <div>
+                <dt>{{ t("replica.scheduleCron") }}</dt>
+                <dd>
+                  <input
+                    v-model="draft.scheduleCron"
                     class="input"
-                    :data-route-target="`${routeIndex}-${targetIndex}`"
-                    :aria-label="t('replica.editTarget', { index: targetIndex + 1 })"
-                    :value="(route.targetNodeIds ?? [])[targetIndex]"
+                    type="text"
+                    data-field="schedule-cron"
+                    autocomplete="off"
+                    :aria-label="t('replica.scheduleCron')"
                     :disabled="acting"
-                    @change="onEditRouteTarget(routeIndex, targetIndex, $event)"
+                  />
+                </dd>
+              </div>
+              <div>
+                <dt>{{ t("replica.timezone") }}</dt>
+                <dd>
+                  <input
+                    v-model="draft.timezone"
+                    class="input"
+                    type="text"
+                    data-field="timezone"
+                    autocomplete="off"
+                    :aria-label="t('replica.timezone')"
+                    :disabled="acting"
+                  />
+                </dd>
+              </div>
+              <div>
+                <dt>{{ t("replica.schedule") }}</dt>
+                <dd>
+                  <label class="field checkbox">
+                    <input v-model="draft.enabled" type="checkbox" data-field="enabled" :disabled="acting" />
+                    {{ t("replica.schedule") }}
+                  </label>
+                </dd>
+              </div>
+              <div>
+                <dt>{{ t("replica.nextRun") }}</dt>
+                <dd data-next-run>{{ nextRunLabel(draft) }}</dd>
+              </div>
+              <div>
+                <dt>{{ t("replica.retention") }}</dt>
+                <dd>
+                  {{
+                    t("replica.retentionSummary", {
+                      last: draft.retentionKeepLast ?? 0,
+                      days: draft.retentionKeepDays ?? 0,
+                    })
+                  }}
+                </dd>
+              </div>
+            </dl>
+            <p v-if="showNextRunHint(draft)" class="muted preview-hint">{{ t("replica.nextRunHint") }}</p>
+            </div>
+          </section>
+
+          <section
+            v-if="(draft.globalWarnings ?? []).length"
+            class="preview-alert"
+            role="status"
+          >
+            <TriangleAlert class="preview-alert-icon" :size="18" aria-hidden="true" />
+            <div>
+              <h3>{{ t("replica.warnings") }}</h3>
+              <ul class="warning-list">
+                <li
+                  v-for="code in draft.globalWarnings ?? []"
+                  :key="code"
+                  :data-n1-warning="isN1Warning(code) ? 'true' : undefined"
+                >
+                  {{ warningLabel(code) }}
+                </li>
+              </ul>
+            </div>
+          </section>
+
+          <section class="preview-section preview-routes" data-preview-routes>
+            <div class="preview-section-heading">
+              <h3>{{ t("replica.routeTable") }}</h3>
+              <span class="preview-section-meta">{{ (draft.routes ?? []).length }}</span>
+            </div>
+            <p v-if="!(draft.routes ?? []).length" class="muted preview-empty">{{ t("replica.noRoutes") }}</p>
+            <ul v-else class="preview-route-list">
+              <li
+                v-for="(route, routeIndex) in draft.routes ?? []"
+                :key="routeIndex"
+                class="preview-route"
+              >
+                <div class="preview-route-field">
+                  <label class="preview-route-label" :for="`route-source-${routeIndex}`">
+                    {{ t("replica.source") }}
+                  </label>
+                  <select
+                    :id="`route-source-${routeIndex}`"
+                    class="input"
+                    :data-route-source="String(routeIndex)"
+                    :aria-label="t('replica.editSource')"
+                    :value="route.sourceNodeId"
+                    :disabled="acting"
+                    @change="onEditRouteSource(routeIndex, $event)"
                   >
                     <option
                       v-for="node in routeNodeOptions"
-                      :key="`target-${routeIndex}-${targetIndex}-${node.nodeId}`"
+                      :key="`source-${routeIndex}-${node.nodeId}`"
                       :value="node.nodeId"
-                      :disabled="node.nodeId === route.sourceNodeId"
                     >
                       {{ nodeName(node) }}
                     </option>
                   </select>
                 </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <h3>{{ t("replica.warnings") }}</h3>
-      <ul class="warning-list">
-        <li
-          v-for="code in draft.globalWarnings ?? []"
-          :key="code"
-          :data-n1-warning="isN1Warning(code) ? 'true' : undefined"
-        >
-          {{ warningLabel(code) }}
-        </li>
-      </ul>
-      <h3>{{ t("replica.costEstimate") }}</h3>
-      <p>{{ t("replica.inboundLoad") }}</p>
-      <ul>
-        <li v-for="(load, nodeId) in draft.inboundLoad ?? {}" :key="nodeId">
-          <span class="mono">{{ nodeNameById(String(nodeId)) }}</span>: {{ load }}
-        </li>
-      </ul>
-      <label v-if="hasExistingRoutes" class="field checkbox" data-replace-current>
-        <input v-model="replaceCurrent" name="replaceCurrent" type="checkbox" />
-        {{ t("replica.replaceCurrent") }}
-      </label>
-      <p v-if="hasExistingRoutes" class="muted">{{ t("replica.replaceHint") }}</p>
-      <div class="preview-actions">
-        <button type="button" class="btn" :disabled="acting" @click="closePreview">
-          {{ t("replica.cancel") }}
-        </button>
-        <button
-          v-if="canManage"
-          type="button"
-          class="btn btn-primary"
-          data-action="apply-draft"
-          :disabled="!canApplyDraft"
-          @click="onApplyDraft"
-        >
-          {{ t("replica.apply") }}
-        </button>
-      </div>
-    </section>
-  </div>
+                <div class="preview-route-arrow" aria-hidden="true">
+                  <ArrowRight :size="18" />
+                </div>
+                <span class="sr-only">{{ t("replica.to") }}</span>
+                <div class="preview-route-field">
+                  <span class="preview-route-label">{{ t("replica.targets") }}</span>
+                  <div class="target-edits">
+                    <select
+                      v-for="(_, targetIndex) in route.targetNodeIds ?? []"
+                      :id="`route-target-${routeIndex}-${targetIndex}`"
+                      :key="`target-${routeIndex}-${targetIndex}`"
+                      class="input"
+                      :data-route-target="`${routeIndex}-${targetIndex}`"
+                      :aria-label="t('replica.editTarget', { index: targetIndex + 1 })"
+                      :value="(route.targetNodeIds ?? [])[targetIndex]"
+                      :disabled="acting"
+                      @change="onEditRouteTarget(routeIndex, targetIndex, $event)"
+                    >
+                      <option
+                        v-for="node in routeNodeOptions"
+                        :key="`target-${routeIndex}-${targetIndex}-${node.nodeId}`"
+                        :value="node.nodeId"
+                        :disabled="node.nodeId === route.sourceNodeId"
+                      >
+                        {{ nodeName(node) }}
+                      </option>
+                    </select>
+                  </div>
+                </div>
+              </li>
+            </ul>
+          </section>
+
+          <section v-if="Object.keys(draft.inboundLoad ?? {}).length" class="preview-section">
+            <h3>{{ t("replica.costEstimate") }}</h3>
+            <p class="muted preview-hint">{{ t("replica.inboundLoad") }}</p>
+            <ul class="preview-load">
+              <li v-for="(load, nodeId) in draft.inboundLoad ?? {}" :key="nodeId">
+                <span class="mono">{{ nodeNameById(String(nodeId)) }}</span>
+                <span class="preview-load-value">{{ load }}</span>
+              </li>
+            </ul>
+          </section>
+        </div>
+        <footer class="preview-footer" data-preview-footer>
+          <div v-if="hasExistingRoutes" class="preview-replace">
+            <label class="field checkbox" data-replace-current>
+              <input v-model="replaceCurrent" name="replaceCurrent" type="checkbox" />
+              {{ t("replica.replaceCurrent") }}
+            </label>
+            <p class="muted preview-hint">{{ t("replica.replaceHint") }}</p>
+          </div>
+          <div class="preview-actions">
+            <button type="button" class="btn" :disabled="acting" @click="closePreview">
+              {{ t("replica.cancel") }}
+            </button>
+            <button
+              v-if="canManage"
+              type="button"
+              class="btn btn-primary"
+              data-action="apply-draft"
+              :disabled="!canApplyDraft"
+              @click="onApplyDraft"
+            >
+              {{ t("replica.apply") }}
+            </button>
+          </div>
+        </footer>
+      </section>
+    </div>
+  </Teleport>
 
   <Drawer
     :open="runDetailOpen"
@@ -1450,8 +1513,7 @@ async function onStartRun(): Promise<void> {
   gap: 0.75rem;
   flex-wrap: wrap;
 }
-.drawer-actions,
-.preview-actions {
+.drawer-actions {
   justify-content: flex-end;
   margin-top: auto;
   padding-top: 1rem;
@@ -1593,22 +1655,224 @@ h3 {
   background: rgba(0, 0, 0, 0.55);
 }
 .preview-panel {
-  width: min(100%, 40rem);
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 56rem);
   max-height: 90vh;
-  overflow: auto;
-  padding: 1.5rem;
+  overflow: hidden;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: 12px;
   background: var(--color-card);
   box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.3);
   color: var(--color-text);
+}
+.preview-panel:focus {
+  outline: none;
+}
+.preview-header,
+.preview-footer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
+  background: var(--color-card);
+}
+.preview-header {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--color-border);
+}
+.preview-header h2 {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 650;
+}
+.preview-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+.preview-close:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-text) 6%, transparent);
+  color: var(--color-text);
+}
+.preview-close:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.preview-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
   display: flex;
   flex-direction: column;
+  gap: 1.25rem;
+  padding: 1.25rem 1.5rem;
+}
+.preview-section,
+.preview-routes,
+.preview-alert {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+.preview-section h3,
+.preview-alert h3 {
+  margin: 0 0 0.75rem;
+  font-size: 0.8125rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+.preview-section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
   gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.preview-section-heading h3 {
+  margin: 0;
+}
+.preview-section-meta {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-muted);
+}
+.preview-facts-card {
+  padding: 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg);
+}
+.preview-facts {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.preview-hint {
+  margin: 0.5rem 0 0;
+  line-height: 1.45;
+}
+.preview-empty {
+  margin: 0;
+  padding: 1rem;
+  border: 1px dashed var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg);
+}
+.preview-route-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.preview-route {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.35fr);
+  gap: 0.75rem 1rem;
+  align-items: end;
+  min-height: 4.75rem;
+  padding: 0.875rem 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg);
+}
+.preview-route-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  min-width: 0;
+}
+.preview-route-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-muted);
+}
+.preview-route-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  color: var(--color-muted);
+}
+.preview-route .input {
+  min-width: 0;
+  width: 100%;
+}
+.preview-alert {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.875rem 1rem;
+  border: 1px solid color-mix(in srgb, var(--color-stale-fg) 18%, var(--color-border));
+  border-radius: 10px;
+  background: var(--color-stale);
+  color: var(--color-stale-fg);
+}
+.preview-alert h3 {
+  color: var(--color-stale-fg);
+}
+.preview-alert-icon {
+  flex: 0 0 auto;
+  margin-top: 0.1rem;
 }
 .warning-list {
   margin: 0;
-  padding-left: 1.25rem;
+  padding-left: 1.1rem;
+  line-height: 1.45;
+}
+.preview-load {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.preview-load li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0.375rem 0.625rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-bg);
+}
+.preview-load .mono {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.preview-load-value {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.preview-footer {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-end;
+  border-top: 1px solid var(--color-border);
+}
+.preview-replace {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+  flex: 1 1 16rem;
+}
+.preview-actions {
+  justify-content: flex-end;
+  margin-left: auto;
 }
 .node-identity {
   display: flex;
@@ -1625,9 +1889,51 @@ h3 {
   flex-wrap: wrap;
   gap: 0.5rem;
 }
-.target-edits .input,
-td .input {
-  min-width: 10rem;
+.target-edits .input {
+  flex: 1 1 10rem;
+  min-width: 0;
+}
+@media (max-width: 720px) {
+  .preview-backdrop {
+    padding: 0.5rem;
+  }
+  .preview-panel {
+    width: min(100%, 56rem);
+    max-height: 100dvh;
+    border-radius: 10px;
+  }
+  .preview-header,
+  .preview-footer,
+  .preview-body {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+  .preview-facts {
+    grid-template-columns: 1fr;
+  }
+  .preview-route {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
+  }
+  .preview-route-arrow {
+    display: none;
+  }
+  .preview-footer {
+    align-items: stretch;
+  }
+  .preview-actions {
+    width: 100%;
+    margin-left: 0;
+  }
+  .preview-actions .btn {
+    flex: 1 1 auto;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .preview-close,
+  .preview-route {
+    transition: none;
+  }
 }
 .sr-only {
   position: absolute;
