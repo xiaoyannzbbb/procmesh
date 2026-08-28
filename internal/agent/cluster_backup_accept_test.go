@@ -275,18 +275,10 @@ func TestDisasterReplication_PeerIdempotencyAndConflict(t *testing.T) {
 	seedOwnerSpecs(t, nodes)
 
 	clusterID := waitClusterID(t, nodes[0].addr)
-	backupPolicyID := uniqueID("bp-rep")
-	createClusterBackupPolicy(t, nodes[0].addr, &procmeshv1.ClusterBackupPolicy{
-		PolicyId: backupPolicyID, Name: backupPolicyID, Enabled: true, Timezone: "UTC",
-		TargetSelector: "ALL_ADMITTED", Sink: "fs", UnavailablePolicy: "RECORD_AND_CONTINUE",
-		TimeoutSeconds: 20, MaxConcurrency: 3,
-	})
-	backupRun := startClusterBackupRun(t, nodes[0].addr, backupPolicyID)
-	waitClusterBackupRun(t, nodes[0].addr, backupRun.GetRunId(), "SUCCEEDED", 60*time.Second)
 
 	rep := disasterReplicationClient(t, nodes[0].addr)
 	draft, err := rep.GeneratePolicyDraft(context.Background(), connect.NewRequest(&procmeshv1.GeneratePolicyDraftRequest{
-		Name: uniqueID("replica"), Enabled: true, SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1, Trigger: "MANUAL", Timezone: "UTC", MaxConcurrency: 3,
+		Name: uniqueID("replica"), Enabled: true, SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1, Timezone: "UTC", MaxConcurrency: 3,
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -300,7 +292,7 @@ func TestDisasterReplication_PeerIdempotencyAndConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	started, err := rep.StartRun(context.Background(), connect.NewRequest(&procmeshv1.StartRunRequest{
-		Meta: &procmeshv1.MutationMeta{OperationId: uniqueID("op-rep")}, PolicyId: policyID, PrimaryRunId: backupRun.GetRunId(),
+		Meta: &procmeshv1.MutationMeta{OperationId: uniqueID("op-rep")}, PolicyId: policyID,
 	}))
 	if err != nil {
 		t.Fatal(err)

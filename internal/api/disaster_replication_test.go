@@ -972,7 +972,6 @@ func TestDisasterReplicationAPI_StartRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create a policy first
 	policy := control.ReplicationPolicy{
 		PolicyID:       "policy-start-1",
 		Name:           "test-start-policy",
@@ -993,15 +992,17 @@ func TestDisasterReplicationAPI_StartRun(t *testing.T) {
 	api.ApplyFn = func(cmd control.Command, _ time.Duration) error {
 		return state.Apply(cmd, api.Now())
 	}
+	var dispatched backup.FrozenReplicationRun
+	dispatchCount := 0
+	api.DispatchRun = func(run backup.FrozenReplicationRun) {
+		dispatched = run
+		dispatchCount++
+	}
 	client := newDisasterReplicationClient(t, api)
 
 	req := bearerReq(sid, &procmeshv1.StartRunRequest{
 		PolicyId: "policy-start-1",
 		Meta:     &procmeshv1.MutationMeta{OperationId: "op-start-1"},
-		SnapshotRefs: []*procmeshv1.ReplicationSnapshotRef{
-			{SourceNodeId: "node-1", SnapshotId: "snapshot-node-1", Sha256: strings.Repeat("a", 64)},
-			{SourceNodeId: "node-2", SnapshotId: "snapshot-node-2", Sha256: strings.Repeat("b", 64)},
-		},
 	})
 
 	resp, err := client.StartRun(context.Background(), req)
@@ -1031,6 +1032,9 @@ func TestDisasterReplicationAPI_StartRun(t *testing.T) {
 		if task.GetStatus() != "PENDING" || len(task.GetTargetNodeIds()) != 1 {
 			t.Fatalf("task = %+v, want one pending route target", task)
 		}
+		if task.GetSnapshotId() != "" || task.GetSha256() != "" {
+			t.Fatalf("task snapshot must be empty at StartRun, got %+v", task)
+		}
 		gotRoutes[task.GetSourceNodeId()+">"+task.GetTargetNodeIds()[0]] = task.GetTaskId()
 	}
 	wantRoutes := []string{"node-1>node-2", "node-1>node-3", "node-2>node-3"}
@@ -1041,6 +1045,20 @@ func TestDisasterReplicationAPI_StartRun(t *testing.T) {
 	}
 	if len(gotRoutes) != len(wantRoutes) {
 		t.Fatalf("route tasks = %+v, want %v", gotRoutes, wantRoutes)
+	}
+	if dispatchCount != 1 {
+		t.Fatalf("DispatchRun calls = %d, want 1", dispatchCount)
+	}
+	if dispatched.RunID != resp.Msg.GetRunId() || dispatched.PolicyID != "policy-start-1" || dispatched.PolicyRevision != 1 || dispatched.LeaderTerm != 7 {
+		t.Fatalf("dispatched = %+v, want run %s policy-start-1 rev=1 term=7", dispatched, resp.Msg.GetRunId())
+	}
+	if len(dispatched.Tasks) != len(wantRoutes) {
+		t.Fatalf("dispatched tasks = %d, want %d", len(dispatched.Tasks), len(wantRoutes))
+	}
+	for _, task := range dispatched.Tasks {
+		if task.Status != "PENDING" || task.SnapshotID != "" || task.SHA256 != "" {
+			t.Fatalf("dispatched task = %+v, want PENDING empty snapshot", task)
+		}
 	}
 	var runningTask control.ClusterBackupTask
 	for _, task := range state.ReplicationTasks {
@@ -1061,16 +1079,15 @@ func TestDisasterReplicationAPI_StartRun(t *testing.T) {
 	retryResp, err := client.StartRun(context.Background(), bearerReq(sid, &procmeshv1.StartRunRequest{
 		PolicyId: "policy-start-1",
 		Meta:     &procmeshv1.MutationMeta{OperationId: "op-start-1"},
-		SnapshotRefs: []*procmeshv1.ReplicationSnapshotRef{
-			{SourceNodeId: "node-1", SnapshotId: "snapshot-node-1", Sha256: strings.Repeat("a", 64)},
-			{SourceNodeId: "node-2", SnapshotId: "snapshot-node-2", Sha256: strings.Repeat("b", 64)},
-		},
 	}))
 	if err != nil {
 		t.Fatalf("idempotent StartRun failed: %v", err)
 	}
 	if retryResp.Msg.GetRunId() != resp.Msg.GetRunId() || retryResp.Msg.GetPolicyRevision() != 1 || len(state.ReplicationTasks) != len(wantRoutes) {
 		t.Fatalf("retry run=%q tasks=%d, want run=%q tasks=%d", retryResp.Msg.GetRunId(), len(state.ReplicationTasks), resp.Msg.GetRunId(), len(wantRoutes))
+	}
+	if dispatchCount != 1 {
+		t.Fatalf("idempotent StartRun DispatchRun calls = %d, want 1", dispatchCount)
 	}
 	gotRunning := state.ReplicationTasks[runningTask.RunID+":"+runningTask.TaskID]
 	if gotRunning.Status != "RUNNING" {
@@ -1089,42 +1106,168 @@ func TestDisasterReplicationAPI_StartRun(t *testing.T) {
 	}
 }
 
-func TestDisasterReplicationAPI_StartRun_ManualRequiresCompleteFrozenSnapshotRefs(t *testing.T) {
+func TestDisasterReplicationAPI_StartRun_CronPolicyAllowed(t *testing.T) {
 	api, state, authSvc := setupMinimalAPI(t)
 	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
 	if err != nil {
 		t.Fatal(err)
 	}
-	state.ReplicationPolicies["policy-manual-frozen"] = control.ReplicationPolicy{
-		PolicyID: "policy-manual-frozen", Name: "manual", Enabled: true, Trigger: "MANUAL", SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"node-1", "node-2"}, Revision: 1,
-		Routes: []control.ReplicationRoute{{SourceNodeID: "node-1", TargetNodeIDs: []string{"node-3"}}, {SourceNodeID: "node-2", TargetNodeIDs: []string{"node-3"}}},
+	state.ReplicationPolicies["scheduled"] = control.ReplicationPolicy{
+		PolicyID: "scheduled", Name: "cron", Enabled: true, Trigger: "SCHEDULE", ScheduleCron: "0 * * * *",
+		SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"node-1"}, Revision: 1,
+		Routes: []control.ReplicationRoute{{SourceNodeID: "node-1", TargetNodeIDs: []string{"node-2"}}},
+	}
+	api.LeaderTerm = func() uint64 { return 3 }
+	api.ApplyFn = func(cmd control.Command, _ time.Duration) error { return state.Apply(cmd, time.Now()) }
+	var dispatched backup.FrozenReplicationRun
+	api.DispatchRun = func(run backup.FrozenReplicationRun) { dispatched = run }
+	client := newDisasterReplicationClient(t, api)
+	resp, err := client.StartRun(context.Background(), bearerReq(sid, &procmeshv1.StartRunRequest{
+		PolicyId: "scheduled", Meta: &procmeshv1.MutationMeta{OperationId: "op-scheduled"},
+	}))
+	if err != nil {
+		t.Fatalf("cron policy StartRun: %v", err)
+	}
+	if resp.Msg.GetRunId() == "" {
+		t.Fatal("expected run_id")
+	}
+	if dispatched.RunID != resp.Msg.GetRunId() || len(dispatched.Tasks) != 1 || dispatched.Tasks[0].SnapshotID != "" {
+		t.Fatalf("dispatched = %+v", dispatched)
+	}
+}
+
+func TestDisasterReplicationAPI_StartRun_ReturnsExistingRunning(t *testing.T) {
+	api, state, authSvc := setupMinimalAPI(t)
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.ReplicationPolicies["policy-running"] = control.ReplicationPolicy{
+		PolicyID: "policy-running", Name: "running", Enabled: true, SourceSelector: "EXPLICIT_NODES",
+		SourceIDs: []string{"node-1"}, Revision: 1,
+		Routes: []control.ReplicationRoute{{SourceNodeID: "node-1", TargetNodeIDs: []string{"node-2"}}},
+	}
+	api.LeaderTerm = func() uint64 { return 4 }
+	api.Now = func() time.Time { return time.Unix(1_800_000_000, 0) }
+	api.ApplyFn = func(cmd control.Command, _ time.Duration) error { return state.Apply(cmd, api.Now()) }
+	dispatchCount := 0
+	api.DispatchRun = func(backup.FrozenReplicationRun) { dispatchCount++ }
+	client := newDisasterReplicationClient(t, api)
+
+	first, err := client.StartRun(context.Background(), bearerReq(sid, &procmeshv1.StartRunRequest{
+		PolicyId: "policy-running", Meta: &procmeshv1.MutationMeta{OperationId: "op-running-1"},
+	}))
+	if err != nil {
+		t.Fatalf("first StartRun: %v", err)
+	}
+	second, err := client.StartRun(context.Background(), bearerReq(sid, &procmeshv1.StartRunRequest{
+		PolicyId: "policy-running", Meta: &procmeshv1.MutationMeta{OperationId: "op-running-2"},
+	}))
+	if err != nil {
+		t.Fatalf("second StartRun: %v", err)
+	}
+	if second.Msg.GetRunId() != first.Msg.GetRunId() {
+		t.Fatalf("run_id = %q, want existing %q", second.Msg.GetRunId(), first.Msg.GetRunId())
+	}
+	if len(state.ReplicationRuns) != 1 {
+		t.Fatalf("runs = %d, want 1 existing RUNNING run", len(state.ReplicationRuns))
+	}
+	if dispatchCount != 1 {
+		t.Fatalf("DispatchRun calls = %d, want 1 (no new run)", dispatchCount)
+	}
+}
+
+func TestDisasterReplicationAPI_StartRun_DisabledPolicyStillAllowed(t *testing.T) {
+	api, state, authSvc := setupMinimalAPI(t)
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.ReplicationPolicies["policy-disabled"] = control.ReplicationPolicy{
+		PolicyID: "policy-disabled", Name: "disabled", Enabled: false, SourceSelector: "EXPLICIT_NODES",
+		SourceIDs: []string{"node-1"}, Revision: 1,
+		Routes: []control.ReplicationRoute{{SourceNodeID: "node-1", TargetNodeIDs: []string{"node-2"}}},
+	}
+	api.LeaderTerm = func() uint64 { return 3 }
+	api.ApplyFn = func(cmd control.Command, _ time.Duration) error { return state.Apply(cmd, time.Now()) }
+	client := newDisasterReplicationClient(t, api)
+	resp, err := client.StartRun(context.Background(), bearerReq(sid, &procmeshv1.StartRunRequest{
+		PolicyId: "policy-disabled", Meta: &procmeshv1.MutationMeta{OperationId: "op-disabled"},
+	}))
+	if err != nil {
+		t.Fatalf("disabled policy StartRun: %v", err)
+	}
+	if resp.Msg.GetRunId() == "" || resp.Msg.GetPolicyId() != "policy-disabled" {
+		t.Fatalf("resp = %+v", resp.Msg)
+	}
+}
+
+func TestDisasterReplicationAPI_StartRun_IgnoresPrimaryRunId(t *testing.T) {
+	api, state, authSvc := setupMinimalAPI(t)
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.ReplicationPolicies["policy-primary"] = control.ReplicationPolicy{
+		PolicyID: "policy-primary", Name: "primary", Enabled: true, SourceSelector: "EXPLICIT_NODES",
+		SourceIDs: []string{"node-1"}, Revision: 1,
+		Routes: []control.ReplicationRoute{{SourceNodeID: "node-1", TargetNodeIDs: []string{"node-2"}}},
+	}
+	state.BackupRuns["backup-1"] = control.ClusterBackupRun{RunID: "backup-1", Status: "SUCCEEDED"}
+	state.BackupTasks["backup-1:task-1"] = control.ClusterBackupTask{
+		RunID: "backup-1", TaskID: "task-1", NodeID: "node-1",
+		SnapshotID: "snap-from-backup", SHA256: strings.Repeat("a", 64), Status: "SUCCESS",
+	}
+	api.LeaderTerm = func() uint64 { return 3 }
+	api.ApplyFn = func(cmd control.Command, _ time.Duration) error { return state.Apply(cmd, time.Now()) }
+	var dispatched backup.FrozenReplicationRun
+	api.DispatchRun = func(run backup.FrozenReplicationRun) { dispatched = run }
+	client := newDisasterReplicationClient(t, api)
+
+	resp, err := client.StartRun(context.Background(), bearerReq(sid, &procmeshv1.StartRunRequest{
+		PolicyId: "policy-primary", PrimaryRunId: "backup-1",
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-ignore-primary"},
+	}))
+	if err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	getResp, err := client.GetRun(context.Background(), bearerReq(sid, &procmeshv1.GetRunRequest{RunId: resp.Msg.GetRunId()}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(getResp.Msg.GetRun().GetTasks()) != 1 {
+		t.Fatalf("tasks = %+v", getResp.Msg.GetRun().GetTasks())
+	}
+	task := getResp.Msg.GetRun().GetTasks()[0]
+	if task.GetSnapshotId() != "" || task.GetSha256() != "" || task.GetStatus() != "PENDING" {
+		t.Fatalf("task = %+v, want PENDING empty snapshot (no BackupRuns bind)", task)
+	}
+	if dispatched.RunID != resp.Msg.GetRunId() || len(dispatched.Tasks) != 1 || dispatched.Tasks[0].SnapshotID != "" {
+		t.Fatalf("dispatched = %+v", dispatched)
+	}
+}
+
+func TestDisasterReplicationAPI_StartRun_EmptyRoutesInvalid(t *testing.T) {
+	api, state, authSvc := setupMinimalAPI(t)
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.ReplicationPolicies["policy-empty"] = control.ReplicationPolicy{
+		PolicyID: "policy-empty", Name: "empty", Enabled: true, SourceSelector: "EXPLICIT_NODES",
+		SourceIDs: []string{"node-1"}, Revision: 1,
 	}
 	api.LeaderTerm = func() uint64 { return 3 }
 	api.ApplyFn = func(cmd control.Command, _ time.Duration) error { return state.Apply(cmd, time.Now()) }
 	client := newDisasterReplicationClient(t, api)
 	_, err = client.StartRun(context.Background(), bearerReq(sid, &procmeshv1.StartRunRequest{
-		PolicyId: "policy-manual-frozen", Meta: &procmeshv1.MutationMeta{OperationId: "op-manual-missing"},
-		SnapshotRefs: []*procmeshv1.ReplicationSnapshotRef{{SourceNodeId: "node-1", SnapshotId: "snap-1", Sha256: strings.Repeat("a", 64)}},
+		PolicyId: "policy-empty", Meta: &procmeshv1.MutationMeta{OperationId: "op-empty"},
 	}))
-	if err == nil || !strings.Contains(err.Error(), "snapshot refs") {
-		t.Fatalf("expected incomplete frozen refs to be rejected, got %v", err)
+	if err == nil || connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("empty routes error = %v, want INVALID", err)
 	}
 	if len(state.ReplicationRuns) != 0 {
-		t.Fatalf("unbound manual request created a run: %+v", state.ReplicationRuns)
-	}
-}
-
-func TestDisasterReplicationAPI_StartRunRejectsNonManualPolicy(t *testing.T) {
-	api, state, authSvc := setupMinimalAPI(t)
-	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
-	if err != nil {
-		t.Fatal(err)
-	}
-	state.ReplicationPolicies["scheduled"] = control.ReplicationPolicy{PolicyID: "scheduled", Enabled: true, Trigger: "SCHEDULE", SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"node-1"}, Revision: 1, Routes: []control.ReplicationRoute{{SourceNodeID: "node-1", TargetNodeIDs: []string{"node-2"}}}}
-	api.LeaderTerm = func() uint64 { return 3 }
-	_, err = api.StartRun(context.Background(), bearerReq(sid, &procmeshv1.StartRunRequest{PolicyId: "scheduled", Meta: &procmeshv1.MutationMeta{OperationId: "op-scheduled"}}))
-	if err == nil || !strings.Contains(err.Error(), "manual") {
-		t.Fatalf("expected non-manual rejection, got %v", err)
+		t.Fatalf("empty routes created a run: %+v", state.ReplicationRuns)
 	}
 }
 
@@ -2016,9 +2159,8 @@ func TestReplicationStartAuditExistingAndApplyFailure(t *testing.T) {
 	api.Now = func() time.Time { return time.Unix(1_800_000_000, 0) }
 	api.ApplyFn = func(cmd control.Command, _ time.Duration) error { return state.Apply(cmd, api.Now()) }
 	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-admin", Username: "admin"})
-	refs := []*procmeshv1.ReplicationSnapshotRef{{SourceNodeId: "node-1", SnapshotId: "snap-1", Sha256: strings.Repeat("a", 64)}}
 	first, err := api.StartRun(ctx, bearerReq(sid, &procmeshv1.StartRunRequest{
-		PolicyId: "rp-start", Meta: &procmeshv1.MutationMeta{OperationId: "op-repl-start"}, SnapshotRefs: refs,
+		PolicyId: "rp-start", Meta: &procmeshv1.MutationMeta{OperationId: "op-repl-start"},
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -2026,7 +2168,7 @@ func TestReplicationStartAuditExistingAndApplyFailure(t *testing.T) {
 	assertControlAudit(t, st, "replication.run.start", "SUCCESS", map[string]string{"policy_id": "rp-start", "run_id": first.Msg.GetRunId()})
 
 	_, err = api.StartRun(ctx, bearerReq(sid, &procmeshv1.StartRunRequest{
-		PolicyId: "rp-start", Meta: &procmeshv1.MutationMeta{OperationId: "op-repl-start"}, SnapshotRefs: refs,
+		PolicyId: "rp-start", Meta: &procmeshv1.MutationMeta{OperationId: "op-repl-start"},
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -2045,9 +2187,13 @@ func TestReplicationStartAuditExistingAndApplyFailure(t *testing.T) {
 		t.Fatalf("existing-run StartRun must audit, got %d success events in %s", success, auditBodies(events))
 	}
 
+	finished := state.ReplicationRuns[first.Msg.GetRunId()]
+	finished.Status = "SUCCEEDED"
+	state.ReplicationRuns[first.Msg.GetRunId()] = finished
+
 	api.ApplyFn = func(control.Command, time.Duration) error { return errors.New("raft apply failed secret_key=wJalr") }
 	_, err = api.StartRun(ctx, bearerReq(sid, &procmeshv1.StartRunRequest{
-		PolicyId: "rp-start", Meta: &procmeshv1.MutationMeta{OperationId: "op-repl-start-fail"}, SnapshotRefs: refs,
+		PolicyId: "rp-start", Meta: &procmeshv1.MutationMeta{OperationId: "op-repl-start-fail"},
 	}))
 	if err == nil {
 		t.Fatal("expected apply failure")

@@ -527,17 +527,18 @@ func (d *DisasterReplicationAPI) StartRun(ctx context.Context, req *connect.Requ
 	if !ok {
 		return nil, ToConnect(errcode.E(errcode.NOT_FOUND, "replication policy not found"))
 	}
-	if policy.Trigger != "MANUAL" {
-		return nil, ToConnect(errcode.E(errcode.INVALID, "public start is only available for manual replication policies"))
-	}
 	now := d.now()
 	sources := replicationSources(policy)
 	if len(sources) == 0 || len(policy.Routes) == 0 {
 		return nil, ToConnect(errcode.E(errcode.INVALID, "replication routes required"))
 	}
-	refs, err := resolveReplicationSnapshotRefs(st, policy, req.Msg)
-	if err != nil {
-		return nil, ToConnect(err)
+	for _, existingRun := range st.ReplicationRuns {
+		if existingRun.PolicyID == policy.PolicyID && existingRun.Status == "RUNNING" {
+			rec.RunID = existingRun.RunID
+			rec.Resource = "replication_run:" + existingRun.RunID
+			d.audit(ctx, rec, nil)
+			return startRunResponse(existingRun), nil
+		}
 	}
 
 	run := control.ClusterBackupRun{
@@ -553,19 +554,12 @@ func (d *DisasterReplicationAPI) StartRun(ctx context.Context, req *connect.Requ
 	}
 	tasks := make([]control.ClusterBackupTask, 0)
 	for _, route := range policy.Routes {
-		ref := refs[route.SourceNodeID]
 		for _, targetID := range route.TargetNodeIDs {
-			taskID := replicationTaskID(runID, route.SourceNodeID, targetID)
-			if ref.SnapshotID != "" {
-				taskID = replicationTaskID(policy.PolicyID, ref.SnapshotID, targetID)
-			}
 			tasks = append(tasks, control.ClusterBackupTask{
 				RunID:        runID,
-				TaskID:       taskID,
+				TaskID:       replicationTaskID(runID, route.SourceNodeID, targetID),
 				NodeID:       targetID,
 				SourceNodeID: route.SourceNodeID,
-				SnapshotID:   ref.SnapshotID,
-				SHA256:       ref.SHA256,
 				Status:       "PENDING",
 				UpdatedUnix:  now.Unix(),
 			})
@@ -590,7 +584,7 @@ func (d *DisasterReplicationAPI) StartRun(ctx context.Context, req *connect.Requ
 		d.audit(ctx, rec, err)
 		return nil, ToConnect(err)
 	}
-	if d.DispatchRun != nil && len(refs) != 0 {
+	if d.DispatchRun != nil {
 		frozen := make([]backup.FrozenReplicationTask, 0, len(tasks))
 		for _, task := range tasks {
 			frozen = append(frozen, backup.FrozenReplicationTask{TaskID: task.TaskID, SourceNodeID: task.SourceNodeID, TargetNodeID: task.NodeID, SnapshotID: task.SnapshotID, SHA256: task.SHA256, Status: task.Status})
