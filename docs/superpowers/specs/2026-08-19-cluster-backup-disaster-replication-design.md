@@ -1,7 +1,7 @@
 # ProcMesh 集群备份与灾备副本设计
 
 日期：2026-08-19
-修订：2026-08-20（Task 7A fix round）
+修订：2026-08-28（灾备自行捕获增量：副本 run 自行捕获源快照后再按路由复制，不再依赖主备份 run / trigger）
 状态：待用户审阅
 范围：在现有 Q5 配置备份能力之上的集群级备份、定时备份与 Peer 灾备副本
 
@@ -248,9 +248,9 @@ ReplicationPolicy
   source_ids
   replica_factor        1 .. N-1
   routes[]              source_node_id -> target_node_ids[]
-  trigger               AFTER_PRIMARY_BACKUP | SCHEDULE | MANUAL
-  primary_policy_ids    AFTER_PRIMARY_BACKUP 时关联的 BackupPolicy
-  schedule_cron / timezone   SCHEDULE 时使用
+  schedule_cron         5 字段 cron；空表示仅手动
+  timezone
+  schedule_epoch_unix   自动调度只在 fire > 此值后触发；不补跑策略写入前已过的 cron
   retention             keep_last / keep_days / max_bytes
   max_concurrency
   verify_after_copy     bool
@@ -258,6 +258,8 @@ ReplicationPolicy
   topology_constraints  anti-affinity 规则
   revision
 ```
+
+产品面不再暴露 `trigger` / `primary_policy_ids`。兼容字段若仍出现在 Proto 中，服务端写入时清空，且不得再作为捕获前置。
 
 `ReplicationRoute` 是生成后的稳定结果。运行任务使用：
 
@@ -287,13 +289,17 @@ Web 的“生成整个集群副本配置”调用 preview API，生成一个未�
 
 Preview 返回完整 route 表、故障域信息、每个目标的预计 inbound load、缺失 Peer 能力、同机风险和预计副本数。用户确认后才把 policy 和 route 写入 Raft。策略 revision 变更不会删除旧副本；旧副本由 retention 管理。
 
-### 10.3 触发与恢复
+### 10.3 调度、捕获与恢复
 
-- `AFTER_PRIMARY_BACKUP`：主备份成功后异步复制同一 `snapshot_id`，不重新生成快照。
-- `SCHEDULE`：Peer 独立按 cron 触发；如果没有对应主备份，运行失败并显示原因，不偷偷创建未声明的主快照。
-- `MANUAL`：用户选择一个已有 ClusterBackupRun 或 Agent snapshot，执行指定路由复制。
+自动：`enabled` 且 `schedule_cron` 非空时，仅当前 Raft Leader 在 `fire > ScheduleEpochUnix` 时创建 replication run；不补跑策略写入前已过的 cron。`enabled=false` 跳过 cron，手动仍允许。
 
-Peer 复制失败只重试失败 route，不重新复制成功 route。目标节点已存在相同 snapshot ID 和 checksum 时直接返回幂等成功；ID 相同但 checksum 不同视为冲突并阻止覆盖。
+每个源节点先捕获本地 process spec 与 revision history，以 `sink=replica` 落盘并产生稳定 `snapshot_id`+checksum，再按路由经 mTLS 复制到 Peer。不读取 `ClusterBackupRun`，也不写主备份 `BackupRuns`。Peer 只校验并落盘，不 apply。
+
+手动：`StartRun` 走同一捕获+复制流水线，不要求 `primary_run_id` / 既有主备份快照引用。应用拓扑只写策略，不立刻创建 run。
+
+同策略同时最多一个 `RUNNING`；若 cron fire 撞上运行中，该 fire 记为 `SKIPPED`，不排队。失败 route 继续推进，run 可为 `PARTIAL`。
+
+重试只处理失败任务：已有冻结快照则只重传；快照为空或源文件丢失则对该源重捕获。成功任务不动。目标节点已存在相同 snapshot ID 和 checksum 时直接返回幂等成功；ID 相同但 checksum 不同视为冲突并阻止覆盖。
 
 恢复页面可以列出 Peer 副本，并跳转到 Owner 选择和 CAS 恢复流程。Peer 目标本身不是新的 Owner，不能在目标节点直接启动源节点的进程。
 
@@ -411,12 +417,12 @@ Draft API 不直接写 Raft；`ApplyPolicyDraft` 必须带 draft revision 和规
 页面包含三个主要区域：
 
 1. **概览**：路由总数、健康/延迟/失败数量、最近一次成功复制、可恢复快照数量。
-2. **副本配置**：当前路由表、复制因子、触发策略、保留、并发和拓扑约束。
-3. **运行与恢复**：复制运行详情、按 route 重试、checksum 验证、可恢复快照和 Owner 恢复入口。
+2. **副本配置**：当前路由表、复制因子、cron/时区/enabled、保留、并发和拓扑约束。
+3. **运行与恢复**：复制运行详情、按 route 重试、checksum 验证、可恢复快照和 Owner 恢复入口。不提供选择已有 `ClusterBackupRun` 或粘贴主备份 `run_id`。
 
-“一键生成整个集群副本配置”打开轻量预览确认：展示生成规则、route 表、故障域警告和开销估算；应用后页面显示 policy revision。已有人工修改的 route 不被静默覆盖，必须由用户明确选择“替换当前配置”。
+“一键生成整个集群副本配置”打开轻量预览确认：默认预填 `schedule_cron=0 2 * * *`、浏览器 IANA 时区、`enabled=true`；预览中必须可编辑 cron、时区与 enabled（cron 可清空为仅手动）；同时展示生成规则、route 表、故障域警告和开销估算。确认应用后只写入策略与路由，不立刻创建 run；页面显示 policy revision。已有人工修改的 route 不被静默覆盖，必须由用户明确选择“替换当前配置”。
 
-Peer 不出现在 `/backup` 的普通 sink 选择器中，避免用户误以为“创建一次 Peer 备份”就等价于建立灾备策略。
+Peer 不出现在 `/backup` 的普通 sink 选择器中，避免用户误以为“创建一次 Peer 备份”就等价于建立灾备策略。旧 `AFTER_PRIMARY_BACKUP` 不再跟跑备份页。
 
 所有状态同时提供 `LIVE`、`STALE`、`UNKNOWN` 语义。Leader/目标 Agent 不可达时保留最后已知结果并标明时间，不显示空白列表。
 
