@@ -130,6 +130,7 @@ const restoreTargets = ref<RestoreTargetForm[]>([]);
 const restoreQueryApplied = ref("");
 const lastPeerNodeIds = ref<string[]>([]);
 const nodesUnavailable = ref(false);
+const nodeNames = ref<Record<string, string>>({});
 
 const policyOpen = ref(false);
 const editingPolicyId = ref("");
@@ -155,13 +156,19 @@ async function collectAlivePeerIds(): Promise<string[]> {
   try {
     const res = await nodeClient.listNodes({});
     nodesUnavailable.value = false;
-    return (res.nodes ?? [])
-      .filter((n) => (n.state || "").toUpperCase() === "ALIVE" && n.nodeId)
-      .map((n) => n.nodeId);
+    const nodes = res.nodes ?? [];
+    nodeNames.value = Object.fromEntries(
+      nodes.filter((n) => Boolean(n.nodeId)).map((n) => [n.nodeId, n.hostname || n.nodeId]),
+    );
+    return nodes.filter((n) => (n.state || "").toUpperCase() === "ALIVE" && n.nodeId).map((n) => n.nodeId);
   } catch {
     nodesUnavailable.value = true;
     return [];
   }
+}
+
+function nodeName(nodeId: string): string {
+  return nodeNames.value[nodeId] || nodeId || "—";
 }
 
 const listQuery = useQuery({
@@ -611,7 +618,8 @@ function mapEntry(
     key: snapshot?.snapshotId || `${entry.sourceNode ?? "node"}:${index}`,
     snapshotId: snapshot?.snapshotId || "—",
     sink: snapshot?.sink || "—",
-    node: snapshot?.nodeId || entry.sourceNode || "—",
+    node: nodeName(snapshot?.nodeId || entry.sourceNode || ""),
+    nodeId: snapshot?.nodeId || entry.sourceNode || "",
     processCount: snapshot?.processIds?.length ?? 0,
     sha256: shortSha(snapshot?.sha256 ?? ""),
     freshness,
@@ -710,14 +718,14 @@ function queryParam(value: unknown): string {
 }
 
 function snapshotMatchesRestoreQuery(
-  row: { snapshotId: string; node: string; snapshot: RestoreSnapshot | null },
+  row: { snapshotId: string; nodeId: string; snapshot: RestoreSnapshot | null },
   owner: string,
   snapshotId: string,
 ): boolean {
   if (!row.snapshot || row.snapshot.snapshotId !== snapshotId) {
     return false;
   }
-  return [row.snapshot.nodeId, row.snapshot.sourceNodeId, row.node].includes(owner);
+  return [row.snapshot.nodeId, row.snapshot.sourceNodeId, row.nodeId].includes(owner);
 }
 
 // Disaster-replica deep links open Owner restore; peer replicas are not auto-applied
@@ -1519,7 +1527,7 @@ async function onRetryFailed(): Promise<void> {
               >
                 <td class="mono">{{ row.snapshotId }}</td>
                 <td>{{ row.sink }}</td>
-                <td class="mono">{{ row.node }}</td>
+                <td>{{ row.node }}</td>
                 <td>{{ row.processCount }}</td>
                 <td class="mono">{{ row.sha256 }}</td>
                 <td><FreshnessBadge :status="row.freshness" /></td>

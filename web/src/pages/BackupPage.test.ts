@@ -363,6 +363,23 @@ describe("BackupPage", () => {
     expect(bg).not.toMatch(/rgb\(209,\s*250,\s*229\)|#d1fae5/);
   });
 
+  it("shows node names, not node ids, in the local snapshot list", async () => {
+    const { wrapper } = await mountBackup({
+      listNodes: [
+        { nodeId: "n1", hostname: "alpha", state: "ALIVE" },
+        { nodeId: "n2", hostname: "beta", state: "FAILED" },
+      ],
+    });
+    const cells = wrapper.findAll('[data-section="snapshots"] tbody tr td:nth-child(3)');
+    expect(cells.map((cell) => cell.text())).toEqual(["alpha", "beta"]);
+  });
+
+  it("falls back to the node id when the node name is unknown", async () => {
+    const { wrapper } = await mountBackup();
+    const cells = wrapper.findAll('[data-section="snapshots"] tbody tr td:nth-child(3)');
+    expect(cells.map((cell) => cell.text())).toEqual(["n1", "n2"]);
+  });
+
   it("hides create, restore, and delete without backup.manage", async () => {
     const { wrapper } = await mountBackup({ permissions: ["backup.read"] });
     expect(wrapper.find('[data-action="create"]').exists()).toBe(false);
