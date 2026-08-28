@@ -44,7 +44,13 @@ func (a raftReplicationControl) ClaimReplicationRuns(_ context.Context, term uin
 	created := make([]backup.FrozenReplicationRun, 0, len(fires))
 	for _, fire := range fires {
 		if fire.skipRunning {
-			if err := claimReplicationFire(n, fire, term, now, "SKIPPED"); err != nil {
+			if err := claimReplicationFire(n, fire, term, now, "SKIPPED", ""); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if fire.runExists {
+			if err := claimReplicationFire(n, fire, term, now, "CLAIMED", fire.runID); err != nil {
 				return nil, err
 			}
 			continue
@@ -62,7 +68,7 @@ func (a raftReplicationControl) ClaimReplicationRuns(_ context.Context, term uin
 		if err := n.Apply(cmd, 5*time.Second); err != nil {
 			return nil, err
 		}
-		if err := claimReplicationFire(n, fire, term, now, "CLAIMED"); err != nil {
+		if err := claimReplicationFire(n, fire, term, now, "CLAIMED", plan.Create.Run.RunID); err != nil {
 			return nil, err
 		}
 		if frozen := frozenReplicationRunFromPlan(plan, term); len(frozen.Tasks) > 0 {
@@ -87,7 +93,7 @@ func (a raftReplicationControl) ClaimReplicationRuns(_ context.Context, term uin
 	return append(created, runnable...), nil
 }
 
-func claimReplicationFire(n *control.Node, fire dueReplicationFire, term uint64, now time.Time, status string) error {
+func claimReplicationFire(n *control.Node, fire dueReplicationFire, term uint64, now time.Time, status, runID string) error {
 	if n == nil || fire.key == "" {
 		return nil
 	}
@@ -98,6 +104,8 @@ func claimReplicationFire(n *control.Node, fire dueReplicationFire, term uint64,
 		ScheduledUnix: fire.fire.Unix(),
 		LeaderTerm:    term,
 		Status:        status,
+		RunID:         runID,
+		Durable:       true,
 	}, now)
 	return err
 }
@@ -125,6 +133,8 @@ type dueReplicationFire struct {
 	fire        time.Time
 	key         string
 	qualifier   string
+	runID       string
+	runExists   bool
 	skipRunning bool
 }
 
@@ -183,15 +193,15 @@ func listDueReplicationFires(state control.State, now time.Time) ([]dueReplicati
 		}
 		qualifier := strconv.FormatInt(fire.Unix(), 10)
 		runID := automaticReplicationID("run", policy.PolicyID, qualifier)
-		if _, exists := state.ReplicationRuns[runID]; exists {
-			continue
-		}
+		_, runExists := state.ReplicationRuns[runID]
 		out = append(out, dueReplicationFire{
 			policy:      policy,
 			fire:        fire,
 			key:         key,
 			qualifier:   qualifier,
-			skipRunning: policyHasRunningReplication(state, policy.PolicyID),
+			runID:       runID,
+			runExists:   runExists,
+			skipRunning: !runExists && policyHasRunningReplication(state, policy.PolicyID),
 		})
 	}
 	return out, nil
@@ -213,7 +223,7 @@ func planAutomaticReplicationRuns(state control.State, term uint64, now time.Tim
 	}
 	plans := make([]automaticReplicationPlan, 0)
 	for _, fire := range fires {
-		if fire.skipRunning {
+		if fire.skipRunning || fire.runExists {
 			continue
 		}
 		plan, ok := buildAutomaticReplicationPlan(state, fire.policy, term, now, fire.qualifier)

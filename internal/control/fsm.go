@@ -1007,24 +1007,28 @@ func (s *State) ClaimFire(b FireClaimBody, now time.Time) (FireRecord, bool, err
 	if status != "CLAIMED" && status != "SKIPPED" {
 		return FireRecord{}, false, errcode.E(errcode.INVALID, "invalid fire status")
 	}
-	if status == "CLAIMED" && b.LeaseUntilUnix != 0 && (b.LeaseUntilUnix <= now.Unix() || b.LeaseUntilUnix > now.Add(24*time.Hour).Unix()) {
+	durable := status == "SKIPPED" || b.Durable
+	if !durable && b.LeaseUntilUnix != 0 && (b.LeaseUntilUnix <= now.Unix() || b.LeaseUntilUnix > now.Add(24*time.Hour).Unix()) {
 		return FireRecord{}, false, errcode.E(errcode.INVALID, "invalid fire lease")
 	}
 	if current, ok := s.BackupFireLedger[b.FireKey]; ok {
 		if current.PolicyID != b.PolicyID {
 			return FireRecord{}, false, errcode.E(errcode.CONFLICT, "fire key belongs to another policy")
 		}
-		if current.Status == "SKIPPED" {
+		if durableFireRecord(current) {
 			return current, false, nil
 		}
 		if current.LeaseUntilUnix > now.Unix() || b.LeaderTerm <= current.LeaderTerm {
 			return current, false, nil
 		}
-		if status == "SKIPPED" {
-			current.Status = "SKIPPED"
+		if durable {
+			current.Status = status
 			current.LeaseUntilUnix = 0
 			current.LeaderTerm = b.LeaderTerm
 			current.ClaimedUnix = now.Unix()
+			if b.RunID != "" {
+				current.RunID = b.RunID
+			}
 			s.BackupFireLedger[b.FireKey] = current
 			return current, false, nil
 		}
@@ -1042,8 +1046,12 @@ func (s *State) ClaimFire(b FireClaimBody, now time.Time) (FireRecord, bool, err
 	if scheduled == 0 {
 		scheduled = now.Unix()
 	}
-	if status == "SKIPPED" {
-		record := FireRecord{FireKey: b.FireKey, PolicyID: b.PolicyID, RunID: runIDForFire(b.FireKey), ScheduledUnix: scheduled, ClaimedUnix: now.Unix(), LeaseUntilUnix: 0, LeaderTerm: b.LeaderTerm, Status: "SKIPPED"}
+	runID := b.RunID
+	if runID == "" {
+		runID = runIDForFire(b.FireKey)
+	}
+	if durable {
+		record := FireRecord{FireKey: b.FireKey, PolicyID: b.PolicyID, RunID: runID, ScheduledUnix: scheduled, ClaimedUnix: now.Unix(), LeaseUntilUnix: 0, LeaderTerm: b.LeaderTerm, Status: status}
 		s.BackupFireLedger[b.FireKey] = record
 		return record, true, nil
 	}
@@ -1054,9 +1062,13 @@ func (s *State) ClaimFire(b FireClaimBody, now time.Time) (FireRecord, bool, err
 	if leaseUntil <= now.Unix() || leaseUntil > now.Add(24*time.Hour).Unix() {
 		return FireRecord{}, false, errcode.E(errcode.INVALID, "invalid fire lease")
 	}
-	record := FireRecord{FireKey: b.FireKey, PolicyID: b.PolicyID, RunID: runIDForFire(b.FireKey), ScheduledUnix: scheduled, ClaimedUnix: now.Unix(), LeaseUntilUnix: leaseUntil, LeaderTerm: b.LeaderTerm, Status: "CLAIMED"}
+	record := FireRecord{FireKey: b.FireKey, PolicyID: b.PolicyID, RunID: runID, ScheduledUnix: scheduled, ClaimedUnix: now.Unix(), LeaseUntilUnix: leaseUntil, LeaderTerm: b.LeaderTerm, Status: "CLAIMED"}
 	s.BackupFireLedger[b.FireKey] = record
 	return record, true, nil
+}
+
+func durableFireRecord(current FireRecord) bool {
+	return current.LeaseUntilUnix == 0 && (current.Status == "SKIPPED" || current.Status == "CLAIMED")
 }
 
 // ClaimFireBody supports the command dispatcher while direct callers receive the claim result.

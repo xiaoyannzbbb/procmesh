@@ -371,6 +371,30 @@ func TestFSM_ClaimFireSkippedPersistsWithoutTakeover(t *testing.T) {
 	}
 }
 
+func TestFSM_ClaimFireReplicationClaimedPersistsWithoutTakeover(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := control.NewState()
+	key := "replication:rp:1700000000"
+	first, created, err := s.ClaimFire(control.FireClaimBody{
+		OperationID: "op-claim", FireKey: key, PolicyID: "rp", LeaderTerm: 3,
+		ScheduledUnix: now.Unix(), Status: "CLAIMED", RunID: "run-auto", Durable: true,
+	}, now)
+	if err != nil || !created || first.Status != "CLAIMED" || first.LeaseUntilUnix != 0 || first.RunID != "run-auto" {
+		t.Fatalf("first=%+v created=%v err=%v", first, created, err)
+	}
+	second, created, err := s.ClaimFire(control.FireClaimBody{
+		OperationID: "op-claim-again", FireKey: key, PolicyID: "rp", LeaderTerm: 9,
+		ScheduledUnix: now.Unix(), Status: "CLAIMED", RunID: "run-other", Durable: true,
+	}, now.Add(time.Hour))
+	if err != nil || created || second.Status != "CLAIMED" || second.LeaderTerm != 3 || second.RunID != "run-auto" {
+		t.Fatalf("takeover claimed fire: %+v created=%v err=%v", second, created, err)
+	}
+	s.PruneRunMetadata(now.Add(time.Hour).Unix())
+	if got, ok := s.BackupFireLedger[key]; !ok || got.LeaseUntilUnix != 0 {
+		t.Fatalf("CLAIMED replication fire pruned: %+v ok=%v", got, ok)
+	}
+}
+
 func TestFSM_ClaimScheduledRunIsAtomicAndFreezesRun(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	s := control.NewState()

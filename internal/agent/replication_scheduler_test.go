@@ -192,8 +192,8 @@ func TestClaimReplicationRuns_CreatesEmptySnapshotRunAndClaimsFire(t *testing.T)
 	}
 	key := replicationFireKey("rp", now.Unix())
 	record, ok := node.View().BackupFireLedger[key]
-	if !ok || record.Status != "CLAIMED" || record.PolicyID != "rp" {
-		t.Fatalf("ledger=%+v ok=%v, want CLAIMED replication fire", record, ok)
+	if !ok || record.Status != "CLAIMED" || record.PolicyID != "rp" || record.LeaseUntilUnix != 0 || record.RunID != runs[0].RunID {
+		t.Fatalf("ledger=%+v ok=%v, want durable CLAIMED with automatic run id", record, ok)
 	}
 	if _, ok := node.View().BackupFireLedger["rp:"+strconv.FormatInt(now.Unix(), 10)]; ok {
 		t.Fatal("replication fire collided with cluster backup fire key")
@@ -266,6 +266,87 @@ func TestClaimReplicationRuns_WritesSkippedFireWhenPolicyRunning(t *testing.T) {
 	}
 	if len(node.View().ReplicationRuns) != 1 {
 		t.Fatalf("runs=%v, want only finished live run", node.View().ReplicationRuns)
+	}
+}
+
+func TestClaimReplicationRuns_PruneDoesNotRecreateFire(t *testing.T) {
+	now := time.Date(2027, 1, 16, 2, 0, 0, 0, time.UTC)
+	node, apply := startScheduledReplicationControl(t)
+	apply(control.CmdReplicationPolicyPut, control.ReplicationPolicyPutBody{
+		OperationID: "policy", PolicyID: "rp", Name: "rp", Enabled: true,
+		SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"source"}, ReplicaFactor: 1,
+		Routes:       []control.ReplicationRoute{{SourceNodeID: "source", TargetNodeIDs: []string{"target"}}},
+		ScheduleCron: "0 2 * * *", Timezone: "UTC", ExpectedRevision: -1,
+	})
+	ctrl := raftReplicationControl{runtime: &rpcRuntime{node: node}}
+	term := node.CurrentTerm()
+	runs, err := ctrl.ClaimReplicationRuns(context.Background(), term, now)
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("claimed=%+v err=%v", runs, err)
+	}
+	apply(control.CmdBackupRunFinish, control.FinishRunBody{
+		OperationID: "finish", RunID: runs[0].RunID, Status: "SUCCEEDED", FinishedUnix: now.Unix(), LeaderTerm: term, Replication: true,
+	})
+	apply(control.CmdRunMetadataPrune, control.PruneRunMetadataBody{OperationID: "prune", BeforeUnix: now.Add(time.Hour).Unix()})
+	if _, ok := node.View().ReplicationRuns[runs[0].RunID]; ok {
+		t.Fatal("finished run should be pruned")
+	}
+	key := replicationFireKey("rp", now.Unix())
+	record, ok := node.View().BackupFireLedger[key]
+	if !ok || record.Status != "CLAIMED" || record.LeaseUntilUnix != 0 {
+		t.Fatalf("durable CLAIMED pruned: %+v ok=%v", record, ok)
+	}
+	after, err := ctrl.ClaimReplicationRuns(context.Background(), term, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != 0 || len(node.View().ReplicationRuns) != 0 {
+		t.Fatalf("pruned fire recaptured runs=%+v state=%v", after, node.View().ReplicationRuns)
+	}
+}
+
+func TestClaimReplicationRuns_WritesClaimedWhenRunExistsWithoutLedger(t *testing.T) {
+	now := time.Date(2027, 1, 16, 2, 0, 0, 0, time.UTC)
+	node, apply := startScheduledReplicationControl(t)
+	apply(control.CmdReplicationPolicyPut, control.ReplicationPolicyPutBody{
+		OperationID: "policy", PolicyID: "rp", Name: "rp", Enabled: true,
+		SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"source"}, ReplicaFactor: 1,
+		Routes:       []control.ReplicationRoute{{SourceNodeID: "source", TargetNodeIDs: []string{"target"}}},
+		ScheduleCron: "0 2 * * *", Timezone: "UTC", ExpectedRevision: -1,
+	})
+	term := node.CurrentTerm()
+	runID := automaticReplicationID("run", "rp", strconv.FormatInt(now.Unix(), 10))
+	taskID := automaticReplicationID("task", "rp", strconv.FormatInt(now.Unix(), 10), "source", "target")
+	apply(control.CmdBackupRunCreate, control.CreateRunBody{
+		OperationID: "run-existing", LeaderTerm: term, Replication: true,
+		Run: control.ClusterBackupRun{
+			RunID: runID, PolicyID: "rp", PolicyRevision: 1, TargetNodeIDs: []string{"source"},
+			Status: "RUNNING", LeaseUntilUnix: now.Add(time.Hour).Unix(),
+		},
+		Tasks: []control.ClusterBackupTask{{
+			RunID: runID, TaskID: taskID, SourceNodeID: "source", NodeID: "target", Status: "PENDING",
+		}},
+	})
+	ctrl := raftReplicationControl{runtime: &rpcRuntime{node: node}}
+	claimed, err := ctrl.ClaimReplicationRuns(context.Background(), term, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(node.View().ReplicationRuns) != 1 {
+		t.Fatalf("runs=%v, want existing automatic run only", node.View().ReplicationRuns)
+	}
+	if _, ok := node.View().ReplicationRuns[runID]; !ok {
+		t.Fatalf("automatic run replaced: claimed=%+v", claimed)
+	}
+	for _, run := range claimed {
+		if run.RunID != runID {
+			t.Fatalf("second run created: %+v", run)
+		}
+	}
+	key := replicationFireKey("rp", now.Unix())
+	record, ok := node.View().BackupFireLedger[key]
+	if !ok || record.Status != "CLAIMED" || record.LeaseUntilUnix != 0 || record.RunID != runID {
+		t.Fatalf("ledger=%+v ok=%v, want CLAIMED for existing automatic run", record, ok)
 	}
 }
 

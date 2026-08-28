@@ -283,7 +283,8 @@ type ReplicationDeleteIntentPutBody struct {
 }
 
 // FireClaimBody records an idempotent scheduled-fire claim. LeaseUntilUnix is
-// optional; zero uses the control plane's short default lease.
+// optional; zero uses the control plane's short default lease unless Durable
+// is set, in which case the key is kept with a zero lease and is not taken over.
 type FireClaimBody struct {
 	OperationID    string `json:"operation_id"`
 	FireKey        string `json:"fire_key"`
@@ -292,6 +293,8 @@ type FireClaimBody struct {
 	LeaseUntilUnix int64  `json:"lease_until_unix"`
 	LeaderTerm     uint64 `json:"leader_term"`
 	Status         string `json:"status,omitempty"`
+	RunID          string `json:"run_id,omitempty"`
+	Durable        bool   `json:"durable,omitempty"`
 }
 
 // ScheduledRunClaimBody atomically records a scheduled fire and its frozen
