@@ -100,6 +100,58 @@ func TestRetentionPlan_RejectsInvalidTimezone(t *testing.T) {
 	}
 }
 
+func TestRetentionPlan_LastRemainingCopyPerSourceIsKept(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	snapshots := []backup.RetentionSnapshot{
+		retentionSnapshot("old", "rp-1", "node-a", now.AddDate(0, 0, -10), 100),
+		retentionSnapshot("newest", "rp-1", "node-a", now.AddDate(0, 0, -9), 100),
+		retentionSnapshot("other-source", "rp-1", "node-b", now.AddDate(0, 0, -10), 100),
+	}
+	got, err := backup.PlanRetention(now, backup.Policy{PolicyID: "rp-1", Timezone: "UTC", RetentionKeepDays: 1}, snapshots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRetentionIDs(t, got, "old")
+}
+
+func TestRetentionPlan_PeerKeepLastIndependentOfSourcePresence(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	policy := backup.Policy{PolicyID: "rp-1", Timezone: "UTC", RetentionKeepLast: 1}
+	peerCopies := []backup.RetentionSnapshot{
+		retentionSnapshot("old", "rp-1", "node-a", now.Add(-2*time.Hour), 50),
+		retentionSnapshot("newest", "rp-1", "node-a", now.Add(-time.Hour), 50),
+	}
+	got, err := backup.PlanRetention(now, policy, peerCopies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRetentionIDs(t, got, "old")
+
+	sourceGone := []backup.RetentionSnapshot{
+		retentionSnapshot("old", "rp-1", "node-a", now.Add(-2*time.Hour), 50),
+	}
+	got, err = backup.PlanRetention(now, policy, sourceGone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("peer last remaining deleted while source is gone: %+v", got)
+	}
+}
+
+func TestRetentionPlan_PeerMaxBytesIndependentOfSourceBytes(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	peerCopies := []backup.RetentionSnapshot{
+		retentionSnapshot("old", "rp-1", "node-a", now.Add(-2*time.Hour), 80),
+		retentionSnapshot("newest", "rp-1", "node-a", now.Add(-time.Hour), 80),
+	}
+	got, err := backup.PlanRetention(now, backup.Policy{PolicyID: "rp-1", Timezone: "UTC", RetentionMaxBytes: 100}, peerCopies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRetentionIDs(t, got, "old")
+}
+
 func TestEngineApplyRetentionReportsDelete(t *testing.T) {
 	ctx := context.Background()
 	e := seededEngine(t)

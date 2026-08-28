@@ -509,20 +509,30 @@ func newBackupEngine(opt Options, mgr *process.Manager, st *store.Store, collect
 			if n == nil {
 				return backup.Policy{}, false
 			}
-			policy, ok := n.View().BackupPolicies[policyID]
+			view := n.View()
+			if policy, ok := view.BackupPolicies[policyID]; ok {
+				return backup.PolicyFromRecord(backup.PolicyRecord{
+					PolicyID: policy.PolicyID, Name: policy.Name, Enabled: policy.Enabled,
+					ScheduleCron: policy.ScheduleCron, Timezone: policy.Timezone,
+					TargetSelector: policy.TargetSelector, TargetIDs: policy.TargetIDs,
+					Sink: policy.Sink, DestinationProfile: policy.DestinationProfile,
+					RetentionKeepLast: policy.RetentionKeepLast, RetentionKeepDays: policy.RetentionKeepDays,
+					RetentionMaxBytes: policy.RetentionMaxBytes, TimeoutSeconds: policy.TimeoutSeconds,
+					MaxConcurrency: policy.MaxConcurrency, UnavailablePolicy: policy.UnavailablePolicy,
+					Revision: policy.Revision,
+				}), true
+			}
+			rp, ok := view.ReplicationPolicies[policyID]
 			if !ok {
 				return backup.Policy{}, false
 			}
-			return backup.PolicyFromRecord(backup.PolicyRecord{
-				PolicyID: policy.PolicyID, Name: policy.Name, Enabled: policy.Enabled,
-				ScheduleCron: policy.ScheduleCron, Timezone: policy.Timezone,
-				TargetSelector: policy.TargetSelector, TargetIDs: policy.TargetIDs,
-				Sink: policy.Sink, DestinationProfile: policy.DestinationProfile,
-				RetentionKeepLast: policy.RetentionKeepLast, RetentionKeepDays: policy.RetentionKeepDays,
-				RetentionMaxBytes: policy.RetentionMaxBytes, TimeoutSeconds: policy.TimeoutSeconds,
-				MaxConcurrency: policy.MaxConcurrency, UnavailablePolicy: policy.UnavailablePolicy,
-				Revision: policy.Revision,
-			}), true
+			return backup.Policy{
+				PolicyID: rp.PolicyID, Name: rp.Name, Enabled: rp.Enabled,
+				ScheduleCron: rp.ScheduleCron, Timezone: rp.Timezone,
+				Sink: backup.ReplicaSinkName, RetentionKeepLast: rp.RetentionKeepLast,
+				RetentionKeepDays: rp.RetentionKeepDays, RetentionMaxBytes: rp.RetentionMaxBytes,
+				MaxConcurrency: rp.MaxConcurrency, Revision: rp.Revision,
+			}, true
 		},
 		PeerStore: &backup.PeerStore{Root: opt.DataDir},
 		PeerPush: backup.PeerPushFunc(func(ctx context.Context, nodeID, sourceNodeID string, payload []byte) error {

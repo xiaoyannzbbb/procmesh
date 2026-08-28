@@ -120,6 +120,8 @@ func PlanRetention(now time.Time, policy Policy, snapshots []RetentionSnapshot) 
 		}
 	}
 
+	protectLastRemainingPerSource(eligible, selected)
+
 	out := make([]RetentionSnapshot, 0, len(selected))
 	for _, snapshot := range eligible {
 		if selected[retentionSnapshotKey(snapshot)] {
@@ -127,6 +129,25 @@ func PlanRetention(now time.Time, policy Policy, snapshots []RetentionSnapshot) 
 		}
 	}
 	return out, nil
+}
+
+func protectLastRemainingPerSource(eligible []RetentionSnapshot, selected map[string]bool) {
+	bySource := make(map[string][]RetentionSnapshot)
+	for _, snapshot := range eligible {
+		bySource[retentionSource(snapshot)] = append(bySource[retentionSource(snapshot)], snapshot)
+	}
+	for _, group := range bySource {
+		remaining := 0
+		for _, snapshot := range group {
+			if !selected[retentionSnapshotKey(snapshot)] {
+				remaining++
+			}
+		}
+		if remaining > 0 || len(group) == 0 {
+			continue
+		}
+		delete(selected, retentionSnapshotKey(group[len(group)-1]))
+	}
 }
 
 func completedRetentionStatus(status string) bool {

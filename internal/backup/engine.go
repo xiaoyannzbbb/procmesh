@@ -386,16 +386,22 @@ func (e *Engine) CaptureReplicationSnapshot(ctx context.Context, req Replication
 	if req.SnapshotID == "" {
 		req.SnapshotID = StableReplicationSnapshotID(req.RunID, req.SourceNodeID)
 	}
+	var meta Meta
 	if e.Store != nil {
 		rec, err := e.Store.GetBackup(ctx, req.SnapshotID)
 		if err == nil && rec.Sink == ReplicaSinkName {
-			return metaFromRecord(rec)
+			meta, err = metaFromRecord(rec)
+			if err != nil {
+				return Meta{}, err
+			}
+			e.applyReplicaRetention(ctx, req.PolicyID)
+			return meta, nil
 		}
 		if err != nil && !errcode.Is(err, errcode.NOT_FOUND) {
 			return Meta{}, err
 		}
 	}
-	return e.CreateCluster(ctx, ClusterCreateOpts{
+	meta, err := e.CreateCluster(ctx, ClusterCreateOpts{
 		RunID:      req.RunID,
 		TaskID:     "capture:" + req.SourceNodeID,
 		PolicyID:   req.PolicyID,
@@ -404,6 +410,24 @@ func (e *Engine) CaptureReplicationSnapshot(ctx context.Context, req Replication
 		Sink:       ReplicaSinkName,
 		SnapshotID: req.SnapshotID,
 	})
+	if err != nil {
+		return Meta{}, err
+	}
+	e.applyReplicaRetention(ctx, req.PolicyID)
+	return meta, nil
+}
+
+func (e *Engine) applyReplicaRetention(ctx context.Context, policyID string) {
+	if e == nil || e.RetentionPolicy == nil || policyID == "" {
+		return
+	}
+	policy, ok := e.RetentionPolicy(policyID)
+	if !ok {
+		return
+	}
+	policy.PolicyID = policyID
+	policy.Sink = ReplicaSinkName
+	_, _ = e.ApplyRetention(ctx, policy)
 }
 
 // CreatePeer is Create with Sink=peer.

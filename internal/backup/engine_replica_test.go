@@ -154,3 +154,252 @@ func TestEngine_CaptureReplicationSnapshot_WritesReplicaNamespacedPath(t *testin
 		t.Fatalf("must not write cluster FS profile: %+v %v", fsMatches, err)
 	}
 }
+
+func TestEngine_CaptureReplicationSnapshot_KeepLastDeletesOlderReplica(t *testing.T) {
+	eng := testEngineWithProcess(t)
+	eng.RetentionPolicy = func(policyID string) (backup.Policy, bool) {
+		return backup.Policy{PolicyID: policyID, Timezone: "UTC", RetentionKeepLast: 1}, true
+	}
+	ctx := context.Background()
+	now := time.Date(2026, 8, 20, 8, 0, 0, 0, time.UTC)
+	eng.Now = func() time.Time { return now }
+
+	oldID := backup.StableReplicationSnapshotID("run-old", eng.NodeID)
+	old, err := eng.CaptureReplicationSnapshot(ctx, backup.ReplicationCaptureRequest{
+		RunID: "run-old", PolicyID: "rp-1", SourceNodeID: eng.NodeID, SnapshotID: oldID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := os.ReadFile(old.Location)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := eng.PeerStore.ReceiveWithMetadata(ctx, backup.ReceiveParams{
+		SourceNodeID: eng.NodeID, ClusterID: eng.ClusterID, SnapshotID: old.SnapshotID,
+		SHA256: old.SHA256, RunID: "run-old", TaskID: "t1", Payload: payload,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	now = now.Add(time.Hour)
+	newID := backup.StableReplicationSnapshotID("run-new", eng.NodeID)
+	newer, err := eng.CaptureReplicationSnapshot(ctx, backup.ReplicationCaptureRequest{
+		RunID: "run-new", PolicyID: "rp-1", SourceNodeID: eng.NodeID, SnapshotID: newID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newPayload, err := os.ReadFile(newer.Location)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := eng.PeerStore.ReceiveWithMetadata(ctx, backup.ReceiveParams{
+		SourceNodeID: eng.NodeID, ClusterID: eng.ClusterID, SnapshotID: newer.SnapshotID,
+		SHA256: newer.SHA256, RunID: "run-new", TaskID: "t1", Payload: newPayload,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	replica := replicaMetas(t, eng)
+	if len(replica) != 1 || replica[0].SnapshotID != newer.SnapshotID {
+		t.Fatalf("source replica after keep_last=1: %+v want only %s", replica, newer.SnapshotID)
+	}
+	if _, err := os.Stat(old.Location); !os.IsNotExist(err) {
+		t.Fatalf("old replica object still present: %v", err)
+	}
+	peerOld := filepath.Join(eng.PeerStore.Root, "backup", "peer", eng.NodeID, eng.ClusterID, old.SnapshotID+".json")
+	if _, err := os.Stat(peerOld); err != nil {
+		t.Fatalf("source retention deleted peer copy: %v", err)
+	}
+
+	listed, err := eng.PeerStore.ListSnapshots(ctx, eng.NodeID, eng.ClusterID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peerSnaps := make([]backup.RetentionSnapshot, 0, len(listed))
+	for _, item := range listed {
+		peerSnaps = append(peerSnaps, backup.RetentionSnapshot{
+			SnapshotID: item.SnapshotID, PolicyID: "rp-1", SourceNodeID: item.SourceNodeID,
+			CreatedAt: item.CreatedAt, Bytes: item.Bytes, Status: "SUCCEEDED",
+		})
+	}
+	planned, err := backup.PlanRetention(now, backup.Policy{PolicyID: "rp-1", Timezone: "UTC", RetentionKeepLast: 1}, peerSnaps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(planned) != 1 || planned[0].SnapshotID != old.SnapshotID {
+		t.Fatalf("peer planner=%+v want old %s (source already gone is irrelevant)", planned, old.SnapshotID)
+	}
+}
+
+func TestEngine_CaptureReplicationSnapshot_DoesNotDeleteClusterBackup(t *testing.T) {
+	eng := testEngineWithProcess(t)
+	eng.RetentionPolicy = func(policyID string) (backup.Policy, bool) {
+		return backup.Policy{PolicyID: policyID, Timezone: "UTC", RetentionKeepLast: 1}, true
+	}
+	ctx := context.Background()
+	now := time.Date(2026, 8, 20, 8, 0, 0, 0, time.UTC)
+	eng.Now = func() time.Time { return now }
+	eng.NewID = func() (string, error) { return "fs-keep", nil }
+	fsMeta, err := eng.CreateCluster(ctx, backup.ClusterCreateOpts{
+		RunID: "backup-run", TaskID: "task-1", PolicyID: "rp-1", ClusterID: eng.ClusterID, NodeID: eng.NodeID, Sink: "fs",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Hour)
+	if _, err := eng.CaptureReplicationSnapshot(ctx, backup.ReplicationCaptureRequest{
+		RunID: "run-1", PolicyID: "rp-1", SourceNodeID: eng.NodeID,
+		SnapshotID: backup.StableReplicationSnapshotID("run-1", eng.NodeID),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Hour)
+	if _, err := eng.CaptureReplicationSnapshot(ctx, backup.ReplicationCaptureRequest{
+		RunID: "run-2", PolicyID: "rp-1", SourceNodeID: eng.NodeID,
+		SnapshotID: backup.StableReplicationSnapshotID("run-2", eng.NodeID),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(fsMeta.Location); err != nil {
+		t.Fatalf("cluster FS backup deleted: %v", err)
+	}
+	got, err := eng.Store.GetBackup(ctx, fsMeta.SnapshotID)
+	if err != nil || got.Sink != "fs" {
+		t.Fatalf("cluster backup index: %+v err=%v", got, err)
+	}
+}
+
+func TestEngine_CaptureReplicationSnapshot_PreservesProtectedReplica(t *testing.T) {
+	eng := testEngineWithProcess(t)
+	eng.RetentionPolicy = func(policyID string) (backup.Policy, bool) {
+		return backup.Policy{PolicyID: policyID, Timezone: "UTC", RetentionKeepLast: 1}, true
+	}
+	ctx := context.Background()
+	now := time.Date(2026, 8, 20, 8, 0, 0, 0, time.UTC)
+	eng.Now = func() time.Time { return now }
+	oldID := backup.StableReplicationSnapshotID("run-old", eng.NodeID)
+	if _, err := eng.CaptureReplicationSnapshot(ctx, backup.ReplicationCaptureRequest{
+		RunID: "run-old", PolicyID: "rp-1", SourceNodeID: eng.NodeID, SnapshotID: oldID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	release := eng.ProtectSnapshot(oldID)
+	now = now.Add(time.Hour)
+	if _, err := eng.CaptureReplicationSnapshot(ctx, backup.ReplicationCaptureRequest{
+		RunID: "run-new", PolicyID: "rp-1", SourceNodeID: eng.NodeID,
+		SnapshotID: backup.StableReplicationSnapshotID("run-new", eng.NodeID),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ids := replicaIDs(t, eng)
+	if len(ids) != 2 || ids[oldID] == false {
+		t.Fatalf("protected replica deleted: %v", ids)
+	}
+	release()
+	if _, err := eng.ApplyRetention(ctx, backup.Policy{PolicyID: "rp-1", Sink: backup.ReplicaSinkName, Timezone: "UTC", RetentionKeepLast: 1}); err != nil {
+		t.Fatal(err)
+	}
+	ids = replicaIDs(t, eng)
+	if len(ids) != 1 || ids[oldID] {
+		t.Fatalf("released replica still kept: %v", ids)
+	}
+}
+
+func TestEngine_CaptureReplicationSnapshot_MaxBytesCountsReplicaOnly(t *testing.T) {
+	eng := testEngineWithProcess(t)
+	ctx := context.Background()
+	now := time.Date(2026, 8, 20, 8, 0, 0, 0, time.UTC)
+	eng.Now = func() time.Time { return now }
+	eng.NewID = func() (string, error) { return "fs-huge", nil }
+	fsMeta, err := eng.CreateCluster(ctx, backup.ClusterCreateOpts{
+		RunID: "backup-run", TaskID: "task-1", PolicyID: "rp-1", ClusterID: eng.ClusterID, NodeID: eng.NodeID, Sink: "fs",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Hour)
+	old, err := eng.CaptureReplicationSnapshot(ctx, backup.ReplicationCaptureRequest{
+		RunID: "run-old", PolicyID: "rp-1", SourceNodeID: eng.NodeID,
+		SnapshotID: backup.StableReplicationSnapshotID("run-old", eng.NodeID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Hour)
+	newer, err := eng.CaptureReplicationSnapshot(ctx, backup.ReplicationCaptureRequest{
+		RunID: "run-new", PolicyID: "rp-1", SourceNodeID: eng.NodeID,
+		SnapshotID: backup.StableReplicationSnapshotID("run-new", eng.NodeID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	limit := old.Bytes + newer.Bytes - 1
+	if limit <= newer.Bytes {
+		t.Fatalf("replica bytes too small to distinguish: old=%d new=%d", old.Bytes, newer.Bytes)
+	}
+	eng.RetentionPolicy = func(policyID string) (backup.Policy, bool) {
+		return backup.Policy{PolicyID: policyID, Timezone: "UTC", RetentionMaxBytes: limit}, true
+	}
+	if _, err := eng.CaptureReplicationSnapshot(ctx, backup.ReplicationCaptureRequest{
+		RunID: "run-new", PolicyID: "rp-1", SourceNodeID: eng.NodeID, SnapshotID: newer.SnapshotID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ids := replicaIDs(t, eng)
+	if len(ids) != 1 || !ids[newer.SnapshotID] {
+		t.Fatalf("max_bytes replica=%v want only %s", ids, newer.SnapshotID)
+	}
+	if _, err := os.Stat(fsMeta.Location); err != nil {
+		t.Fatalf("cluster FS counted toward replica max_bytes: %v", err)
+	}
+}
+
+func TestEngine_CaptureReplicationSnapshot_KeepsLastRemainingReplica(t *testing.T) {
+	eng := testEngineWithProcess(t)
+	eng.RetentionPolicy = func(policyID string) (backup.Policy, bool) {
+		return backup.Policy{PolicyID: policyID, Timezone: "UTC", RetentionKeepDays: 1}, true
+	}
+	ctx := context.Background()
+	created := time.Date(2026, 8, 1, 8, 0, 0, 0, time.UTC)
+	eng.Now = func() time.Time { return created }
+	id := backup.StableReplicationSnapshotID("run-old", eng.NodeID)
+	if _, err := eng.CaptureReplicationSnapshot(ctx, backup.ReplicationCaptureRequest{
+		RunID: "run-old", PolicyID: "rp-1", SourceNodeID: eng.NodeID, SnapshotID: id,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	eng.Now = func() time.Time { return time.Date(2026, 8, 20, 8, 0, 0, 0, time.UTC) }
+	if _, err := eng.ApplyRetention(ctx, backup.Policy{PolicyID: "rp-1", Sink: backup.ReplicaSinkName, Timezone: "UTC", RetentionKeepDays: 1}); err != nil {
+		t.Fatal(err)
+	}
+	ids := replicaIDs(t, eng)
+	if len(ids) != 1 || !ids[id] {
+		t.Fatalf("last remaining replica deleted: %v", ids)
+	}
+}
+
+func replicaMetas(t *testing.T, eng *backup.Engine) []backup.Meta {
+	t.Helper()
+	listed, err := eng.ListLocal(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := make([]backup.Meta, 0, len(listed))
+	for _, meta := range listed {
+		if meta.Sink == backup.ReplicaSinkName {
+			out = append(out, meta)
+		}
+	}
+	return out
+}
+
+func replicaIDs(t *testing.T, eng *backup.Engine) map[string]bool {
+	t.Helper()
+	ids := map[string]bool{}
+	for _, meta := range replicaMetas(t, eng) {
+		ids[meta.SnapshotID] = true
+	}
+	return ids
+}
