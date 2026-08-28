@@ -123,7 +123,6 @@ const previewOpen = ref(false);
 const replaceCurrent = ref(false);
 const draft = ref<PolicyDraft | null>(null);
 const appliedRevision = ref<bigint | number | "">("");
-const primaryRunId = ref("");
 const verifyNotice = ref("");
 
 const perms = computed(() => new Set(session.value?.permissions ?? []));
@@ -509,6 +508,29 @@ function constraintText(constraints: Record<string, string> | undefined): string
   return entries.map(([key, value]) => `${key}=${value}`).join(", ");
 }
 
+function nextRunLabel(
+  policy: { enabled?: boolean; scheduleCron?: string; timezone?: string } | null | undefined,
+): string {
+  if (!policy) {
+    return t("replica.none");
+  }
+  if (!policy.enabled) {
+    return t("replica.scheduleDisabled");
+  }
+  const cron = (policy.scheduleCron ?? "").trim();
+  if (!cron) {
+    return t("replica.manualOnly");
+  }
+  const zone = policy.timezone || "UTC";
+  return `${cron} (${zone})`;
+}
+
+function showNextRunHint(
+  policy: { enabled?: boolean; scheduleCron?: string } | null | undefined,
+): boolean {
+  return Boolean(policy?.enabled && (policy.scheduleCron ?? "").trim());
+}
+
 function warningLabel(code: string): string {
   if (code === "single-node-no-replica") {
     return t("replica.n1Warning");
@@ -631,10 +653,10 @@ function draftRequest(): PolicyDraft {
     sourceSelector: policy?.sourceSelector || "ALL_ADMITTED",
     sourceIds: policy?.sourceIds ?? [],
     replicaFactor: policy?.replicaFactor || 1,
-    trigger: policy?.trigger || "MANUAL",
-    primaryPolicyIds: policy?.primaryPolicyIds ?? [],
-    scheduleCron: policy?.scheduleCron ?? "",
-    timezone: policy?.timezone || "UTC",
+    trigger: "",
+    primaryPolicyIds: [],
+    scheduleCron: policy?.scheduleCron || "0 2 * * *",
+    timezone: policy?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
     retentionKeepLast: policy?.retentionKeepLast ?? 7,
     retentionKeepDays: policy?.retentionKeepDays ?? 30,
     retentionMaxBytes: asBigInt(policy?.retentionMaxBytes),
@@ -728,11 +750,10 @@ const startRunMut = useMutation({
   mutationFn: () =>
     client.startRun({
       policyId: currentPolicy.value?.policyId || "",
-      primaryRunId: primaryRunId.value.trim(),
+      primaryRunId: "",
       meta: mutationMeta(),
     }),
   onSuccess: async () => {
-    primaryRunId.value = "";
     await invalidateReplica();
   },
   onError: (err: unknown) => {
@@ -810,7 +831,7 @@ async function onVerify(snap: RecoverableSnapshot): Promise<void> {
 }
 
 async function onStartRun(): Promise<void> {
-  if (!canManage.value || !currentPolicy.value?.policyId || !primaryRunId.value.trim() || acting.value) {
+  if (!canManage.value || !currentPolicy.value?.policyId || acting.value) {
     return;
   }
   actionError.value = "";
@@ -928,8 +949,8 @@ async function onStartRun(): Promise<void> {
                 <dd>{{ currentPolicy?.replicaFactor ?? "—" }}</dd>
               </div>
               <div>
-                <dt>{{ t("replica.trigger") }}</dt>
-                <dd>{{ currentPolicy?.trigger || t("replica.none") }}</dd>
+                <dt>{{ t("replica.nextRun") }}</dt>
+                <dd data-next-run>{{ nextRunLabel(currentPolicy) }}</dd>
               </div>
               <div>
                 <dt>{{ t("replica.retention") }}</dt>
@@ -1028,25 +1049,21 @@ async function onStartRun(): Promise<void> {
         <div class="section-header">
           <h2>{{ t("replica.runs") }}</h2>
           <FreshnessBadge v-if="runsFreshness !== LIVE" :status="runsFreshness" />
+          <button
+            v-if="canManage && currentPolicy?.policyId"
+            type="button"
+            class="btn btn-primary"
+            data-action="start-run"
+            :aria-label="t('replica.startRun')"
+            :disabled="acting"
+            @click="onStartRun"
+          >
+            {{ t("replica.startRun") }}
+          </button>
         </div>
         <div v-if="hasPartialRun" class="banner warning-banner" data-partial-warning role="status">
           {{ t("replica.partialWarning") }}
         </div>
-        <form v-if="canManage && currentPolicy?.policyId" class="inline-form" @submit.prevent="onStartRun">
-          <label class="field">
-            {{ t("replica.primaryRunId") }}
-            <input
-              v-model="primaryRunId"
-              class="input"
-              name="primaryRunId"
-              type="text"
-              autocomplete="off"
-            />
-          </label>
-          <button class="btn" type="submit" data-action="start-run" :disabled="!primaryRunId.trim() || acting">
-            {{ t("replica.startRun") }}
-          </button>
-        </form>
         <p v-if="runsPending" class="muted">{{ t("replica.loading") }}</p>
         <div
           v-else-if="runsUnreachable"
@@ -1179,8 +1196,48 @@ async function onStartRun(): Promise<void> {
           <dd>{{ draft.replicaFactor }}</dd>
         </div>
         <div>
-          <dt>{{ t("replica.trigger") }}</dt>
-          <dd>{{ draft.trigger }}</dd>
+          <dt>{{ t("replica.scheduleCron") }}</dt>
+          <dd>
+            <input
+              v-model="draft.scheduleCron"
+              class="input"
+              type="text"
+              data-field="schedule-cron"
+              autocomplete="off"
+              :aria-label="t('replica.scheduleCron')"
+              :disabled="acting"
+            />
+          </dd>
+        </div>
+        <div>
+          <dt>{{ t("replica.timezone") }}</dt>
+          <dd>
+            <input
+              v-model="draft.timezone"
+              class="input"
+              type="text"
+              data-field="timezone"
+              autocomplete="off"
+              :aria-label="t('replica.timezone')"
+              :disabled="acting"
+            />
+          </dd>
+        </div>
+        <div>
+          <dt>{{ t("replica.schedule") }}</dt>
+          <dd>
+            <label class="field checkbox">
+              <input v-model="draft.enabled" type="checkbox" data-field="enabled" :disabled="acting" />
+              {{ t("replica.schedule") }}
+            </label>
+          </dd>
+        </div>
+        <div>
+          <dt>{{ t("replica.nextRun") }}</dt>
+          <dd data-next-run>
+            {{ nextRunLabel(draft) }}
+            <p v-if="showNextRunHint(draft)" class="muted">{{ t("replica.nextRunHint") }}</p>
+          </dd>
         </div>
         <div>
           <dt>{{ t("replica.retention") }}</dt>

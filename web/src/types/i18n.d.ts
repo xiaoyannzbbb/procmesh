@@ -1056,6 +1056,13 @@ declare module "i18next" {
         'replica.policyRevision': string
         'replica.replicaFactor': string
         'replica.trigger': string
+        'replica.schedule': string
+        'replica.scheduleCron': string
+        'replica.timezone': string
+        'replica.nextRun': string
+        'replica.manualOnly': string
+        'replica.scheduleDisabled': string
+        'replica.nextRunHint': string
         'replica.retention': string
         'replica.retentionSummary': string
         'replica.concurrency': string

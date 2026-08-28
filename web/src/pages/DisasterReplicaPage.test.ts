@@ -67,6 +67,14 @@ const replicaI18n = {
   policyRevision: "Policy revision",
   replicaFactor: "Replica factor",
   trigger: "Trigger",
+  schedule: "Schedule",
+  scheduleCron: "Cron",
+  timezone: "Timezone",
+  nextRun: "Next run",
+  manualOnly: "Manual only",
+  scheduleDisabled: "Schedule disabled",
+  nextRunHint:
+    "Applying the policy does not back up immediately. The next cron fire will. Use Start run to back up now.",
   retention: "Retention",
   retentionSummary: "keep last {{last}}, {{days}} days",
   concurrency: "Concurrency",
@@ -94,7 +102,7 @@ const replicaI18n = {
   staleBanner: "Some replica sources are unreachable. This is not an empty catalog.",
   partialWarning: "This run is PARTIAL: some routes succeeded and others did not. This is not a successful replication.",
   loading: "Loading…",
-  startRun: "Start run",
+  startRun: "Capture and replicate now",
   primaryRunId: "Primary backup run ID",
   runId: "Run ID",
   runDetail: "Run detail",
@@ -802,5 +810,52 @@ describe("DisasterReplicaPage", () => {
     const style = (dialog.attributes("style") ?? "").toLowerCase();
     expect(style).toMatch(/min\(100%/);
     expect(style).toMatch(/overflow:\s*auto/);
+  });
+
+  it("prefills cron and timezone when generating a draft", async () => {
+    const { wrapper, replicationClient } = await mountPage();
+    await wrapper.get('[data-action="generate"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+    expect(replicationClient.generatePolicyDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scheduleCron: "0 2 * * *",
+        timezone: expect.any(String),
+        enabled: true,
+      }),
+    );
+    expect(wrapper.get('[data-field="schedule-cron"]').exists()).toBe(true);
+  });
+
+  it("shows manual-only when cron is cleared in preview", async () => {
+    const { wrapper } = await mountPage({
+      draft: { ...policyDraft, scheduleCron: "0 2 * * *" },
+    });
+    await wrapper.get('[data-action="generate"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+    await wrapper.get('[data-field="schedule-cron"]').setValue("");
+    await wrapper.vm.$nextTick();
+    expect(wrapper.get("[data-preview-dialog]").get("[data-next-run]").text()).toMatch(/manual/i);
+  });
+
+  it("starts a run without a primary backup run id", async () => {
+    const { wrapper, replicationClient } = await mountPage();
+    expect(wrapper.find('input[name="primaryRunId"]').exists()).toBe(false);
+    await wrapper.get('[data-action="start-run"]').trigger("click");
+    await flushPromises();
+    expect(replicationClient.startRun).toHaveBeenCalledWith(
+      expect.objectContaining({ policyId: "rep-1" }),
+    );
+    const arg = replicationClient.startRun.mock.calls[0][0] as { primaryRunId?: string };
+    expect(arg.primaryRunId ?? "").toBe("");
+  });
+
+  it("shows schedule disabled instead of next run when policy is disabled", async () => {
+    const { wrapper } = await mountPage({
+      policies: [{ ...replicaPolicy, enabled: false, scheduleCron: "0 2 * * *" }],
+    });
+    expect(wrapper.get("[data-next-run]").text()).toMatch(/disabled/i);
+    expect(wrapper.get("[data-next-run]").text()).not.toContain("0 2 * * *");
   });
 });
