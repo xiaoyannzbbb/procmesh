@@ -1176,6 +1176,7 @@
     "apply": "应用草稿",
     "replaceCurrent": "替换当前配置",
     "replaceHint": "已有路由不会被静默覆盖，必须明确选择替换。",
+    "topologyChanged": "编辑期间集群拓扑已变化，预览已刷新；请重新检查并再次确认替换。",
     "generationRules": "生成规则",
     "routeTable": "路由表",
     "warnings": "故障域警告",

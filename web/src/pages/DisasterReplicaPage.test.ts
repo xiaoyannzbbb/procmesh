@@ -57,6 +57,8 @@ const replicaI18n = {
   apply: "Apply draft",
   replaceCurrent: "Replace current configuration",
   replaceHint: "Existing routes will not be overwritten unless you choose replace.",
+  topologyChanged:
+    "The cluster topology changed while you were editing. The preview was refreshed; review it and confirm replacement again.",
   generationRules: "Generation rules",
   routeTable: "Route table",
   warnings: "Failure-domain warnings",
@@ -863,6 +865,90 @@ describe("DisasterReplicaPage", () => {
     await wrapper.vm.$nextTick();
     expect((timezone.element as HTMLSelectElement).value).toBe("UTC");
     expect(wrapper.get("[data-preview-dialog]").get("[data-next-run]").text()).toContain("UTC");
+  });
+
+  it("refreshes the draft hash after timezone edits before replacing the current policy", async () => {
+    const refreshedDraft = {
+      ...policyDraft,
+      scheduleCron: "0 2 * * *",
+      timezone: "Asia/Shanghai",
+      draftHash: "draft-hash-shanghai",
+    };
+    const { wrapper, replicationClient } = await mountPage({
+      draft: { ...policyDraft, scheduleCron: "0 2 * * *", timezone: "UTC" },
+    });
+    replicationClient.generatePolicyDraft
+      .mockResolvedValueOnce({
+        draft: { ...policyDraft, scheduleCron: "0 2 * * *", timezone: "UTC" },
+      })
+      .mockResolvedValueOnce({ draft: refreshedDraft });
+
+    await wrapper.get('[data-action="generate"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+    const preview = wrapper.get("[data-preview-dialog]");
+    await preview.get('[data-field="timezone"]').setValue("Asia/Shanghai");
+    await preview.get('[data-route-source="0"]').setValue("n2");
+    await preview.get('[data-route-target="0-0"]').setValue("n1");
+    await wrapper.get('input[name="replaceCurrent"]').setValue(true);
+    await wrapper.get('[data-action="apply-draft"]').trigger("click");
+    await flushPromises();
+
+    expect(replicationClient.generatePolicyDraft).toHaveBeenCalledTimes(2);
+    expect(replicationClient.generatePolicyDraft).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        scheduleCron: "0 2 * * *",
+        timezone: "Asia/Shanghai",
+      }),
+    );
+    expect(replicationClient.applyPolicyDraft).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedRevision: 2n,
+        draftRevision: 7n,
+        draftHash: "draft-hash-shanghai",
+        draft: expect.objectContaining({
+          timezone: "Asia/Shanghai",
+          draftHash: "draft-hash-shanghai",
+          routes: expect.arrayContaining([
+            expect.objectContaining({ sourceNodeId: "n2", targetNodeIds: ["n1"] }),
+          ]),
+        }),
+      }),
+    );
+  });
+
+  it("requires another review when topology changes while refreshing an edited draft", async () => {
+    const refreshedDraft = {
+      ...policyDraft,
+      scheduleCron: "0 2 * * *",
+      timezone: "Asia/Shanghai",
+      routes: [{ sourceNodeId: "n2", targetNodeIds: ["n3"], warnings: [] as string[] }],
+      draftRevision: 8n,
+      draftHash: "draft-hash-topology-8",
+    };
+    const { wrapper, replicationClient } = await mountPage({
+      draft: { ...policyDraft, scheduleCron: "0 2 * * *", timezone: "UTC" },
+    });
+    replicationClient.generatePolicyDraft
+      .mockResolvedValueOnce({
+        draft: { ...policyDraft, scheduleCron: "0 2 * * *", timezone: "UTC" },
+      })
+      .mockResolvedValueOnce({ draft: refreshedDraft });
+
+    await wrapper.get('[data-action="generate"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+    await wrapper.get('[data-field="timezone"]').setValue("Asia/Shanghai");
+    await wrapper.get('input[name="replaceCurrent"]').setValue(true);
+    await wrapper.get('[data-action="apply-draft"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+
+    expect(replicationClient.generatePolicyDraft).toHaveBeenCalledTimes(2);
+    expect(replicationClient.applyPolicyDraft).not.toHaveBeenCalled();
+    expect(wrapper.get("[data-preview-dialog]").text()).toContain("n2");
+    expect(wrapper.text()).toMatch(/topology changed/i);
+    expect((wrapper.get('input[name="replaceCurrent"]').element as HTMLInputElement).checked).toBe(false);
   });
 
   it("keeps timezone editable without cron because retention still uses it", async () => {

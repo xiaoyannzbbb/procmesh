@@ -1176,6 +1176,7 @@
     "apply": "Apply draft",
     "replaceCurrent": "Replace current configuration",
     "replaceHint": "Existing routes will not be overwritten unless you choose replace.",
+    "topologyChanged": "The cluster topology changed while you were editing. The preview was refreshed; review it and confirm replacement again.",
     "generationRules": "Generation rules",
     "routeTable": "Route table",
     "warnings": "Failure-domain warnings",

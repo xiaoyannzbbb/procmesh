@@ -125,6 +125,7 @@ const selectedRunId = ref("");
 const previewOpen = ref(false);
 const replaceCurrent = ref(false);
 const draft = ref<PolicyDraft | null>(null);
+const generatedDraftInputFingerprint = ref("");
 const appliedRevision = ref<bigint | number | "">("");
 const verifyNotice = ref("");
 
@@ -672,6 +673,49 @@ function draftRequest(): PolicyDraft {
   };
 }
 
+function editedDraftRequest(current: PolicyDraft): PolicyDraft {
+  return {
+    name: current.name || "cluster-replica",
+    enabled: current.enabled ?? true,
+    sourceSelector: current.sourceSelector || "ALL_ADMITTED",
+    sourceIds: current.sourceIds ?? [],
+    replicaFactor: current.replicaFactor || 1,
+    trigger: current.trigger || "",
+    primaryPolicyIds: current.primaryPolicyIds ?? [],
+    scheduleCron: current.scheduleCron || "",
+    timezone: current.timezone || "UTC",
+    retentionKeepLast: current.retentionKeepLast ?? 7,
+    retentionKeepDays: current.retentionKeepDays ?? 30,
+    retentionMaxBytes: asBigInt(current.retentionMaxBytes),
+    maxConcurrency: current.maxConcurrency ?? 2,
+    verifyAfterCopy: current.verifyAfterCopy ?? true,
+    bandwidthLimit: asBigInt(current.bandwidthLimit),
+    topologyConstraints: current.topologyConstraints ?? {},
+  };
+}
+
+function draftInputFingerprint(current: PolicyDraft): string {
+  const request = editedDraftRequest(current);
+  return JSON.stringify([
+    request.name,
+    request.enabled,
+    request.sourceSelector,
+    [...(request.sourceIds ?? [])].sort(),
+    request.replicaFactor,
+    request.trigger,
+    [...(request.primaryPolicyIds ?? [])].sort(),
+    request.scheduleCron,
+    request.timezone,
+    request.retentionKeepLast,
+    request.retentionKeepDays,
+    String(request.retentionMaxBytes ?? 0n),
+    request.maxConcurrency,
+    request.verifyAfterCopy,
+    String(request.bandwidthLimit ?? 0n),
+    Object.entries(request.topologyConstraints ?? {}).sort(([left], [right]) => left.localeCompare(right)),
+  ]);
+}
+
 async function invalidateReplica(): Promise<void> {
   await Promise.all([
     queryClient.invalidateQueries({ queryKey: ["replica-topology"] }),
@@ -686,6 +730,7 @@ const generateMut = useMutation({
   mutationFn: () => client.generatePolicyDraft(draftRequest()),
   onSuccess: (res) => {
     draft.value = (res.draft ?? null) as PolicyDraft | null;
+    generatedDraftInputFingerprint.value = draft.value ? draftInputFingerprint(draft.value) : "";
     previewOpen.value = Boolean(draft.value);
     replaceCurrent.value = false;
     actionError.value = "";
@@ -696,10 +741,35 @@ const generateMut = useMutation({
 });
 
 const applyMut = useMutation({
-  mutationFn: () => {
-    const current = draft.value;
+  mutationFn: async () => {
+    let current = draft.value;
     if (!current) {
       throw new Error("draft required");
+    }
+    if (draftInputFingerprint(current) !== generatedDraftInputFingerprint.value) {
+      const editedRoutes = (current.routes ?? []).map((route) => ({
+        ...route,
+        targetNodeIds: [...(route.targetNodeIds ?? [])],
+        warnings: [...(route.warnings ?? [])],
+      }));
+      const editedInboundLoad = { ...(current.inboundLoad ?? {}) };
+      const refreshedResponse = await client.generatePolicyDraft(editedDraftRequest(current));
+      const refreshed = (refreshedResponse.draft ?? null) as PolicyDraft | null;
+      if (!refreshed) {
+        throw new Error("draft required");
+      }
+      generatedDraftInputFingerprint.value = draftInputFingerprint(refreshed);
+      if (asBigInt(refreshed.draftRevision) !== asBigInt(current.draftRevision)) {
+        draft.value = refreshed;
+        replaceCurrent.value = false;
+        throw new Error(t("replica.topologyChanged"));
+      }
+      current = {
+        ...refreshed,
+        routes: editedRoutes,
+        inboundLoad: editedInboundLoad,
+      };
+      draft.value = current;
     }
     return client.applyPolicyDraft({
       policyId: currentPolicy.value?.policyId || newOperationId(),
@@ -715,6 +785,7 @@ const applyMut = useMutation({
     previewOpen.value = false;
     replaceCurrent.value = false;
     draft.value = null;
+    generatedDraftInputFingerprint.value = "";
     actionNotice.value = t("replica.applied", { revision: String(res.revision) });
     await invalidateReplica();
   },

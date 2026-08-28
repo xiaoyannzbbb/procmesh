@@ -1049,6 +1049,7 @@ declare module "i18next" {
         'replica.apply': string
         'replica.replaceCurrent': string
         'replica.replaceHint': string
+        'replica.topologyChanged': string
         'replica.generationRules': string
         'replica.routeTable': string
         'replica.warnings': string
