@@ -77,6 +77,11 @@ describe("LoginPage", () => {
     expect(wrapper.get('button[type="submit"]').exists()).toBe(true);
   });
 
+  it("renders the brand mark above the login form", async () => {
+    const wrapper = await mountLogin();
+    expect(wrapper.find(".login-brand .brand-mark").exists()).toBe(true);
+  });
+
   it("does not call transport on empty submit", async () => {
     const login = vi.fn();
     const wrapper = await mountLogin({ authClient: { login } });

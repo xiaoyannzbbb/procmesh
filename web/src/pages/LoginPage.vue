@@ -4,6 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { saveCsrf, useAuthClient } from "../lib/session";
 import { useI18n } from "../lib/useI18n";
 import { useErrorHandler } from "../lib/useErrorHandler";
+import BrandMark from "../components/BrandMark.vue";
 
 const { t } = useI18n();
 const { formatError } = useErrorHandler();
@@ -47,7 +48,10 @@ async function onSubmit(): Promise<void> {
 <template>
   <div class="login-page">
     <form class="login-card" @submit.prevent="onSubmit">
-      <h1>{{ t("login.title") }}</h1>
+      <div class="login-brand">
+        <BrandMark :size="32" />
+        <h1>{{ t("login.title") }}</h1>
+      </div>
       <label class="field">
         {{ t("login.username") }}
         <input v-model="username" class="input" name="username" type="text" autocomplete="username" />
@@ -82,8 +86,15 @@ async function onSubmit(): Promise<void> {
   border-radius: var(--radius-sm);
   background: var(--color-card);
 }
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.25rem;
+}
+
 .login-card h1 {
-  margin: 0 0 0.25rem;
+  margin: 0;
   font-size: 1.25rem;
   font-weight: 600;
 }

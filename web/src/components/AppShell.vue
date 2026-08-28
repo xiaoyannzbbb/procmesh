@@ -23,6 +23,7 @@ import { newOperationId } from "../lib/opid";
 import { clearSession, session, useAuthClient } from "../lib/session";
 import { useI18n } from "../lib/useI18n";
 import LanguageSwitcher from "./LanguageSwitcher.vue";
+import BrandMark from "./BrandMark.vue";
 
 const route = useRoute();
 const router = useRouter();
@@ -150,8 +151,8 @@ async function onLogout(): Promise<void> {
     <aside class="sidebar" :class="{ collapsed: isCollapsed, 'mobile-open': isMobileNavOpen }">
       <div class="sidebar-header">
         <div class="brand">
+          <BrandMark :size="isCollapsed ? 32 : 28" />
           <span class="brand-full">{{ t("app.name") }}</span>
-          <span class="brand-short">PM</span>
         </div>
         <button
           type="button"
@@ -228,7 +229,10 @@ async function onLogout(): Promise<void> {
           <X v-if="isMobileNavOpen" :size="22" aria-hidden="true" />
           <Menu v-else :size="22" aria-hidden="true" />
         </button>
-        <span class="mobile-brand">{{ t("app.name") }}</span>
+        <span class="mobile-brand">
+          <BrandMark :size="24" />
+          {{ t("app.name") }}
+        </span>
       </header>
       <div class="content-inner">
         <RouterView />
@@ -282,6 +286,10 @@ async function onLogout(): Promise<void> {
 }
 
 .brand {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  min-width: 0;
   font-size: 1.125rem;
   font-weight: 650;
   letter-spacing: -0.01em;
@@ -289,16 +297,13 @@ async function onLogout(): Promise<void> {
   overflow: hidden;
 }
 
-.brand-short {
-  display: none;
+.collapsed .brand {
+  justify-content: center;
+  overflow: visible;
 }
 
 .collapsed .brand-full {
   display: none;
-}
-
-.collapsed .brand-short {
-  display: inline;
 }
 
 .collapse-btn {
@@ -558,6 +563,9 @@ async function onLogout(): Promise<void> {
   }
 
   .mobile-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
     font-size: 1rem;
     font-weight: 700;
   }
@@ -614,9 +622,9 @@ async function onLogout(): Promise<void> {
     display: inline;
   }
 
-  .sidebar .brand-short,
-  .sidebar.collapsed .brand-short {
-    display: none;
+  .sidebar.collapsed .brand {
+    justify-content: flex-start;
+    overflow: hidden;
   }
 
   .sidebar.collapsed .sidebar-header {

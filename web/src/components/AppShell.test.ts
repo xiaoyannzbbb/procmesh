@@ -125,6 +125,12 @@ describe("AppShell", () => {
     expect(wrapper.text()).toContain("Processes");
   });
 
+  it("renders the brand mark in the sidebar header and mobile topbar", async () => {
+    const wrapper = await mountShell(me());
+    expect(wrapper.find(".sidebar-header .brand-mark").exists()).toBe(true);
+    expect(wrapper.find(".mobile-brand .brand-mark").exists()).toBe(true);
+  });
+
   it("hides Users, Roles, and Audit without read permissions", async () => {
     const wrapper = await mountShell(me({ permissions: ["cluster.read", "node.read", "process.read"] }));
     expect(wrapper.text()).toContain("Overview");
@@ -261,6 +267,13 @@ describe("AppShell", () => {
   it("locks the shell to the viewport so logout stays on screen", () => {
     expect(shellSource).toMatch(/\.app-shell\s*\{[^}]*height:\s*100dvh/s);
     expect(shellSource).toMatch(/\.content\s*\{[^}]*overflow-y:\s*auto/s);
+  });
+
+  it("keeps the brand mark visible when the sidebar is collapsed", async () => {
+    localStorage.setItem("procmesh-sidebar-collapsed", "true");
+    const wrapper = await mountShell(me());
+    expect(wrapper.find(".sidebar.collapsed .brand-mark").exists()).toBe(true);
+    expect(wrapper.find(".sidebar.collapsed .brand-full").exists()).toBe(true);
   });
 
   it("keeps the compact brand visible without horizontal navigation overflow", () => {
