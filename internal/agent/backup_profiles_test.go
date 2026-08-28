@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/qleelulu/procmesh/internal/agentcfg"
+	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/store"
 )
 
@@ -31,6 +32,9 @@ func TestNewBackupEngineResolvesNamedS3Profiles(t *testing.T) {
 	}, nil, st, nil, &rpcRuntime{nodeID: "node-1"}, nil)
 	if engine == nil || engine.ResolveDestination == nil {
 		t.Fatal("named destination resolver is not wired")
+	}
+	if sink := engine.Sinks[backup.ReplicaSinkName]; sink == nil {
+		t.Fatal("replica sink is not wired")
 	}
 	sink, err := engine.ResolveDestination("archive")
 	if err != nil || sink == nil || sink.Name() != "s3" {

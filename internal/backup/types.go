@@ -45,7 +45,7 @@ type Meta struct {
 	RevisionRanges []RevisionRange
 	SHA256         string
 	Bytes          int64
-	Sink           string // fs | s3 | peer
+	Sink           string // fs | s3 | peer | replica
 	Location       string
 	SourceNodeID   string // peer receive source; empty when self-created
 }

@@ -98,6 +98,9 @@ func TestNew_BackupDirs(t *testing.T) {
 	if l.BackupFSDir() != "/data/backup/fs" {
 		t.Fatal(l.BackupFSDir())
 	}
+	if l.BackupReplicaDir() != "/data/backup/replica" {
+		t.Fatal(l.BackupReplicaDir())
+	}
 	if l.BackupPeerDir("src") != "/data/backup/peer/src" {
 		t.Fatal(l.BackupPeerDir("src"))
 	}

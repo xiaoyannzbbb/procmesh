@@ -445,7 +445,10 @@ func newBackupEngine(opt Options, mgr *process.Manager, st *store.Store, collect
 	if fsDir == "" {
 		fsDir = layout.BackupFSDir()
 	}
-	sinks := map[string]backup.Sink{"fs": backup.NewFSSink(fsDir)}
+	sinks := map[string]backup.Sink{
+		"fs":                   backup.NewFSSink(fsDir),
+		backup.ReplicaSinkName: backup.NewFSSink(layout.BackupReplicaDir()),
+	}
 	destinations := make(map[string]backup.Sink, len(opt.Backup.S3Profiles))
 	clusterID, _ := st.GetClusterID(context.Background())
 	if opt.Backup.S3.Bucket != "" {

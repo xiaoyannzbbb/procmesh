@@ -51,6 +51,9 @@ func (l Layout) BackupRoot() string { return filepath.Join(l.Root, "backup") }
 // BackupFSDir is the filesystem sink directory.
 func (l Layout) BackupFSDir() string { return filepath.Join(l.BackupRoot(), "fs") }
 
+// BackupReplicaDir is the disaster-replica capture sink directory.
+func (l Layout) BackupReplicaDir() string { return filepath.Join(l.BackupRoot(), "replica") }
+
 // BackupPeerDir is the peer-received snapshot directory for sourceNodeID.
 func (l Layout) BackupPeerDir(sourceNodeID string) string {
 	return filepath.Join(l.BackupRoot(), "peer", sourceNodeID)

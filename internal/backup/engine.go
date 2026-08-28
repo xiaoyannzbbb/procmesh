@@ -69,6 +69,8 @@ func (f ReplicationPeerPushFunc) PutReplicationSnapshot(ctx context.Context, req
 	return f(ctx, req, payload)
 }
 
+const ReplicaSinkName = "replica"
+
 // CreateOpts selects processes, sink, and optional peer targets for Create.
 type CreateOpts struct {
 	ProcessIDs    []string
@@ -90,6 +92,11 @@ type ClusterCreateOpts struct {
 	SnapshotID         string
 }
 
+// ReplicationCaptureRequest captures a durable local replica snapshot for one run+source.
+type ReplicationCaptureRequest struct {
+	RunID, PolicyID, SourceNodeID, SnapshotID string
+}
+
 type DestinationHealth struct {
 	Sink               string
 	DestinationProfile string
@@ -104,7 +111,7 @@ type Engine struct {
 	NodeID             string
 	ClusterID          string
 	Apply              Applier
-	Sinks              map[string]Sink // "fs"|"s3"
+	Sinks              map[string]Sink // "fs"|"s3"|"replica"
 	ResolveDestination func(profile string) (Sink, error)
 	PeerStore          *PeerStore
 	PeerPush           PeerPusher
@@ -142,16 +149,7 @@ func (e *Engine) ReplicateSnapshot(ctx context.Context, req ReplicationTaskReque
 	if rec.NodeID != e.NodeID || rec.SHA256 != req.SHA256 || rec.ClusterID != clusterID {
 		return 0, errcode.E(errcode.CONFLICT, "frozen snapshot checksum mismatch")
 	}
-	sink, err := e.clusterSink(rec.Sink, rec.DestinationProfile)
-	if err != nil {
-		return 0, err
-	}
-	var payload []byte
-	if clusterSink, ok := sink.(ClusterSink); ok && rec.PolicyID != "" {
-		payload, err = clusterSink.GetCluster(ctx, rec.ClusterID, rec.PolicyID, rec.NodeID, rec.SnapshotID)
-	} else {
-		payload, err = sink.Get(ctx, rec.SnapshotID)
-	}
+	payload, err := e.readPayload(ctx, rec, rec.SnapshotID, rec.Sink)
 	if err != nil {
 		return 0, err
 	}
@@ -377,6 +375,26 @@ func (e *Engine) CreateCluster(ctx context.Context, opts ClusterCreateOpts) (Met
 	}
 
 	return e.indexClusterSnapshot(ctx, snap, sha, int64(len(payload)), opts.Sink, loc, opts.RunID, opts.TaskID, opts.PolicyID, opts.DestinationProfile)
+}
+
+// CaptureReplicationSnapshot writes a durable local replica snapshot for this
+// source node. It does not create a ClusterBackupRun.
+func (e *Engine) CaptureReplicationSnapshot(ctx context.Context, req ReplicationCaptureRequest) (Meta, error) {
+	if req.SourceNodeID != e.NodeID {
+		return Meta{}, errcode.E(errcode.INVALID, "capture source mismatch")
+	}
+	if req.SnapshotID == "" {
+		req.SnapshotID = StableReplicationSnapshotID(req.RunID, req.SourceNodeID)
+	}
+	return e.CreateCluster(ctx, ClusterCreateOpts{
+		RunID:      req.RunID,
+		TaskID:     "capture:" + req.SourceNodeID,
+		PolicyID:   req.PolicyID,
+		ClusterID:  e.resolvedClusterID(),
+		NodeID:     e.NodeID,
+		Sink:       ReplicaSinkName,
+		SnapshotID: req.SnapshotID,
+	})
 }
 
 // CreatePeer is Create with Sink=peer.
@@ -810,6 +828,9 @@ func (e *destinationProfileError) Error() string {
 func (e *destinationProfileError) Unwrap() error { return e.err }
 
 func (e *Engine) clusterSink(name, profile string) (Sink, error) {
+	if name == ReplicaSinkName {
+		return e.sink(name)
+	}
 	if name != "s3" || e.ResolveDestination == nil {
 		return e.sink(name)
 	}
@@ -976,6 +997,13 @@ func (e *Engine) resolvedClusterID() string {
 		}
 	}
 	return ""
+}
+
+// StableReplicationSnapshotID is the idempotent replica snapshot name for one
+// run and source node. Every route of that run shares this object.
+func StableReplicationSnapshotID(runID, sourceNodeID string) string {
+	sum := sha256.Sum256([]byte("replica-snap\x00" + runID + "\x00" + sourceNodeID))
+	return hex.EncodeToString(sum[:16])
 }
 
 // StableClusterSnapshotID is the idempotent object name for a cluster task.
