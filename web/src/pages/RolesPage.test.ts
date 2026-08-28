@@ -21,7 +21,12 @@ const EN_ROLES = {
   stats: { roles: "Roles", bindings: "Bindings" },
   table: { name: "Name", type: "Type", permissions: "Permissions", bindings: "Bindings", actions: "Actions" },
   type: { builtin: "Built-in", custom: "Custom" },
-  perms: { more: "+{{count}}", less: "Show less" },
+  permissionsDialog: {
+    title: "Permissions for {{name}}",
+    count: "Permissions: {{count}}",
+    viewRole: "View permissions for {{name}}",
+    empty: "No permissions assigned",
+  },
   empty: {
     title: "No roles yet",
     hint: "Create a role to bundle permissions, then grant it to a user.",
@@ -29,7 +34,7 @@ const EN_ROLES = {
   bindings: {
     title: "Bindings",
     empty: { title: "No bindings yet", hint: "Grant a role to a user to see it here." },
-    table: { userId: "User ID", role: "Role", scope: "Scope", scopeId: "Scope ID", actions: "Actions" },
+    table: { userName: "User name", role: "Role", scope: "Scope", scopeId: "Scope ID", actions: "Actions" },
   },
   error: { title: "Could not load roles", retry: "Retry" },
   createRole: {
@@ -266,36 +271,38 @@ describe("RolesPage role table", () => {
     expect(wrapper.get('[data-role-id="viewer"] [data-cell="bindings"]').text()).toBe("0");
   });
 
-  it("collapses long permission lists behind a toggle", async () => {
-    const permissions = Array.from({ length: 8 }, (_, index) => `perm.p${index}`);
+  it("shows a permission count and opens the complete list grouped by resource", async () => {
+    const permissions = ["cluster.read", "process.read", "process.restart", "audit.read"];
     const { wrapper } = await mountRolesPage(
       [{ roleId: "r1", name: "Ops", permissions }],
       [],
       ["role.read"],
     );
 
-    expect(wrapper.findAll('[data-role-id="r1"] [data-perm-chip]')).toHaveLength(6);
-    const toggle = wrapper.get('[data-action="toggle-perms"]');
-    expect(toggle.attributes("aria-expanded")).toBe("false");
-    expect(toggle.text()).toContain("+2");
+    const count = wrapper.get('[data-role-id="r1"] [data-action="view-role-permissions"]');
+    expect(count.text()).toBe("Permissions: 4");
+    expect(wrapper.find('[data-role-id="r1"] [data-perm-chip]').exists()).toBe(false);
 
-    await toggle.trigger("click");
-    expect(wrapper.findAll('[data-role-id="r1"] [data-perm-chip]')).toHaveLength(8);
-    expect(wrapper.get('[data-action="toggle-perms"]').attributes("aria-expanded")).toBe("true");
-
-    await wrapper.get('[data-action="toggle-perms"]').trigger("click");
-    expect(wrapper.findAll('[data-role-id="r1"] [data-perm-chip]')).toHaveLength(6);
+    await count.trigger("click");
+    const dialog = wrapper.get('[data-testid="permission-dialog"]');
+    expect(dialog.attributes("role")).toBe("dialog");
+    expect(dialog.text()).toContain("Permissions for Ops");
+    expect(dialog.get('[data-permission-group="cluster"]').text()).toContain("cluster.read");
+    expect(dialog.findAll('[data-permission-group="process"] [data-permission]')).toHaveLength(2);
+    expect(dialog.get('[data-permission-group="audit"]').text()).toContain("audit.read");
   });
 
-  it("shows a placeholder for roles without permissions", async () => {
+  it("shows a zero count and an empty state for roles without permissions", async () => {
     const { wrapper } = await mountRolesPage(
       [{ roleId: "r1", name: "Empty", permissions: [] }],
       [],
       ["role.read"],
     );
 
-    expect(wrapper.get('[data-role-id="r1"] [data-cell="permissions"]').text()).toBe("—");
-    expect(wrapper.find('[data-role-id="r1"] [data-perm-chip]').exists()).toBe(false);
+    const count = wrapper.get('[data-role-id="r1"] [data-action="view-role-permissions"]');
+    expect(count.text()).toBe("Permissions: 0");
+    await count.trigger("click");
+    expect(wrapper.get('[data-testid="permission-dialog"]').text()).toContain("No permissions assigned");
   });
 
   it("enables custom-role actions and disables built-in role actions", async () => {
@@ -355,6 +362,38 @@ describe("RolesPage role table", () => {
 });
 
 describe("RolesPage bindings table", () => {
+  it("shows user names and opens grouped permissions from the role name", async () => {
+    const roles = [{
+      roleId: "r-custom",
+      name: "On-call",
+      permissions: ["cluster.read", "process.read", "process.restart"],
+    }];
+    const bindings = [
+      { userId: "u-alice", roleId: "r-custom", scopeType: "CLUSTER", scopeId: "" },
+    ];
+    const users = [
+      { userId: "u-alice", username: "alice", displayName: "Alice Chen", email: "alice@example.com", status: "ACTIVE" },
+    ];
+    const { wrapper } = await mountRolesPage(
+      roles,
+      bindings,
+      ["role.read", "user.read"],
+      users,
+    );
+
+    const table = wrapper.get(".bindings-card table");
+    expect(table.get("thead").text()).toContain("User name");
+    expect(table.get('[data-cell="user-name"]').text()).toContain("Alice Chen");
+    expect(table.get('[data-cell="user-name"]').text()).toContain("alice");
+
+    const roleButton = table.get('[data-action="view-binding-role-permissions"]');
+    expect(roleButton.text()).toBe("On-call");
+    await roleButton.trigger("click");
+    const dialog = wrapper.get('[data-testid="permission-dialog"]');
+    expect(dialog.text()).toContain("Permissions for On-call");
+    expect(dialog.findAll('[data-permission-group="process"] [data-permission]')).toHaveLength(2);
+  });
+
   it("renders localized scope badges instead of raw scope types", async () => {
     const roles = [{ roleId: "operator", name: "Operator", permissions: [] }];
     const bindings = [

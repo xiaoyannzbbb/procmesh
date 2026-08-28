@@ -850,9 +850,11 @@
       "builtin": "内置",
       "custom": "自定义"
     },
-    "perms": {
-      "more": "+{{count}}",
-      "less": "收起"
+    "permissionsDialog": {
+      "title": "{{name}} 的权限",
+      "count": "权限：{{count}} 项",
+      "viewRole": "查看角色 {{name}} 的权限",
+      "empty": "未分配权限"
     },
     "empty": {
       "title": "暂无角色",
@@ -865,7 +867,7 @@
     "bindings": {
       "title": "绑定",
       "table": {
-        "userId": "用户ID",
+        "userName": "用户名称",
         "role": "角色",
         "scope": "范围",
         "scopeId": "范围ID",
@@ -896,7 +898,8 @@
         "command": "命令",
         "batch": "批次",
         "alert": "告警",
-        "backup": "备份"
+        "backup": "备份",
+        "replication": "灾备复制"
       },
       "create": "创建",
       "success": "角色创建成功"

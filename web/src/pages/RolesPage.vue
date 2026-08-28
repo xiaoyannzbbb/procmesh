@@ -4,11 +4,12 @@ import { computed, ref } from "vue";
 import { AlertCircle, Pencil, Plus, Search, ShieldCheck, Trash2, Unlink, UserPlus } from "lucide-vue-next";
 import ConfirmDialog from "../components/ConfirmDialog.vue";
 import Drawer from "../components/Drawer.vue";
+import PermissionDialog, { type PermissionGroup } from "../components/PermissionDialog.vue";
 import Toast from "../components/Toast.vue";
-import type { Binding, Role } from "../gen/procmesh/v1/api_pb";
+import type { Binding, Role, User } from "../gen/procmesh/v1/api_pb";
 import UserSelector from "../components/UserSelector.vue";
 import { newOperationId } from "../lib/opid";
-import { useRoleClient } from "../lib/rpc";
+import { useRoleClient, useUserClient } from "../lib/rpc";
 import { session } from "../lib/session";
 import { useI18n } from "../lib/useI18n";
 import { formatRemoteError } from "./processView";
@@ -16,7 +17,6 @@ import { formatRemoteError } from "./processView";
 const { t } = useI18n();
 
 const POLL_MS = 5000;
-const PERM_CHIP_LIMIT = 6;
 const SKELETON_ROWS = 5;
 const BUILTIN_ROLE_IDS = new Set(["super_admin", "cluster_admin", "operator", "viewer"]);
 const ROLE_PERMISSIONS = [
@@ -51,16 +51,19 @@ const PERMISSION_GROUP_LABELS: Record<string, () => string> = {
   batch: () => t("roles.createRole.groups.batch"),
   alert: () => t("roles.createRole.groups.alert"),
   backup: () => t("roles.createRole.groups.backup"),
+  replication: () => t("roles.createRole.groups.replication"),
 };
 
 type GrantScope = "CLUSTER" | "AGENT" | "AGENT_GROUP" | "PROCESS_GROUP";
 
 const client = useRoleClient();
+const userClient = useUserClient();
 const queryClient = useQueryClient();
 const actionError = ref("");
 const createDrawerOpen = ref(false);
 const grantDrawerOpen = ref(false);
 const editingRoleId = ref("");
+const permissionDialogRole = ref<Role | null>(null);
 const pendingConfirmation = ref<
   | { kind: "delete"; roleId: string; roleName: string }
   | { kind: "revoke"; binding: Binding; roleName: string }
@@ -73,7 +76,6 @@ const showToast = ref(false);
 const roleName = ref("");
 const selectedPerms = ref<string[]>([]);
 const permSearch = ref("");
-const expandedRoles = ref(new Set<string>());
 const grantUserId = ref("");
 const grantRoleId = ref("");
 const grantScope = ref<GrantScope>("CLUSTER");
@@ -89,8 +91,18 @@ const query = useQuery({
   refetchInterval: POLL_MS,
 });
 
+const usersQuery = useQuery({
+  queryKey: ["users"],
+  queryFn: () => userClient.listUsers({}),
+  enabled: canSelectUsers,
+  refetchInterval: POLL_MS,
+});
+
 const roles = computed(() => query.data.value?.roles ?? []);
 const bindings = computed(() => query.data.value?.bindings ?? []);
+const usersById = computed(() => new Map(
+  (usersQuery.data.value?.users ?? []).map((user) => [user.userId, user]),
+));
 const errorText = computed(() => query.error.value ? formatRemoteError(query.error.value) : "");
 const createReady = computed(() => roleName.value.trim().length > 0);
 const roleDrawerTitle = computed(() => editingRoleId.value
@@ -109,6 +121,9 @@ const grantReady = computed(() => Boolean(
 const totalRoles = computed(() => roles.value.length);
 const totalBindings = computed(() => bindings.value.length);
 const selectedPermCount = computed(() => selectedPerms.value.length);
+const permissionGroups = computed(() => groupPermissions(
+  permissionDialogRole.value?.permissions ?? [],
+));
 const confirmTitle = computed(() => pendingConfirmation.value?.kind === "delete"
   ? t("roles.deleteRole.title")
   : t("roles.revoke.title"));
@@ -161,31 +176,62 @@ function isBuiltin(roleId: string): boolean {
 }
 
 function roleLabel(roleId: string): string {
-  return roles.value.find((role) => role.roleId === roleId)?.name || roleId;
+  return roleFor(roleId)?.name || roleId;
+}
+
+function roleFor(roleId: string): Role | undefined {
+  return roles.value.find((role) => role.roleId === roleId);
+}
+
+function userFor(userId: string): User | undefined {
+  return usersById.value.get(userId);
+}
+
+function userLabel(userId: string): string {
+  const user = userFor(userId);
+  return user?.displayName || user?.username || userId;
+}
+
+function userSecondaryLabel(userId: string): string {
+  const user = userFor(userId);
+  return user?.displayName && user.username ? user.username : "";
 }
 
 function roleBindingCount(roleId: string): number {
   return bindingCountByRole.value.get(roleId) ?? 0;
 }
 
-function visiblePerms(roleId: string, perms: string[]): string[] {
-  return expandedRoles.value.has(roleId) ? perms : perms.slice(0, PERM_CHIP_LIMIT);
-}
-
-function hiddenPermCount(perms: string[]): number {
-  return Math.max(0, perms.length - PERM_CHIP_LIMIT);
-}
-
-function isPermsExpanded(roleId: string): boolean {
-  return expandedRoles.value.has(roleId);
-}
-
-function togglePerms(roleId: string): void {
-  const next = new Set(expandedRoles.value);
-  if (!next.delete(roleId)) {
-    next.add(roleId);
+function groupPermissions(perms: string[]): PermissionGroup[] {
+  const grouped = new Map<string, string[]>();
+  for (const permission of perms) {
+    const key = permission.split(".")[0] || permission;
+    const items = grouped.get(key) ?? [];
+    items.push(permission);
+    grouped.set(key, items);
   }
-  expandedRoles.value = next;
+  const order = new Map(PERMISSION_GROUPS.map((group, index) => [group.key, index]));
+  return Array.from(grouped, ([key, permissions]) => ({
+    key,
+    label: groupLabel(key),
+    permissions,
+  })).sort((left, right) => {
+    const leftOrder = order.get(left.key) ?? Number.MAX_SAFE_INTEGER;
+    const rightOrder = order.get(right.key) ?? Number.MAX_SAFE_INTEGER;
+    return leftOrder - rightOrder || left.key.localeCompare(right.key);
+  });
+}
+
+function openPermissionDialog(role: Role): void {
+  permissionDialogRole.value = role;
+}
+
+function openPermissionDialogById(roleId: string): void {
+  const role = roleFor(roleId);
+  if (role) openPermissionDialog(role);
+}
+
+function closePermissionDialog(): void {
+  permissionDialogRole.value = null;
 }
 
 function scopeKey(scopeType: string): string {
@@ -500,32 +546,15 @@ async function confirmPending(): Promise<void> {
                 </span>
               </td>
               <td data-cell="permissions">
-                <template v-if="role.permissions.length">
-                  <ul :id="`role-perms-${role.roleId}`" class="perm-chips">
-                    <li
-                      v-for="perm in visiblePerms(role.roleId, role.permissions)"
-                      :key="perm"
-                      class="badge perm-chip"
-                      data-perm-chip
-                    >
-                      {{ perm }}
-                    </li>
-                  </ul>
-                  <button
-                    v-if="hiddenPermCount(role.permissions) || isPermsExpanded(role.roleId)"
-                    type="button"
-                    class="btn btn-xs perm-toggle"
-                    data-action="toggle-perms"
-                    :aria-expanded="isPermsExpanded(role.roleId)"
-                    :aria-controls="`role-perms-${role.roleId}`"
-                    @click="togglePerms(role.roleId)"
-                  >
-                    {{ isPermsExpanded(role.roleId)
-                      ? t("roles.perms.less")
-                      : t("roles.perms.more", { count: hiddenPermCount(role.permissions) }) }}
-                  </button>
-                </template>
-                <span v-else class="muted">—</span>
+                <button
+                  type="button"
+                  class="permission-count-button"
+                  data-action="view-role-permissions"
+                  :aria-label="t('roles.permissionsDialog.viewRole', { name: role.name })"
+                  @click="openPermissionDialog(role)"
+                >
+                  {{ t("roles.permissionsDialog.count", { count: role.permissions.length }) }}
+                </button>
               </td>
               <td data-cell="bindings" class="count-cell">{{ roleBindingCount(role.roleId) }}</td>
               <td class="action-cell">
@@ -583,7 +612,7 @@ async function confirmPending(): Promise<void> {
           <caption class="sr-only">{{ t("roles.bindings.title") }}</caption>
           <thead>
             <tr>
-              <th>{{ t("roles.bindings.table.userId") }}</th>
+              <th>{{ t("roles.bindings.table.userName") }}</th>
               <th>{{ t("roles.bindings.table.role") }}</th>
               <th>{{ t("roles.bindings.table.scope") }}</th>
               <th>{{ t("roles.bindings.table.scopeId") }}</th>
@@ -595,8 +624,26 @@ async function confirmPending(): Promise<void> {
               v-for="(binding, index) in bindings"
               :key="`${binding.userId}:${binding.roleId}:${binding.scopeType}:${binding.scopeId}:${index}`"
             >
-              <td class="mono">{{ binding.userId }}</td>
-              <td>{{ roleLabel(binding.roleId) }}</td>
+              <td data-cell="user-name">
+                <span class="user-identity">
+                  <strong>{{ userLabel(binding.userId) }}</strong>
+                  <small v-if="userSecondaryLabel(binding.userId)">{{ userSecondaryLabel(binding.userId) }}</small>
+                  <small v-else-if="!userFor(binding.userId)" class="mono">{{ binding.userId }}</small>
+                </span>
+              </td>
+              <td>
+                <button
+                  v-if="roleFor(binding.roleId)"
+                  type="button"
+                  class="role-permissions-button"
+                  data-action="view-binding-role-permissions"
+                  :aria-label="t('roles.permissionsDialog.viewRole', { name: roleLabel(binding.roleId) })"
+                  @click="openPermissionDialogById(binding.roleId)"
+                >
+                  {{ roleLabel(binding.roleId) }}
+                </button>
+                <span v-else>{{ roleLabel(binding.roleId) }}</span>
+              </td>
               <td data-cell="scope">
                 <span class="badge scope-badge" :data-scope="scopeKey(binding.scopeType)">
                   {{ scopeLabel(binding.scopeType) }}
@@ -714,6 +761,16 @@ async function confirmPending(): Promise<void> {
       </form>
     </Drawer>
 
+    <PermissionDialog
+      :open="Boolean(permissionDialogRole)"
+      :title="t('roles.permissionsDialog.title', { name: permissionDialogRole?.name ?? '' })"
+      :summary="t('roles.permissionsDialog.count', { count: permissionDialogRole?.permissions.length ?? 0 })"
+      :close-label="t('actions.close')"
+      :empty-label="t('roles.permissionsDialog.empty')"
+      :groups="permissionGroups"
+      @close="closePermissionDialog"
+    />
+
     <ConfirmDialog
       :open="Boolean(pendingConfirmation)"
       :title="confirmTitle"
@@ -771,7 +828,7 @@ h2 { margin: 0; font-size: 1.05rem; font-weight: 650; }
   color: var(--color-muted);
   font-size: 0.75rem;
   text-transform: uppercase;
-  letter-spacing: 0.025em;
+  letter-spacing: 0;
 }
 .summary-value {
   margin: 0;
@@ -837,22 +894,35 @@ h2 { margin: 0; font-size: 1.05rem; font-weight: 650; }
   color: var(--color-info-fg);
 }
 
-.perms-column { min-width: 18rem; }
-.perm-chips {
+.perms-column { min-width: 9rem; }
+.permission-count-button,
+.role-permissions-button {
+  min-height: 2rem;
+  padding: 0.25rem 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-accent);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.permission-count-button:hover,
+.role-permissions-button:hover { text-decoration: underline; }
+.permission-count-button:focus-visible,
+.role-permissions-button:focus-visible {
+  border-radius: var(--radius-sm);
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+.user-identity {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem;
-  margin: 0;
-  padding: 0;
-  list-style: none;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 8rem;
 }
-.perm-chip {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-weight: 500;
-  /* color: var(--color-muted); */
-  overflow-wrap: anywhere;
-}
-.perm-toggle { margin-top: 0.25rem; }
+.user-identity strong { font-size: 0.875rem; font-weight: 600; overflow-wrap: anywhere; }
+.user-identity small { color: var(--color-muted); font-size: 0.75rem; overflow-wrap: anywhere; }
 .count-column, .count-cell { text-align: right; }
 .count-cell { font-variant-numeric: tabular-nums; }
 .action-column, .action-cell { min-width: 11rem; text-align: right; }

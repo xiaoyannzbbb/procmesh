@@ -751,14 +751,16 @@ declare module "i18next" {
         'roles.table.actions': string
         'roles.type.builtin': string
         'roles.type.custom': string
-        'roles.perms.more': string
-        'roles.perms.less': string
+        'roles.permissionsDialog.title': string
+        'roles.permissionsDialog.count': string
+        'roles.permissionsDialog.viewRole': string
+        'roles.permissionsDialog.empty': string
         'roles.empty.title': string
         'roles.empty.hint': string
         'roles.error.title': string
         'roles.error.retry': string
         'roles.bindings.title': string
-        'roles.bindings.table.userId': string
+        'roles.bindings.table.userName': string
         'roles.bindings.table.role': string
         'roles.bindings.table.scope': string
         'roles.bindings.table.scopeId': string
@@ -784,6 +786,7 @@ declare module "i18next" {
         'roles.createRole.groups.batch': string
         'roles.createRole.groups.alert': string
         'roles.createRole.groups.backup': string
+        'roles.createRole.groups.replication': string
         'roles.createRole.create': string
         'roles.createRole.success': string
         'roles.updateRole.title': string

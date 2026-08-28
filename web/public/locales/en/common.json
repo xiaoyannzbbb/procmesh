@@ -850,9 +850,11 @@
       "builtin": "Built-in",
       "custom": "Custom"
     },
-    "perms": {
-      "more": "+{{count}}",
-      "less": "Show less"
+    "permissionsDialog": {
+      "title": "Permissions for {{name}}",
+      "count": "Permissions: {{count}}",
+      "viewRole": "View permissions for {{name}}",
+      "empty": "No permissions assigned"
     },
     "empty": {
       "title": "No roles yet",
@@ -865,7 +867,7 @@
     "bindings": {
       "title": "Bindings",
       "table": {
-        "userId": "User ID",
+        "userName": "User name",
         "role": "Role",
         "scope": "Scope",
         "scopeId": "Scope ID",
@@ -896,7 +898,8 @@
         "command": "Command",
         "batch": "Batch",
         "alert": "Alert",
-        "backup": "Backup"
+        "backup": "Backup",
+        "replication": "Replication"
       },
       "create": "Create",
       "success": "Role created"
