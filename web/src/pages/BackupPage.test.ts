@@ -699,6 +699,20 @@ describe("BackupPage", () => {
     expect(detail.text()).toContain("FAILED");
   });
 
+  it("shows node names, not node ids, in the run detail agent table", async () => {
+    const { wrapper } = await mountBackup({
+      listNodes: [
+        { nodeId: "n1", hostname: "alpha", state: "ALIVE" },
+        { nodeId: "n2", hostname: "beta", state: "ALIVE" },
+      ],
+    });
+    await wrapper.get('[data-run-id="run-partial"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+    const cells = wrapper.findAll("[data-run-detail] tbody tr td:first-child");
+    expect(cells.map((cell) => cell.text())).toEqual(["alpha", "beta"]);
+  });
+
   it("renders PARTIAL as a warning, not success, and retries only failed Agents", async () => {
     const { wrapper, clusterBackupClient } = await mountBackup();
     const badge = wrapper.get('[data-status="PARTIAL"]');

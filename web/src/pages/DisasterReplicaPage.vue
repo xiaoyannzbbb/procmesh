@@ -360,8 +360,9 @@ const routeRows = computed(() =>
     const status = routeStatus(latestForSource);
     const lastSuccess = lastSuccessfulUnix(runs.value, source);
     return {
-      source,
-      targets: (route.targetNodeIds ?? []).join(", ") || "—",
+      sourceId: source,
+      source: nodeNameById(source),
+      targets: (route.targetNodeIds ?? []).map(nodeNameById).join(", ") || "—",
       warnings: route.warnings ?? [],
       status,
       lastSuccess: lastSuccess > 0 ? formatUnix(lastSuccess) : "—",
@@ -1115,9 +1116,9 @@ async function onStartRun(): Promise<void> {
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="row in routeRows" :key="row.source">
-                  <td class="mono">{{ row.source }}</td>
-                  <td class="mono">{{ row.targets }}</td>
+                <tr v-for="row in routeRows" :key="row.sourceId">
+                  <td>{{ row.source }}</td>
+                  <td>{{ row.targets }}</td>
                   <td>
                     <span
                       class="status-badge"
@@ -1233,7 +1234,7 @@ async function onStartRun(): Promise<void> {
             <tbody>
               <tr v-for="snap in snapshots" :key="`${snap.sourceNodeId}:${snap.snapshotId}`">
                 <td class="mono">{{ snap.snapshotId }}</td>
-                <td class="mono" data-snapshot-owner>{{ snap.sourceNodeId }}</td>
+                <td data-snapshot-owner>{{ nodeNameById(snap.sourceNodeId || "") }}</td>
                 <td class="mono">{{ shortSha(snap.sha256) }}</td>
                 <td>
                   <div class="row-actions">
@@ -1551,8 +1552,8 @@ async function onStartRun(): Promise<void> {
           </thead>
           <tbody>
             <tr v-for="task in selectedTasks" :key="task.taskId">
-              <td class="mono">{{ task.sourceNodeId }}</td>
-              <td class="mono">{{ (task.targetNodeIds ?? []).join(", ") }}</td>
+              <td>{{ nodeNameById(task.sourceNodeId || "") }}</td>
+              <td>{{ (task.targetNodeIds ?? []).map(nodeNameById).join(", ") || "—" }}</td>
               <td>
                 <span
                   class="status-badge"

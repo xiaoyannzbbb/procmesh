@@ -648,8 +648,8 @@ describe("DisasterReplicaPage", () => {
     await wrapper.vm.$nextTick();
     expect(replicationClient.getRun).toHaveBeenCalledWith({ runId: "run-partial" });
     const detail = wrapper.get("[data-run-detail]");
-    expect(detail.text()).toContain("n1");
-    expect(detail.text()).toContain("n2");
+    expect(detail.text()).toContain("agent-one");
+    expect(detail.text()).toContain("agent-two");
     expect(detail.text()).toContain("checksum mismatch");
     await wrapper.get('[data-action="retry-failed"]').trigger("click");
     await flushPromises();
@@ -682,7 +682,7 @@ describe("DisasterReplicaPage", () => {
     const { wrapper, replicationClient } = await mountPage();
     const recovery = wrapper.get('[data-section="recovery"]');
     expect(recovery.text()).toContain("snap-n1");
-    expect(recovery.get("[data-snapshot-owner]").text()).toContain("n1");
+    expect(recovery.get("[data-snapshot-owner]").text()).toBe("agent-one");
     await wrapper.get('[data-action="verify"]').trigger("click");
     await flushPromises();
     expect(replicationClient.verifyReplica).toHaveBeenCalledWith(
@@ -694,7 +694,7 @@ describe("DisasterReplicaPage", () => {
   it("exposes an Owner restore entry that keeps source identity and links to Backup", async () => {
     const { wrapper } = await mountPage();
     const recovery = wrapper.get('[data-section="recovery"]');
-    expect(recovery.get("[data-snapshot-owner]").text()).toContain("n1");
+    expect(recovery.get("[data-snapshot-owner]").text()).toBe("agent-one");
     expect(recovery.text()).toMatch(/cannot be applied directly|Restore on the source Owner/i);
     const link = wrapper.get('[data-action="restore-owner"]');
     expect(link.attributes("href") ?? link.attributes("to") ?? link.html()).toMatch(/\/backup/);

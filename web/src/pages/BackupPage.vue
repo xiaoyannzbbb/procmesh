@@ -2015,7 +2015,7 @@ async function onRetryFailed(): Promise<void> {
             </thead>
             <tbody>
               <tr v-for="task in selectedTasks" :key="task.taskId || task.nodeId">
-                <td class="mono">{{ task.nodeId }}</td>
+                <td>{{ nodeName(task.nodeId ?? "") }}</td>
                 <td>
                   <span
                     class="status-badge"
