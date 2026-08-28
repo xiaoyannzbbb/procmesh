@@ -28,6 +28,13 @@
     "confirm": "Confirm",
     "close": "Close",
     "logout": "Logout",
+    "profile": "Personal profile",
+    "language": "Language",
+    "accountMenu": "Account menu",
+    "signedIn": "Signed in",
+    "showPassword": "Show password",
+    "hidePassword": "Hide password",
+    "saving": "Saving...",
     "signIn": "Sign in",
     "tail": "Tail 100",
     "stream": "Stream",
@@ -74,6 +81,25 @@
     "invalidCredentials": "invalid credentials",
     "rateLimited": "login rate limited",
     "userLocked": "user locked"
+  },
+  "profile": {
+    "title": "Personal profile",
+    "subtitle": "Manage your account and sign-in security.",
+    "identity": "Account",
+    "identityDescription": "Your signed-in ProcMesh identity.",
+    "username": "Username",
+    "userId": "User ID",
+    "passwordTitle": "Change password",
+    "passwordDescription": "Confirm your current password before choosing a new one.",
+    "currentPassword": "Current password",
+    "newPassword": "New password",
+    "confirmPassword": "Confirm new password",
+    "passwordHint": "Use at least 10 characters.",
+    "currentPasswordRequired": "Enter your current password.",
+    "passwordTooShort": "Password must be at least 10 characters.",
+    "passwordSame": "New password must be different from the current password.",
+    "passwordMismatch": "Passwords do not match.",
+    "passwordChanged": "Password updated."
   },
   "audit": {
     "title": "Audit",
@@ -843,15 +869,18 @@
       "name": "Name",
       "type": "Type",
       "permissions": "Permissions",
-      "bindings": "Bindings"
+      "bindings": "Bindings",
+      "actions": "Actions"
     },
     "type": {
       "builtin": "Built-in",
       "custom": "Custom"
     },
-    "perms": {
-      "more": "+{{count}}",
-      "less": "Show less"
+    "permissionsDialog": {
+      "title": "Permissions for {{name}}",
+      "count": "Permissions: {{count}}",
+      "viewRole": "View permissions for {{name}}",
+      "empty": "No permissions assigned"
     },
     "empty": {
       "title": "No roles yet",
@@ -864,10 +893,11 @@
     "bindings": {
       "title": "Bindings",
       "table": {
-        "userId": "User ID",
+        "userName": "User name",
         "role": "Role",
         "scope": "Scope",
-        "scopeId": "Scope ID"
+        "scopeId": "Scope ID",
+        "actions": "Actions"
       },
       "empty": {
         "title": "No bindings yet",
@@ -894,11 +924,31 @@
         "command": "Command",
         "batch": "Batch",
         "alert": "Alert",
-        "backup": "Backup"
+        "backup": "Backup",
+        "replication": "Replication"
       },
       "create": "Create",
       "success": "Role created"
     },
+    "updateRole": {
+      "title": "Edit role",
+      "save": "Save changes",
+      "success": "Role updated"
+    },
+    "deleteRole": {
+      "title": "Delete role?",
+      "message": "Delete role “{{name}}”? This action cannot be undone.",
+      "confirm": "Delete role",
+      "success": "Role deleted"
+    },
+    "revoke": {
+      "action": "Unbind",
+      "title": "Remove binding?",
+      "message": "Remove {{role}} from user {{userId}}?",
+      "confirm": "Remove binding",
+      "success": "Binding removed"
+    },
+    "builtinActionUnavailable": "Built-in roles and their bindings cannot be changed",
     "grant": {
       "title": "Grant role to user",
       "userId": "User ID",
