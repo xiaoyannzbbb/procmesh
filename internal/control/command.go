@@ -291,6 +291,7 @@ type FireClaimBody struct {
 	ScheduledUnix  int64  `json:"scheduled_unix"`
 	LeaseUntilUnix int64  `json:"lease_until_unix"`
 	LeaderTerm     uint64 `json:"leader_term"`
+	Status         string `json:"status,omitempty"`
 }
 
 // ScheduledRunClaimBody atomically records a scheduled fire and its frozen

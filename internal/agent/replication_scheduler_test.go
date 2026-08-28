@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
+	"strconv"
 	"testing"
 	"time"
 
@@ -36,114 +36,245 @@ func TestRunnableReplicationRunsSkipsCurrentTermLiveRun(t *testing.T) {
 	}
 }
 
-func TestPlanAutomaticReplicationRunsAfterPrimaryUsesFrozenTaskResult(t *testing.T) {
-	now := time.Unix(1_800_000_000, 0)
-	state := automaticReplicationState(now, "AFTER_PRIMARY_BACKUP")
-
-	plans, err := planAutomaticReplicationRuns(*state, 9, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(plans) != 1 || len(plans[0].Create.Tasks) != 1 || len(plans[0].MissingTaskIDs) != 0 {
-		t.Fatalf("plans=%+v, want one executable route", plans)
-	}
-	task := plans[0].Create.Tasks[0]
-	if task.SourceNodeID != "source" || task.NodeID != "target" || task.SnapshotID != "snapshot-primary" || task.SHA256 != replicationTestSHA || task.TaskID == "" {
-		t.Fatalf("task=%+v, want frozen primary task metadata", task)
-	}
-	if err := state.CreateRun(plans[0].Create); err != nil {
-		t.Fatal(err)
-	}
-	plans, err = planAutomaticReplicationRuns(*state, 9, now)
-	if err != nil || len(plans) != 0 {
-		t.Fatalf("idempotent plans=%+v err=%v, want none", plans, err)
-	}
-}
-
-func TestPlanAutomaticReplicationRunsAfterPrimaryPlansEveryUnreplicatedPrimaryRun(t *testing.T) {
-	now := time.Unix(1_800_000_000, 0)
-	state := automaticReplicationState(now, "AFTER_PRIMARY_BACKUP")
-	state.BackupRuns["backup-run-earlier"] = control.ClusterBackupRun{RunID: "backup-run-earlier", PolicyID: "bp", PolicyRevision: 1, Status: "SUCCEEDED", FinishedUnix: now.Add(-40 * time.Second).Unix()}
-	state.BackupTasks["backup-run-earlier:task"] = control.ClusterBackupTask{RunID: "backup-run-earlier", TaskID: "task", NodeID: "source", SnapshotID: "snapshot-earlier", SHA256: replicationTestSHA, Status: "SUCCEEDED"}
-	plans, err := planAutomaticReplicationRuns(*state, 9, now)
-	if err != nil || len(plans) != 2 {
-		t.Fatalf("plans=%+v err=%v, want both primary runs", plans, err)
-	}
-	if plans[0].Create.Run.RunID == plans[1].Create.Run.RunID {
-		t.Fatalf("duplicate automatic run IDs")
-	}
-}
-
-func TestPlanAutomaticReplicationRunsScheduleWithoutPrimaryMarksMissingRoute(t *testing.T) {
-	now := time.Date(2027, 1, 15, 2, 0, 0, 0, time.UTC)
+func TestPlanAutomaticReplicationRuns_SkipsFireAtOrBeforeEpoch(t *testing.T) {
+	now := time.Date(2027, 1, 15, 15, 0, 0, 0, time.UTC) // 15:00
 	state := control.NewState()
 	state.ReplicationPolicies["rp"] = control.ReplicationPolicy{
-		PolicyID: "rp", Enabled: true, Trigger: "SCHEDULE", ScheduleCron: "0 * * * *", Timezone: "UTC",
-		SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"source"}, PrimaryPolicyIDs: []string{"bp"}, Revision: 1,
+		PolicyID: "rp", Enabled: true, ScheduleCron: "0 2 * * *", Timezone: "UTC",
+		ScheduleEpochUnix: now.Unix(), Revision: 1,
 		Routes: []control.ReplicationRoute{{SourceNodeID: "source", TargetNodeIDs: []string{"target"}}},
 	}
-
-	plans, err := planAutomaticReplicationRuns(*state, 4, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(plans) != 1 || len(plans[0].Create.Tasks) != 1 || len(plans[0].MissingTaskIDs) != 1 {
-		t.Fatalf("plans=%+v, want one visible missing-source route", plans)
-	}
-	if task := plans[0].Create.Tasks[0]; task.SnapshotID != "" || task.SHA256 != "" || task.Status != "PENDING" {
-		t.Fatalf("missing-source task=%+v", task)
-	}
-	if err := state.CreateRun(plans[0].Create); err != nil {
-		t.Fatal(err)
-	}
-	plans, err = planAutomaticReplicationRuns(*state, 4, now)
+	plans, err := planAutomaticReplicationRuns(*state, 1, now)
 	if err != nil || len(plans) != 0 {
-		t.Fatalf("same schedule fire plans=%+v err=%v", plans, err)
+		t.Fatalf("caught-up plans=%+v err=%v", plans, err)
 	}
 }
 
-func TestPlanAutomaticReplicationRunsScheduleWithoutPrimaryPolicyIDsUsesSourceSnapshot(t *testing.T) {
-	now := time.Date(2027, 1, 15, 2, 0, 0, 0, time.UTC)
-	state := automaticReplicationState(now, "SCHEDULE")
-	policy := state.ReplicationPolicies["rp"]
-	policy.ScheduleCron, policy.Timezone, policy.PrimaryPolicyIDs = "0 * * * *", "UTC", nil
-	state.ReplicationPolicies["rp"] = policy
-	plans, err := planAutomaticReplicationRuns(*state, 9, now)
+func TestPlanAutomaticReplicationRuns_FiresAfterEpoch(t *testing.T) {
+	epoch := time.Date(2027, 1, 15, 15, 0, 0, 0, time.UTC)
+	now := time.Date(2027, 1, 16, 2, 0, 0, 0, time.UTC)
+	state := control.NewState()
+	state.ReplicationPolicies["rp"] = control.ReplicationPolicy{
+		PolicyID: "rp", Enabled: true, ScheduleCron: "0 2 * * *", Timezone: "UTC",
+		ScheduleEpochUnix: epoch.Unix(), Revision: 1,
+		Routes: []control.ReplicationRoute{{SourceNodeID: "source", TargetNodeIDs: []string{"target"}}},
+	}
+	plans, err := planAutomaticReplicationRuns(*state, 1, now)
 	if err != nil || len(plans) != 1 {
 		t.Fatalf("plans=%+v err=%v", plans, err)
 	}
 	task := plans[0].Create.Tasks[0]
-	if task.SnapshotID != "snapshot-primary" || task.SHA256 != replicationTestSHA {
-		t.Fatalf("task=%+v, want source frozen primary", task)
+	if task.SnapshotID != "" || task.SHA256 != "" || task.Status != "PENDING" {
+		t.Fatalf("capture-pending task=%+v", task)
 	}
 }
 
-func TestPlanAutomaticReplicationRunsScheduleSelectsLatestSnapshotForEachSource(t *testing.T) {
-	now := time.Date(2027, 1, 15, 2, 2, 0, 0, time.UTC)
+func TestPlanAutomaticReplicationRuns_SkipsDisabledAndEmptyCron(t *testing.T) {
+	now := time.Date(2027, 1, 16, 2, 0, 0, 0, time.UTC)
+	state := control.NewState()
+	state.ReplicationPolicies["off"] = control.ReplicationPolicy{
+		PolicyID: "off", Enabled: false, ScheduleCron: "0 2 * * *", Timezone: "UTC",
+		Routes: []control.ReplicationRoute{{SourceNodeID: "s", TargetNodeIDs: []string{"t"}}},
+	}
+	state.ReplicationPolicies["manual"] = control.ReplicationPolicy{
+		PolicyID: "manual", Enabled: true,
+		Routes: []control.ReplicationRoute{{SourceNodeID: "s", TargetNodeIDs: []string{"t"}}},
+	}
+	plans, err := planAutomaticReplicationRuns(*state, 1, now)
+	if err != nil || len(plans) != 0 {
+		t.Fatalf("plans=%+v", plans)
+	}
+}
+
+func TestPlanAutomaticReplicationRuns_SkipFireWhenPolicyRunning(t *testing.T) {
+	epoch := time.Date(2027, 1, 15, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2027, 1, 16, 2, 0, 0, 0, time.UTC)
 	state := control.NewState()
 	state.ReplicationPolicies["rp"] = control.ReplicationPolicy{
-		PolicyID: "rp", Enabled: true, Trigger: "SCHEDULE", ScheduleCron: "0 * * * *", Timezone: "UTC", Revision: 1,
-		Routes: []control.ReplicationRoute{
-			{SourceNodeID: "source-a", TargetNodeIDs: []string{"target-a"}},
-			{SourceNodeID: "source-b", TargetNodeIDs: []string{"target-b"}},
-		},
+		PolicyID: "rp", Enabled: true, ScheduleCron: "0 2 * * *", Timezone: "UTC",
+		ScheduleEpochUnix: epoch.Unix(),
+		Routes:            []control.ReplicationRoute{{SourceNodeID: "s", TargetNodeIDs: []string{"t"}}},
 	}
-	state.BackupRuns["run-a"] = control.ClusterBackupRun{RunID: "run-a", PolicyID: "primary-a", Status: "SUCCEEDED", FinishedUnix: now.Add(-2 * time.Hour).Unix()}
-	state.BackupRuns["run-b"] = control.ClusterBackupRun{RunID: "run-b", PolicyID: "primary-b", Status: "SUCCEEDED", FinishedUnix: now.Add(-time.Hour).Unix()}
-	state.BackupTasks["run-a:task-a"] = control.ClusterBackupTask{RunID: "run-a", TaskID: "task-a", NodeID: "source-a", SnapshotID: "snapshot-a", SHA256: replicationTestSHA, Status: "SUCCEEDED", UpdatedUnix: now.Add(-2 * time.Hour).Unix()}
-	state.BackupTasks["run-b:task-b"] = control.ClusterBackupTask{RunID: "run-b", TaskID: "task-b", NodeID: "source-b", SnapshotID: "snapshot-b", SHA256: strings.Repeat("b", 64), Status: "SUCCEEDED", UpdatedUnix: now.Add(-time.Hour).Unix()}
+	state.ReplicationRuns["run-live"] = control.ClusterBackupRun{RunID: "run-live", PolicyID: "rp", Status: "RUNNING"}
+	plans, err := planAutomaticReplicationRuns(*state, 1, now)
+	if err != nil || len(plans) != 0 {
+		t.Fatalf("plans=%+v, want skip", plans)
+	}
+	// 实现后：ClaimReplicationRuns 应写入 SKIPPED fire，随后 Tick 不再建 run
+}
 
-	plans, err := planAutomaticReplicationRuns(*state, 9, now)
-	if err != nil || len(plans) != 1 || len(plans[0].Create.Tasks) != 2 {
+func TestPlanAutomaticReplicationRuns_IgnoresLegacyTriggerAndPrimaryPolicyIDs(t *testing.T) {
+	epoch := time.Date(2027, 1, 15, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2027, 1, 16, 2, 0, 0, 0, time.UTC)
+	state := control.NewState()
+	state.ReplicationPolicies["rp"] = control.ReplicationPolicy{
+		PolicyID: "rp", Enabled: true, Trigger: "AFTER_PRIMARY_BACKUP", ScheduleCron: "0 2 * * *", Timezone: "UTC",
+		ScheduleEpochUnix: epoch.Unix(), Revision: 1, PrimaryPolicyIDs: []string{"bp"},
+		Routes: []control.ReplicationRoute{{SourceNodeID: "source", TargetNodeIDs: []string{"target"}}},
+	}
+	state.BackupRuns["backup-run"] = control.ClusterBackupRun{RunID: "backup-run", PolicyID: "bp", Status: "SUCCEEDED", FinishedUnix: now.Unix()}
+	state.BackupTasks["backup-run:task"] = control.ClusterBackupTask{
+		RunID: "backup-run", TaskID: "task", NodeID: "source", SnapshotID: "snapshot-primary",
+		SHA256: replicationTestSHA, Status: "SUCCEEDED",
+	}
+	plans, err := planAutomaticReplicationRuns(*state, 1, now)
+	if err != nil || len(plans) != 1 {
+		t.Fatalf("plans=%+v err=%v, want cron fire ignoring Trigger", plans, err)
+	}
+	task := plans[0].Create.Tasks[0]
+	if task.SnapshotID != "" || task.SHA256 != "" || task.Status != "PENDING" {
+		t.Fatalf("capture-pending task=%+v, must not bind BackupRuns", task)
+	}
+}
+
+func TestPlanAutomaticReplicationRuns_SkipsExistingLedgerFire(t *testing.T) {
+	epoch := time.Date(2027, 1, 15, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2027, 1, 16, 2, 0, 0, 0, time.UTC)
+	state := control.NewState()
+	state.ReplicationPolicies["rp"] = control.ReplicationPolicy{
+		PolicyID: "rp", Enabled: true, ScheduleCron: "0 2 * * *", Timezone: "UTC",
+		ScheduleEpochUnix: epoch.Unix(), Revision: 1,
+		Routes: []control.ReplicationRoute{{SourceNodeID: "source", TargetNodeIDs: []string{"target"}}},
+	}
+	key := replicationFireKey("rp", now.Unix())
+	state.BackupFireLedger[key] = control.FireRecord{FireKey: key, PolicyID: "rp", Status: "SKIPPED"}
+	plans, err := planAutomaticReplicationRuns(*state, 1, now)
+	if err != nil || len(plans) != 0 {
+		t.Fatalf("ledger plans=%+v err=%v", plans, err)
+	}
+}
+
+func TestPlanAutomaticReplicationRuns_IdempotentWhenRunExists(t *testing.T) {
+	epoch := time.Date(2027, 1, 15, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2027, 1, 16, 2, 0, 0, 0, time.UTC)
+	state := control.NewState()
+	state.ReplicationPolicies["rp"] = control.ReplicationPolicy{
+		PolicyID: "rp", Enabled: true, ScheduleCron: "0 2 * * *", Timezone: "UTC",
+		ScheduleEpochUnix: epoch.Unix(), Revision: 1,
+		Routes: []control.ReplicationRoute{{SourceNodeID: "source", TargetNodeIDs: []string{"target"}}},
+	}
+	plans, err := planAutomaticReplicationRuns(*state, 1, now)
+	if err != nil || len(plans) != 1 {
 		t.Fatalf("plans=%+v err=%v", plans, err)
 	}
-	tasks := plans[0].Create.Tasks
-	if tasks[0].SourceNodeID != "source-a" || tasks[0].SnapshotID != "snapshot-a" || tasks[0].SHA256 != replicationTestSHA {
-		t.Fatalf("first source task=%+v, want source-a frozen snapshot", tasks[0])
+	state.ReplicationRuns[plans[0].Create.Run.RunID] = plans[0].Create.Run
+	plans, err = planAutomaticReplicationRuns(*state, 1, now)
+	if err != nil || len(plans) != 0 {
+		t.Fatalf("idempotent plans=%+v err=%v", plans, err)
 	}
-	if tasks[1].SourceNodeID != "source-b" || tasks[1].SnapshotID != "snapshot-b" || tasks[1].SHA256 != strings.Repeat("b", 64) {
-		t.Fatalf("second source task=%+v, want source-b frozen snapshot", tasks[1])
+}
+
+func TestClaimReplicationRuns_CreatesEmptySnapshotRunAndClaimsFire(t *testing.T) {
+	now := time.Date(2027, 1, 16, 2, 0, 0, 0, time.UTC)
+	node, apply := startScheduledReplicationControl(t)
+	apply(control.CmdReplicationPolicyPut, control.ReplicationPolicyPutBody{
+		OperationID: "policy", PolicyID: "rp", Name: "rp", Enabled: true,
+		SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"source"}, ReplicaFactor: 1,
+		Routes:       []control.ReplicationRoute{{SourceNodeID: "source", TargetNodeIDs: []string{"target"}}},
+		ScheduleCron: "0 2 * * *", Timezone: "UTC", ExpectedRevision: -1,
+	})
+	ctrl := raftReplicationControl{runtime: &rpcRuntime{node: node}}
+	term := node.CurrentTerm()
+	runs, err := ctrl.ClaimReplicationRuns(context.Background(), term, now)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if len(runs) != 1 || len(runs[0].Tasks) != 1 {
+		t.Fatalf("claimed=%+v, want one capture-pending run", runs)
+	}
+	task := runs[0].Tasks[0]
+	if task.SnapshotID != "" || task.SHA256 != "" || task.Status != "PENDING" {
+		t.Fatalf("task=%+v, want empty snapshot PENDING", task)
+	}
+	stored := node.View().ReplicationTasks[runs[0].RunID+":"+task.TaskID]
+	if stored.SnapshotID != "" || stored.SHA256 != "" || stored.Status != "PENDING" {
+		t.Fatalf("stored task=%+v", stored)
+	}
+	key := replicationFireKey("rp", now.Unix())
+	record, ok := node.View().BackupFireLedger[key]
+	if !ok || record.Status != "CLAIMED" || record.PolicyID != "rp" {
+		t.Fatalf("ledger=%+v ok=%v, want CLAIMED replication fire", record, ok)
+	}
+	if _, ok := node.View().BackupFireLedger["rp:"+strconv.FormatInt(now.Unix(), 10)]; ok {
+		t.Fatal("replication fire collided with cluster backup fire key")
+	}
+
+	again, err := ctrl.ClaimReplicationRuns(context.Background(), term, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(node.View().ReplicationRuns) != 1 {
+		t.Fatalf("runs=%v, want idempotent single automatic run", node.View().ReplicationRuns)
+	}
+	for _, run := range again {
+		if run.RunID != runs[0].RunID {
+			t.Fatalf("second claim created extra run %+v", run)
+		}
+	}
+}
+
+func TestClaimReplicationRuns_WritesSkippedFireWhenPolicyRunning(t *testing.T) {
+	now := time.Date(2027, 1, 16, 2, 0, 0, 0, time.UTC)
+	node, apply := startScheduledReplicationControl(t)
+	apply(control.CmdReplicationPolicyPut, control.ReplicationPolicyPutBody{
+		OperationID: "policy", PolicyID: "rp", Name: "rp", Enabled: true,
+		SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"source"}, ReplicaFactor: 1,
+		Routes:       []control.ReplicationRoute{{SourceNodeID: "source", TargetNodeIDs: []string{"target"}}},
+		ScheduleCron: "0 2 * * *", Timezone: "UTC", ExpectedRevision: -1,
+	})
+	term := node.CurrentTerm()
+	apply(control.CmdBackupRunCreate, control.CreateRunBody{
+		OperationID: "run-live", LeaderTerm: term, Replication: true,
+		Run: control.ClusterBackupRun{
+			RunID: "run-live", PolicyID: "rp", PolicyRevision: 1, TargetNodeIDs: []string{"source"},
+			Status: "RUNNING", LeaseUntilUnix: now.Add(time.Hour).Unix(),
+		},
+		Tasks: []control.ClusterBackupTask{{
+			RunID: "run-live", TaskID: "task-live", SourceNodeID: "source", NodeID: "target", Status: "PENDING",
+		}},
+	})
+	ctrl := raftReplicationControl{runtime: &rpcRuntime{node: node}}
+	claimed, err := ctrl.ClaimReplicationRuns(context.Background(), term, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, run := range claimed {
+		if run.RunID != "run-live" {
+			t.Fatalf("created automatic run during RUNNING: %+v", run)
+		}
+	}
+	key := replicationFireKey("rp", now.Unix())
+	record, ok := node.View().BackupFireLedger[key]
+	if !ok || record.Status != "SKIPPED" || record.PolicyID != "rp" {
+		t.Fatalf("ledger=%+v ok=%v, want SKIPPED fire", record, ok)
+	}
+
+	apply(control.CmdBackupRunFinish, control.FinishRunBody{
+		OperationID: "finish-live", RunID: "run-live", Status: "SUCCEEDED", FinishedUnix: now.Unix(), LeaderTerm: term, Replication: true,
+	})
+	after, err := ctrl.ClaimReplicationRuns(context.Background(), term, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := node.View().ReplicationRuns["run-live"]; !ok {
+		t.Fatal("finished live run missing")
+	}
+	for _, run := range after {
+		if run.RunID != "run-live" {
+			t.Fatalf("SKIPPED slot created run after RUNNING ended: %+v", run)
+		}
+	}
+	if len(node.View().ReplicationRuns) != 1 {
+		t.Fatalf("runs=%v, want only finished live run", node.View().ReplicationRuns)
+	}
+}
+
+func startScheduledReplicationControl(t *testing.T) (*control.Node, func(string, any)) {
+	t.Helper()
+	node, apply := startBackupSchedulerControl(t, "cluster-replication-schedule", "leader")
+	apply(control.CmdMemberPut, control.MemberPutBody{NodeID: "source", Status: control.MemberAdmitted})
+	apply(control.CmdMemberPut, control.MemberPutBody{NodeID: "target", Status: control.MemberAdmitted})
+	return node, apply
 }
 
 func TestReplicationFrozenTasksStableByTaskID(t *testing.T) {
@@ -157,62 +288,13 @@ func TestReplicationFrozenTasksStableByTaskID(t *testing.T) {
 	}
 }
 
-func TestReconcileMissingReplicationTasksReturnsApplyFailureThenRetriesOnNextTick(t *testing.T) {
-	now := time.Unix(1_800_000_000, 0)
+func TestReplicationFrozenTasksIncludesCapturePending(t *testing.T) {
 	state := control.NewState()
-	state.ReplicationPolicies["rp"] = control.ReplicationPolicy{PolicyID: "rp", Enabled: true, Trigger: "SCHEDULE"}
-	state.ReplicationRuns["run-missing"] = control.ClusterBackupRun{RunID: "run-missing", PolicyID: "rp", Status: "RUNNING"}
-	task := control.ClusterBackupTask{RunID: "run-missing", TaskID: "route-missing", SourceNodeID: "source", NodeID: "target", Status: "PENDING"}
-	state.ReplicationTasks["run-missing:route-missing"] = task
-	applyErr := errors.New("raft apply failed")
-	failed := &recordingReplicationApplier{err: applyErr}
-	if err := reconcileMissingReplicationTasks(failed, *state, 7, now); !errors.Is(err, applyErr) {
-		t.Fatalf("first reconciliation error = %v, want apply failure", err)
-	}
-	if len(failed.commands) != 1 {
-		t.Fatalf("first reconciliation commands = %d, want 1", len(failed.commands))
-	}
-
-	retried := &recordingReplicationApplier{}
-	if err := reconcileMissingReplicationTasks(retried, *state, 7, now.Add(time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	if len(retried.commands) != 1 {
-		t.Fatalf("second reconciliation commands = %d, want 1", len(retried.commands))
-	}
-	var update control.UpdateTaskBody
-	if err := json.Unmarshal(retried.commands[0].Body, &update); err != nil {
-		t.Fatal(err)
-	}
-	if update.Task.Status != "FAILED" || update.Task.ErrorCode != "SOURCE_SNAPSHOT_MISSING" || update.Task.SnapshotID != "" || update.Task.SHA256 != "" {
-		t.Fatalf("second reconciliation update = %+v", update.Task)
-	}
-}
-
-func TestReconcileMissingReplicationTasksDoesNotDependOnMutablePolicy(t *testing.T) {
-	now := time.Unix(1_800_000_100, 0)
-	for _, tc := range []struct {
-		name   string
-		policy *control.ReplicationPolicy
-	}{
-		{name: "policy deleted"},
-		{name: "trigger changed", policy: &control.ReplicationPolicy{PolicyID: "rp", Trigger: "MANUAL"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			state := control.NewState()
-			if tc.policy != nil {
-				state.ReplicationPolicies[tc.policy.PolicyID] = *tc.policy
-			}
-			state.ReplicationRuns["run-missing"] = control.ClusterBackupRun{RunID: "run-missing", PolicyID: "rp", Status: "RUNNING"}
-			state.ReplicationTasks["run-missing:route-missing"] = control.ClusterBackupTask{RunID: "run-missing", TaskID: "route-missing", SourceNodeID: "source", NodeID: "target", Status: "PENDING"}
-			applier := &recordingReplicationApplier{}
-			if err := reconcileMissingReplicationTasks(applier, *state, 7, now); err != nil {
-				t.Fatal(err)
-			}
-			if len(applier.commands) != 1 {
-				t.Fatalf("commands = %d, want durable task reconciliation", len(applier.commands))
-			}
-		})
+	run := control.ClusterBackupRun{RunID: "run", Status: "RUNNING"}
+	state.ReplicationTasks["run:a"] = control.ClusterBackupTask{RunID: "run", TaskID: "a", SourceNodeID: "s", NodeID: "t", Status: "PENDING"}
+	tasks := replicationFrozenTasks(*state, run)
+	if len(tasks) != 1 || tasks[0].TaskID != "a" || tasks[0].SnapshotID != "" || tasks[0].SHA256 != "" {
+		t.Fatalf("tasks=%+v, want capture-pending", tasks)
 	}
 }
 
@@ -599,22 +681,4 @@ func (a *recordingReplicationApplier) Apply(command control.Command, _ time.Dura
 		a.afterApply()
 	}
 	return a.err
-}
-
-func automaticReplicationState(now time.Time, trigger string) *control.State {
-	state := control.NewState()
-	state.ReplicationPolicies["rp"] = control.ReplicationPolicy{
-		PolicyID: "rp", Enabled: true, Trigger: trigger, SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"source"},
-		PrimaryPolicyIDs: []string{"bp"}, Revision: 1, MaxConcurrency: 2,
-		Routes: []control.ReplicationRoute{{SourceNodeID: "source", TargetNodeIDs: []string{"target"}}},
-	}
-	state.BackupRuns["backup-run"] = control.ClusterBackupRun{
-		RunID: "backup-run", PolicyID: "bp", PolicyRevision: 1, Status: "SUCCEEDED",
-		CreatedUnix: now.Add(-time.Minute).Unix(), FinishedUnix: now.Add(-30 * time.Second).Unix(),
-	}
-	state.BackupTasks["backup-run:backup-task"] = control.ClusterBackupTask{
-		RunID: "backup-run", TaskID: "backup-task", NodeID: "source", SnapshotID: "snapshot-primary",
-		SHA256: replicationTestSHA, Status: "SUCCEEDED",
-	}
-	return state
 }

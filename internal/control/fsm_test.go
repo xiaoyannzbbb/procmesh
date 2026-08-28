@@ -342,6 +342,35 @@ func TestFSM_FireLedgerIdempotencyAndLeaseTakeover(t *testing.T) {
 	}
 }
 
+func TestFSM_ClaimFireSkippedPersistsWithoutTakeover(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := control.NewState()
+	key := "replication:rp:1700000000"
+	first, created, err := s.ClaimFire(control.FireClaimBody{
+		OperationID: "op-skip", FireKey: key, PolicyID: "rp", LeaderTerm: 3,
+		ScheduledUnix: now.Unix(), Status: "SKIPPED",
+	}, now)
+	if err != nil || !created || first.Status != "SKIPPED" || first.LeaseUntilUnix != 0 {
+		t.Fatalf("first=%+v created=%v err=%v", first, created, err)
+	}
+	second, created, err := s.ClaimFire(control.FireClaimBody{
+		OperationID: "op-skip-again", FireKey: key, PolicyID: "rp", LeaderTerm: 9,
+		ScheduledUnix: now.Unix(), Status: "CLAIMED",
+	}, now.Add(time.Hour))
+	if err != nil || created || second.Status != "SKIPPED" || second.LeaderTerm != 3 {
+		t.Fatalf("takeover skipped fire: %+v created=%v err=%v", second, created, err)
+	}
+	s.PruneRunMetadata(now.Add(time.Hour).Unix())
+	if _, ok := s.BackupFireLedger[key]; !ok {
+		t.Fatal("SKIPPED replication fire pruned")
+	}
+	if _, created, err := s.ClaimFire(control.FireClaimBody{
+		OperationID: "op-backup", FireKey: "rp:1700000000", PolicyID: "rp", LeaderTerm: 3,
+	}, now); err != nil || !created {
+		t.Fatalf("backup fire key collision err=%v created=%v", err, created)
+	}
+}
+
 func TestFSM_ClaimScheduledRunIsAtomicAndFreezesRun(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	s := control.NewState()
