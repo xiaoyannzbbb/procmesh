@@ -6,6 +6,7 @@ const (
 	CmdBootstrap                  = "bootstrap"
 	CmdUserPut                    = "user_put"
 	CmdUserDisable                = "user_disable"
+	CmdUserPasswordSet            = "user_password_set"
 	CmdLoginOK                    = "login_ok"
 	CmdLoginFail                  = "login_fail"
 	CmdSessionPut                 = "session_put"
@@ -68,6 +69,11 @@ type UserPutBody struct {
 
 type UserDisableBody struct {
 	UserID string `json:"user_id"`
+}
+
+type UserPasswordSetBody struct {
+	UserID       string `json:"user_id"`
+	PasswordHash string `json:"password_hash"`
 }
 
 type LoginOKBody struct {

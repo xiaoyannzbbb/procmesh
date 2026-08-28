@@ -34,6 +34,10 @@ testI18n.init({
         },
         actions: {
           logout: 'Logout',
+          profile: 'Profile',
+          language: 'Language',
+          accountMenu: 'Account menu',
+          signedIn: 'Signed in',
           expand: 'Expand sidebar',
           collapse: 'Collapse sidebar',
         }
@@ -56,6 +60,10 @@ testI18n.init({
         },
         actions: {
           logout: '退出登录',
+          profile: '个人资料',
+          language: '语言',
+          accountMenu: '账户菜单',
+          signedIn: '已登录',
           expand: '展开侧边栏',
           collapse: '收起侧边栏',
         }
@@ -97,6 +105,7 @@ async function mountShell(current: Me, provide: Record<string, unknown> = {}) {
           { path: "users", component: Blank },
           { path: "roles", component: Blank },
           { path: "audit", component: Blank },
+          { path: "profile", component: Blank },
         ],
       },
       { path: "/login", component: Blank },
@@ -238,6 +247,7 @@ describe("AppShell", () => {
   it("logs out with operation_id then goes to /login", async () => {
     const logout = vi.fn().mockResolvedValue({});
     const wrapper = await mountShell(me({ username: "admin" }), { authClient: { logout } });
+    await wrapper.get("button.account-trigger").trigger("click");
     await wrapper.get("button.logout").trigger("click");
     await flushPromises();
     expect(logout).toHaveBeenCalled();
@@ -246,12 +256,42 @@ describe("AppShell", () => {
     expect(wrapper.vm.$router.currentRoute.value.path).toBe("/login");
   });
 
+  it("opens an accessible account menu with profile, language, and logout actions", async () => {
+    await testI18n.changeLanguage("en");
+    const wrapper = await mountShell(me({ username: "admin" }));
+    const trigger = wrapper.get("button.account-trigger");
+
+    expect(trigger.attributes("aria-expanded")).toBe("false");
+    await trigger.trigger("click");
+    expect(trigger.attributes("aria-expanded")).toBe("true");
+    expect(wrapper.get(".account-menu").text()).toContain("Profile");
+    expect(wrapper.get(".account-menu").text()).toContain("Language");
+    expect(wrapper.get(".account-menu").text()).toContain("Logout");
+
+    await wrapper.get('[data-action="profile"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.vm.$router.currentRoute.value.path).toBe("/profile");
+  });
+
+  it("closes the account menu with Escape and returns focus to its trigger", async () => {
+    const wrapper = await mountShell(me());
+    const trigger = wrapper.get<HTMLButtonElement>("button.account-trigger");
+    const focus = vi.spyOn(trigger.element, "focus");
+    await trigger.trigger("click");
+    await wrapper.get(".account-menu").trigger("keydown", { key: "Escape" });
+    await flushPromises();
+
+    expect(wrapper.find(".account-menu").exists()).toBe(false);
+    expect(focus).toHaveBeenCalled();
+  });
+
   it("renders navigation in English", async () => {
     await testI18n.changeLanguage('en');
     const wrapper = await mountShell(me());
     expect(wrapper.text()).toContain('Overview');
     expect(wrapper.text()).toContain('Nodes');
     expect(wrapper.text()).toContain('Processes');
+    await wrapper.get("button.account-trigger").trigger("click");
     expect(wrapper.text()).toContain('Logout');
   });
 
@@ -261,6 +301,7 @@ describe("AppShell", () => {
     expect(wrapper.text()).toContain('概览');
     expect(wrapper.text()).toContain('节点');
     expect(wrapper.text()).toContain('进程');
+    await wrapper.get("button.account-trigger").trigger("click");
     expect(wrapper.text()).toContain('退出登录');
   });
 
@@ -291,7 +332,7 @@ describe("AppShell", () => {
     const wrapper = await mountShell(me());
     const overviewLink = wrapper.findAll(".nav-link")[0];
     const expandButton = wrapper.get(".collapse-btn");
-    const logoutButton = wrapper.get(".logout");
+    const accountButton = wrapper.get(".account-trigger");
 
     expect(expandButton.attributes("aria-label")).toBe("Expand sidebar");
     expect(expandButton.attributes("title")).toBeUndefined();
@@ -306,11 +347,11 @@ describe("AppShell", () => {
     await overviewLink.trigger("mouseleave");
     expect(document.body.querySelector('[role="tooltip"]')).toBeNull();
 
-    expect(logoutButton.attributes("aria-label")).toBe("Logout");
-    expect(logoutButton.attributes("title")).toBeUndefined();
-    await logoutButton.trigger("mouseenter");
-    expect(document.body.querySelector('[role="tooltip"]')?.textContent).toBe("Logout");
-    await logoutButton.trigger("mouseleave");
+    expect(accountButton.attributes("aria-label")).toBe("Account menu");
+    expect(accountButton.attributes("title")).toBeUndefined();
+    await accountButton.trigger("mouseenter");
+    expect(document.body.querySelector('[role="tooltip"]')?.textContent).toBe("Account menu");
+    await accountButton.trigger("mouseleave");
 
     await overviewLink.trigger("focus");
     expect(document.body.querySelector('[role="tooltip"]')?.textContent).toBe("Overview");

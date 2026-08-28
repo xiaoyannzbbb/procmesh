@@ -387,6 +387,23 @@ func (s *AuthAPI) GetMe(ctx context.Context, _ *connect.Request[procmeshv1.GetMe
 	}), nil
 }
 
+func (s *AuthAPI) ChangePassword(ctx context.Context, req *connect.Request[procmeshv1.ChangePasswordRequest]) (*connect.Response[procmeshv1.ChangePasswordResponse], error) {
+	if s.Auth == nil {
+		return nil, unimplemented()
+	}
+	if _, _, err := metaOf(req.Msg.GetMeta()); err != nil {
+		return nil, err
+	}
+	p, ok := PrincipalFrom(ctx)
+	if !ok {
+		return nil, ToConnect(errcode.E(errcode.DENIED, "authentication required"))
+	}
+	if err := s.Auth.ChangePassword(p.UserID, req.Msg.GetCurrentPassword(), req.Msg.GetNewPassword()); err != nil {
+		return nil, ToConnect(err)
+	}
+	return connect.NewResponse(&procmeshv1.ChangePasswordResponse{}), nil
+}
+
 func collectPermissions(svc *auth.Service, userID string) []string {
 	if svc == nil || svc.Store() == nil {
 		return nil

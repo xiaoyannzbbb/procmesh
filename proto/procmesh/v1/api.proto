@@ -434,12 +434,20 @@ message GetMeResponse {
   repeated string permissions = 5;
 }
 
+message ChangePasswordRequest {
+  MutationMeta meta = 1;
+  string current_password = 2;
+  string new_password = 3;
+}
+message ChangePasswordResponse {}
+
 service AuthService {
   rpc Login(LoginRequest) returns (LoginResponse);
   rpc Logout(LogoutRequest) returns (LogoutResponse);
   rpc CreateAPIToken(CreateAPITokenRequest) returns (CreateAPITokenResponse);
   rpc RevokeAPIToken(RevokeAPITokenRequest) returns (RevokeAPITokenResponse);
   rpc GetMe(GetMeRequest) returns (GetMeResponse);
+  rpc ChangePassword(ChangePasswordRequest) returns (ChangePasswordResponse);
 }
 
 message User {

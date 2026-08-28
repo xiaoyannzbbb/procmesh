@@ -59,6 +59,13 @@ declare module "i18next" {
         'actions.confirm': string
         'actions.close': string
         'actions.logout': string
+        'actions.profile': string
+        'actions.language': string
+        'actions.accountMenu': string
+        'actions.signedIn': string
+        'actions.showPassword': string
+        'actions.hidePassword': string
+        'actions.saving': string
         'actions.signIn': string
         'actions.tail': string
         'actions.stream': string
@@ -95,6 +102,23 @@ declare module "i18next" {
         'login.invalidCredentials': string
         'login.rateLimited': string
         'login.userLocked': string
+        'profile.title': string
+        'profile.subtitle': string
+        'profile.identity': string
+        'profile.identityDescription': string
+        'profile.username': string
+        'profile.userId': string
+        'profile.passwordTitle': string
+        'profile.passwordDescription': string
+        'profile.currentPassword': string
+        'profile.newPassword': string
+        'profile.confirmPassword': string
+        'profile.passwordHint': string
+        'profile.currentPasswordRequired': string
+        'profile.passwordTooShort': string
+        'profile.passwordSame': string
+        'profile.passwordMismatch': string
+        'profile.passwordChanged': string
         'audit.title': string
         'audit.eyebrow': string
         'audit.notice': string

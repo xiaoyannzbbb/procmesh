@@ -30,7 +30,7 @@ ProcMesh 是 Local-First、Agent-Owned、Peer-Managed 的分布式进程管理�
 - 修改 `.proto` 后运行 `make proto`；涉及 Web API 时再运行 `make proto-ts`。不要手工编辑 `*.pb.go`、`*.connect.go` 或 `web/src/gen/`。
 - Go 文件提交前运行 `gofmt`。平台特定代码沿用 `_linux.go`、`_darwin.go`、`_other.go` 的现有拆分，并保留非 Linux 的明确降级行为。
 - Web 代码沿用 Vue 3 Composition API 和 TypeScript；服务端状态沿用现有 Vue Query 封装。新增可见文案必须使用 `useI18n`，同时补齐 `web/public/locales/en/` 与 `zh/`。
-- 不修改依赖目录和运行产物，例如 `web/node_modules/`、`bin/`、`dist/`、`web/test-results/`；只提交可再生成的源文件或仓库已跟踪的生成文件。
+- 不修改依赖目录和运行产物，例如 `web/node_modules/`、`bin/`、`dist/`、`web/test-results/`；只提交可再生成的源文件或仓库已跟踪的生成文件。`internal/web/dist` 目录生成的文件应提交。
 
 ## 验证
 

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import LanguageSwitcher from './LanguageSwitcher.vue'
+import switcherSource from './LanguageSwitcher.vue?raw'
 import { I18NextVue } from '../lib/i18n'
 import i18next from 'i18next'
 import { nextTick } from 'vue'
@@ -46,6 +47,11 @@ describe('LanguageSwitcher', () => {
 
     expect(wrapper.text()).toContain('English')
     expect(wrapper.find('[data-testid="lang-en"]').classes()).toContain('active')
+  })
+
+  it('only hides language names when the switcher itself is collapsed', () => {
+    expect(switcherSource).toMatch(/\.language-switcher\.collapsed \.lang-name\s*\{[^}]*display:\s*none/s)
+    expect(switcherSource).not.toMatch(/\n\.collapsed \.lang-name\s*\{/)
   })
 
   it('should mark English active for a regional English locale', async () => {

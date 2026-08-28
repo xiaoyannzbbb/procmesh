@@ -11,7 +11,7 @@ export type Me = {
   permissions: string[];
 };
 
-export type AuthClient = Pick<Client<typeof AuthService>, "login" | "logout" | "getMe">;
+export type AuthClient = Pick<Client<typeof AuthService>, "login" | "logout" | "getMe" | "changePassword">;
 
 export const session: Ref<Me | null> = ref(null);
 

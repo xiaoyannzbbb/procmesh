@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -158,6 +159,34 @@ func (s *Service) LoginWithTTL(username, password string, ttl time.Duration) (se
 
 func (s *Service) Logout(sessionID string) error {
 	return s.apply(control.CmdSessionDel, control.SessionDelBody{ID: sessionID})
+}
+
+func (s *Service) ChangePassword(userID, currentPassword, newPassword string) error {
+	stStore, err := s.storeOrErr()
+	if err != nil {
+		return err
+	}
+	u, ok := userByID(stStore.View(), userID)
+	if !ok {
+		return errcode.E(errcode.NOT_FOUND, "user not found")
+	}
+	if !control.VerifyPassword(u.PasswordHash, currentPassword) {
+		return errcode.E(errcode.INVALID_CREDENTIALS, "invalid credentials")
+	}
+	if err := ValidPassword(newPassword); err != nil {
+		return err
+	}
+	if control.VerifyPassword(u.PasswordHash, newPassword) {
+		return errcode.E(errcode.INVALID, "new password must differ from current password")
+	}
+	hash, err := control.HashPassword(newPassword)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+	return s.apply(control.CmdUserPasswordSet, control.UserPasswordSetBody{
+		UserID:       userID,
+		PasswordHash: hash,
+	})
 }
 
 func (s *Service) AuthenticateBearer(token string) (Principal, error) {

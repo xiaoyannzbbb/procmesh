@@ -58,6 +58,7 @@ type User struct {
 	ID, Username, PasswordHash, DisplayName, Email string
 	Status                                         UserStatus
 	CreatedUnix, LastLoginUnix, LockedUntilUnix    int64
+	PasswordChangedUnix                            int64
 	FailCount                                      int
 }
 
@@ -305,6 +306,8 @@ func (s *State) Apply(cmd Command, now time.Time) error {
 		return applyJSON(cmd.Body, s.applyUserPut)
 	case CmdUserDisable:
 		return applyJSON(cmd.Body, s.applyUserDisable)
+	case CmdUserPasswordSet:
+		return applyJSON(cmd.Body, func(b UserPasswordSetBody) error { return s.applyUserPasswordSet(b, now) })
 	case CmdLoginOK:
 		return applyJSON(cmd.Body, func(b LoginOKBody) error { return s.applyLoginOK(b, now) })
 	case CmdLoginFail:
@@ -466,6 +469,20 @@ func (s *State) applyUserDisable(b UserDisableBody) error {
 		return errcode.E(errcode.NOT_FOUND, "user not found")
 	}
 	u.Status = UserDisabled
+	s.Users[u.Username] = u
+	return nil
+}
+
+func (s *State) applyUserPasswordSet(b UserPasswordSetBody, now time.Time) error {
+	if b.UserID == "" || b.PasswordHash == "" {
+		return errcode.E(errcode.INVALID, "user id and password hash required")
+	}
+	u, ok := s.userByID(b.UserID)
+	if !ok {
+		return errcode.E(errcode.NOT_FOUND, "user not found")
+	}
+	u.PasswordHash = b.PasswordHash
+	u.PasswordChangedUnix = now.Unix()
 	s.Users[u.Username] = u
 	return nil
 }

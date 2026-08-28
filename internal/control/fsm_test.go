@@ -1121,6 +1121,34 @@ func TestFSM_UserPutInvalid(t *testing.T) {
 	}
 }
 
+func TestFSM_UserPasswordSet(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := mustBootstrap(t, now)
+
+	err := s.Apply(mustEncode(t, control.CmdUserPasswordSet, control.UserPasswordSetBody{
+		UserID:       "user-admin",
+		PasswordHash: "new-hash",
+	}), now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := s.Users["admin"]
+	if got.PasswordHash != "new-hash" || got.PasswordChangedUnix != now.Add(time.Minute).Unix() {
+		t.Fatalf("updated user = %+v", got)
+	}
+
+	for _, body := range []control.UserPasswordSetBody{
+		{PasswordHash: "hash"},
+		{UserID: "user-admin"},
+		{UserID: "missing", PasswordHash: "hash"},
+	} {
+		err = s.Apply(mustEncode(t, control.CmdUserPasswordSet, body), now)
+		if err == nil {
+			t.Fatalf("body %+v unexpectedly succeeded", body)
+		}
+	}
+}
+
 func TestFSM_LoginOKClearsLock(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	s := mustBootstrap(t, now)

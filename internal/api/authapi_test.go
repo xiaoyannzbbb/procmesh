@@ -953,6 +953,66 @@ func TestAuth_GetMeReturnsPermissions(t *testing.T) {
 	}
 }
 
+func TestAuthAPI_ChangePassword(t *testing.T) {
+	_, svc := newBootstrappedAuth(t)
+	api := &AuthAPI{Auth: svc}
+	ctx := WithPrincipal(context.Background(), auth.Principal{
+		UserID: "user-admin", Username: "admin", SessionID: "session-admin",
+	})
+
+	_, err := api.ChangePassword(ctx, connect.NewRequest(&procmeshv1.ChangePasswordRequest{
+		Meta:            &procmeshv1.MutationMeta{OperationId: "op-password", Operator: "admin"},
+		CurrentPassword: testAdminPass,
+		NewPassword:     "new-admin-pass",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, _, err := svc.Login("admin", testAdminPass); !errcode.Is(err, errcode.INVALID_CREDENTIALS) {
+		t.Fatalf("old password login err = %v", err)
+	}
+	if _, _, _, _, err := svc.Login("admin", "new-admin-pass"); err != nil {
+		t.Fatalf("new password login: %v", err)
+	}
+}
+
+func TestAuthAPI_ChangePasswordRejectsInvalidInput(t *testing.T) {
+	_, svc := newBootstrappedAuth(t)
+	api := &AuthAPI{Auth: svc}
+	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-admin", Username: "admin"})
+
+	tests := []struct {
+		name    string
+		current string
+		new     string
+		code    connect.Code
+		detail  string
+	}{
+		{name: "wrong current password", current: "wrong-password", new: "new-admin-pass", code: connect.CodePermissionDenied, detail: "INVALID_CREDENTIALS"},
+		{name: "short new password", current: testAdminPass, new: "short", code: connect.CodeInvalidArgument, detail: "INVALID"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := api.ChangePassword(ctx, connect.NewRequest(&procmeshv1.ChangePasswordRequest{
+				Meta:            &procmeshv1.MutationMeta{OperationId: "op-" + tc.name, Operator: "admin"},
+				CurrentPassword: tc.current,
+				NewPassword:     tc.new,
+			}))
+			code, detail := connectDetail(t, err)
+			if code != tc.code || detail != tc.detail {
+				t.Fatalf("code=%v detail=%q err=%v", code, detail, err)
+			}
+		})
+	}
+
+	_, err := api.ChangePassword(context.Background(), connect.NewRequest(&procmeshv1.ChangePasswordRequest{
+		Meta:            &procmeshv1.MutationMeta{OperationId: "op-unauthenticated", Operator: ""},
+		CurrentPassword: testAdminPass,
+		NewPassword:     "new-admin-pass",
+	}))
+	assertDenied(t, err)
+}
+
 func containsStr(ss []string, want string) bool {
 	for _, s := range ss {
 		if s == want {

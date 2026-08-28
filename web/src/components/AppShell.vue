@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, onMounted, watch } from "vue";
+/* eslint-disable i18next/no-literal-string -- Template refs and component variants are non-visible implementation values; visible copy uses t(). */
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   LayoutDashboard,
@@ -18,6 +19,9 @@ import {
   ChevronRight,
   Menu,
   X,
+  UserRound,
+  Languages,
+  ChevronsUpDown,
 } from "lucide-vue-next";
 import { newOperationId } from "../lib/opid";
 import { clearSession, session, useAuthClient } from "../lib/session";
@@ -33,6 +37,10 @@ const { t } = useI18n();
 const COLLAPSED_KEY = "procmesh-sidebar-collapsed";
 const isCollapsed = ref(false);
 const isMobileNavOpen = ref(false);
+const isAccountMenuOpen = ref(false);
+const isLanguageMenuOpen = ref(false);
+const accountArea = ref<HTMLElement | null>(null);
+const accountTrigger = ref<HTMLButtonElement | null>(null);
 const sidebarTooltip = ref<{ label: string; left: number; top: number } | null>(null);
 
 onMounted(() => {
@@ -40,7 +48,10 @@ onMounted(() => {
   if (stored !== null) {
     isCollapsed.value = stored === "true";
   }
+  document.addEventListener("pointerdown", onDocumentPointerDown);
 });
+
+onBeforeUnmount(() => document.removeEventListener("pointerdown", onDocumentPointerDown));
 
 function toggleCollapse() {
   isCollapsed.value = !isCollapsed.value;
@@ -56,6 +67,39 @@ function toggleMobileNav(): void {
 
 function closeMobileNav(): void {
   isMobileNavOpen.value = false;
+}
+
+function toggleAccountMenu(): void {
+  isAccountMenuOpen.value = !isAccountMenuOpen.value;
+  isLanguageMenuOpen.value = false;
+  hideSidebarTooltip();
+}
+
+function closeAccountMenu(restoreFocus = false): void {
+  isAccountMenuOpen.value = false;
+  isLanguageMenuOpen.value = false;
+  if (restoreFocus) {
+    void nextTick(() => accountTrigger.value?.focus());
+  }
+}
+
+function onDocumentPointerDown(event: PointerEvent): void {
+  const target = event.target;
+  if (isAccountMenuOpen.value && target instanceof Node && !accountArea.value?.contains(target)) {
+    closeAccountMenu();
+  }
+}
+
+function onAccountMenuKeydown(event: KeyboardEvent): void {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeAccountMenu(true);
+  }
+}
+
+function onProfileNavigate(): void {
+  closeAccountMenu();
+  closeMobileNav();
 }
 
 function showSidebarTooltip(event: MouseEvent | FocusEvent, label: string): void {
@@ -84,10 +128,14 @@ function hideSidebarTooltip(): void {
 
 watch(
   () => route.fullPath,
-  () => closeMobileNav(),
+  () => {
+    closeMobileNav();
+    closeAccountMenu();
+  },
 );
 
 const username = computed(() => session.value?.username ?? "");
+const avatarInitial = computed(() => username.value.trim().charAt(0).toUpperCase() || "?");
 const perms = computed(() => new Set(session.value?.permissions ?? []));
 
 const navItems = computed(() => {
@@ -131,6 +179,7 @@ function isActive(to: string): boolean {
 }
 
 async function onLogout(): Promise<void> {
+  closeAccountMenu();
   try {
     await client.logout({
       meta: {
@@ -187,23 +236,76 @@ async function onLogout(): Promise<void> {
         </RouterLink>
       </nav>
       <div class="sidebar-foot">
-        <LanguageSwitcher :collapsed="isCollapsed" />
-        <div class="user-info">
-          <span class="username" :title="username">{{ username }}</span>
+        <div ref="accountArea" class="account-area">
+          <div
+            v-if="isAccountMenuOpen"
+            id="account-menu"
+            class="account-menu"
+            :aria-label="t('actions.accountMenu')"
+            @keydown="onAccountMenuKeydown"
+          >
+            <div class="account-menu-header">
+              <span class="account-avatar" aria-hidden="true">{{ avatarInitial }}</span>
+              <span class="account-identity">
+                <strong :title="username">{{ username }}</strong>
+                <small>{{ t("actions.signedIn") }}</small>
+              </span>
+            </div>
+            <div class="account-menu-actions">
+              <RouterLink
+                to="/profile"
+                class="account-menu-item"
+                :class="{ active: isActive('/profile') }"
+                data-action="profile"
+                @click="onProfileNavigate"
+              >
+                <UserRound :size="19" aria-hidden="true" />
+                <span>{{ t("actions.profile") }}</span>
+              </RouterLink>
+              <button
+                type="button"
+                class="account-menu-item"
+                :aria-expanded="isLanguageMenuOpen"
+                aria-controls="account-language-menu"
+                @click="isLanguageMenuOpen = !isLanguageMenuOpen"
+              >
+                <Languages :size="19" aria-hidden="true" />
+                <span>{{ t("actions.language") }}</span>
+                <ChevronRight :size="18" class="menu-chevron" aria-hidden="true" />
+              </button>
+              <div v-if="isLanguageMenuOpen" id="account-language-menu" class="language-menu-panel">
+                <LanguageSwitcher variant="menu" />
+              </div>
+            </div>
+            <div class="account-menu-danger">
+              <button type="button" class="account-menu-item logout" @click="onLogout">
+                <LogOut :size="19" aria-hidden="true" />
+                <span>{{ t("actions.logout") }}</span>
+              </button>
+            </div>
+          </div>
+          <button
+            ref="accountTrigger"
+            type="button"
+            class="account-trigger"
+            :class="{ active: isAccountMenuOpen || isActive('/profile') }"
+            :aria-label="t('actions.accountMenu')"
+            :aria-expanded="isAccountMenuOpen"
+            aria-controls="account-menu"
+            @mouseenter="showSidebarTooltip($event, t('actions.accountMenu'))"
+            @mouseleave="hideSidebarTooltip"
+            @focus="showSidebarTooltip($event, t('actions.accountMenu'))"
+            @blur="hideSidebarTooltip"
+            @click="toggleAccountMenu"
+          >
+            <span class="account-avatar" aria-hidden="true">{{ avatarInitial }}</span>
+            <span class="account-trigger-copy">
+              <strong :title="username">{{ username }}</strong>
+              <small>{{ t("actions.signedIn") }}</small>
+            </span>
+            <ChevronsUpDown :size="18" class="account-trigger-chevron" aria-hidden="true" />
+          </button>
         </div>
-        <button
-          type="button"
-          class="btn logout"
-          :aria-label="isCollapsed ? t('actions.logout') : undefined"
-          @mouseenter="showSidebarTooltip($event, t('actions.logout'))"
-          @mouseleave="hideSidebarTooltip"
-          @focus="showSidebarTooltip($event, t('actions.logout'))"
-          @blur="hideSidebarTooltip"
-          @click="hideSidebarTooltip(); onLogout()"
-        >
-          <LogOut :size="18" />
-          <span class="btn-label">{{ t("actions.logout") }}</span>
-        </button>
       </div>
     </aside>
     <Teleport to="body">
@@ -459,67 +561,191 @@ async function onLogout(): Promise<void> {
 }
 
 .sidebar-foot {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  padding: 1rem 1.25rem;
+  padding: 0.75rem;
   border-top: 1px solid var(--color-border);
 }
 
 .collapsed .sidebar-foot {
-  padding: 1rem 0.75rem;
-  align-items: center;
+  padding: 0.75rem;
 }
 
-.user-info {
+.account-area {
+  position: relative;
+  width: 100%;
+}
+
+.account-trigger {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  width: 100%;
+  min-height: 3.5rem;
+  gap: 0.75rem;
+  padding: 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.16s ease, border-color 0.16s ease;
 }
 
-.username {
-  font-size: 0.875rem;
-  color: var(--color-muted);
+.account-trigger:hover,
+.account-trigger.active {
+  border-color: var(--color-border);
+  background: var(--color-hover);
+}
+
+.account-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  flex: 0 0 2.5rem;
+  border-radius: 8px;
+  background: var(--color-accent);
+  color: white;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.account-trigger-copy,
+.account-identity {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.account-trigger-copy strong,
+.account-identity strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 1;
+  font-size: 0.875rem;
+  font-weight: 650;
 }
 
-.collapsed .username {
-  width: 0;
-  opacity: 0;
+.account-trigger-copy small,
+.account-identity small {
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: 0.75rem;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.logout {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  width: 100%;
+.account-trigger-chevron {
+  flex-shrink: 0;
+  color: var(--color-muted);
+}
+
+.account-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 0.5rem);
+  left: 0;
+  z-index: 1050;
+  overflow: visible;
   border: 1px solid var(--color-border);
   border-radius: 8px;
   background: var(--color-card);
+  box-shadow: 0 12px 30px rgba(13, 13, 13, 0.14);
+}
+
+.account-menu-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.875rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.account-menu-header .account-avatar {
+  width: 2.25rem;
+  height: 2.25rem;
+  flex-basis: 2.25rem;
+}
+
+.account-menu-actions {
+  position: relative;
+  padding: 0.375rem;
+}
+
+.account-menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 2.75rem;
+  gap: 0.625rem;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   color: var(--color-text);
-  padding: 0.5rem 0.875rem;
+  padding: 0.625rem 0.75rem;
   font-size: 0.875rem;
   font-weight: 500;
+  text-decoration: none;
+  text-align: left;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
-.logout:hover {
-  background: color-mix(in srgb, var(--color-text) 6%, transparent);
-  border-color: var(--color-text);
+.account-menu-item:hover,
+.account-menu-item.active {
+  background: var(--color-hover);
 }
 
-.logout:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
+.menu-chevron {
+  margin-left: auto;
+  color: var(--color-muted);
 }
 
-.collapsed .btn-label {
+.language-menu-panel {
+  position: absolute;
+  bottom: 0.375rem;
+  left: calc(100% + 0.5rem);
+  z-index: 1060;
+  width: 11rem;
+  padding: 0.375rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-card);
+  box-shadow: 0 12px 30px rgba(13, 13, 13, 0.14);
+}
+
+.account-menu-danger {
+  padding: 0.375rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.account-menu-item.logout {
+  color: var(--color-danger);
+}
+
+.account-menu-item.logout:hover {
+  background: color-mix(in srgb, var(--color-danger) 9%, transparent);
+}
+
+.collapsed .account-trigger {
+  justify-content: center;
+  padding: 0.5rem;
+}
+
+.collapsed .account-trigger-copy,
+.collapsed .account-trigger-chevron {
   display: none;
+}
+
+.collapsed .account-menu {
+  right: auto;
+  bottom: 0;
+  left: calc(100% + 1.25rem);
+  width: 15rem;
 }
 
 .content {
@@ -652,17 +878,30 @@ async function onLogout(): Promise<void> {
   }
 
   .sidebar.collapsed .sidebar-foot {
-    padding: 1rem 1.25rem;
-    align-items: stretch;
+    padding: 0.75rem;
   }
 
-  .sidebar.collapsed .username {
+  .sidebar.collapsed .account-trigger {
+    justify-content: flex-start;
+  }
+
+  .sidebar.collapsed .account-trigger-copy,
+  .sidebar.collapsed .account-trigger-chevron {
+    display: flex;
+  }
+
+  .sidebar.collapsed .account-menu {
+    right: 0;
+    bottom: calc(100% + 0.5rem);
+    left: 0;
     width: auto;
-    opacity: 1;
   }
 
-  .sidebar.collapsed .btn-label {
-    display: inline;
+  .language-menu-panel {
+    position: static;
+    width: auto;
+    margin-top: 0.25rem;
+    box-shadow: none;
   }
 
   .content {

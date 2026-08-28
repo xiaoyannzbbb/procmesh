@@ -1,5 +1,5 @@
 <template>
-  <div class="language-switcher" :class="{ collapsed }">
+  <div class="language-switcher" :class="[{ collapsed }, `variant-${variant}`]">
     <button
       v-for="lang in languages"
       :key="lang.code"
@@ -11,20 +11,25 @@
     >
       <span class="lang-code">{{ lang.code.toUpperCase() }}</span>
       <span class="lang-name">{{ lang.name }}</span>
+      <Check v-if="isMenuVariant && currentLanguage === lang.code" :size="17" class="lang-check" aria-hidden="true" />
     </button>
   </div>
 </template>
 
 <script setup lang="ts">
 import { useI18n } from '../lib/useI18n'
+import { Check } from 'lucide-vue-next'
+import { computed } from 'vue'
 
 interface Props {
   collapsed?: boolean
+  variant?: 'segmented' | 'menu'
 }
 
-defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), { variant: 'segmented' })
 
 const { currentLanguage, setLanguage } = useI18n()
+const isMenuVariant = computed(() => props.variant === 'menu')
 
 const languages = [
   { code: 'en', name: 'English' },
@@ -45,6 +50,39 @@ const languages = [
 .language-switcher.collapsed {
   flex-direction: column;
   padding: 0.25rem;
+}
+
+.language-switcher.variant-menu {
+  flex-direction: column;
+  gap: 0.125rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.language-switcher.variant-menu button {
+  justify-content: flex-start;
+  width: 100%;
+  padding: 0.625rem 0.75rem;
+}
+
+.language-switcher.variant-menu button.active,
+.language-switcher.variant-menu button.active:hover {
+  background: var(--color-hover);
+  color: var(--color-text);
+}
+
+.variant-menu .lang-code {
+  display: none;
+}
+
+.variant-menu .lang-name {
+  margin-left: 0;
+}
+
+.lang-check {
+  margin-left: auto;
+  color: var(--color-accent);
 }
 
 .language-switcher button {
@@ -93,11 +131,11 @@ const languages = [
   margin-left: 0.375rem;
 }
 
-.collapsed .lang-name {
+.language-switcher.collapsed .lang-name {
   display: none;
 }
 
-.collapsed button {
+.language-switcher.collapsed button {
   padding: 0.375rem 0.5rem;
   min-width: 36px;
 }
