@@ -740,23 +740,48 @@ declare module "i18next" {
         'processLogs.stderrMergePending': string
         'roles.title': string
         'roles.loading': string
-        'roles.noRoles': string
+        'roles.stats.roles': string
+        'roles.stats.bindings': string
         'roles.actions.createRole': string
         'roles.actions.grantRole': string
         'roles.table.name': string
         'roles.table.type': string
         'roles.table.permissions': string
+        'roles.table.bindings': string
         'roles.type.builtin': string
         'roles.type.custom': string
+        'roles.perms.more': string
+        'roles.perms.less': string
+        'roles.empty.title': string
+        'roles.empty.hint': string
+        'roles.error.title': string
+        'roles.error.retry': string
         'roles.bindings.title': string
-        'roles.bindings.noBindings': string
         'roles.bindings.table.userId': string
         'roles.bindings.table.role': string
         'roles.bindings.table.scope': string
         'roles.bindings.table.scopeId': string
+        'roles.bindings.empty.title': string
+        'roles.bindings.empty.hint': string
         'roles.createRole.title': string
         'roles.createRole.name': string
         'roles.createRole.permissions': string
+        'roles.createRole.search': string
+        'roles.createRole.searchPlaceholder': string
+        'roles.createRole.selectAll': string
+        'roles.createRole.clearSelection': string
+        'roles.createRole.selectedCount': string
+        'roles.createRole.noPermissionMatch': string
+        'roles.createRole.groups.cluster': string
+        'roles.createRole.groups.node': string
+        'roles.createRole.groups.process': string
+        'roles.createRole.groups.user': string
+        'roles.createRole.groups.role': string
+        'roles.createRole.groups.audit': string
+        'roles.createRole.groups.command': string
+        'roles.createRole.groups.batch': string
+        'roles.createRole.groups.alert': string
+        'roles.createRole.groups.backup': string
         'roles.createRole.create': string
         'roles.createRole.success': string
         'roles.grant.title': string

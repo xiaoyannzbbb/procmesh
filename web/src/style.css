@@ -4,6 +4,7 @@
   --color-bg: #f7f7f8;
   --color-sidebar: #ffffff;
   --color-border: #e5e5e5;
+  --color-hover: #f1f1f1;
   --color-text: #0d0d0d;
   --color-muted: #6b6b6b;
   --color-accent: #10a37f;
@@ -15,6 +16,8 @@
   --color-stale-fg: #92400e;
   --color-unknown: #e5e7eb;
   --color-unknown-fg: #374151;
+  --color-info: #dbeafe;
+  --color-info-fg: #1d4ed8;
   --radius-lg: 16px;
   --radius-sm: 5px;
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;

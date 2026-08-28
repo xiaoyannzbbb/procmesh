@@ -831,7 +831,10 @@
   "roles": {
     "title": "Roles",
     "loading": "Loading…",
-    "noRoles": "No roles",
+    "stats": {
+      "roles": "Roles",
+      "bindings": "Bindings"
+    },
     "actions": {
       "createRole": "Create role",
       "grantRole": "Grant to user"
@@ -839,26 +842,60 @@
     "table": {
       "name": "Name",
       "type": "Type",
-      "permissions": "Permissions"
+      "permissions": "Permissions",
+      "bindings": "Bindings"
     },
     "type": {
       "builtin": "Built-in",
       "custom": "Custom"
     },
+    "perms": {
+      "more": "+{{count}}",
+      "less": "Show less"
+    },
+    "empty": {
+      "title": "No roles yet",
+      "hint": "Create a role to bundle permissions, then grant it to a user."
+    },
+    "error": {
+      "title": "Could not load roles",
+      "retry": "Retry"
+    },
     "bindings": {
       "title": "Bindings",
-      "noBindings": "No bindings",
       "table": {
         "userId": "User ID",
         "role": "Role",
         "scope": "Scope",
         "scopeId": "Scope ID"
+      },
+      "empty": {
+        "title": "No bindings yet",
+        "hint": "Grant a role to a user to see it here."
       }
     },
     "createRole": {
       "title": "Create role",
       "name": "Name",
       "permissions": "Permissions",
+      "search": "Search permissions",
+      "searchPlaceholder": "Filter by permission name",
+      "selectAll": "Select all",
+      "clearSelection": "Clear selection",
+      "selectedCount": "{{count}} permissions selected",
+      "noPermissionMatch": "No matching permissions",
+      "groups": {
+        "cluster": "Cluster",
+        "node": "Node",
+        "process": "Process",
+        "user": "User",
+        "role": "Role",
+        "audit": "Audit",
+        "command": "Command",
+        "batch": "Batch",
+        "alert": "Alert",
+        "backup": "Backup"
+      },
       "create": "Create",
       "success": "Role created"
     },

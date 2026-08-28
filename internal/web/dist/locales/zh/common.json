@@ -831,7 +831,10 @@
   "roles": {
     "title": "角色",
     "loading": "加载中…",
-    "noRoles": "无角色",
+    "stats": {
+      "roles": "角色",
+      "bindings": "绑定"
+    },
     "actions": {
       "createRole": "创建角色",
       "grantRole": "授权给用户"
@@ -839,26 +842,60 @@
     "table": {
       "name": "名称",
       "type": "类型",
-      "permissions": "权限"
+      "permissions": "权限",
+      "bindings": "绑定数"
     },
     "type": {
       "builtin": "内置",
       "custom": "自定义"
     },
+    "perms": {
+      "more": "+{{count}}",
+      "less": "收起"
+    },
+    "empty": {
+      "title": "暂无角色",
+      "hint": "创建一个角色来打包权限，然后再授权给用户。"
+    },
+    "error": {
+      "title": "角色数据加载失败",
+      "retry": "重试"
+    },
     "bindings": {
       "title": "绑定",
-      "noBindings": "无绑定",
       "table": {
         "userId": "用户ID",
         "role": "角色",
         "scope": "范围",
         "scopeId": "范围ID"
+      },
+      "empty": {
+        "title": "暂无绑定",
+        "hint": "把角色授权给用户后，绑定会出现在这里。"
       }
     },
     "createRole": {
       "title": "创建角色",
       "name": "名称",
       "permissions": "权限",
+      "search": "搜索权限",
+      "searchPlaceholder": "按权限名称过滤",
+      "selectAll": "全选",
+      "clearSelection": "清空选择",
+      "selectedCount": "已选 {{count}} 个权限",
+      "noPermissionMatch": "没有匹配的权限",
+      "groups": {
+        "cluster": "集群",
+        "node": "节点",
+        "process": "进程",
+        "user": "用户",
+        "role": "角色",
+        "audit": "审计",
+        "command": "命令",
+        "batch": "批次",
+        "alert": "告警",
+        "backup": "备份"
+      },
       "create": "创建",
       "success": "角色创建成功"
     },
