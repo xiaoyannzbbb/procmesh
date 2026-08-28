@@ -4,6 +4,7 @@ import i18next from "i18next";
 import I18NextVue from "i18next-vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { session } from "../lib/session";
+import ConfirmDialog from "../components/ConfirmDialog.vue";
 import Drawer from "../components/Drawer.vue";
 import RolesPage from "./RolesPage.vue";
 
@@ -18,7 +19,7 @@ const EN_ROLES = {
   title: "Roles",
   loading: "Loading…",
   stats: { roles: "Roles", bindings: "Bindings" },
-  table: { name: "Name", type: "Type", permissions: "Permissions", bindings: "Bindings" },
+  table: { name: "Name", type: "Type", permissions: "Permissions", bindings: "Bindings", actions: "Actions" },
   type: { builtin: "Built-in", custom: "Custom" },
   perms: { more: "+{{count}}", less: "Show less" },
   empty: {
@@ -28,7 +29,7 @@ const EN_ROLES = {
   bindings: {
     title: "Bindings",
     empty: { title: "No bindings yet", hint: "Grant a role to a user to see it here." },
-    table: { userId: "User ID", role: "Role", scope: "Scope", scopeId: "Scope ID" },
+    table: { userId: "User ID", role: "Role", scope: "Scope", scopeId: "Scope ID", actions: "Actions" },
   },
   error: { title: "Could not load roles", retry: "Retry" },
   createRole: {
@@ -56,6 +57,25 @@ const EN_ROLES = {
     create: "Create",
     success: "Role created",
   },
+  updateRole: {
+    title: "Edit role",
+    save: "Save changes",
+    success: "Role updated",
+  },
+  deleteRole: {
+    title: "Delete role?",
+    message: "Delete role “{{name}}”? This action cannot be undone.",
+    confirm: "Delete role",
+    success: "Role deleted",
+  },
+  revoke: {
+    action: "Unbind",
+    title: "Remove binding?",
+    message: "Remove {{role}} from user {{userId}}?",
+    confirm: "Remove binding",
+    success: "Binding removed",
+  },
+  builtinActionUnavailable: "Built-in roles and their bindings cannot be changed",
   grant: {
     title: "Grant role to user",
     searchUsers: "Select user",
@@ -113,7 +133,10 @@ async function mountRolesPage(
       ? vi.fn(listRolesImpl)
       : vi.fn().mockResolvedValue({ roles, bindings }),
     createRole: vi.fn().mockResolvedValue({}),
+    updateRole: vi.fn().mockResolvedValue({}),
+    deleteRole: vi.fn().mockResolvedValue({}),
     grantRole: vi.fn().mockResolvedValue({}),
+    revokeRole: vi.fn().mockResolvedValue({}),
   };
   const userClient = {
     listUsers: vi.fn().mockResolvedValue({ users }),
@@ -274,6 +297,61 @@ describe("RolesPage role table", () => {
     expect(wrapper.get('[data-role-id="r1"] [data-cell="permissions"]').text()).toBe("—");
     expect(wrapper.find('[data-role-id="r1"] [data-perm-chip]').exists()).toBe(false);
   });
+
+  it("enables custom-role actions and disables built-in role actions", async () => {
+    const roles = [
+      { roleId: "viewer", name: "Viewer", permissions: ["cluster.read"] },
+      { roleId: "r-custom", name: "On-call", permissions: ["process.read"] },
+    ];
+    const { wrapper } = await mountRolesPage(roles, [], ["role.read", "role.manage"]);
+
+    expect(wrapper.get("thead").text()).toContain("Actions");
+    const builtin = wrapper.get('[data-role-id="viewer"]');
+    expect((builtin.get('[data-action="edit-role"]').element as HTMLButtonElement).disabled).toBe(true);
+    expect((builtin.get('[data-action="delete-role"]').element as HTMLButtonElement).disabled).toBe(true);
+
+    const custom = wrapper.get('[data-role-id="r-custom"]');
+    expect((custom.get('[data-action="edit-role"]').element as HTMLButtonElement).disabled).toBe(false);
+    expect((custom.get('[data-action="delete-role"]').element as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("edits and deletes a custom role", async () => {
+    const roles = [{ roleId: "r-custom", name: "On-call", permissions: ["process.read"] }];
+    const { wrapper, roleClient } = await mountRolesPage(roles, [], ["role.read", "role.manage"]);
+
+    await wrapper.get('[data-role-id="r-custom"] [data-action="edit-role"]').trigger("click");
+    const roleDrawer = wrapper.findAllComponents(Drawer)[0];
+    expect(roleDrawer.props("open")).toBe(true);
+    expect((roleDrawer.get('input[name="role_name"]').element as HTMLInputElement).value).toBe("On-call");
+    expect((roleDrawer.get('input[name="perm-process.read"]').element as HTMLInputElement).checked).toBe(true);
+
+    await roleDrawer.get('input[name="role_name"]').setValue("On-call operators");
+    await roleDrawer.get("form").trigger("submit");
+    await flushPromises();
+    expect(roleClient.updateRole).toHaveBeenCalledWith(expect.objectContaining({
+      roleId: "r-custom",
+      name: "On-call operators",
+      permissions: ["process.read"],
+    }));
+
+    await wrapper.get('[data-role-id="r-custom"] [data-action="delete-role"]').trigger("click");
+    const confirm = wrapper.getComponent(ConfirmDialog);
+    expect(confirm.props("open")).toBe(true);
+    await confirm.vm.$emit("confirm");
+    await flushPromises();
+    expect(roleClient.deleteRole).toHaveBeenCalledWith(expect.objectContaining({ roleId: "r-custom" }));
+  });
+
+  it("does not expose role mutation buttons without role.manage", async () => {
+    const { wrapper } = await mountRolesPage(
+      [{ roleId: "r-custom", name: "On-call", permissions: [] }],
+      [],
+      ["role.read"],
+    );
+
+    expect(wrapper.find('[data-action="edit-role"]').exists()).toBe(false);
+    expect(wrapper.find('[data-action="delete-role"]').exists()).toBe(false);
+  });
 });
 
 describe("RolesPage bindings table", () => {
@@ -292,6 +370,34 @@ describe("RolesPage bindings table", () => {
     ]);
     expect(scopeCells[0].text()).toBe("Agent group");
     expect(scopeCells[1].text()).toBe("Entire cluster");
+  });
+
+  it("only allows custom-role bindings to be removed", async () => {
+    const roles = [
+      { roleId: "viewer", name: "Viewer", permissions: [] },
+      { roleId: "r-custom", name: "On-call", permissions: [] },
+    ];
+    const bindings = [
+      { userId: "u1", roleId: "viewer", scopeType: "CLUSTER", scopeId: "" },
+      { userId: "u2", roleId: "r-custom", scopeType: "AGENT", scopeId: "node-1" },
+    ];
+    const { wrapper, roleClient } = await mountRolesPage(roles, bindings, ["role.read", "role.manage"]);
+
+    const rows = wrapper.findAll(".bindings-card tbody tr");
+    expect((rows[0].get('[data-action="revoke-role"]').element as HTMLButtonElement).disabled).toBe(true);
+    expect((rows[1].get('[data-action="revoke-role"]').element as HTMLButtonElement).disabled).toBe(false);
+
+    await rows[1].get('[data-action="revoke-role"]').trigger("click");
+    const confirm = wrapper.getComponent(ConfirmDialog);
+    expect(confirm.props("open")).toBe(true);
+    await confirm.vm.$emit("confirm");
+    await flushPromises();
+    expect(roleClient.revokeRole).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "u2",
+      roleId: "r-custom",
+      scopeType: "AGENT",
+      scopeId: "node-1",
+    }));
   });
 });
 

@@ -161,8 +161,14 @@ const (
 	RoleServiceListRolesProcedure = "/procmesh.v1.RoleService/ListRoles"
 	// RoleServiceCreateRoleProcedure is the fully-qualified name of the RoleService's CreateRole RPC.
 	RoleServiceCreateRoleProcedure = "/procmesh.v1.RoleService/CreateRole"
+	// RoleServiceUpdateRoleProcedure is the fully-qualified name of the RoleService's UpdateRole RPC.
+	RoleServiceUpdateRoleProcedure = "/procmesh.v1.RoleService/UpdateRole"
+	// RoleServiceDeleteRoleProcedure is the fully-qualified name of the RoleService's DeleteRole RPC.
+	RoleServiceDeleteRoleProcedure = "/procmesh.v1.RoleService/DeleteRole"
 	// RoleServiceGrantRoleProcedure is the fully-qualified name of the RoleService's GrantRole RPC.
 	RoleServiceGrantRoleProcedure = "/procmesh.v1.RoleService/GrantRole"
+	// RoleServiceRevokeRoleProcedure is the fully-qualified name of the RoleService's RevokeRole RPC.
+	RoleServiceRevokeRoleProcedure = "/procmesh.v1.RoleService/RevokeRole"
 	// GroupServiceListAgentGroupsProcedure is the fully-qualified name of the GroupService's
 	// ListAgentGroups RPC.
 	GroupServiceListAgentGroupsProcedure = "/procmesh.v1.GroupService/ListAgentGroups"
@@ -1588,7 +1594,10 @@ func (UnimplementedUserServiceHandler) DisableUser(context.Context, *connect.Req
 type RoleServiceClient interface {
 	ListRoles(context.Context, *connect.Request[v1.ListRolesRequest]) (*connect.Response[v1.ListRolesResponse], error)
 	CreateRole(context.Context, *connect.Request[v1.CreateRoleRequest]) (*connect.Response[v1.CreateRoleResponse], error)
+	UpdateRole(context.Context, *connect.Request[v1.UpdateRoleRequest]) (*connect.Response[v1.UpdateRoleResponse], error)
+	DeleteRole(context.Context, *connect.Request[v1.DeleteRoleRequest]) (*connect.Response[v1.DeleteRoleResponse], error)
 	GrantRole(context.Context, *connect.Request[v1.GrantRoleRequest]) (*connect.Response[v1.GrantRoleResponse], error)
+	RevokeRole(context.Context, *connect.Request[v1.RevokeRoleRequest]) (*connect.Response[v1.RevokeRoleResponse], error)
 }
 
 // NewRoleServiceClient constructs a client for the procmesh.v1.RoleService service. By default, it
@@ -1614,10 +1623,28 @@ func NewRoleServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 			connect.WithSchema(roleServiceMethods.ByName("CreateRole")),
 			connect.WithClientOptions(opts...),
 		),
+		updateRole: connect.NewClient[v1.UpdateRoleRequest, v1.UpdateRoleResponse](
+			httpClient,
+			baseURL+RoleServiceUpdateRoleProcedure,
+			connect.WithSchema(roleServiceMethods.ByName("UpdateRole")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteRole: connect.NewClient[v1.DeleteRoleRequest, v1.DeleteRoleResponse](
+			httpClient,
+			baseURL+RoleServiceDeleteRoleProcedure,
+			connect.WithSchema(roleServiceMethods.ByName("DeleteRole")),
+			connect.WithClientOptions(opts...),
+		),
 		grantRole: connect.NewClient[v1.GrantRoleRequest, v1.GrantRoleResponse](
 			httpClient,
 			baseURL+RoleServiceGrantRoleProcedure,
 			connect.WithSchema(roleServiceMethods.ByName("GrantRole")),
+			connect.WithClientOptions(opts...),
+		),
+		revokeRole: connect.NewClient[v1.RevokeRoleRequest, v1.RevokeRoleResponse](
+			httpClient,
+			baseURL+RoleServiceRevokeRoleProcedure,
+			connect.WithSchema(roleServiceMethods.ByName("RevokeRole")),
 			connect.WithClientOptions(opts...),
 		),
 	}
@@ -1627,7 +1654,10 @@ func NewRoleServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 type roleServiceClient struct {
 	listRoles  *connect.Client[v1.ListRolesRequest, v1.ListRolesResponse]
 	createRole *connect.Client[v1.CreateRoleRequest, v1.CreateRoleResponse]
+	updateRole *connect.Client[v1.UpdateRoleRequest, v1.UpdateRoleResponse]
+	deleteRole *connect.Client[v1.DeleteRoleRequest, v1.DeleteRoleResponse]
 	grantRole  *connect.Client[v1.GrantRoleRequest, v1.GrantRoleResponse]
+	revokeRole *connect.Client[v1.RevokeRoleRequest, v1.RevokeRoleResponse]
 }
 
 // ListRoles calls procmesh.v1.RoleService.ListRoles.
@@ -1640,16 +1670,34 @@ func (c *roleServiceClient) CreateRole(ctx context.Context, req *connect.Request
 	return c.createRole.CallUnary(ctx, req)
 }
 
+// UpdateRole calls procmesh.v1.RoleService.UpdateRole.
+func (c *roleServiceClient) UpdateRole(ctx context.Context, req *connect.Request[v1.UpdateRoleRequest]) (*connect.Response[v1.UpdateRoleResponse], error) {
+	return c.updateRole.CallUnary(ctx, req)
+}
+
+// DeleteRole calls procmesh.v1.RoleService.DeleteRole.
+func (c *roleServiceClient) DeleteRole(ctx context.Context, req *connect.Request[v1.DeleteRoleRequest]) (*connect.Response[v1.DeleteRoleResponse], error) {
+	return c.deleteRole.CallUnary(ctx, req)
+}
+
 // GrantRole calls procmesh.v1.RoleService.GrantRole.
 func (c *roleServiceClient) GrantRole(ctx context.Context, req *connect.Request[v1.GrantRoleRequest]) (*connect.Response[v1.GrantRoleResponse], error) {
 	return c.grantRole.CallUnary(ctx, req)
+}
+
+// RevokeRole calls procmesh.v1.RoleService.RevokeRole.
+func (c *roleServiceClient) RevokeRole(ctx context.Context, req *connect.Request[v1.RevokeRoleRequest]) (*connect.Response[v1.RevokeRoleResponse], error) {
+	return c.revokeRole.CallUnary(ctx, req)
 }
 
 // RoleServiceHandler is an implementation of the procmesh.v1.RoleService service.
 type RoleServiceHandler interface {
 	ListRoles(context.Context, *connect.Request[v1.ListRolesRequest]) (*connect.Response[v1.ListRolesResponse], error)
 	CreateRole(context.Context, *connect.Request[v1.CreateRoleRequest]) (*connect.Response[v1.CreateRoleResponse], error)
+	UpdateRole(context.Context, *connect.Request[v1.UpdateRoleRequest]) (*connect.Response[v1.UpdateRoleResponse], error)
+	DeleteRole(context.Context, *connect.Request[v1.DeleteRoleRequest]) (*connect.Response[v1.DeleteRoleResponse], error)
 	GrantRole(context.Context, *connect.Request[v1.GrantRoleRequest]) (*connect.Response[v1.GrantRoleResponse], error)
+	RevokeRole(context.Context, *connect.Request[v1.RevokeRoleRequest]) (*connect.Response[v1.RevokeRoleResponse], error)
 }
 
 // NewRoleServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -1671,10 +1719,28 @@ func NewRoleServiceHandler(svc RoleServiceHandler, opts ...connect.HandlerOption
 		connect.WithSchema(roleServiceMethods.ByName("CreateRole")),
 		connect.WithHandlerOptions(opts...),
 	)
+	roleServiceUpdateRoleHandler := connect.NewUnaryHandler(
+		RoleServiceUpdateRoleProcedure,
+		svc.UpdateRole,
+		connect.WithSchema(roleServiceMethods.ByName("UpdateRole")),
+		connect.WithHandlerOptions(opts...),
+	)
+	roleServiceDeleteRoleHandler := connect.NewUnaryHandler(
+		RoleServiceDeleteRoleProcedure,
+		svc.DeleteRole,
+		connect.WithSchema(roleServiceMethods.ByName("DeleteRole")),
+		connect.WithHandlerOptions(opts...),
+	)
 	roleServiceGrantRoleHandler := connect.NewUnaryHandler(
 		RoleServiceGrantRoleProcedure,
 		svc.GrantRole,
 		connect.WithSchema(roleServiceMethods.ByName("GrantRole")),
+		connect.WithHandlerOptions(opts...),
+	)
+	roleServiceRevokeRoleHandler := connect.NewUnaryHandler(
+		RoleServiceRevokeRoleProcedure,
+		svc.RevokeRole,
+		connect.WithSchema(roleServiceMethods.ByName("RevokeRole")),
 		connect.WithHandlerOptions(opts...),
 	)
 	return "/procmesh.v1.RoleService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1683,8 +1749,14 @@ func NewRoleServiceHandler(svc RoleServiceHandler, opts ...connect.HandlerOption
 			roleServiceListRolesHandler.ServeHTTP(w, r)
 		case RoleServiceCreateRoleProcedure:
 			roleServiceCreateRoleHandler.ServeHTTP(w, r)
+		case RoleServiceUpdateRoleProcedure:
+			roleServiceUpdateRoleHandler.ServeHTTP(w, r)
+		case RoleServiceDeleteRoleProcedure:
+			roleServiceDeleteRoleHandler.ServeHTTP(w, r)
 		case RoleServiceGrantRoleProcedure:
 			roleServiceGrantRoleHandler.ServeHTTP(w, r)
+		case RoleServiceRevokeRoleProcedure:
+			roleServiceRevokeRoleHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1702,8 +1774,20 @@ func (UnimplementedRoleServiceHandler) CreateRole(context.Context, *connect.Requ
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.RoleService.CreateRole is not implemented"))
 }
 
+func (UnimplementedRoleServiceHandler) UpdateRole(context.Context, *connect.Request[v1.UpdateRoleRequest]) (*connect.Response[v1.UpdateRoleResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.RoleService.UpdateRole is not implemented"))
+}
+
+func (UnimplementedRoleServiceHandler) DeleteRole(context.Context, *connect.Request[v1.DeleteRoleRequest]) (*connect.Response[v1.DeleteRoleResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.RoleService.DeleteRole is not implemented"))
+}
+
 func (UnimplementedRoleServiceHandler) GrantRole(context.Context, *connect.Request[v1.GrantRoleRequest]) (*connect.Response[v1.GrantRoleResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.RoleService.GrantRole is not implemented"))
+}
+
+func (UnimplementedRoleServiceHandler) RevokeRole(context.Context, *connect.Request[v1.RevokeRoleRequest]) (*connect.Response[v1.RevokeRoleResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.RoleService.RevokeRole is not implemented"))
 }
 
 // GroupServiceClient is a client for the procmesh.v1.GroupService service.

@@ -843,7 +843,8 @@
       "name": "Name",
       "type": "Type",
       "permissions": "Permissions",
-      "bindings": "Bindings"
+      "bindings": "Bindings",
+      "actions": "Actions"
     },
     "type": {
       "builtin": "Built-in",
@@ -867,7 +868,8 @@
         "userId": "User ID",
         "role": "Role",
         "scope": "Scope",
-        "scopeId": "Scope ID"
+        "scopeId": "Scope ID",
+        "actions": "Actions"
       },
       "empty": {
         "title": "No bindings yet",
@@ -899,6 +901,25 @@
       "create": "Create",
       "success": "Role created"
     },
+    "updateRole": {
+      "title": "Edit role",
+      "save": "Save changes",
+      "success": "Role updated"
+    },
+    "deleteRole": {
+      "title": "Delete role?",
+      "message": "Delete role “{{name}}”? This action cannot be undone.",
+      "confirm": "Delete role",
+      "success": "Role deleted"
+    },
+    "revoke": {
+      "action": "Unbind",
+      "title": "Remove binding?",
+      "message": "Remove {{role}} from user {{userId}}?",
+      "confirm": "Remove binding",
+      "success": "Binding removed"
+    },
+    "builtinActionUnavailable": "Built-in roles and their bindings cannot be changed",
     "grant": {
       "title": "Grant role to user",
       "userId": "User ID",

@@ -1241,6 +1241,80 @@ func TestFSM_RolePutAndJoinTokenLookup(t *testing.T) {
 	}
 }
 
+func TestFSM_CustomRoleAndBindingMutations(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := mustBootstrap(t, now)
+	if err := s.Apply(mustEncode(t, control.CmdRolePut, control.RolePutBody{
+		ID: "custom", Name: "Custom", Perms: []string{"cluster.read"},
+	}), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Apply(mustEncode(t, control.CmdBindPut, control.BindPutBody{
+		UserID: "user-admin", RoleID: "custom", Scope: control.ScopeAgent, ScopeID: "node-1",
+	}), now); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Apply(mustEncode(t, control.CmdRolePut, control.RolePutBody{
+		ID: "custom", Name: "Updated", Perms: []string{"node.read"},
+	}), now); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Roles["custom"]; got.Name != "Updated" || !hasPerm(got.Perms, "node.read") {
+		t.Fatalf("updated role=%+v", got)
+	}
+
+	err := s.Apply(mustEncode(t, control.CmdRoleDelete, control.RoleDeleteBody{ID: "custom"}), now)
+	if !errcode.Is(err, errcode.CONFLICT) {
+		t.Fatalf("delete bound role: %v", err)
+	}
+	if err := s.Apply(mustEncode(t, control.CmdBindDelete, control.BindDeleteBody{
+		UserID: "user-admin", RoleID: "custom", Scope: control.ScopeAgent, ScopeID: "node-1",
+	}), now); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Bindings) != 1 {
+		t.Fatalf("bindings=%+v", s.Bindings)
+	}
+	if err := s.Apply(mustEncode(t, control.CmdRoleDelete, control.RoleDeleteBody{ID: "custom"}), now); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.Roles["custom"]; ok {
+		t.Fatal("custom role was not deleted")
+	}
+	err = s.Apply(mustEncode(t, control.CmdRolePut, control.RolePutBody{
+		ID: "custom", Name: "Unexpected", ExistingOnly: true,
+	}), now)
+	if !errcode.Is(err, errcode.NOT_FOUND) {
+		t.Fatalf("update deleted role: %v", err)
+	}
+}
+
+func TestFSM_BuiltinRolesAndBindingsCannotBeMutated(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := mustBootstrap(t, now)
+
+	err := s.Apply(mustEncode(t, control.CmdRolePut, control.RolePutBody{
+		ID: "viewer", Name: "Changed", Perms: []string{"role.manage"},
+	}), now)
+	if !errcode.Is(err, errcode.DENIED) {
+		t.Fatalf("update builtin role: %v", err)
+	}
+	err = s.Apply(mustEncode(t, control.CmdRoleDelete, control.RoleDeleteBody{ID: "viewer"}), now)
+	if !errcode.Is(err, errcode.DENIED) {
+		t.Fatalf("delete builtin role: %v", err)
+	}
+	err = s.Apply(mustEncode(t, control.CmdBindDelete, control.BindDeleteBody{
+		UserID: "user-admin", RoleID: "super_admin", Scope: control.ScopeCluster,
+	}), now)
+	if !errcode.Is(err, errcode.DENIED) {
+		t.Fatalf("delete builtin binding: %v", err)
+	}
+	if !s.Check("user-admin", "role.manage", "") {
+		t.Fatal("builtin binding was removed")
+	}
+}
+
 func TestFSM_ApplyRejectsUnknownAndInvalid(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	s := mustBootstrap(t, now)

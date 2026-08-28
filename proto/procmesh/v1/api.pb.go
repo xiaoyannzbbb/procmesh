@@ -15059,6 +15059,318 @@ func (x *ListRecoverableSnapshotsResponse) GetSnapshots() []*ReplicaSnapshot {
 	return nil
 }
 
+type UpdateRoleRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Meta          *MutationMeta          `protobuf:"bytes,1,opt,name=meta,proto3" json:"meta,omitempty"`
+	RoleId        string                 `protobuf:"bytes,2,opt,name=role_id,json=roleId,proto3" json:"role_id,omitempty"`
+	Name          string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	Permissions   []string               `protobuf:"bytes,4,rep,name=permissions,proto3" json:"permissions,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateRoleRequest) Reset() {
+	*x = UpdateRoleRequest{}
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[236]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateRoleRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateRoleRequest) ProtoMessage() {}
+
+func (x *UpdateRoleRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[236]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateRoleRequest.ProtoReflect.Descriptor instead.
+func (*UpdateRoleRequest) Descriptor() ([]byte, []int) {
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{236}
+}
+
+func (x *UpdateRoleRequest) GetMeta() *MutationMeta {
+	if x != nil {
+		return x.Meta
+	}
+	return nil
+}
+
+func (x *UpdateRoleRequest) GetRoleId() string {
+	if x != nil {
+		return x.RoleId
+	}
+	return ""
+}
+
+func (x *UpdateRoleRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *UpdateRoleRequest) GetPermissions() []string {
+	if x != nil {
+		return x.Permissions
+	}
+	return nil
+}
+
+type UpdateRoleResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Role          *Role                  `protobuf:"bytes,1,opt,name=role,proto3" json:"role,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateRoleResponse) Reset() {
+	*x = UpdateRoleResponse{}
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[237]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateRoleResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateRoleResponse) ProtoMessage() {}
+
+func (x *UpdateRoleResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[237]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateRoleResponse.ProtoReflect.Descriptor instead.
+func (*UpdateRoleResponse) Descriptor() ([]byte, []int) {
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{237}
+}
+
+func (x *UpdateRoleResponse) GetRole() *Role {
+	if x != nil {
+		return x.Role
+	}
+	return nil
+}
+
+type DeleteRoleRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Meta          *MutationMeta          `protobuf:"bytes,1,opt,name=meta,proto3" json:"meta,omitempty"`
+	RoleId        string                 `protobuf:"bytes,2,opt,name=role_id,json=roleId,proto3" json:"role_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteRoleRequest) Reset() {
+	*x = DeleteRoleRequest{}
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[238]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteRoleRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteRoleRequest) ProtoMessage() {}
+
+func (x *DeleteRoleRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[238]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteRoleRequest.ProtoReflect.Descriptor instead.
+func (*DeleteRoleRequest) Descriptor() ([]byte, []int) {
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{238}
+}
+
+func (x *DeleteRoleRequest) GetMeta() *MutationMeta {
+	if x != nil {
+		return x.Meta
+	}
+	return nil
+}
+
+func (x *DeleteRoleRequest) GetRoleId() string {
+	if x != nil {
+		return x.RoleId
+	}
+	return ""
+}
+
+type DeleteRoleResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteRoleResponse) Reset() {
+	*x = DeleteRoleResponse{}
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[239]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteRoleResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteRoleResponse) ProtoMessage() {}
+
+func (x *DeleteRoleResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[239]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteRoleResponse.ProtoReflect.Descriptor instead.
+func (*DeleteRoleResponse) Descriptor() ([]byte, []int) {
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{239}
+}
+
+type RevokeRoleRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Meta          *MutationMeta          `protobuf:"bytes,1,opt,name=meta,proto3" json:"meta,omitempty"`
+	UserId        string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	RoleId        string                 `protobuf:"bytes,3,opt,name=role_id,json=roleId,proto3" json:"role_id,omitempty"`
+	ScopeType     string                 `protobuf:"bytes,4,opt,name=scope_type,json=scopeType,proto3" json:"scope_type,omitempty"`
+	ScopeId       string                 `protobuf:"bytes,5,opt,name=scope_id,json=scopeId,proto3" json:"scope_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RevokeRoleRequest) Reset() {
+	*x = RevokeRoleRequest{}
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[240]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RevokeRoleRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RevokeRoleRequest) ProtoMessage() {}
+
+func (x *RevokeRoleRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[240]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RevokeRoleRequest.ProtoReflect.Descriptor instead.
+func (*RevokeRoleRequest) Descriptor() ([]byte, []int) {
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{240}
+}
+
+func (x *RevokeRoleRequest) GetMeta() *MutationMeta {
+	if x != nil {
+		return x.Meta
+	}
+	return nil
+}
+
+func (x *RevokeRoleRequest) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *RevokeRoleRequest) GetRoleId() string {
+	if x != nil {
+		return x.RoleId
+	}
+	return ""
+}
+
+func (x *RevokeRoleRequest) GetScopeType() string {
+	if x != nil {
+		return x.ScopeType
+	}
+	return ""
+}
+
+func (x *RevokeRoleRequest) GetScopeId() string {
+	if x != nil {
+		return x.ScopeId
+	}
+	return ""
+}
+
+type RevokeRoleResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RevokeRoleResponse) Reset() {
+	*x = RevokeRoleResponse{}
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[241]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RevokeRoleResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RevokeRoleResponse) ProtoMessage() {}
+
+func (x *RevokeRoleResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_procmesh_v1_api_proto_msgTypes[241]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RevokeRoleResponse.ProtoReflect.Descriptor instead.
+func (*RevokeRoleResponse) Descriptor() ([]byte, []int) {
+	return file_proto_procmesh_v1_api_proto_rawDescGZIP(), []int{241}
+}
+
 var File_proto_procmesh_v1_api_proto protoreflect.FileDescriptor
 
 const file_proto_procmesh_v1_api_proto_rawDesc = "" +
@@ -16305,7 +16617,26 @@ const file_proto_procmesh_v1_api_proto_rawDesc = "" +
 	"\x06errors\x18\x05 \x03(\tR\x06errors\"!\n" +
 	"\x1fListRecoverableSnapshotsRequest\"^\n" +
 	" ListRecoverableSnapshotsResponse\x12:\n" +
-	"\tsnapshots\x18\x01 \x03(\v2\x1c.procmesh.v1.ReplicaSnapshotR\tsnapshots2\xc1\x06\n" +
+	"\tsnapshots\x18\x01 \x03(\v2\x1c.procmesh.v1.ReplicaSnapshotR\tsnapshots\"\x91\x01\n" +
+	"\x11UpdateRoleRequest\x12-\n" +
+	"\x04meta\x18\x01 \x01(\v2\x19.procmesh.v1.MutationMetaR\x04meta\x12\x17\n" +
+	"\arole_id\x18\x02 \x01(\tR\x06roleId\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\x12 \n" +
+	"\vpermissions\x18\x04 \x03(\tR\vpermissions\";\n" +
+	"\x12UpdateRoleResponse\x12%\n" +
+	"\x04role\x18\x01 \x01(\v2\x11.procmesh.v1.RoleR\x04role\"[\n" +
+	"\x11DeleteRoleRequest\x12-\n" +
+	"\x04meta\x18\x01 \x01(\v2\x19.procmesh.v1.MutationMetaR\x04meta\x12\x17\n" +
+	"\arole_id\x18\x02 \x01(\tR\x06roleId\"\x14\n" +
+	"\x12DeleteRoleResponse\"\xae\x01\n" +
+	"\x11RevokeRoleRequest\x12-\n" +
+	"\x04meta\x18\x01 \x01(\v2\x19.procmesh.v1.MutationMetaR\x04meta\x12\x17\n" +
+	"\auser_id\x18\x02 \x01(\tR\x06userId\x12\x17\n" +
+	"\arole_id\x18\x03 \x01(\tR\x06roleId\x12\x1d\n" +
+	"\n" +
+	"scope_type\x18\x04 \x01(\tR\tscopeType\x12\x19\n" +
+	"\bscope_id\x18\x05 \x01(\tR\ascopeId\"\x14\n" +
+	"\x12RevokeRoleResponse2\xc1\x06\n" +
 	"\x0eProcessService\x12V\n" +
 	"\rListProcesses\x12!.procmesh.v1.ListProcessesRequest\x1a\".procmesh.v1.ListProcessesResponse\x12M\n" +
 	"\n" +
@@ -16353,12 +16684,18 @@ const file_proto_procmesh_v1_api_proto_rawDesc = "" +
 	"\tListUsers\x12\x1d.procmesh.v1.ListUsersRequest\x1a\x1e.procmesh.v1.ListUsersResponse\x12M\n" +
 	"\n" +
 	"CreateUser\x12\x1e.procmesh.v1.CreateUserRequest\x1a\x1f.procmesh.v1.CreateUserResponse\x12P\n" +
-	"\vDisableUser\x12\x1f.procmesh.v1.DisableUserRequest\x1a .procmesh.v1.DisableUserResponse2\xf4\x01\n" +
+	"\vDisableUser\x12\x1f.procmesh.v1.DisableUserRequest\x1a .procmesh.v1.DisableUserResponse2\xe1\x03\n" +
 	"\vRoleService\x12J\n" +
 	"\tListRoles\x12\x1d.procmesh.v1.ListRolesRequest\x1a\x1e.procmesh.v1.ListRolesResponse\x12M\n" +
 	"\n" +
-	"CreateRole\x12\x1e.procmesh.v1.CreateRoleRequest\x1a\x1f.procmesh.v1.CreateRoleResponse\x12J\n" +
-	"\tGrantRole\x12\x1d.procmesh.v1.GrantRoleRequest\x1a\x1e.procmesh.v1.GrantRoleResponse2\xf9\x03\n" +
+	"CreateRole\x12\x1e.procmesh.v1.CreateRoleRequest\x1a\x1f.procmesh.v1.CreateRoleResponse\x12M\n" +
+	"\n" +
+	"UpdateRole\x12\x1e.procmesh.v1.UpdateRoleRequest\x1a\x1f.procmesh.v1.UpdateRoleResponse\x12M\n" +
+	"\n" +
+	"DeleteRole\x12\x1e.procmesh.v1.DeleteRoleRequest\x1a\x1f.procmesh.v1.DeleteRoleResponse\x12J\n" +
+	"\tGrantRole\x12\x1d.procmesh.v1.GrantRoleRequest\x1a\x1e.procmesh.v1.GrantRoleResponse\x12M\n" +
+	"\n" +
+	"RevokeRole\x12\x1e.procmesh.v1.RevokeRoleRequest\x1a\x1f.procmesh.v1.RevokeRoleResponse2\xf9\x03\n" +
 	"\fGroupService\x12\\\n" +
 	"\x0fListAgentGroups\x12#.procmesh.v1.ListAgentGroupsRequest\x1a$.procmesh.v1.ListAgentGroupsResponse\x12_\n" +
 	"\x10CreateAgentGroup\x12$.procmesh.v1.CreateAgentGroupRequest\x1a%.procmesh.v1.CreateAgentGroupResponse\x12_\n" +
@@ -16443,7 +16780,7 @@ func file_proto_procmesh_v1_api_proto_rawDescGZIP() []byte {
 	return file_proto_procmesh_v1_api_proto_rawDescData
 }
 
-var file_proto_procmesh_v1_api_proto_msgTypes = make([]protoimpl.MessageInfo, 244)
+var file_proto_procmesh_v1_api_proto_msgTypes = make([]protoimpl.MessageInfo, 250)
 var file_proto_procmesh_v1_api_proto_goTypes = []any{
 	(*ErrorInfo)(nil),                                 // 0: procmesh.v1.ErrorInfo
 	(*MutationMeta)(nil),                              // 1: procmesh.v1.MutationMeta
@@ -16681,18 +17018,24 @@ var file_proto_procmesh_v1_api_proto_goTypes = []any{
 	(*VerifyReplicaResponse)(nil),                     // 233: procmesh.v1.VerifyReplicaResponse
 	(*ListRecoverableSnapshotsRequest)(nil),           // 234: procmesh.v1.ListRecoverableSnapshotsRequest
 	(*ListRecoverableSnapshotsResponse)(nil),          // 235: procmesh.v1.ListRecoverableSnapshotsResponse
-	nil,                                               // 236: procmesh.v1.ProcessSpec.EnvironmentEntry
-	nil,                                               // 237: procmesh.v1.Node.LabelsEntry
-	nil,                                               // 238: procmesh.v1.ClusterOverviewResponse.VersionCountsEntry
-	nil,                                               // 239: procmesh.v1.PolicyDraft.TopologyConstraintsEntry
-	nil,                                               // 240: procmesh.v1.PolicyDraft.InboundLoadEntry
-	nil,                                               // 241: procmesh.v1.GeneratePolicyDraftRequest.TopologyConstraintsEntry
-	nil,                                               // 242: procmesh.v1.ReplicationPolicy.TopologyConstraintsEntry
-	nil,                                               // 243: procmesh.v1.UpdatePolicyRequest.TopologyConstraintsEntry
+	(*UpdateRoleRequest)(nil),                         // 236: procmesh.v1.UpdateRoleRequest
+	(*UpdateRoleResponse)(nil),                        // 237: procmesh.v1.UpdateRoleResponse
+	(*DeleteRoleRequest)(nil),                         // 238: procmesh.v1.DeleteRoleRequest
+	(*DeleteRoleResponse)(nil),                        // 239: procmesh.v1.DeleteRoleResponse
+	(*RevokeRoleRequest)(nil),                         // 240: procmesh.v1.RevokeRoleRequest
+	(*RevokeRoleResponse)(nil),                        // 241: procmesh.v1.RevokeRoleResponse
+	nil,                                               // 242: procmesh.v1.ProcessSpec.EnvironmentEntry
+	nil,                                               // 243: procmesh.v1.Node.LabelsEntry
+	nil,                                               // 244: procmesh.v1.ClusterOverviewResponse.VersionCountsEntry
+	nil,                                               // 245: procmesh.v1.PolicyDraft.TopologyConstraintsEntry
+	nil,                                               // 246: procmesh.v1.PolicyDraft.InboundLoadEntry
+	nil,                                               // 247: procmesh.v1.GeneratePolicyDraftRequest.TopologyConstraintsEntry
+	nil,                                               // 248: procmesh.v1.ReplicationPolicy.TopologyConstraintsEntry
+	nil,                                               // 249: procmesh.v1.UpdatePolicyRequest.TopologyConstraintsEntry
 }
 var file_proto_procmesh_v1_api_proto_depIdxs = []int32{
 	2,   // 0: procmesh.v1.RestartPolicy.backoff:type_name -> procmesh.v1.Backoff
-	236, // 1: procmesh.v1.ProcessSpec.environment:type_name -> procmesh.v1.ProcessSpec.EnvironmentEntry
+	242, // 1: procmesh.v1.ProcessSpec.environment:type_name -> procmesh.v1.ProcessSpec.EnvironmentEntry
 	3,   // 2: procmesh.v1.ProcessSpec.restart:type_name -> procmesh.v1.RestartPolicy
 	4,   // 3: procmesh.v1.ProcessSpec.health:type_name -> procmesh.v1.HealthCheck
 	5,   // 4: procmesh.v1.ProcessSpec.log:type_name -> procmesh.v1.LogPolicy
@@ -16717,7 +17060,7 @@ var file_proto_procmesh_v1_api_proto_depIdxs = []int32{
 	28,  // 23: procmesh.v1.HistoryResponse.revisions:type_name -> procmesh.v1.Revision
 	1,   // 24: procmesh.v1.RollbackRequest.meta:type_name -> procmesh.v1.MutationMeta
 	8,   // 25: procmesh.v1.RollbackResponse.spec:type_name -> procmesh.v1.ProcessSpec
-	237, // 26: procmesh.v1.Node.labels:type_name -> procmesh.v1.Node.LabelsEntry
+	243, // 26: procmesh.v1.Node.labels:type_name -> procmesh.v1.Node.LabelsEntry
 	39,  // 27: procmesh.v1.Node.resources:type_name -> procmesh.v1.ResourceSummary
 	40,  // 28: procmesh.v1.Node.processes:type_name -> procmesh.v1.ProcessSummary
 	41,  // 29: procmesh.v1.ListNodesResponse.nodes:type_name -> procmesh.v1.Node
@@ -16728,7 +17071,7 @@ var file_proto_procmesh_v1_api_proto_depIdxs = []int32{
 	1,   // 34: procmesh.v1.PromoteNodeRequest.meta:type_name -> procmesh.v1.MutationMeta
 	1,   // 35: procmesh.v1.InitClusterRequest.meta:type_name -> procmesh.v1.MutationMeta
 	1,   // 36: procmesh.v1.JoinClusterRequest.meta:type_name -> procmesh.v1.MutationMeta
-	238, // 37: procmesh.v1.ClusterOverviewResponse.version_counts:type_name -> procmesh.v1.ClusterOverviewResponse.VersionCountsEntry
+	244, // 37: procmesh.v1.ClusterOverviewResponse.version_counts:type_name -> procmesh.v1.ClusterOverviewResponse.VersionCountsEntry
 	1,   // 38: procmesh.v1.RequestJoinRequest.meta:type_name -> procmesh.v1.MutationMeta
 	1,   // 39: procmesh.v1.LogoutRequest.meta:type_name -> procmesh.v1.MutationMeta
 	1,   // 40: procmesh.v1.CreateAPITokenRequest.meta:type_name -> procmesh.v1.MutationMeta
@@ -16816,18 +17159,18 @@ var file_proto_procmesh_v1_api_proto_depIdxs = []int32{
 	165, // 122: procmesh.v1.GetClusterBackupTaskResponse.task:type_name -> procmesh.v1.ClusterBackupTask
 	202, // 123: procmesh.v1.GetTopologyResponse.nodes:type_name -> procmesh.v1.AgentTopologyNode
 	205, // 124: procmesh.v1.PolicyDraft.routes:type_name -> procmesh.v1.ReplicationRoute
-	239, // 125: procmesh.v1.PolicyDraft.topology_constraints:type_name -> procmesh.v1.PolicyDraft.TopologyConstraintsEntry
-	240, // 126: procmesh.v1.PolicyDraft.inbound_load:type_name -> procmesh.v1.PolicyDraft.InboundLoadEntry
-	241, // 127: procmesh.v1.GeneratePolicyDraftRequest.topology_constraints:type_name -> procmesh.v1.GeneratePolicyDraftRequest.TopologyConstraintsEntry
+	245, // 125: procmesh.v1.PolicyDraft.topology_constraints:type_name -> procmesh.v1.PolicyDraft.TopologyConstraintsEntry
+	246, // 126: procmesh.v1.PolicyDraft.inbound_load:type_name -> procmesh.v1.PolicyDraft.InboundLoadEntry
+	247, // 127: procmesh.v1.GeneratePolicyDraftRequest.topology_constraints:type_name -> procmesh.v1.GeneratePolicyDraftRequest.TopologyConstraintsEntry
 	206, // 128: procmesh.v1.GeneratePolicyDraftResponse.draft:type_name -> procmesh.v1.PolicyDraft
 	206, // 129: procmesh.v1.ApplyPolicyDraftRequest.draft:type_name -> procmesh.v1.PolicyDraft
 	1,   // 130: procmesh.v1.ApplyPolicyDraftRequest.meta:type_name -> procmesh.v1.MutationMeta
 	205, // 131: procmesh.v1.ReplicationPolicy.routes:type_name -> procmesh.v1.ReplicationRoute
-	242, // 132: procmesh.v1.ReplicationPolicy.topology_constraints:type_name -> procmesh.v1.ReplicationPolicy.TopologyConstraintsEntry
+	248, // 132: procmesh.v1.ReplicationPolicy.topology_constraints:type_name -> procmesh.v1.ReplicationPolicy.TopologyConstraintsEntry
 	211, // 133: procmesh.v1.ListPoliciesResponse.policies:type_name -> procmesh.v1.ReplicationPolicy
 	211, // 134: procmesh.v1.GetPolicyResponse.policy:type_name -> procmesh.v1.ReplicationPolicy
 	205, // 135: procmesh.v1.UpdatePolicyRequest.routes:type_name -> procmesh.v1.ReplicationRoute
-	243, // 136: procmesh.v1.UpdatePolicyRequest.topology_constraints:type_name -> procmesh.v1.UpdatePolicyRequest.TopologyConstraintsEntry
+	249, // 136: procmesh.v1.UpdatePolicyRequest.topology_constraints:type_name -> procmesh.v1.UpdatePolicyRequest.TopologyConstraintsEntry
 	1,   // 137: procmesh.v1.UpdatePolicyRequest.meta:type_name -> procmesh.v1.MutationMeta
 	1,   // 138: procmesh.v1.DeletePolicyRequest.meta:type_name -> procmesh.v1.MutationMeta
 	1,   // 139: procmesh.v1.StartRunRequest.meta:type_name -> procmesh.v1.MutationMeta
@@ -16837,209 +17180,219 @@ var file_proto_procmesh_v1_api_proto_depIdxs = []int32{
 	224, // 143: procmesh.v1.ListRunsResponse.runs:type_name -> procmesh.v1.ReplicationRun
 	1,   // 144: procmesh.v1.RetryFailedRoutesRequest.meta:type_name -> procmesh.v1.MutationMeta
 	231, // 145: procmesh.v1.ListRecoverableSnapshotsResponse.snapshots:type_name -> procmesh.v1.ReplicaSnapshot
-	15,  // 146: procmesh.v1.ProcessService.ListProcesses:input_type -> procmesh.v1.ListProcessesRequest
-	13,  // 147: procmesh.v1.ProcessService.GetProcess:input_type -> procmesh.v1.GetProcessRequest
-	11,  // 148: procmesh.v1.ProcessService.ApplyProcess:input_type -> procmesh.v1.ApplyProcessRequest
-	17,  // 149: procmesh.v1.ProcessService.DeleteProcess:input_type -> procmesh.v1.DeleteProcessRequest
-	19,  // 150: procmesh.v1.ProcessService.StartProcess:input_type -> procmesh.v1.ProcessRefRequest
-	19,  // 151: procmesh.v1.ProcessService.StopProcess:input_type -> procmesh.v1.ProcessRefRequest
-	19,  // 152: procmesh.v1.ProcessService.RestartProcess:input_type -> procmesh.v1.ProcessRefRequest
-	19,  // 153: procmesh.v1.ProcessService.KillProcess:input_type -> procmesh.v1.ProcessRefRequest
-	19,  // 154: procmesh.v1.ProcessService.ResetFailure:input_type -> procmesh.v1.ProcessRefRequest
-	21,  // 155: procmesh.v1.ProcessService.AdoptInstance:input_type -> procmesh.v1.AdoptRequest
-	23,  // 156: procmesh.v1.ConfigService.GetConfig:input_type -> procmesh.v1.GetConfigRequest
-	25,  // 157: procmesh.v1.ConfigService.UpdateConfig:input_type -> procmesh.v1.UpdateConfigRequest
-	27,  // 158: procmesh.v1.ConfigService.History:input_type -> procmesh.v1.HistoryRequest
-	30,  // 159: procmesh.v1.ConfigService.Diff:input_type -> procmesh.v1.DiffRequest
-	32,  // 160: procmesh.v1.ConfigService.Rollback:input_type -> procmesh.v1.RollbackRequest
-	34,  // 161: procmesh.v1.LogService.TailLogs:input_type -> procmesh.v1.TailLogsRequest
-	36,  // 162: procmesh.v1.LogService.StreamLogs:input_type -> procmesh.v1.StreamLogsRequest
-	37,  // 163: procmesh.v1.LogService.DownloadLogs:input_type -> procmesh.v1.DownloadLogsRequest
-	42,  // 164: procmesh.v1.NodeService.ListNodes:input_type -> procmesh.v1.ListNodesRequest
-	44,  // 165: procmesh.v1.NodeService.GetNode:input_type -> procmesh.v1.GetNodeRequest
-	46,  // 166: procmesh.v1.NodeService.CreateJoinToken:input_type -> procmesh.v1.CreateJoinTokenRequest
-	48,  // 167: procmesh.v1.NodeService.RevokeJoinToken:input_type -> procmesh.v1.RevokeJoinTokenRequest
-	50,  // 168: procmesh.v1.NodeService.RemoveNode:input_type -> procmesh.v1.RemoveNodeRequest
-	52,  // 169: procmesh.v1.NodeService.PromoteNode:input_type -> procmesh.v1.PromoteNodeRequest
-	54,  // 170: procmesh.v1.ClusterService.Init:input_type -> procmesh.v1.InitClusterRequest
-	56,  // 171: procmesh.v1.ClusterService.Join:input_type -> procmesh.v1.JoinClusterRequest
-	60,  // 172: procmesh.v1.ClusterService.RequestJoin:input_type -> procmesh.v1.RequestJoinRequest
-	58,  // 173: procmesh.v1.ClusterService.Overview:input_type -> procmesh.v1.ClusterOverviewRequest
-	62,  // 174: procmesh.v1.AuthService.Login:input_type -> procmesh.v1.LoginRequest
-	64,  // 175: procmesh.v1.AuthService.Logout:input_type -> procmesh.v1.LogoutRequest
-	66,  // 176: procmesh.v1.AuthService.CreateAPIToken:input_type -> procmesh.v1.CreateAPITokenRequest
-	68,  // 177: procmesh.v1.AuthService.RevokeAPIToken:input_type -> procmesh.v1.RevokeAPITokenRequest
-	70,  // 178: procmesh.v1.AuthService.GetMe:input_type -> procmesh.v1.GetMeRequest
-	73,  // 179: procmesh.v1.UserService.ListUsers:input_type -> procmesh.v1.ListUsersRequest
-	75,  // 180: procmesh.v1.UserService.CreateUser:input_type -> procmesh.v1.CreateUserRequest
-	77,  // 181: procmesh.v1.UserService.DisableUser:input_type -> procmesh.v1.DisableUserRequest
-	81,  // 182: procmesh.v1.RoleService.ListRoles:input_type -> procmesh.v1.ListRolesRequest
-	83,  // 183: procmesh.v1.RoleService.CreateRole:input_type -> procmesh.v1.CreateRoleRequest
-	85,  // 184: procmesh.v1.RoleService.GrantRole:input_type -> procmesh.v1.GrantRoleRequest
-	88,  // 185: procmesh.v1.GroupService.ListAgentGroups:input_type -> procmesh.v1.ListAgentGroupsRequest
-	90,  // 186: procmesh.v1.GroupService.CreateAgentGroup:input_type -> procmesh.v1.CreateAgentGroupRequest
-	92,  // 187: procmesh.v1.GroupService.DeleteAgentGroup:input_type -> procmesh.v1.DeleteAgentGroupRequest
-	94,  // 188: procmesh.v1.GroupService.AddAgentGroupMember:input_type -> procmesh.v1.AgentGroupMemberRequest
-	94,  // 189: procmesh.v1.GroupService.RemoveAgentGroupMember:input_type -> procmesh.v1.AgentGroupMemberRequest
-	98,  // 190: procmesh.v1.AuditService.ListAudit:input_type -> procmesh.v1.ListAuditRequest
-	100, // 191: procmesh.v1.MetricsService.GetAgentMetrics:input_type -> procmesh.v1.GetAgentMetricsRequest
-	103, // 192: procmesh.v1.MetricsService.GetProcessMetrics:input_type -> procmesh.v1.GetProcessMetricsRequest
-	108, // 193: procmesh.v1.MetricsService.GetNodeHistory:input_type -> procmesh.v1.GetNodeHistoryRequest
-	110, // 194: procmesh.v1.MetricsService.GetProcessHistory:input_type -> procmesh.v1.GetProcessHistoryRequest
-	117, // 195: procmesh.v1.BatchService.CreateBatch:input_type -> procmesh.v1.CreateBatchRequest
-	119, // 196: procmesh.v1.BatchService.GetBatch:input_type -> procmesh.v1.GetBatchRequest
-	121, // 197: procmesh.v1.BatchService.ListBatches:input_type -> procmesh.v1.ListBatchesRequest
-	123, // 198: procmesh.v1.BatchService.RetryFailed:input_type -> procmesh.v1.RetryBatchRequest
-	123, // 199: procmesh.v1.BatchService.ReplayTimeout:input_type -> procmesh.v1.RetryBatchRequest
-	125, // 200: procmesh.v1.BatchService.ExportBatch:input_type -> procmesh.v1.ExportBatchRequest
-	129, // 201: procmesh.v1.AlertService.ListAlerts:input_type -> procmesh.v1.ListAlertsRequest
-	131, // 202: procmesh.v1.AlertService.GetAlert:input_type -> procmesh.v1.GetAlertRequest
-	134, // 203: procmesh.v1.AlertService.ListAlertChannels:input_type -> procmesh.v1.ListAlertChannelsRequest
-	136, // 204: procmesh.v1.AlertService.PutAlertChannel:input_type -> procmesh.v1.PutAlertChannelRequest
-	138, // 205: procmesh.v1.AlertService.DeleteAlertChannel:input_type -> procmesh.v1.DeleteAlertChannelRequest
-	140, // 206: procmesh.v1.AlertService.TestAlertChannel:input_type -> procmesh.v1.TestAlertChannelRequest
-	143, // 207: procmesh.v1.AlertService.GetAlertPolicy:input_type -> procmesh.v1.GetAlertPolicyRequest
-	145, // 208: procmesh.v1.AlertService.PutAlertPolicy:input_type -> procmesh.v1.PutAlertPolicyRequest
-	150, // 209: procmesh.v1.BackupService.CreateBackup:input_type -> procmesh.v1.CreateBackupRequest
-	152, // 210: procmesh.v1.BackupService.ListBackups:input_type -> procmesh.v1.ListBackupsRequest
-	154, // 211: procmesh.v1.BackupService.GetBackup:input_type -> procmesh.v1.GetBackupRequest
-	156, // 212: procmesh.v1.BackupService.DeleteBackup:input_type -> procmesh.v1.DeleteBackupRequest
-	159, // 213: procmesh.v1.BackupService.RestoreBackup:input_type -> procmesh.v1.RestoreBackupRequest
-	162, // 214: procmesh.v1.BackupService.PutPeerSnapshot:input_type -> procmesh.v1.PutPeerSnapshotRequest
-	168, // 215: procmesh.v1.ClusterBackupService.CreatePolicy:input_type -> procmesh.v1.CreateClusterBackupPolicyRequest
-	170, // 216: procmesh.v1.ClusterBackupService.UpdatePolicy:input_type -> procmesh.v1.UpdateClusterBackupPolicyRequest
-	172, // 217: procmesh.v1.ClusterBackupService.DeletePolicy:input_type -> procmesh.v1.DeleteClusterBackupPolicyRequest
-	174, // 218: procmesh.v1.ClusterBackupService.ListPolicies:input_type -> procmesh.v1.ListClusterBackupPoliciesRequest
-	176, // 219: procmesh.v1.ClusterBackupService.ValidatePolicy:input_type -> procmesh.v1.ValidateClusterBackupPolicyRequest
-	178, // 220: procmesh.v1.ClusterBackupService.StartRun:input_type -> procmesh.v1.StartClusterBackupRunRequest
-	180, // 221: procmesh.v1.ClusterBackupService.GetRun:input_type -> procmesh.v1.GetClusterBackupRunRequest
-	182, // 222: procmesh.v1.ClusterBackupService.ListRuns:input_type -> procmesh.v1.ListClusterBackupRunsRequest
-	184, // 223: procmesh.v1.ClusterBackupService.RetryFailedTasks:input_type -> procmesh.v1.RetryFailedClusterBackupTasksRequest
-	186, // 224: procmesh.v1.ClusterBackupService.GetDestinationHealth:input_type -> procmesh.v1.GetClusterBackupDestinationHealthRequest
-	188, // 225: procmesh.v1.ClusterBackupAgentService.RunTask:input_type -> procmesh.v1.RunClusterBackupTaskRequest
-	190, // 226: procmesh.v1.ClusterBackupAgentService.GetTask:input_type -> procmesh.v1.GetClusterBackupTaskRequest
-	192, // 227: procmesh.v1.PeerReplicationService.PutSnapshot:input_type -> procmesh.v1.PutSnapshotRequest
-	194, // 228: procmesh.v1.PeerReplicationService.ReplicateSnapshot:input_type -> procmesh.v1.ReplicateSnapshotRequest
-	196, // 229: procmesh.v1.PeerReplicationService.CheckSnapshot:input_type -> procmesh.v1.CheckSnapshotRequest
-	198, // 230: procmesh.v1.PeerReplicationService.DeleteSnapshot:input_type -> procmesh.v1.DeleteSnapshotRequest
-	200, // 231: procmesh.v1.PeerReplicationService.GetReplicaMetadata:input_type -> procmesh.v1.GetReplicaMetadataRequest
-	203, // 232: procmesh.v1.DisasterReplicationService.GetTopology:input_type -> procmesh.v1.GetTopologyRequest
-	207, // 233: procmesh.v1.DisasterReplicationService.GeneratePolicyDraft:input_type -> procmesh.v1.GeneratePolicyDraftRequest
-	209, // 234: procmesh.v1.DisasterReplicationService.ApplyPolicyDraft:input_type -> procmesh.v1.ApplyPolicyDraftRequest
-	212, // 235: procmesh.v1.DisasterReplicationService.ListPolicies:input_type -> procmesh.v1.ListPoliciesRequest
-	214, // 236: procmesh.v1.DisasterReplicationService.GetPolicy:input_type -> procmesh.v1.GetPolicyRequest
-	216, // 237: procmesh.v1.DisasterReplicationService.UpdatePolicy:input_type -> procmesh.v1.UpdatePolicyRequest
-	218, // 238: procmesh.v1.DisasterReplicationService.DeletePolicy:input_type -> procmesh.v1.DeletePolicyRequest
-	220, // 239: procmesh.v1.DisasterReplicationService.StartRun:input_type -> procmesh.v1.StartRunRequest
-	225, // 240: procmesh.v1.DisasterReplicationService.GetRun:input_type -> procmesh.v1.GetRunRequest
-	227, // 241: procmesh.v1.DisasterReplicationService.ListRuns:input_type -> procmesh.v1.ListRunsRequest
-	229, // 242: procmesh.v1.DisasterReplicationService.RetryFailedRoutes:input_type -> procmesh.v1.RetryFailedRoutesRequest
-	232, // 243: procmesh.v1.DisasterReplicationService.VerifyReplica:input_type -> procmesh.v1.VerifyReplicaRequest
-	234, // 244: procmesh.v1.DisasterReplicationService.ListRecoverableSnapshots:input_type -> procmesh.v1.ListRecoverableSnapshotsRequest
-	16,  // 245: procmesh.v1.ProcessService.ListProcesses:output_type -> procmesh.v1.ListProcessesResponse
-	14,  // 246: procmesh.v1.ProcessService.GetProcess:output_type -> procmesh.v1.GetProcessResponse
-	12,  // 247: procmesh.v1.ProcessService.ApplyProcess:output_type -> procmesh.v1.ApplyProcessResponse
-	18,  // 248: procmesh.v1.ProcessService.DeleteProcess:output_type -> procmesh.v1.DeleteProcessResponse
-	20,  // 249: procmesh.v1.ProcessService.StartProcess:output_type -> procmesh.v1.ProcessRefResponse
-	20,  // 250: procmesh.v1.ProcessService.StopProcess:output_type -> procmesh.v1.ProcessRefResponse
-	20,  // 251: procmesh.v1.ProcessService.RestartProcess:output_type -> procmesh.v1.ProcessRefResponse
-	20,  // 252: procmesh.v1.ProcessService.KillProcess:output_type -> procmesh.v1.ProcessRefResponse
-	20,  // 253: procmesh.v1.ProcessService.ResetFailure:output_type -> procmesh.v1.ProcessRefResponse
-	22,  // 254: procmesh.v1.ProcessService.AdoptInstance:output_type -> procmesh.v1.AdoptResponse
-	24,  // 255: procmesh.v1.ConfigService.GetConfig:output_type -> procmesh.v1.GetConfigResponse
-	26,  // 256: procmesh.v1.ConfigService.UpdateConfig:output_type -> procmesh.v1.UpdateConfigResponse
-	29,  // 257: procmesh.v1.ConfigService.History:output_type -> procmesh.v1.HistoryResponse
-	31,  // 258: procmesh.v1.ConfigService.Diff:output_type -> procmesh.v1.DiffResponse
-	33,  // 259: procmesh.v1.ConfigService.Rollback:output_type -> procmesh.v1.RollbackResponse
-	35,  // 260: procmesh.v1.LogService.TailLogs:output_type -> procmesh.v1.TailLogsResponse
-	38,  // 261: procmesh.v1.LogService.StreamLogs:output_type -> procmesh.v1.LogChunk
-	38,  // 262: procmesh.v1.LogService.DownloadLogs:output_type -> procmesh.v1.LogChunk
-	43,  // 263: procmesh.v1.NodeService.ListNodes:output_type -> procmesh.v1.ListNodesResponse
-	45,  // 264: procmesh.v1.NodeService.GetNode:output_type -> procmesh.v1.GetNodeResponse
-	47,  // 265: procmesh.v1.NodeService.CreateJoinToken:output_type -> procmesh.v1.CreateJoinTokenResponse
-	49,  // 266: procmesh.v1.NodeService.RevokeJoinToken:output_type -> procmesh.v1.RevokeJoinTokenResponse
-	51,  // 267: procmesh.v1.NodeService.RemoveNode:output_type -> procmesh.v1.RemoveNodeResponse
-	53,  // 268: procmesh.v1.NodeService.PromoteNode:output_type -> procmesh.v1.PromoteNodeResponse
-	55,  // 269: procmesh.v1.ClusterService.Init:output_type -> procmesh.v1.InitClusterResponse
-	57,  // 270: procmesh.v1.ClusterService.Join:output_type -> procmesh.v1.JoinClusterResponse
-	61,  // 271: procmesh.v1.ClusterService.RequestJoin:output_type -> procmesh.v1.RequestJoinResponse
-	59,  // 272: procmesh.v1.ClusterService.Overview:output_type -> procmesh.v1.ClusterOverviewResponse
-	63,  // 273: procmesh.v1.AuthService.Login:output_type -> procmesh.v1.LoginResponse
-	65,  // 274: procmesh.v1.AuthService.Logout:output_type -> procmesh.v1.LogoutResponse
-	67,  // 275: procmesh.v1.AuthService.CreateAPIToken:output_type -> procmesh.v1.CreateAPITokenResponse
-	69,  // 276: procmesh.v1.AuthService.RevokeAPIToken:output_type -> procmesh.v1.RevokeAPITokenResponse
-	71,  // 277: procmesh.v1.AuthService.GetMe:output_type -> procmesh.v1.GetMeResponse
-	74,  // 278: procmesh.v1.UserService.ListUsers:output_type -> procmesh.v1.ListUsersResponse
-	76,  // 279: procmesh.v1.UserService.CreateUser:output_type -> procmesh.v1.CreateUserResponse
-	78,  // 280: procmesh.v1.UserService.DisableUser:output_type -> procmesh.v1.DisableUserResponse
-	82,  // 281: procmesh.v1.RoleService.ListRoles:output_type -> procmesh.v1.ListRolesResponse
-	84,  // 282: procmesh.v1.RoleService.CreateRole:output_type -> procmesh.v1.CreateRoleResponse
-	86,  // 283: procmesh.v1.RoleService.GrantRole:output_type -> procmesh.v1.GrantRoleResponse
-	89,  // 284: procmesh.v1.GroupService.ListAgentGroups:output_type -> procmesh.v1.ListAgentGroupsResponse
-	91,  // 285: procmesh.v1.GroupService.CreateAgentGroup:output_type -> procmesh.v1.CreateAgentGroupResponse
-	93,  // 286: procmesh.v1.GroupService.DeleteAgentGroup:output_type -> procmesh.v1.DeleteAgentGroupResponse
-	95,  // 287: procmesh.v1.GroupService.AddAgentGroupMember:output_type -> procmesh.v1.AgentGroupMemberResponse
-	95,  // 288: procmesh.v1.GroupService.RemoveAgentGroupMember:output_type -> procmesh.v1.AgentGroupMemberResponse
-	99,  // 289: procmesh.v1.AuditService.ListAudit:output_type -> procmesh.v1.ListAuditResponse
-	102, // 290: procmesh.v1.MetricsService.GetAgentMetrics:output_type -> procmesh.v1.GetAgentMetricsResponse
-	105, // 291: procmesh.v1.MetricsService.GetProcessMetrics:output_type -> procmesh.v1.GetProcessMetricsResponse
-	109, // 292: procmesh.v1.MetricsService.GetNodeHistory:output_type -> procmesh.v1.GetNodeHistoryResponse
-	111, // 293: procmesh.v1.MetricsService.GetProcessHistory:output_type -> procmesh.v1.GetProcessHistoryResponse
-	118, // 294: procmesh.v1.BatchService.CreateBatch:output_type -> procmesh.v1.CreateBatchResponse
-	120, // 295: procmesh.v1.BatchService.GetBatch:output_type -> procmesh.v1.GetBatchResponse
-	122, // 296: procmesh.v1.BatchService.ListBatches:output_type -> procmesh.v1.ListBatchesResponse
-	124, // 297: procmesh.v1.BatchService.RetryFailed:output_type -> procmesh.v1.RetryBatchResponse
-	124, // 298: procmesh.v1.BatchService.ReplayTimeout:output_type -> procmesh.v1.RetryBatchResponse
-	126, // 299: procmesh.v1.BatchService.ExportBatch:output_type -> procmesh.v1.ExportBatchResponse
-	130, // 300: procmesh.v1.AlertService.ListAlerts:output_type -> procmesh.v1.ListAlertsResponse
-	132, // 301: procmesh.v1.AlertService.GetAlert:output_type -> procmesh.v1.GetAlertResponse
-	135, // 302: procmesh.v1.AlertService.ListAlertChannels:output_type -> procmesh.v1.ListAlertChannelsResponse
-	137, // 303: procmesh.v1.AlertService.PutAlertChannel:output_type -> procmesh.v1.PutAlertChannelResponse
-	139, // 304: procmesh.v1.AlertService.DeleteAlertChannel:output_type -> procmesh.v1.DeleteAlertChannelResponse
-	141, // 305: procmesh.v1.AlertService.TestAlertChannel:output_type -> procmesh.v1.TestAlertChannelResponse
-	144, // 306: procmesh.v1.AlertService.GetAlertPolicy:output_type -> procmesh.v1.GetAlertPolicyResponse
-	146, // 307: procmesh.v1.AlertService.PutAlertPolicy:output_type -> procmesh.v1.PutAlertPolicyResponse
-	151, // 308: procmesh.v1.BackupService.CreateBackup:output_type -> procmesh.v1.CreateBackupResponse
-	153, // 309: procmesh.v1.BackupService.ListBackups:output_type -> procmesh.v1.ListBackupsResponse
-	155, // 310: procmesh.v1.BackupService.GetBackup:output_type -> procmesh.v1.GetBackupResponse
-	157, // 311: procmesh.v1.BackupService.DeleteBackup:output_type -> procmesh.v1.DeleteBackupResponse
-	161, // 312: procmesh.v1.BackupService.RestoreBackup:output_type -> procmesh.v1.RestoreBackupResponse
-	163, // 313: procmesh.v1.BackupService.PutPeerSnapshot:output_type -> procmesh.v1.PutPeerSnapshotResponse
-	169, // 314: procmesh.v1.ClusterBackupService.CreatePolicy:output_type -> procmesh.v1.CreateClusterBackupPolicyResponse
-	171, // 315: procmesh.v1.ClusterBackupService.UpdatePolicy:output_type -> procmesh.v1.UpdateClusterBackupPolicyResponse
-	173, // 316: procmesh.v1.ClusterBackupService.DeletePolicy:output_type -> procmesh.v1.DeleteClusterBackupPolicyResponse
-	175, // 317: procmesh.v1.ClusterBackupService.ListPolicies:output_type -> procmesh.v1.ListClusterBackupPoliciesResponse
-	177, // 318: procmesh.v1.ClusterBackupService.ValidatePolicy:output_type -> procmesh.v1.ValidateClusterBackupPolicyResponse
-	179, // 319: procmesh.v1.ClusterBackupService.StartRun:output_type -> procmesh.v1.StartClusterBackupRunResponse
-	181, // 320: procmesh.v1.ClusterBackupService.GetRun:output_type -> procmesh.v1.GetClusterBackupRunResponse
-	183, // 321: procmesh.v1.ClusterBackupService.ListRuns:output_type -> procmesh.v1.ListClusterBackupRunsResponse
-	185, // 322: procmesh.v1.ClusterBackupService.RetryFailedTasks:output_type -> procmesh.v1.RetryFailedClusterBackupTasksResponse
-	187, // 323: procmesh.v1.ClusterBackupService.GetDestinationHealth:output_type -> procmesh.v1.GetClusterBackupDestinationHealthResponse
-	189, // 324: procmesh.v1.ClusterBackupAgentService.RunTask:output_type -> procmesh.v1.RunClusterBackupTaskResponse
-	191, // 325: procmesh.v1.ClusterBackupAgentService.GetTask:output_type -> procmesh.v1.GetClusterBackupTaskResponse
-	193, // 326: procmesh.v1.PeerReplicationService.PutSnapshot:output_type -> procmesh.v1.PutSnapshotResponse
-	195, // 327: procmesh.v1.PeerReplicationService.ReplicateSnapshot:output_type -> procmesh.v1.ReplicateSnapshotResponse
-	197, // 328: procmesh.v1.PeerReplicationService.CheckSnapshot:output_type -> procmesh.v1.CheckSnapshotResponse
-	199, // 329: procmesh.v1.PeerReplicationService.DeleteSnapshot:output_type -> procmesh.v1.DeleteSnapshotResponse
-	201, // 330: procmesh.v1.PeerReplicationService.GetReplicaMetadata:output_type -> procmesh.v1.GetReplicaMetadataResponse
-	204, // 331: procmesh.v1.DisasterReplicationService.GetTopology:output_type -> procmesh.v1.GetTopologyResponse
-	208, // 332: procmesh.v1.DisasterReplicationService.GeneratePolicyDraft:output_type -> procmesh.v1.GeneratePolicyDraftResponse
-	210, // 333: procmesh.v1.DisasterReplicationService.ApplyPolicyDraft:output_type -> procmesh.v1.ApplyPolicyDraftResponse
-	213, // 334: procmesh.v1.DisasterReplicationService.ListPolicies:output_type -> procmesh.v1.ListPoliciesResponse
-	215, // 335: procmesh.v1.DisasterReplicationService.GetPolicy:output_type -> procmesh.v1.GetPolicyResponse
-	217, // 336: procmesh.v1.DisasterReplicationService.UpdatePolicy:output_type -> procmesh.v1.UpdatePolicyResponse
-	219, // 337: procmesh.v1.DisasterReplicationService.DeletePolicy:output_type -> procmesh.v1.DeletePolicyResponse
-	222, // 338: procmesh.v1.DisasterReplicationService.StartRun:output_type -> procmesh.v1.StartRunResponse
-	226, // 339: procmesh.v1.DisasterReplicationService.GetRun:output_type -> procmesh.v1.GetRunResponse
-	228, // 340: procmesh.v1.DisasterReplicationService.ListRuns:output_type -> procmesh.v1.ListRunsResponse
-	230, // 341: procmesh.v1.DisasterReplicationService.RetryFailedRoutes:output_type -> procmesh.v1.RetryFailedRoutesResponse
-	233, // 342: procmesh.v1.DisasterReplicationService.VerifyReplica:output_type -> procmesh.v1.VerifyReplicaResponse
-	235, // 343: procmesh.v1.DisasterReplicationService.ListRecoverableSnapshots:output_type -> procmesh.v1.ListRecoverableSnapshotsResponse
-	245, // [245:344] is the sub-list for method output_type
-	146, // [146:245] is the sub-list for method input_type
-	146, // [146:146] is the sub-list for extension type_name
-	146, // [146:146] is the sub-list for extension extendee
-	0,   // [0:146] is the sub-list for field type_name
+	1,   // 146: procmesh.v1.UpdateRoleRequest.meta:type_name -> procmesh.v1.MutationMeta
+	79,  // 147: procmesh.v1.UpdateRoleResponse.role:type_name -> procmesh.v1.Role
+	1,   // 148: procmesh.v1.DeleteRoleRequest.meta:type_name -> procmesh.v1.MutationMeta
+	1,   // 149: procmesh.v1.RevokeRoleRequest.meta:type_name -> procmesh.v1.MutationMeta
+	15,  // 150: procmesh.v1.ProcessService.ListProcesses:input_type -> procmesh.v1.ListProcessesRequest
+	13,  // 151: procmesh.v1.ProcessService.GetProcess:input_type -> procmesh.v1.GetProcessRequest
+	11,  // 152: procmesh.v1.ProcessService.ApplyProcess:input_type -> procmesh.v1.ApplyProcessRequest
+	17,  // 153: procmesh.v1.ProcessService.DeleteProcess:input_type -> procmesh.v1.DeleteProcessRequest
+	19,  // 154: procmesh.v1.ProcessService.StartProcess:input_type -> procmesh.v1.ProcessRefRequest
+	19,  // 155: procmesh.v1.ProcessService.StopProcess:input_type -> procmesh.v1.ProcessRefRequest
+	19,  // 156: procmesh.v1.ProcessService.RestartProcess:input_type -> procmesh.v1.ProcessRefRequest
+	19,  // 157: procmesh.v1.ProcessService.KillProcess:input_type -> procmesh.v1.ProcessRefRequest
+	19,  // 158: procmesh.v1.ProcessService.ResetFailure:input_type -> procmesh.v1.ProcessRefRequest
+	21,  // 159: procmesh.v1.ProcessService.AdoptInstance:input_type -> procmesh.v1.AdoptRequest
+	23,  // 160: procmesh.v1.ConfigService.GetConfig:input_type -> procmesh.v1.GetConfigRequest
+	25,  // 161: procmesh.v1.ConfigService.UpdateConfig:input_type -> procmesh.v1.UpdateConfigRequest
+	27,  // 162: procmesh.v1.ConfigService.History:input_type -> procmesh.v1.HistoryRequest
+	30,  // 163: procmesh.v1.ConfigService.Diff:input_type -> procmesh.v1.DiffRequest
+	32,  // 164: procmesh.v1.ConfigService.Rollback:input_type -> procmesh.v1.RollbackRequest
+	34,  // 165: procmesh.v1.LogService.TailLogs:input_type -> procmesh.v1.TailLogsRequest
+	36,  // 166: procmesh.v1.LogService.StreamLogs:input_type -> procmesh.v1.StreamLogsRequest
+	37,  // 167: procmesh.v1.LogService.DownloadLogs:input_type -> procmesh.v1.DownloadLogsRequest
+	42,  // 168: procmesh.v1.NodeService.ListNodes:input_type -> procmesh.v1.ListNodesRequest
+	44,  // 169: procmesh.v1.NodeService.GetNode:input_type -> procmesh.v1.GetNodeRequest
+	46,  // 170: procmesh.v1.NodeService.CreateJoinToken:input_type -> procmesh.v1.CreateJoinTokenRequest
+	48,  // 171: procmesh.v1.NodeService.RevokeJoinToken:input_type -> procmesh.v1.RevokeJoinTokenRequest
+	50,  // 172: procmesh.v1.NodeService.RemoveNode:input_type -> procmesh.v1.RemoveNodeRequest
+	52,  // 173: procmesh.v1.NodeService.PromoteNode:input_type -> procmesh.v1.PromoteNodeRequest
+	54,  // 174: procmesh.v1.ClusterService.Init:input_type -> procmesh.v1.InitClusterRequest
+	56,  // 175: procmesh.v1.ClusterService.Join:input_type -> procmesh.v1.JoinClusterRequest
+	60,  // 176: procmesh.v1.ClusterService.RequestJoin:input_type -> procmesh.v1.RequestJoinRequest
+	58,  // 177: procmesh.v1.ClusterService.Overview:input_type -> procmesh.v1.ClusterOverviewRequest
+	62,  // 178: procmesh.v1.AuthService.Login:input_type -> procmesh.v1.LoginRequest
+	64,  // 179: procmesh.v1.AuthService.Logout:input_type -> procmesh.v1.LogoutRequest
+	66,  // 180: procmesh.v1.AuthService.CreateAPIToken:input_type -> procmesh.v1.CreateAPITokenRequest
+	68,  // 181: procmesh.v1.AuthService.RevokeAPIToken:input_type -> procmesh.v1.RevokeAPITokenRequest
+	70,  // 182: procmesh.v1.AuthService.GetMe:input_type -> procmesh.v1.GetMeRequest
+	73,  // 183: procmesh.v1.UserService.ListUsers:input_type -> procmesh.v1.ListUsersRequest
+	75,  // 184: procmesh.v1.UserService.CreateUser:input_type -> procmesh.v1.CreateUserRequest
+	77,  // 185: procmesh.v1.UserService.DisableUser:input_type -> procmesh.v1.DisableUserRequest
+	81,  // 186: procmesh.v1.RoleService.ListRoles:input_type -> procmesh.v1.ListRolesRequest
+	83,  // 187: procmesh.v1.RoleService.CreateRole:input_type -> procmesh.v1.CreateRoleRequest
+	236, // 188: procmesh.v1.RoleService.UpdateRole:input_type -> procmesh.v1.UpdateRoleRequest
+	238, // 189: procmesh.v1.RoleService.DeleteRole:input_type -> procmesh.v1.DeleteRoleRequest
+	85,  // 190: procmesh.v1.RoleService.GrantRole:input_type -> procmesh.v1.GrantRoleRequest
+	240, // 191: procmesh.v1.RoleService.RevokeRole:input_type -> procmesh.v1.RevokeRoleRequest
+	88,  // 192: procmesh.v1.GroupService.ListAgentGroups:input_type -> procmesh.v1.ListAgentGroupsRequest
+	90,  // 193: procmesh.v1.GroupService.CreateAgentGroup:input_type -> procmesh.v1.CreateAgentGroupRequest
+	92,  // 194: procmesh.v1.GroupService.DeleteAgentGroup:input_type -> procmesh.v1.DeleteAgentGroupRequest
+	94,  // 195: procmesh.v1.GroupService.AddAgentGroupMember:input_type -> procmesh.v1.AgentGroupMemberRequest
+	94,  // 196: procmesh.v1.GroupService.RemoveAgentGroupMember:input_type -> procmesh.v1.AgentGroupMemberRequest
+	98,  // 197: procmesh.v1.AuditService.ListAudit:input_type -> procmesh.v1.ListAuditRequest
+	100, // 198: procmesh.v1.MetricsService.GetAgentMetrics:input_type -> procmesh.v1.GetAgentMetricsRequest
+	103, // 199: procmesh.v1.MetricsService.GetProcessMetrics:input_type -> procmesh.v1.GetProcessMetricsRequest
+	108, // 200: procmesh.v1.MetricsService.GetNodeHistory:input_type -> procmesh.v1.GetNodeHistoryRequest
+	110, // 201: procmesh.v1.MetricsService.GetProcessHistory:input_type -> procmesh.v1.GetProcessHistoryRequest
+	117, // 202: procmesh.v1.BatchService.CreateBatch:input_type -> procmesh.v1.CreateBatchRequest
+	119, // 203: procmesh.v1.BatchService.GetBatch:input_type -> procmesh.v1.GetBatchRequest
+	121, // 204: procmesh.v1.BatchService.ListBatches:input_type -> procmesh.v1.ListBatchesRequest
+	123, // 205: procmesh.v1.BatchService.RetryFailed:input_type -> procmesh.v1.RetryBatchRequest
+	123, // 206: procmesh.v1.BatchService.ReplayTimeout:input_type -> procmesh.v1.RetryBatchRequest
+	125, // 207: procmesh.v1.BatchService.ExportBatch:input_type -> procmesh.v1.ExportBatchRequest
+	129, // 208: procmesh.v1.AlertService.ListAlerts:input_type -> procmesh.v1.ListAlertsRequest
+	131, // 209: procmesh.v1.AlertService.GetAlert:input_type -> procmesh.v1.GetAlertRequest
+	134, // 210: procmesh.v1.AlertService.ListAlertChannels:input_type -> procmesh.v1.ListAlertChannelsRequest
+	136, // 211: procmesh.v1.AlertService.PutAlertChannel:input_type -> procmesh.v1.PutAlertChannelRequest
+	138, // 212: procmesh.v1.AlertService.DeleteAlertChannel:input_type -> procmesh.v1.DeleteAlertChannelRequest
+	140, // 213: procmesh.v1.AlertService.TestAlertChannel:input_type -> procmesh.v1.TestAlertChannelRequest
+	143, // 214: procmesh.v1.AlertService.GetAlertPolicy:input_type -> procmesh.v1.GetAlertPolicyRequest
+	145, // 215: procmesh.v1.AlertService.PutAlertPolicy:input_type -> procmesh.v1.PutAlertPolicyRequest
+	150, // 216: procmesh.v1.BackupService.CreateBackup:input_type -> procmesh.v1.CreateBackupRequest
+	152, // 217: procmesh.v1.BackupService.ListBackups:input_type -> procmesh.v1.ListBackupsRequest
+	154, // 218: procmesh.v1.BackupService.GetBackup:input_type -> procmesh.v1.GetBackupRequest
+	156, // 219: procmesh.v1.BackupService.DeleteBackup:input_type -> procmesh.v1.DeleteBackupRequest
+	159, // 220: procmesh.v1.BackupService.RestoreBackup:input_type -> procmesh.v1.RestoreBackupRequest
+	162, // 221: procmesh.v1.BackupService.PutPeerSnapshot:input_type -> procmesh.v1.PutPeerSnapshotRequest
+	168, // 222: procmesh.v1.ClusterBackupService.CreatePolicy:input_type -> procmesh.v1.CreateClusterBackupPolicyRequest
+	170, // 223: procmesh.v1.ClusterBackupService.UpdatePolicy:input_type -> procmesh.v1.UpdateClusterBackupPolicyRequest
+	172, // 224: procmesh.v1.ClusterBackupService.DeletePolicy:input_type -> procmesh.v1.DeleteClusterBackupPolicyRequest
+	174, // 225: procmesh.v1.ClusterBackupService.ListPolicies:input_type -> procmesh.v1.ListClusterBackupPoliciesRequest
+	176, // 226: procmesh.v1.ClusterBackupService.ValidatePolicy:input_type -> procmesh.v1.ValidateClusterBackupPolicyRequest
+	178, // 227: procmesh.v1.ClusterBackupService.StartRun:input_type -> procmesh.v1.StartClusterBackupRunRequest
+	180, // 228: procmesh.v1.ClusterBackupService.GetRun:input_type -> procmesh.v1.GetClusterBackupRunRequest
+	182, // 229: procmesh.v1.ClusterBackupService.ListRuns:input_type -> procmesh.v1.ListClusterBackupRunsRequest
+	184, // 230: procmesh.v1.ClusterBackupService.RetryFailedTasks:input_type -> procmesh.v1.RetryFailedClusterBackupTasksRequest
+	186, // 231: procmesh.v1.ClusterBackupService.GetDestinationHealth:input_type -> procmesh.v1.GetClusterBackupDestinationHealthRequest
+	188, // 232: procmesh.v1.ClusterBackupAgentService.RunTask:input_type -> procmesh.v1.RunClusterBackupTaskRequest
+	190, // 233: procmesh.v1.ClusterBackupAgentService.GetTask:input_type -> procmesh.v1.GetClusterBackupTaskRequest
+	192, // 234: procmesh.v1.PeerReplicationService.PutSnapshot:input_type -> procmesh.v1.PutSnapshotRequest
+	194, // 235: procmesh.v1.PeerReplicationService.ReplicateSnapshot:input_type -> procmesh.v1.ReplicateSnapshotRequest
+	196, // 236: procmesh.v1.PeerReplicationService.CheckSnapshot:input_type -> procmesh.v1.CheckSnapshotRequest
+	198, // 237: procmesh.v1.PeerReplicationService.DeleteSnapshot:input_type -> procmesh.v1.DeleteSnapshotRequest
+	200, // 238: procmesh.v1.PeerReplicationService.GetReplicaMetadata:input_type -> procmesh.v1.GetReplicaMetadataRequest
+	203, // 239: procmesh.v1.DisasterReplicationService.GetTopology:input_type -> procmesh.v1.GetTopologyRequest
+	207, // 240: procmesh.v1.DisasterReplicationService.GeneratePolicyDraft:input_type -> procmesh.v1.GeneratePolicyDraftRequest
+	209, // 241: procmesh.v1.DisasterReplicationService.ApplyPolicyDraft:input_type -> procmesh.v1.ApplyPolicyDraftRequest
+	212, // 242: procmesh.v1.DisasterReplicationService.ListPolicies:input_type -> procmesh.v1.ListPoliciesRequest
+	214, // 243: procmesh.v1.DisasterReplicationService.GetPolicy:input_type -> procmesh.v1.GetPolicyRequest
+	216, // 244: procmesh.v1.DisasterReplicationService.UpdatePolicy:input_type -> procmesh.v1.UpdatePolicyRequest
+	218, // 245: procmesh.v1.DisasterReplicationService.DeletePolicy:input_type -> procmesh.v1.DeletePolicyRequest
+	220, // 246: procmesh.v1.DisasterReplicationService.StartRun:input_type -> procmesh.v1.StartRunRequest
+	225, // 247: procmesh.v1.DisasterReplicationService.GetRun:input_type -> procmesh.v1.GetRunRequest
+	227, // 248: procmesh.v1.DisasterReplicationService.ListRuns:input_type -> procmesh.v1.ListRunsRequest
+	229, // 249: procmesh.v1.DisasterReplicationService.RetryFailedRoutes:input_type -> procmesh.v1.RetryFailedRoutesRequest
+	232, // 250: procmesh.v1.DisasterReplicationService.VerifyReplica:input_type -> procmesh.v1.VerifyReplicaRequest
+	234, // 251: procmesh.v1.DisasterReplicationService.ListRecoverableSnapshots:input_type -> procmesh.v1.ListRecoverableSnapshotsRequest
+	16,  // 252: procmesh.v1.ProcessService.ListProcesses:output_type -> procmesh.v1.ListProcessesResponse
+	14,  // 253: procmesh.v1.ProcessService.GetProcess:output_type -> procmesh.v1.GetProcessResponse
+	12,  // 254: procmesh.v1.ProcessService.ApplyProcess:output_type -> procmesh.v1.ApplyProcessResponse
+	18,  // 255: procmesh.v1.ProcessService.DeleteProcess:output_type -> procmesh.v1.DeleteProcessResponse
+	20,  // 256: procmesh.v1.ProcessService.StartProcess:output_type -> procmesh.v1.ProcessRefResponse
+	20,  // 257: procmesh.v1.ProcessService.StopProcess:output_type -> procmesh.v1.ProcessRefResponse
+	20,  // 258: procmesh.v1.ProcessService.RestartProcess:output_type -> procmesh.v1.ProcessRefResponse
+	20,  // 259: procmesh.v1.ProcessService.KillProcess:output_type -> procmesh.v1.ProcessRefResponse
+	20,  // 260: procmesh.v1.ProcessService.ResetFailure:output_type -> procmesh.v1.ProcessRefResponse
+	22,  // 261: procmesh.v1.ProcessService.AdoptInstance:output_type -> procmesh.v1.AdoptResponse
+	24,  // 262: procmesh.v1.ConfigService.GetConfig:output_type -> procmesh.v1.GetConfigResponse
+	26,  // 263: procmesh.v1.ConfigService.UpdateConfig:output_type -> procmesh.v1.UpdateConfigResponse
+	29,  // 264: procmesh.v1.ConfigService.History:output_type -> procmesh.v1.HistoryResponse
+	31,  // 265: procmesh.v1.ConfigService.Diff:output_type -> procmesh.v1.DiffResponse
+	33,  // 266: procmesh.v1.ConfigService.Rollback:output_type -> procmesh.v1.RollbackResponse
+	35,  // 267: procmesh.v1.LogService.TailLogs:output_type -> procmesh.v1.TailLogsResponse
+	38,  // 268: procmesh.v1.LogService.StreamLogs:output_type -> procmesh.v1.LogChunk
+	38,  // 269: procmesh.v1.LogService.DownloadLogs:output_type -> procmesh.v1.LogChunk
+	43,  // 270: procmesh.v1.NodeService.ListNodes:output_type -> procmesh.v1.ListNodesResponse
+	45,  // 271: procmesh.v1.NodeService.GetNode:output_type -> procmesh.v1.GetNodeResponse
+	47,  // 272: procmesh.v1.NodeService.CreateJoinToken:output_type -> procmesh.v1.CreateJoinTokenResponse
+	49,  // 273: procmesh.v1.NodeService.RevokeJoinToken:output_type -> procmesh.v1.RevokeJoinTokenResponse
+	51,  // 274: procmesh.v1.NodeService.RemoveNode:output_type -> procmesh.v1.RemoveNodeResponse
+	53,  // 275: procmesh.v1.NodeService.PromoteNode:output_type -> procmesh.v1.PromoteNodeResponse
+	55,  // 276: procmesh.v1.ClusterService.Init:output_type -> procmesh.v1.InitClusterResponse
+	57,  // 277: procmesh.v1.ClusterService.Join:output_type -> procmesh.v1.JoinClusterResponse
+	61,  // 278: procmesh.v1.ClusterService.RequestJoin:output_type -> procmesh.v1.RequestJoinResponse
+	59,  // 279: procmesh.v1.ClusterService.Overview:output_type -> procmesh.v1.ClusterOverviewResponse
+	63,  // 280: procmesh.v1.AuthService.Login:output_type -> procmesh.v1.LoginResponse
+	65,  // 281: procmesh.v1.AuthService.Logout:output_type -> procmesh.v1.LogoutResponse
+	67,  // 282: procmesh.v1.AuthService.CreateAPIToken:output_type -> procmesh.v1.CreateAPITokenResponse
+	69,  // 283: procmesh.v1.AuthService.RevokeAPIToken:output_type -> procmesh.v1.RevokeAPITokenResponse
+	71,  // 284: procmesh.v1.AuthService.GetMe:output_type -> procmesh.v1.GetMeResponse
+	74,  // 285: procmesh.v1.UserService.ListUsers:output_type -> procmesh.v1.ListUsersResponse
+	76,  // 286: procmesh.v1.UserService.CreateUser:output_type -> procmesh.v1.CreateUserResponse
+	78,  // 287: procmesh.v1.UserService.DisableUser:output_type -> procmesh.v1.DisableUserResponse
+	82,  // 288: procmesh.v1.RoleService.ListRoles:output_type -> procmesh.v1.ListRolesResponse
+	84,  // 289: procmesh.v1.RoleService.CreateRole:output_type -> procmesh.v1.CreateRoleResponse
+	237, // 290: procmesh.v1.RoleService.UpdateRole:output_type -> procmesh.v1.UpdateRoleResponse
+	239, // 291: procmesh.v1.RoleService.DeleteRole:output_type -> procmesh.v1.DeleteRoleResponse
+	86,  // 292: procmesh.v1.RoleService.GrantRole:output_type -> procmesh.v1.GrantRoleResponse
+	241, // 293: procmesh.v1.RoleService.RevokeRole:output_type -> procmesh.v1.RevokeRoleResponse
+	89,  // 294: procmesh.v1.GroupService.ListAgentGroups:output_type -> procmesh.v1.ListAgentGroupsResponse
+	91,  // 295: procmesh.v1.GroupService.CreateAgentGroup:output_type -> procmesh.v1.CreateAgentGroupResponse
+	93,  // 296: procmesh.v1.GroupService.DeleteAgentGroup:output_type -> procmesh.v1.DeleteAgentGroupResponse
+	95,  // 297: procmesh.v1.GroupService.AddAgentGroupMember:output_type -> procmesh.v1.AgentGroupMemberResponse
+	95,  // 298: procmesh.v1.GroupService.RemoveAgentGroupMember:output_type -> procmesh.v1.AgentGroupMemberResponse
+	99,  // 299: procmesh.v1.AuditService.ListAudit:output_type -> procmesh.v1.ListAuditResponse
+	102, // 300: procmesh.v1.MetricsService.GetAgentMetrics:output_type -> procmesh.v1.GetAgentMetricsResponse
+	105, // 301: procmesh.v1.MetricsService.GetProcessMetrics:output_type -> procmesh.v1.GetProcessMetricsResponse
+	109, // 302: procmesh.v1.MetricsService.GetNodeHistory:output_type -> procmesh.v1.GetNodeHistoryResponse
+	111, // 303: procmesh.v1.MetricsService.GetProcessHistory:output_type -> procmesh.v1.GetProcessHistoryResponse
+	118, // 304: procmesh.v1.BatchService.CreateBatch:output_type -> procmesh.v1.CreateBatchResponse
+	120, // 305: procmesh.v1.BatchService.GetBatch:output_type -> procmesh.v1.GetBatchResponse
+	122, // 306: procmesh.v1.BatchService.ListBatches:output_type -> procmesh.v1.ListBatchesResponse
+	124, // 307: procmesh.v1.BatchService.RetryFailed:output_type -> procmesh.v1.RetryBatchResponse
+	124, // 308: procmesh.v1.BatchService.ReplayTimeout:output_type -> procmesh.v1.RetryBatchResponse
+	126, // 309: procmesh.v1.BatchService.ExportBatch:output_type -> procmesh.v1.ExportBatchResponse
+	130, // 310: procmesh.v1.AlertService.ListAlerts:output_type -> procmesh.v1.ListAlertsResponse
+	132, // 311: procmesh.v1.AlertService.GetAlert:output_type -> procmesh.v1.GetAlertResponse
+	135, // 312: procmesh.v1.AlertService.ListAlertChannels:output_type -> procmesh.v1.ListAlertChannelsResponse
+	137, // 313: procmesh.v1.AlertService.PutAlertChannel:output_type -> procmesh.v1.PutAlertChannelResponse
+	139, // 314: procmesh.v1.AlertService.DeleteAlertChannel:output_type -> procmesh.v1.DeleteAlertChannelResponse
+	141, // 315: procmesh.v1.AlertService.TestAlertChannel:output_type -> procmesh.v1.TestAlertChannelResponse
+	144, // 316: procmesh.v1.AlertService.GetAlertPolicy:output_type -> procmesh.v1.GetAlertPolicyResponse
+	146, // 317: procmesh.v1.AlertService.PutAlertPolicy:output_type -> procmesh.v1.PutAlertPolicyResponse
+	151, // 318: procmesh.v1.BackupService.CreateBackup:output_type -> procmesh.v1.CreateBackupResponse
+	153, // 319: procmesh.v1.BackupService.ListBackups:output_type -> procmesh.v1.ListBackupsResponse
+	155, // 320: procmesh.v1.BackupService.GetBackup:output_type -> procmesh.v1.GetBackupResponse
+	157, // 321: procmesh.v1.BackupService.DeleteBackup:output_type -> procmesh.v1.DeleteBackupResponse
+	161, // 322: procmesh.v1.BackupService.RestoreBackup:output_type -> procmesh.v1.RestoreBackupResponse
+	163, // 323: procmesh.v1.BackupService.PutPeerSnapshot:output_type -> procmesh.v1.PutPeerSnapshotResponse
+	169, // 324: procmesh.v1.ClusterBackupService.CreatePolicy:output_type -> procmesh.v1.CreateClusterBackupPolicyResponse
+	171, // 325: procmesh.v1.ClusterBackupService.UpdatePolicy:output_type -> procmesh.v1.UpdateClusterBackupPolicyResponse
+	173, // 326: procmesh.v1.ClusterBackupService.DeletePolicy:output_type -> procmesh.v1.DeleteClusterBackupPolicyResponse
+	175, // 327: procmesh.v1.ClusterBackupService.ListPolicies:output_type -> procmesh.v1.ListClusterBackupPoliciesResponse
+	177, // 328: procmesh.v1.ClusterBackupService.ValidatePolicy:output_type -> procmesh.v1.ValidateClusterBackupPolicyResponse
+	179, // 329: procmesh.v1.ClusterBackupService.StartRun:output_type -> procmesh.v1.StartClusterBackupRunResponse
+	181, // 330: procmesh.v1.ClusterBackupService.GetRun:output_type -> procmesh.v1.GetClusterBackupRunResponse
+	183, // 331: procmesh.v1.ClusterBackupService.ListRuns:output_type -> procmesh.v1.ListClusterBackupRunsResponse
+	185, // 332: procmesh.v1.ClusterBackupService.RetryFailedTasks:output_type -> procmesh.v1.RetryFailedClusterBackupTasksResponse
+	187, // 333: procmesh.v1.ClusterBackupService.GetDestinationHealth:output_type -> procmesh.v1.GetClusterBackupDestinationHealthResponse
+	189, // 334: procmesh.v1.ClusterBackupAgentService.RunTask:output_type -> procmesh.v1.RunClusterBackupTaskResponse
+	191, // 335: procmesh.v1.ClusterBackupAgentService.GetTask:output_type -> procmesh.v1.GetClusterBackupTaskResponse
+	193, // 336: procmesh.v1.PeerReplicationService.PutSnapshot:output_type -> procmesh.v1.PutSnapshotResponse
+	195, // 337: procmesh.v1.PeerReplicationService.ReplicateSnapshot:output_type -> procmesh.v1.ReplicateSnapshotResponse
+	197, // 338: procmesh.v1.PeerReplicationService.CheckSnapshot:output_type -> procmesh.v1.CheckSnapshotResponse
+	199, // 339: procmesh.v1.PeerReplicationService.DeleteSnapshot:output_type -> procmesh.v1.DeleteSnapshotResponse
+	201, // 340: procmesh.v1.PeerReplicationService.GetReplicaMetadata:output_type -> procmesh.v1.GetReplicaMetadataResponse
+	204, // 341: procmesh.v1.DisasterReplicationService.GetTopology:output_type -> procmesh.v1.GetTopologyResponse
+	208, // 342: procmesh.v1.DisasterReplicationService.GeneratePolicyDraft:output_type -> procmesh.v1.GeneratePolicyDraftResponse
+	210, // 343: procmesh.v1.DisasterReplicationService.ApplyPolicyDraft:output_type -> procmesh.v1.ApplyPolicyDraftResponse
+	213, // 344: procmesh.v1.DisasterReplicationService.ListPolicies:output_type -> procmesh.v1.ListPoliciesResponse
+	215, // 345: procmesh.v1.DisasterReplicationService.GetPolicy:output_type -> procmesh.v1.GetPolicyResponse
+	217, // 346: procmesh.v1.DisasterReplicationService.UpdatePolicy:output_type -> procmesh.v1.UpdatePolicyResponse
+	219, // 347: procmesh.v1.DisasterReplicationService.DeletePolicy:output_type -> procmesh.v1.DeletePolicyResponse
+	222, // 348: procmesh.v1.DisasterReplicationService.StartRun:output_type -> procmesh.v1.StartRunResponse
+	226, // 349: procmesh.v1.DisasterReplicationService.GetRun:output_type -> procmesh.v1.GetRunResponse
+	228, // 350: procmesh.v1.DisasterReplicationService.ListRuns:output_type -> procmesh.v1.ListRunsResponse
+	230, // 351: procmesh.v1.DisasterReplicationService.RetryFailedRoutes:output_type -> procmesh.v1.RetryFailedRoutesResponse
+	233, // 352: procmesh.v1.DisasterReplicationService.VerifyReplica:output_type -> procmesh.v1.VerifyReplicaResponse
+	235, // 353: procmesh.v1.DisasterReplicationService.ListRecoverableSnapshots:output_type -> procmesh.v1.ListRecoverableSnapshotsResponse
+	252, // [252:354] is the sub-list for method output_type
+	150, // [150:252] is the sub-list for method input_type
+	150, // [150:150] is the sub-list for extension type_name
+	150, // [150:150] is the sub-list for extension extendee
+	0,   // [0:150] is the sub-list for field type_name
 }
 
 func init() { file_proto_procmesh_v1_api_proto_init() }
@@ -17053,7 +17406,7 @@ func file_proto_procmesh_v1_api_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_procmesh_v1_api_proto_rawDesc), len(file_proto_procmesh_v1_api_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   244,
+			NumMessages:   250,
 			NumExtensions: 0,
 			NumServices:   18,
 		},

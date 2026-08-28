@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
 import { computed, ref } from "vue";
-import { AlertCircle, Plus, Search, ShieldCheck, UserPlus } from "lucide-vue-next";
+import { AlertCircle, Pencil, Plus, Search, ShieldCheck, Trash2, Unlink, UserPlus } from "lucide-vue-next";
+import ConfirmDialog from "../components/ConfirmDialog.vue";
 import Drawer from "../components/Drawer.vue";
 import Toast from "../components/Toast.vue";
+import type { Binding, Role } from "../gen/procmesh/v1/api_pb";
 import UserSelector from "../components/UserSelector.vue";
 import { newOperationId } from "../lib/opid";
 import { useRoleClient } from "../lib/rpc";
@@ -58,6 +60,12 @@ const queryClient = useQueryClient();
 const actionError = ref("");
 const createDrawerOpen = ref(false);
 const grantDrawerOpen = ref(false);
+const editingRoleId = ref("");
+const pendingConfirmation = ref<
+  | { kind: "delete"; roleId: string; roleName: string }
+  | { kind: "revoke"; binding: Binding; roleName: string }
+  | null
+>(null);
 const toastMessage = ref("");
 const toastType = ref<"success" | "error">("success");
 const showToast = ref(false);
@@ -85,6 +93,12 @@ const roles = computed(() => query.data.value?.roles ?? []);
 const bindings = computed(() => query.data.value?.bindings ?? []);
 const errorText = computed(() => query.error.value ? formatRemoteError(query.error.value) : "");
 const createReady = computed(() => roleName.value.trim().length > 0);
+const roleDrawerTitle = computed(() => editingRoleId.value
+  ? t("roles.updateRole.title")
+  : t("roles.createRole.title"));
+const roleSubmitLabel = computed(() => editingRoleId.value
+  ? t("roles.updateRole.save")
+  : t("roles.createRole.create"));
 const scopeIdRequired = computed(() => grantScope.value !== "CLUSTER");
 const grantReady = computed(() => Boolean(
   grantUserId.value &&
@@ -95,6 +109,23 @@ const grantReady = computed(() => Boolean(
 const totalRoles = computed(() => roles.value.length);
 const totalBindings = computed(() => bindings.value.length);
 const selectedPermCount = computed(() => selectedPerms.value.length);
+const confirmTitle = computed(() => pendingConfirmation.value?.kind === "delete"
+  ? t("roles.deleteRole.title")
+  : t("roles.revoke.title"));
+const confirmMessage = computed(() => {
+  const pending = pendingConfirmation.value;
+  if (!pending) return "";
+  if (pending.kind === "delete") {
+    return t("roles.deleteRole.message", { name: pending.roleName });
+  }
+  return t("roles.revoke.message", {
+    role: pending.roleName,
+    userId: pending.binding.userId,
+  });
+});
+const confirmLabel = computed(() => pendingConfirmation.value?.kind === "delete"
+  ? t("roles.deleteRole.confirm")
+  : t("roles.revoke.confirm"));
 
 const bindingCountByRole = computed(() => {
   const counts = new Map<string, number>();
@@ -220,8 +251,27 @@ function resetGrantForm(): void {
 function openCreateDrawer(): void {
   actionError.value = "";
   resetCreateForm();
+  editingRoleId.value = "";
   grantDrawerOpen.value = false;
   createDrawerOpen.value = true;
+}
+
+function openEditDrawer(role: Role): void {
+  if (!canManage.value || isBuiltin(role.roleId)) return;
+  actionError.value = "";
+  roleName.value = role.name;
+  selectedPerms.value = [...role.permissions];
+  permSearch.value = "";
+  editingRoleId.value = role.roleId;
+  grantDrawerOpen.value = false;
+  createDrawerOpen.value = true;
+}
+
+function closeRoleDrawer(): void {
+  if (acting.value) return;
+  createDrawerOpen.value = false;
+  editingRoleId.value = "";
+  resetCreateForm();
 }
 
 function openGrantDrawer(): void {
@@ -248,6 +298,40 @@ const createMut = useMutation({
   },
 });
 
+const updateMut = useMutation({
+  mutationFn: () => client.updateRole({
+    meta: mutationMeta(),
+    roleId: editingRoleId.value,
+    name: roleName.value.trim(),
+    permissions: [...selectedPerms.value],
+  }),
+  onSuccess: async () => {
+    createDrawerOpen.value = false;
+    editingRoleId.value = "";
+    resetCreateForm();
+    await queryClient.invalidateQueries({ queryKey: ["roles"] });
+    notify(t("roles.updateRole.success"), "success");
+  },
+  onError: (error: unknown) => {
+    actionError.value = formatRemoteError(error);
+  },
+});
+
+const deleteMut = useMutation({
+  mutationFn: (roleId: string) => client.deleteRole({
+    meta: mutationMeta(),
+    roleId,
+  }),
+  onSuccess: async () => {
+    pendingConfirmation.value = null;
+    await queryClient.invalidateQueries({ queryKey: ["roles"] });
+    notify(t("roles.deleteRole.success"), "success");
+  },
+  onError: (error: unknown) => {
+    notify(formatRemoteError(error), "error");
+  },
+});
+
 const grantMut = useMutation({
   mutationFn: () => client.grantRole({
     meta: mutationMeta(),
@@ -267,7 +351,31 @@ const grantMut = useMutation({
   },
 });
 
-const acting = computed(() => createMut.isPending.value || grantMut.isPending.value);
+const revokeMut = useMutation({
+  mutationFn: (binding: Binding) => client.revokeRole({
+    meta: mutationMeta(),
+    userId: binding.userId,
+    roleId: binding.roleId,
+    scopeType: binding.scopeType,
+    scopeId: binding.scopeId,
+  }),
+  onSuccess: async () => {
+    pendingConfirmation.value = null;
+    await queryClient.invalidateQueries({ queryKey: ["roles"] });
+    notify(t("roles.revoke.success"), "success");
+  },
+  onError: (error: unknown) => {
+    notify(formatRemoteError(error), "error");
+  },
+});
+
+const acting = computed(() =>
+  createMut.isPending.value ||
+  updateMut.isPending.value ||
+  deleteMut.isPending.value ||
+  grantMut.isPending.value ||
+  revokeMut.isPending.value,
+);
 
 async function onCreate(): Promise<void> {
   if (!canManage.value || !createReady.value || acting.value) return;
@@ -275,10 +383,44 @@ async function onCreate(): Promise<void> {
   try { await createMut.mutateAsync(); } catch { /* handled by mutation */ }
 }
 
+async function onSaveRole(): Promise<void> {
+  if (editingRoleId.value) {
+    if (!canManage.value || !createReady.value || acting.value) return;
+    actionError.value = "";
+    try { await updateMut.mutateAsync(); } catch { /* handled by mutation */ }
+    return;
+  }
+  await onCreate();
+}
+
 async function onGrant(): Promise<void> {
   if (!canManage.value || !grantReady.value || acting.value) return;
   actionError.value = "";
   try { await grantMut.mutateAsync(); } catch { /* handled by mutation */ }
+}
+
+function requestDeleteRole(role: Role): void {
+  if (!canManage.value || isBuiltin(role.roleId) || acting.value) return;
+  pendingConfirmation.value = { kind: "delete", roleId: role.roleId, roleName: role.name };
+}
+
+function requestRevoke(binding: Binding): void {
+  if (!canManage.value || isBuiltin(binding.roleId) || acting.value) return;
+  pendingConfirmation.value = { kind: "revoke", binding, roleName: roleLabel(binding.roleId) };
+}
+
+function cancelConfirmation(): void {
+  if (!acting.value) pendingConfirmation.value = null;
+}
+
+async function confirmPending(): Promise<void> {
+  const pending = pendingConfirmation.value;
+  if (!pending || !canManage.value || acting.value) return;
+  if (pending.kind === "delete") {
+    try { await deleteMut.mutateAsync(pending.roleId); } catch { /* handled by mutation */ }
+    return;
+  }
+  try { await revokeMut.mutateAsync(pending.binding); } catch { /* handled by mutation */ }
 }
 </script>
 
@@ -343,6 +485,7 @@ async function onGrant(): Promise<void> {
               <th>{{ t("roles.table.type") }}</th>
               <th class="perms-column">{{ t("roles.table.permissions") }}</th>
               <th class="count-column">{{ t("roles.table.bindings") }}</th>
+              <th class="action-column">{{ t("roles.table.actions") }}</th>
             </tr>
           </thead>
           <tbody>
@@ -385,6 +528,33 @@ async function onGrant(): Promise<void> {
                 <span v-else class="muted">—</span>
               </td>
               <td data-cell="bindings" class="count-cell">{{ roleBindingCount(role.roleId) }}</td>
+              <td class="action-cell">
+                <div v-if="canManage" class="row-actions">
+                  <button
+                    type="button"
+                    class="btn btn-xs"
+                    data-action="edit-role"
+                    :disabled="acting || isBuiltin(role.roleId)"
+                    :title="isBuiltin(role.roleId) ? t('roles.builtinActionUnavailable') : undefined"
+                    @click="openEditDrawer(role)"
+                  >
+                    <Pencil :size="14" aria-hidden="true" />
+                    {{ t("actions.edit") }}
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-xs btn-danger"
+                    data-action="delete-role"
+                    :disabled="acting || isBuiltin(role.roleId)"
+                    :title="isBuiltin(role.roleId) ? t('roles.builtinActionUnavailable') : undefined"
+                    @click="requestDeleteRole(role)"
+                  >
+                    <Trash2 :size="14" aria-hidden="true" />
+                    {{ t("actions.delete") }}
+                  </button>
+                </div>
+                <span v-else class="muted">—</span>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -417,6 +587,7 @@ async function onGrant(): Promise<void> {
               <th>{{ t("roles.bindings.table.role") }}</th>
               <th>{{ t("roles.bindings.table.scope") }}</th>
               <th>{{ t("roles.bindings.table.scopeId") }}</th>
+              <th class="action-column">{{ t("roles.bindings.table.actions") }}</th>
             </tr>
           </thead>
           <tbody>
@@ -432,6 +603,21 @@ async function onGrant(): Promise<void> {
                 </span>
               </td>
               <td>{{ binding.scopeId || "—" }}</td>
+              <td class="action-cell">
+                <button
+                  v-if="canManage"
+                  type="button"
+                  class="btn btn-xs btn-danger"
+                  data-action="revoke-role"
+                  :disabled="acting || isBuiltin(binding.roleId)"
+                  :title="isBuiltin(binding.roleId) ? t('roles.builtinActionUnavailable') : undefined"
+                  @click="requestRevoke(binding)"
+                >
+                  <Unlink :size="14" aria-hidden="true" />
+                  {{ t("roles.revoke.action") }}
+                </button>
+                <span v-else class="muted">—</span>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -443,8 +629,8 @@ async function onGrant(): Promise<void> {
       </div>
     </template>
 
-    <Drawer :open="createDrawerOpen" :title="t('roles.createRole.title')" :close-label="t('actions.close')" size="wide" @close="createDrawerOpen = false">
-      <form class="drawer-form" @submit.prevent="onCreate">
+    <Drawer :open="createDrawerOpen" :title="roleDrawerTitle" :close-label="t('actions.close')" size="wide" @close="closeRoleDrawer">
+      <form class="drawer-form" @submit.prevent="onSaveRole">
         <p v-if="actionError" class="error" role="alert">{{ actionError }}</p>
         <label class="field">
           <span>{{ t("roles.createRole.name") }} <span class="required" aria-hidden="true"></span></span>
@@ -502,8 +688,8 @@ async function onGrant(): Promise<void> {
           </fieldset>
         </div>
         <div class="drawer-actions">
-          <button type="button" class="btn" :disabled="acting" @click="createDrawerOpen = false">{{ t("actions.cancel") }}</button>
-          <button class="btn btn-primary" type="submit" :disabled="!createReady || acting">{{ t("roles.createRole.create") }}</button>
+          <button type="button" class="btn" :disabled="acting" @click="closeRoleDrawer">{{ t("actions.cancel") }}</button>
+          <button class="btn btn-primary" type="submit" :disabled="!createReady || acting">{{ roleSubmitLabel }}</button>
         </div>
       </form>
     </Drawer>
@@ -527,6 +713,17 @@ async function onGrant(): Promise<void> {
         </div>
       </form>
     </Drawer>
+
+    <ConfirmDialog
+      :open="Boolean(pendingConfirmation)"
+      :title="confirmTitle"
+      :message="confirmMessage"
+      :confirm-label="confirmLabel"
+      :cancel-label="t('actions.cancel')"
+      :pending="deleteMut.isPending.value || revokeMut.isPending.value"
+      @cancel="cancelConfirmation"
+      @confirm="confirmPending"
+    />
 
     <Toast :show="showToast" :message="toastMessage" :type="toastType" @close="showToast = false" />
   </div>
@@ -658,6 +855,9 @@ h2 { margin: 0; font-size: 1.05rem; font-weight: 650; }
 .perm-toggle { margin-top: 0.25rem; }
 .count-column, .count-cell { text-align: right; }
 .count-cell { font-variant-numeric: tabular-nums; }
+.action-column, .action-cell { min-width: 11rem; text-align: right; }
+.row-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
+.action-cell .btn { white-space: nowrap; }
 
 .perms-picker { display: flex; flex-direction: column; gap: 0.75rem; }
 .perms-toolbar {

@@ -319,8 +319,12 @@ func (s *State) Apply(cmd Command, now time.Time) error {
 		return applyJSON(cmd.Body, s.applyTokenRevoke)
 	case CmdRolePut:
 		return applyJSON(cmd.Body, s.applyRolePut)
+	case CmdRoleDelete:
+		return applyJSON(cmd.Body, s.applyRoleDelete)
 	case CmdBindPut:
 		return applyJSON(cmd.Body, s.applyBindPut)
+	case CmdBindDelete:
+		return applyJSON(cmd.Body, s.applyBindDelete)
 	case CmdJoinTokenPut:
 		return applyJSON(cmd.Body, func(b JoinTokenPutBody) error { return s.applyJoinTokenPut(b, now) })
 	case CmdJoinTokenConsume:
@@ -553,7 +557,32 @@ func (s *State) applyRolePut(b RolePutBody) error {
 	if b.ID == "" {
 		return errcode.E(errcode.INVALID, "role id required")
 	}
+	if IsBuiltinRoleID(b.ID) {
+		return errcode.E(errcode.DENIED, "built-in role cannot be changed")
+	}
+	if _, ok := s.Roles[b.ID]; b.ExistingOnly && !ok {
+		return errcode.E(errcode.NOT_FOUND, "role not found")
+	}
 	s.Roles[b.ID] = Role{ID: b.ID, Name: b.Name, Perms: append([]string(nil), b.Perms...)}
+	return nil
+}
+
+func (s *State) applyRoleDelete(b RoleDeleteBody) error {
+	if b.ID == "" {
+		return errcode.E(errcode.INVALID, "role id required")
+	}
+	if IsBuiltinRoleID(b.ID) {
+		return errcode.E(errcode.DENIED, "built-in role cannot be deleted")
+	}
+	if _, ok := s.Roles[b.ID]; !ok {
+		return errcode.E(errcode.NOT_FOUND, "role not found")
+	}
+	for _, binding := range s.Bindings {
+		if binding.RoleID == b.ID {
+			return errcode.E(errcode.CONFLICT, "role still has bindings")
+		}
+	}
+	delete(s.Roles, b.ID)
 	return nil
 }
 
@@ -569,6 +598,23 @@ func (s *State) applyBindPut(b BindPutBody) error {
 	}
 	s.Bindings = append(s.Bindings, nb)
 	return nil
+}
+
+func (s *State) applyBindDelete(b BindDeleteBody) error {
+	if b.UserID == "" || b.RoleID == "" {
+		return errcode.E(errcode.INVALID, "binding user and role required")
+	}
+	if IsBuiltinRoleID(b.RoleID) {
+		return errcode.E(errcode.DENIED, "built-in role binding cannot be deleted")
+	}
+	target := Binding{UserID: b.UserID, RoleID: b.RoleID, ScopeID: b.ScopeID, Scope: b.Scope}
+	for i, binding := range s.Bindings {
+		if binding == target {
+			s.Bindings = append(s.Bindings[:i], s.Bindings[i+1:]...)
+			return nil
+		}
+	}
+	return errcode.E(errcode.NOT_FOUND, "binding not found")
 }
 
 func (s *State) applyJoinTokenPut(b JoinTokenPutBody, now time.Time) error {
@@ -2321,6 +2367,16 @@ const (
 	roleOperator     = "operator"
 	roleViewer       = "viewer"
 )
+
+// IsBuiltinRoleID reports whether id belongs to a role managed by ProcMesh.
+func IsBuiltinRoleID(id string) bool {
+	switch id {
+	case roleSuperAdmin, roleClusterAdmin, roleOperator, roleViewer:
+		return true
+	default:
+		return false
+	}
+}
 
 func builtinRoles() []Role {
 	return []Role{

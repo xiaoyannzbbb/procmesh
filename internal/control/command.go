@@ -13,7 +13,9 @@ const (
 	CmdTokenPut                   = "token_put"
 	CmdTokenRevoke                = "token_revoke"
 	CmdRolePut                    = "role_put"
+	CmdRoleDelete                 = "role_delete"
 	CmdBindPut                    = "bind_put"
+	CmdBindDelete                 = "bind_delete"
 	CmdJoinTokenPut               = "join_token_put"
 	CmdJoinTokenConsume           = "join_token_consume"
 	CmdJoinTokenRevoke            = "join_token_revoke"
@@ -100,12 +102,24 @@ type TokenRevokeBody struct {
 }
 
 type RolePutBody struct {
-	ID    string   `json:"id"`
-	Name  string   `json:"name"`
-	Perms []string `json:"perms"`
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Perms        []string `json:"perms"`
+	ExistingOnly bool     `json:"existing_only,omitempty"`
+}
+
+type RoleDeleteBody struct {
+	ID string `json:"id"`
 }
 
 type BindPutBody struct {
+	UserID  string    `json:"user_id"`
+	RoleID  string    `json:"role_id"`
+	ScopeID string    `json:"scope_id"`
+	Scope   ScopeType `json:"scope"`
+}
+
+type BindDeleteBody struct {
 	UserID  string    `json:"user_id"`
 	RoleID  string    `json:"role_id"`
 	ScopeID string    `json:"scope_id"`

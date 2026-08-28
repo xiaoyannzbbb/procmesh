@@ -115,6 +115,92 @@ func TestRole_CreateAndGrant(t *testing.T) {
 	}
 }
 
+func TestRoleAPI_UpdateDeleteAndRevokeCustomRole(t *testing.T) {
+	ctx := context.Background()
+	_, svc := newBootstrappedAuth(t)
+	api := &RoleAPI{Auth: svc}
+
+	created, err := api.CreateRole(ctx, connect.NewRequest(&procmeshv1.CreateRoleRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-role-create-custom", Operator: "t"},
+		Name: "ops", Permissions: []string{auth.PermProcessRead},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	roleID := created.Msg.GetRole().GetRoleId()
+
+	updated, err := api.UpdateRole(ctx, connect.NewRequest(&procmeshv1.UpdateRoleRequest{
+		Meta:   &procmeshv1.MutationMeta{OperationId: "op-role-update", Operator: "t"},
+		RoleId: roleID, Name: "operators", Permissions: []string{auth.PermProcessRead, auth.PermProcessRestart},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := updated.Msg.GetRole(); got.GetName() != "operators" || !hasAllPerms(got.GetPermissions(), auth.PermProcessRead, auth.PermProcessRestart) {
+		t.Fatalf("updated=%+v", got)
+	}
+
+	_, err = api.GrantRole(ctx, connect.NewRequest(&procmeshv1.GrantRoleRequest{
+		Meta:   &procmeshv1.MutationMeta{OperationId: "op-role-grant-custom", Operator: "t"},
+		UserId: "user-admin", RoleId: roleID, ScopeType: string(control.ScopeAgent), ScopeId: "node-1",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = api.DeleteRole(ctx, connect.NewRequest(&procmeshv1.DeleteRoleRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-role-delete-bound", Operator: "t"}, RoleId: roleID,
+	}))
+	assertConnectError(t, err, connect.CodeFailedPrecondition, "CONFLICT", "role still has bindings")
+
+	_, err = api.RevokeRole(ctx, connect.NewRequest(&procmeshv1.RevokeRoleRequest{
+		Meta:   &procmeshv1.MutationMeta{OperationId: "op-role-revoke", Operator: "t"},
+		UserId: "user-admin", RoleId: roleID, ScopeType: string(control.ScopeAgent), ScopeId: " node-1 ",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = api.DeleteRole(ctx, connect.NewRequest(&procmeshv1.DeleteRoleRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-role-delete", Operator: "t"}, RoleId: roleID,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := svc.Store().View().Roles[roleID]; ok {
+		t.Fatal("role was not deleted")
+	}
+}
+
+func TestRoleAPI_RejectsBuiltinRoleMutations(t *testing.T) {
+	ctx := context.Background()
+	_, svc := newBootstrappedAuth(t)
+	api := &RoleAPI{Auth: svc}
+
+	_, err := api.UpdateRole(ctx, connect.NewRequest(&procmeshv1.UpdateRoleRequest{
+		Meta:   &procmeshv1.MutationMeta{OperationId: "op-builtin-update", Operator: "t"},
+		RoleId: "viewer", Name: "Changed", Permissions: []string{auth.PermRoleManage},
+	}))
+	assertConnectError(t, err, connect.CodePermissionDenied, "DENIED", "built-in role")
+
+	_, err = api.DeleteRole(ctx, connect.NewRequest(&procmeshv1.DeleteRoleRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-builtin-delete", Operator: "t"}, RoleId: "viewer",
+	}))
+	assertConnectError(t, err, connect.CodePermissionDenied, "DENIED", "built-in role")
+
+	_, err = api.RevokeRole(ctx, connect.NewRequest(&procmeshv1.RevokeRoleRequest{
+		Meta:   &procmeshv1.MutationMeta{OperationId: "op-builtin-revoke", Operator: "t"},
+		UserId: "user-admin", RoleId: "super_admin", ScopeType: string(control.ScopeCluster),
+	}))
+	assertConnectError(t, err, connect.CodePermissionDenied, "DENIED", "built-in role")
+}
+
+func assertConnectError(t *testing.T, err error, code connect.Code, detail, message string) {
+	t.Helper()
+	gotCode, gotDetail := connectDetail(t, err)
+	if gotCode != code || gotDetail != detail || !strings.Contains(err.Error(), message) {
+		t.Fatalf("code=%v detail=%s err=%v", gotCode, gotDetail, err)
+	}
+}
+
 func TestRoleAPI_GrantGroupScopes(t *testing.T) {
 	ctx := context.Background()
 	_, svc := newBootstrappedAuth(t)

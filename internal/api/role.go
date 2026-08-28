@@ -83,6 +83,71 @@ func (s *RoleAPI) CreateRole(ctx context.Context, req *connect.Request[procmeshv
 	return connect.NewResponse(&procmeshv1.CreateRoleResponse{Role: roleToProto(role)}), nil
 }
 
+func (s *RoleAPI) UpdateRole(ctx context.Context, req *connect.Request[procmeshv1.UpdateRoleRequest]) (*connect.Response[procmeshv1.UpdateRoleResponse], error) {
+	if err := requireAuthConfigured(s.Auth); err != nil {
+		return nil, err
+	}
+	if err := requirePerm(ctx, s.Auth, auth.PermRoleManage, "", true, true); err != nil {
+		return nil, err
+	}
+	if _, _, err := metaOf(req.Msg.GetMeta()); err != nil {
+		return nil, err
+	}
+	roleID := req.Msg.GetRoleId()
+	if roleID == "" {
+		return nil, ToConnect(errcode.E(errcode.INVALID, "role_id required"))
+	}
+	if control.IsBuiltinRoleID(roleID) {
+		return nil, ToConnect(errcode.E(errcode.DENIED, "built-in role cannot be changed"))
+	}
+	if _, ok := s.Auth.Store().View().Roles[roleID]; !ok {
+		return nil, ToConnect(errcode.E(errcode.NOT_FOUND, "role not found"))
+	}
+	name := strings.TrimSpace(req.Msg.GetName())
+	if name == "" {
+		return nil, ToConnect(errcode.E(errcode.INVALID, "role name required"))
+	}
+	perms := req.Msg.GetPermissions()
+	for _, p := range perms {
+		if !knownPerm(p) {
+			return nil, ToConnect(errcode.E(errcode.INVALID, "unknown permission"))
+		}
+	}
+	if err := applyAuth(s.Auth, control.CmdRolePut, control.RolePutBody{
+		ID: roleID, Name: name, Perms: append([]string(nil), perms...), ExistingOnly: true,
+	}); err != nil {
+		return nil, err
+	}
+	role, ok := s.Auth.Store().View().Roles[roleID]
+	if !ok {
+		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "role not found after update"))
+	}
+	return connect.NewResponse(&procmeshv1.UpdateRoleResponse{Role: roleToProto(role)}), nil
+}
+
+func (s *RoleAPI) DeleteRole(ctx context.Context, req *connect.Request[procmeshv1.DeleteRoleRequest]) (*connect.Response[procmeshv1.DeleteRoleResponse], error) {
+	if err := requireAuthConfigured(s.Auth); err != nil {
+		return nil, err
+	}
+	if err := requirePerm(ctx, s.Auth, auth.PermRoleManage, "", true, true); err != nil {
+		return nil, err
+	}
+	if _, _, err := metaOf(req.Msg.GetMeta()); err != nil {
+		return nil, err
+	}
+	roleID := req.Msg.GetRoleId()
+	if roleID == "" {
+		return nil, ToConnect(errcode.E(errcode.INVALID, "role_id required"))
+	}
+	if control.IsBuiltinRoleID(roleID) {
+		return nil, ToConnect(errcode.E(errcode.DENIED, "built-in role cannot be deleted"))
+	}
+	if err := applyAuth(s.Auth, control.CmdRoleDelete, control.RoleDeleteBody{ID: roleID}); err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(&procmeshv1.DeleteRoleResponse{}), nil
+}
+
 func (s *RoleAPI) GrantRole(ctx context.Context, req *connect.Request[procmeshv1.GrantRoleRequest]) (*connect.Response[procmeshv1.GrantRoleResponse], error) {
 	if err := requireAuthConfigured(s.Auth); err != nil {
 		return nil, err
@@ -130,6 +195,36 @@ func (s *RoleAPI) GrantRole(ctx context.Context, req *connect.Request[procmeshv1
 			ScopeId:   scopeID,
 		},
 	}), nil
+}
+
+func (s *RoleAPI) RevokeRole(ctx context.Context, req *connect.Request[procmeshv1.RevokeRoleRequest]) (*connect.Response[procmeshv1.RevokeRoleResponse], error) {
+	if err := requireAuthConfigured(s.Auth); err != nil {
+		return nil, err
+	}
+	if err := requirePerm(ctx, s.Auth, auth.PermRoleManage, "", true, true); err != nil {
+		return nil, err
+	}
+	if _, _, err := metaOf(req.Msg.GetMeta()); err != nil {
+		return nil, err
+	}
+	userID := req.Msg.GetUserId()
+	roleID := req.Msg.GetRoleId()
+	if userID == "" || roleID == "" {
+		return nil, ToConnect(errcode.E(errcode.INVALID, "user_id and role_id required"))
+	}
+	if control.IsBuiltinRoleID(roleID) {
+		return nil, ToConnect(errcode.E(errcode.DENIED, "built-in role binding cannot be deleted"))
+	}
+	scope, scopeID, err := parseScope(req.Msg.GetScopeType(), req.Msg.GetScopeId())
+	if err != nil {
+		return nil, err
+	}
+	if err := applyAuth(s.Auth, control.CmdBindDelete, control.BindDeleteBody{
+		UserID: userID, RoleID: roleID, Scope: scope, ScopeID: scopeID,
+	}); err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(&procmeshv1.RevokeRoleResponse{}), nil
 }
 
 func parseScope(scopeType, scopeID string) (control.ScopeType, string, error) {

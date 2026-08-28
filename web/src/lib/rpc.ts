@@ -42,7 +42,10 @@ export type ConfigClient = Pick<
 >;
 export type LogClient = Pick<Client<typeof LogService>, "tailLogs" | "streamLogs" | "downloadLogs">;
 export type UserClient = Pick<Client<typeof UserService>, "listUsers" | "createUser" | "disableUser">;
-export type RoleClient = Pick<Client<typeof RoleService>, "listRoles" | "createRole" | "grantRole">;
+export type RoleClient = Pick<
+  Client<typeof RoleService>,
+  "listRoles" | "createRole" | "updateRole" | "deleteRole" | "grantRole" | "revokeRole"
+>;
 export type GroupClient = Pick<
   Client<typeof GroupService>,
   "listAgentGroups" | "createAgentGroup" | "deleteAgentGroup" | "addAgentGroupMember" | "removeAgentGroupMember"
