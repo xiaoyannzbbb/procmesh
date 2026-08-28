@@ -1322,7 +1322,7 @@ async function onRetryFailed(): Promise<void> {
                 <div class="row-actions">
                   <button
                     type="button"
-                    class="btn btn-sm"
+                    class="btn btn-xs"
                     data-action="start-run"
                     :disabled="acting"
                     @click="onStartRun(row.policy.policyId || '')"
@@ -1331,7 +1331,7 @@ async function onRetryFailed(): Promise<void> {
                   </button>
                   <button
                     type="button"
-                    class="btn btn-sm"
+                    class="btn btn-xs"
                     data-action="edit-policy"
                     :disabled="acting"
                     @click="openEditPolicy(row.policy)"
@@ -1340,7 +1340,7 @@ async function onRetryFailed(): Promise<void> {
                   </button>
                   <button
                     type="button"
-                    class="btn btn-sm btn-danger"
+                    class="btn btn-xs btn-danger"
                     data-action="delete-policy"
                     :disabled="acting"
                     @click="onDeletePolicy(row.policy)"
@@ -1526,10 +1526,10 @@ async function onRetryFailed(): Promise<void> {
                 <td>{{ row.lastUpdated }}</td>
                 <td v-if="canManage">
                   <div v-if="row.canAct" class="row-actions">
-                    <button type="button" class="btn btn-sm" data-action="restore" :disabled="acting" @click="openRestore(row.snapshot!)">
+                    <button type="button" class="btn btn-xs" data-action="restore" :disabled="acting" @click="openRestore(row.snapshot!)">
                       {{ t("backup.restore") }}
                     </button>
-                    <button type="button" class="btn btn-sm btn-danger" data-action="delete" :disabled="acting" @click="onDelete(row)">
+                    <button type="button" class="btn btn-xs btn-danger" data-action="delete" :disabled="acting" @click="onDelete(row)">
                       {{ t("backup.delete") }}
                     </button>
                   </div>
@@ -2405,11 +2405,6 @@ h3 {
   max-width: 28rem;
   font-size: 0.8125rem;
   line-height: 1.45;
-}
-.btn-sm {
-  min-height: 2.25rem;
-  padding: 0.375rem 0.75rem;
-  font-size: 0.8125rem;
 }
 .sr-only {
   position: absolute;

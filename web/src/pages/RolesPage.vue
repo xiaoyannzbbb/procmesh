@@ -292,4 +292,7 @@ h2 { margin: 0; font-size: 1.05rem; font-weight: 650; }
   .header-actions { justify-content: flex-end; }
   .header-actions .btn { min-height: 2.75rem; }
 }
+.table th, .table td {
+  min-width: 100px;
+}
 </style>

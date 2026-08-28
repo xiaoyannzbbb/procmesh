@@ -292,7 +292,7 @@ async function onRemoveMember(groupId: string, nodeId: string): Promise<void> {
                   />
                   <button
                     type="button"
-                    class="btn btn-sm"
+                    class="btn btn-xs"
                     :disabled="acting || !rowNodeId(group.groupId)"
                     @click="onAddMember(group.groupId)"
                   >
@@ -300,7 +300,7 @@ async function onRemoveMember(groupId: string, nodeId: string): Promise<void> {
                   </button>
                   <button
                     type="button"
-                    class="btn btn-sm btn-danger"
+                    class="btn btn-xs btn-danger"
                     :disabled="acting"
                     @click="requestDelete(group.groupId, group.name)"
                   >
@@ -481,11 +481,6 @@ h1 {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
-}
-
-.btn-sm {
-  padding: 0.375rem 0.75rem;
-  font-size: 0.8125rem;
 }
 
 .drawer-form {

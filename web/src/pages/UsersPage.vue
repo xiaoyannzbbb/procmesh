@@ -239,11 +239,11 @@ async function onGrant(): Promise<void> {
               <td>{{ formatLastLogin(user.lastLoginUnix) }}</td>
               <td v-if="hasRowActions">
                 <div class="row-actions">
-                  <button v-if="canBindRoles" type="button" class="btn btn-sm" data-action="bind-role" :disabled="acting" @click="openBindDrawer(user.userId, user.displayName || user.username)">
+                  <button v-if="canBindRoles" type="button" class="btn btn-xs" data-action="bind-role" :disabled="acting" @click="openBindDrawer(user.userId, user.displayName || user.username)">
                     <ShieldPlus :size="16" aria-hidden="true" />
                     {{ t("users.bindRole.action") }}
                   </button>
-                  <button v-if="canUpdate && user.status !== 'DISABLED'" type="button" class="btn btn-sm btn-danger" :disabled="acting" @click="onDisable(user.userId)">{{ t("users.disable") }}</button>
+                  <button v-if="canUpdate && user.status !== 'DISABLED'" type="button" class="btn btn-xs btn-danger" :disabled="acting" @click="onDisable(user.userId)">{{ t("users.disable") }}</button>
                 </div>
               </td>
             </tr>
