@@ -394,7 +394,7 @@ func (e *Engine) CaptureReplicationSnapshot(ctx context.Context, req Replication
 			if err != nil {
 				return Meta{}, err
 			}
-			e.applyReplicaRetention(ctx, req.PolicyID)
+			e.applyReplicaRetention(ctx, req.PolicyID, meta.SnapshotID)
 			return meta, nil
 		}
 		if err != nil && !errcode.Is(err, errcode.NOT_FOUND) {
@@ -413,11 +413,11 @@ func (e *Engine) CaptureReplicationSnapshot(ctx context.Context, req Replication
 	if err != nil {
 		return Meta{}, err
 	}
-	e.applyReplicaRetention(ctx, req.PolicyID)
+	e.applyReplicaRetention(ctx, req.PolicyID, meta.SnapshotID)
 	return meta, nil
 }
 
-func (e *Engine) applyReplicaRetention(ctx context.Context, policyID string) {
+func (e *Engine) applyReplicaRetention(ctx context.Context, policyID, snapshotID string) {
 	if e == nil || e.RetentionPolicy == nil || policyID == "" {
 		return
 	}
@@ -427,6 +427,8 @@ func (e *Engine) applyReplicaRetention(ctx context.Context, policyID string) {
 	}
 	policy.PolicyID = policyID
 	policy.Sink = ReplicaSinkName
+	release := e.ProtectSnapshot(snapshotID)
+	defer release()
 	_, _ = e.ApplyRetention(ctx, policy)
 }
 

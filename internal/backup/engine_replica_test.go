@@ -356,6 +356,61 @@ func TestEngine_CaptureReplicationSnapshot_MaxBytesCountsReplicaOnly(t *testing.
 	}
 }
 
+func TestEngine_CaptureReplicationSnapshot_ProtectsReturnedSnapshotDuringRetention(t *testing.T) {
+	eng := testEngineWithProcess(t)
+	ctx := context.Background()
+	now := time.Date(2026, 8, 20, 8, 0, 0, 0, time.UTC)
+	eng.Now = func() time.Time { return now }
+	eng.NewID = func() (string, error) { return "fs-keep", nil }
+	fsMeta, err := eng.CreateCluster(ctx, backup.ClusterCreateOpts{
+		RunID: "backup-run", TaskID: "task-1", PolicyID: "rp-1", ClusterID: eng.ClusterID, NodeID: eng.NodeID, Sink: "fs",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Hour)
+	old, err := eng.CaptureReplicationSnapshot(ctx, backup.ReplicationCaptureRequest{
+		RunID: "run-old", PolicyID: "rp-1", SourceNodeID: eng.NodeID,
+		SnapshotID: backup.StableReplicationSnapshotID("run-old", eng.NodeID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	release := eng.ProtectSnapshot(old.SnapshotID)
+	defer release()
+	now = now.Add(time.Hour)
+	newID := backup.StableReplicationSnapshotID("run-new", eng.NodeID)
+	eng.RetentionPolicy = func(policyID string) (backup.Policy, bool) {
+		return backup.Policy{PolicyID: policyID, Timezone: "UTC", RetentionMaxBytes: old.Bytes}, true
+	}
+	newer, err := eng.CaptureReplicationSnapshot(ctx, backup.ReplicationCaptureRequest{
+		RunID: "run-new", PolicyID: "rp-1", SourceNodeID: eng.NodeID, SnapshotID: newID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := replicaIDs(t, eng)
+	if !ids[newer.SnapshotID] || !ids[old.SnapshotID] {
+		t.Fatalf("capture retention deleted returned or protected replica: returned=%s ids=%v", newer.SnapshotID, ids)
+	}
+	if _, err := os.Stat(fsMeta.Location); err != nil {
+		t.Fatalf("cluster FS backup deleted: %v", err)
+	}
+	again, err := eng.CaptureReplicationSnapshot(ctx, backup.ReplicationCaptureRequest{
+		RunID: "run-new", PolicyID: "rp-1", SourceNodeID: eng.NodeID, SnapshotID: newID,
+	})
+	if err != nil || again.SnapshotID != newer.SnapshotID {
+		t.Fatalf("recapture=%+v err=%v", again, err)
+	}
+	ids = replicaIDs(t, eng)
+	if !ids[again.SnapshotID] || !ids[old.SnapshotID] {
+		t.Fatalf("recapture retention deleted returned or protected replica: ids=%v", ids)
+	}
+	if _, err := os.Stat(fsMeta.Location); err != nil {
+		t.Fatalf("cluster FS backup deleted on recapture: %v", err)
+	}
+}
+
 func TestEngine_CaptureReplicationSnapshot_KeepsLastRemainingReplica(t *testing.T) {
 	eng := testEngineWithProcess(t)
 	eng.RetentionPolicy = func(policyID string) (backup.Policy, bool) {
