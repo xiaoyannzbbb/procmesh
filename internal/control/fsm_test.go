@@ -1594,9 +1594,9 @@ func TestFSM_PolicyPutRejectsInvalidAgentGroupSelectors(t *testing.T) {
 		}
 	}
 	replicationCases := []control.ReplicationPolicyPutBody{
-		{PolicyID: "rp-group-blank", Name: "group-blank", SourceSelector: "AGENT_GROUP", SourceIDs: []string{" "}, ReplicaFactor: 1, Trigger: "MANUAL"},
-		{PolicyID: "rp-group-duplicate", Name: "group-duplicate", SourceSelector: "AGENT_GROUP", SourceIDs: []string{"g-1", "g-1"}, ReplicaFactor: 1, Trigger: "MANUAL"},
-		{PolicyID: "rp-group-missing", Name: "group-missing", SourceSelector: "AGENT_GROUP", SourceIDs: []string{"missing"}, ReplicaFactor: 1, Trigger: "MANUAL"},
+		{PolicyID: "rp-group-blank", Name: "group-blank", SourceSelector: "AGENT_GROUP", SourceIDs: []string{" "}, ReplicaFactor: 1},
+		{PolicyID: "rp-group-duplicate", Name: "group-duplicate", SourceSelector: "AGENT_GROUP", SourceIDs: []string{"g-1", "g-1"}, ReplicaFactor: 1},
+		{PolicyID: "rp-group-missing", Name: "group-missing", SourceSelector: "AGENT_GROUP", SourceIDs: []string{"missing"}, ReplicaFactor: 1},
 	}
 	for _, body := range replicationCases {
 		if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), now); !errcode.Is(err, errcode.INVALID) {
@@ -1614,6 +1614,83 @@ func TestFSM_BackupPolicyDeleteRejectsMissingPolicy(t *testing.T) {
 	}
 }
 
+func TestFSM_ReplicationPolicyPut_OptionalCronAndEpoch(t *testing.T) {
+	s := admittedReplicationState(t)
+	now := time.Unix(1_800_000_000, 0) // 不是 02:00
+	body := control.ReplicationPolicyPutBody{
+		OperationID: "op-1", PolicyID: "rp-1", Name: "cluster-replica",
+		Enabled: true, SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1,
+		Routes:       admittedReplicationRoutes(),
+		ScheduleCron: "0 2 * * *", Timezone: "UTC", ExpectedRevision: -1,
+	}
+	if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), now); err != nil {
+		t.Fatal(err)
+	}
+	got := s.ReplicationPolicies["rp-1"]
+	if got.ScheduleCron != "0 2 * * *" || got.Timezone != "UTC" {
+		t.Fatalf("schedule=%q tz=%q", got.ScheduleCron, got.Timezone)
+	}
+	if got.Trigger != "" || len(got.PrimaryPolicyIDs) != 0 {
+		t.Fatalf("legacy fields must be cleared: %+v", got)
+	}
+	if got.ScheduleEpochUnix != now.Unix() {
+		t.Fatalf("epoch=%d want %d", got.ScheduleEpochUnix, now.Unix())
+	}
+}
+
+func TestFSM_ReplicationPolicyPut_EmptyCronIsManualOnly(t *testing.T) {
+	s := admittedReplicationState(t)
+	body := control.ReplicationPolicyPutBody{
+		OperationID: "op-2", PolicyID: "rp-manual", Name: "manual-only",
+		Enabled: true, SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1,
+		Routes:           admittedReplicationRoutes(),
+		ExpectedRevision: -1,
+	}
+	if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), time.Unix(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFSM_ReplicationPolicyPut_RejectsBadCronEvenWithoutTrigger(t *testing.T) {
+	s := admittedReplicationState(t)
+	body := control.ReplicationPolicyPutBody{
+		OperationID: "op-3", PolicyID: "rp-bad", Name: "bad",
+		Enabled: true, SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1,
+		Routes:       admittedReplicationRoutes(),
+		ScheduleCron: "0 * *", Timezone: "UTC", ExpectedRevision: -1,
+	}
+	if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), time.Unix(1, 0)); !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestFSM_RetryFailedReplicationTasks_AllowsMissingSnapshot(t *testing.T) {
+	s := admittedReplicationState(t)
+	run := control.ClusterBackupRun{RunID: "run-1", PolicyID: "rp-1", PolicyRevision: 1, TargetNodeIDs: []string{"node-a"}, Status: "PARTIAL"}
+	s.ReplicationPolicies["rp-1"] = control.ReplicationPolicy{
+		PolicyID: "rp-1", Revision: 1, SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"node-a"}, ReplicaFactor: 2,
+		Routes: []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b", "node-c"}}},
+	}
+	s.ReplicationRuns[run.RunID] = run
+	s.ReplicationRunTerms[run.RunID] = 3
+	s.ReplicationTasks["run-1:t-copy"] = control.ClusterBackupTask{
+		RunID: "run-1", TaskID: "t-copy", SourceNodeID: "node-a", NodeID: "node-b",
+		SnapshotID: "snap", SHA256: strings.Repeat("a", 64), Status: "FAILED",
+	}
+	s.ReplicationTasks["run-1:t-cap"] = control.ClusterBackupTask{
+		RunID: "run-1", TaskID: "t-cap", SourceNodeID: "node-a", NodeID: "node-c", Status: "FAILED",
+	}
+	if err := s.RetryFailedTasks(control.RetryFailedTasksBody{OperationID: "op-retry", RunID: "run-1", LeaderTerm: 3, UpdatedUnix: 100, LeaseUntilUnix: 130, Replication: true}); err != nil {
+		t.Fatal(err)
+	}
+	if s.ReplicationTasks["run-1:t-cap"].Status != "PENDING" {
+		t.Fatalf("capture-failed task not retried: %+v", s.ReplicationTasks["run-1:t-cap"])
+	}
+	if s.ReplicationTasks["run-1:t-copy"].SnapshotID != "snap" {
+		t.Fatal("copy-failed task must keep snapshot_id")
+	}
+}
+
 func TestFSM_ReplicationPolicyPutRejectsUnsafeRoutes(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	s := mustBootstrap(t, now)
@@ -1627,12 +1704,8 @@ func TestFSM_ReplicationPolicyPutRejectsUnsafeRoutes(t *testing.T) {
 	}
 	valid := control.ReplicationPolicyPutBody{
 		PolicyID: "rp-1", Name: "dr", Enabled: true,
-		SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1, Trigger: "MANUAL",
-		Routes: []control.ReplicationRoute{
-			{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}},
-			{SourceNodeID: "node-b", TargetNodeIDs: []string{"node-a"}},
-			{SourceNodeID: "node-c", TargetNodeIDs: []string{"node-a"}},
-		},
+		SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1,
+		Routes:           admittedReplicationRoutes(),
 		ExpectedRevision: -1,
 	}
 	if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, valid), now); err != nil {
@@ -1641,10 +1714,8 @@ func TestFSM_ReplicationPolicyPutRejectsUnsafeRoutes(t *testing.T) {
 	if got := s.ReplicationPolicies["rp-1"].Routes[0].TargetNodeIDs; len(got) != 1 || got[0] != "node-b" {
 		t.Fatalf("routes=%v", got)
 	}
-	if err := s.Apply(mustEncode(t, control.CmdBackupPolicyPut, control.BackupPolicyPutBody{
-		PolicyID: "bp-primary", Name: "primary", ScheduleCron: "0 2 * * *", Timezone: "UTC", TargetSelector: "ALL_ADMITTED", Sink: "fs",
-	}), now); err != nil {
-		t.Fatal(err)
+	if got := s.ReplicationPolicies["rp-1"]; got.Trigger != "" || len(got.PrimaryPolicyIDs) != 0 {
+		t.Fatalf("legacy fields must be cleared: %+v", got)
 	}
 	afterPrimary := valid
 	afterPrimary.PolicyID, afterPrimary.Name, afterPrimary.Trigger = "rp-after-primary", "after-primary", "AFTER_PRIMARY_BACKUP"
@@ -1652,62 +1723,19 @@ func TestFSM_ReplicationPolicyPutRejectsUnsafeRoutes(t *testing.T) {
 	if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, afterPrimary), now); err != nil {
 		t.Fatal(err)
 	}
+	if got := s.ReplicationPolicies["rp-after-primary"]; got.Trigger != "" || len(got.PrimaryPolicyIDs) != 0 {
+		t.Fatalf("legacy fields must be cleared: %+v", got)
+	}
 
-	cases := []struct {
+	legacyAccepted := []struct {
 		name string
 		body control.ReplicationPolicyPutBody
 	}{
-		{name: "zero factor", body: func() control.ReplicationPolicyPutBody {
-			b := valid
-			b.PolicyID = "rp-zero"
-			b.Name = "zero"
-			b.ReplicaFactor = 0
-			return b
-		}()},
-		{name: "self replication", body: func() control.ReplicationPolicyPutBody {
-			b := valid
-			b.PolicyID = "rp-self"
-			b.Name = "self"
-			b.Routes = []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-a"}}}
-			return b
-		}()},
-		{name: "duplicate target", body: func() control.ReplicationPolicyPutBody {
-			b := valid
-			b.PolicyID = "rp-dup"
-			b.Name = "dup"
-			b.Routes = []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b", "node-b"}}}
-			return b
-		}()},
-		{name: "invalid trigger", body: func() control.ReplicationPolicyPutBody {
+		{name: "invalid trigger stripped", body: func() control.ReplicationPolicyPutBody {
 			b := valid
 			b.PolicyID = "rp-trigger"
 			b.Name = "trigger"
 			b.Trigger = "ON_DEMAND"
-			return b
-		}()},
-		{name: "manual malformed cron metadata", body: func() control.ReplicationPolicyPutBody {
-			b := valid
-			b.PolicyID = "rp-manual-cron"
-			b.Name = "manual-cron"
-			b.Trigger = "MANUAL"
-			b.ScheduleCron = "0 * *"
-			return b
-		}()},
-		{name: "manual malformed timezone metadata", body: func() control.ReplicationPolicyPutBody {
-			b := valid
-			b.PolicyID = "rp-manual-timezone"
-			b.Name = "manual-timezone"
-			b.Trigger = "MANUAL"
-			b.Timezone = "Moon/Base"
-			return b
-		}()},
-		{name: "after primary malformed cron metadata", body: func() control.ReplicationPolicyPutBody {
-			b := valid
-			b.PolicyID = "rp-primary-cron"
-			b.Name = "primary-cron"
-			b.Trigger = "AFTER_PRIMARY_BACKUP"
-			b.PrimaryPolicyIDs = []string{"bp-primary"}
-			b.ScheduleCron = "0 * *"
 			return b
 		}()},
 		{name: "scheduled trigger missing schedule", body: func() control.ReplicationPolicyPutBody {
@@ -1716,24 +1744,6 @@ func TestFSM_ReplicationPolicyPutRejectsUnsafeRoutes(t *testing.T) {
 			b.Name = "schedule-empty"
 			b.Trigger = "SCHEDULE"
 			b.ScheduleCron = ""
-			b.Timezone = "UTC"
-			return b
-		}()},
-		{name: "scheduled trigger invalid timezone", body: func() control.ReplicationPolicyPutBody {
-			b := valid
-			b.PolicyID = "rp-schedule-timezone"
-			b.Name = "schedule-timezone"
-			b.Trigger = "SCHEDULE"
-			b.ScheduleCron = "0 2 * * *"
-			b.Timezone = "Moon/Base"
-			return b
-		}()},
-		{name: "scheduled trigger invalid cron", body: func() control.ReplicationPolicyPutBody {
-			b := valid
-			b.PolicyID = "rp-schedule-cron"
-			b.Name = "schedule-cron"
-			b.Trigger = "SCHEDULE"
-			b.ScheduleCron = "0 * *"
 			b.Timezone = "UTC"
 			return b
 		}()},
@@ -1766,6 +1776,77 @@ func TestFSM_ReplicationPolicyPutRejectsUnsafeRoutes(t *testing.T) {
 			b.Name = "primary-duplicate"
 			b.Trigger = "AFTER_PRIMARY_BACKUP"
 			b.PrimaryPolicyIDs = []string{"bp-primary", "bp-primary"}
+			return b
+		}()},
+	}
+	for _, tc := range legacyAccepted {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, tc.body), now); err != nil {
+				t.Fatal(err)
+			}
+			got := s.ReplicationPolicies[tc.body.PolicyID]
+			if got.Trigger != "" || len(got.PrimaryPolicyIDs) != 0 {
+				t.Fatalf("legacy fields must be cleared: %+v", got)
+			}
+		})
+	}
+
+	cases := []struct {
+		name string
+		body control.ReplicationPolicyPutBody
+	}{
+		{name: "zero factor", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-zero"
+			b.Name = "zero"
+			b.ReplicaFactor = 0
+			return b
+		}()},
+		{name: "self replication", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-self"
+			b.Name = "self"
+			b.Routes = []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-a"}}}
+			return b
+		}()},
+		{name: "duplicate target", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-dup"
+			b.Name = "dup"
+			b.Routes = []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b", "node-b"}}}
+			return b
+		}()},
+		{name: "malformed cron metadata", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-manual-cron"
+			b.Name = "manual-cron"
+			b.ScheduleCron = "0 * *"
+			return b
+		}()},
+		{name: "malformed timezone metadata", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-manual-timezone"
+			b.Name = "manual-timezone"
+			b.ScheduleCron = "0 2 * * *"
+			b.Timezone = "Moon/Base"
+			return b
+		}()},
+		{name: "scheduled trigger invalid timezone", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-schedule-timezone"
+			b.Name = "schedule-timezone"
+			b.Trigger = "SCHEDULE"
+			b.ScheduleCron = "0 2 * * *"
+			b.Timezone = "Moon/Base"
+			return b
+		}()},
+		{name: "scheduled trigger invalid cron", body: func() control.ReplicationPolicyPutBody {
+			b := valid
+			b.PolicyID = "rp-schedule-cron"
+			b.Name = "schedule-cron"
+			b.Trigger = "SCHEDULE"
+			b.ScheduleCron = "0 * *"
+			b.Timezone = "UTC"
 			return b
 		}()},
 		{name: "negative retention", body: func() control.ReplicationPolicyPutBody {
@@ -1902,7 +1983,7 @@ func TestFSM_ReplicationPolicyPutRouteSourcesMatchSelector(t *testing.T) {
 
 	base := control.ReplicationPolicyPutBody{
 		PolicyID: "rp-selector", Name: "selector", Enabled: true,
-		SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"node-a"}, ReplicaFactor: 2, Trigger: "MANUAL", ExpectedRevision: -1,
+		SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"node-a"}, ReplicaFactor: 2, ExpectedRevision: -1,
 		Routes: []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b", "node-c"}}},
 	}
 	for _, tc := range []struct {
@@ -1947,7 +2028,7 @@ func TestFSM_ReplicationPolicyPutExpectedRevision(t *testing.T) {
 	}
 	body := control.ReplicationPolicyPutBody{
 		OperationID: "op-1", PolicyID: "rp-1", Name: "dr", Enabled: true,
-		SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1, Trigger: "MANUAL",
+		SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1,
 		Routes: []control.ReplicationRoute{
 			{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}},
 			{SourceNodeID: "node-b", TargetNodeIDs: []string{"node-a"}},
@@ -2013,7 +2094,7 @@ func TestFSM_ReplicationPolicyPutReplicaFactorVsCandidates(t *testing.T) {
 	}
 	body := control.ReplicationPolicyPutBody{
 		OperationID: "op-1", PolicyID: "rp-1", Name: "dr", Enabled: true,
-		SourceSelector: "ALL_ADMITTED", ReplicaFactor: 3, Trigger: "MANUAL",
+		SourceSelector: "ALL_ADMITTED", ReplicaFactor: 3,
 		Routes: []control.ReplicationRoute{
 			{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}},
 			{SourceNodeID: "node-b", TargetNodeIDs: []string{"node-a"}},
@@ -2080,7 +2161,7 @@ func TestFSM_ReplicationPolicyPutReplicaFactorUsesAvailableTargetsPerSource(t *t
 	}
 	body := control.ReplicationPolicyPutBody{
 		OperationID: "op-factor", PolicyID: "rp-factor", Name: "factor", Enabled: true,
-		SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"node-a"}, ReplicaFactor: 2, Trigger: "MANUAL",
+		SourceSelector: "EXPLICIT_NODES", SourceIDs: []string{"node-a"}, ReplicaFactor: 2,
 		Routes: []control.ReplicationRoute{{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b", "node-c"}}}, ExpectedRevision: -1,
 	}
 	if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, body), now); err != nil {
@@ -2103,7 +2184,7 @@ func TestFSM_ReplicationPolicyDeletePreservesReplicas(t *testing.T) {
 	}
 	body := control.ReplicationPolicyPutBody{
 		OperationID: "op-1", PolicyID: "rp-1", Name: "dr", Enabled: true,
-		SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1, Trigger: "MANUAL",
+		SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1,
 		Routes: []control.ReplicationRoute{
 			{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}},
 			{SourceNodeID: "node-b", TargetNodeIDs: []string{"node-a"}},
@@ -2323,6 +2404,26 @@ func TestFSM_CRLAddAndSessionDel(t *testing.T) {
 	}
 	if !s.APITokens["t1"].Revoked {
 		t.Fatal("token not revoked")
+	}
+}
+
+func admittedReplicationState(t *testing.T) *control.State {
+	t.Helper()
+	now := time.Unix(1_700_000_000, 0)
+	s := mustBootstrap(t, now)
+	for _, nodeID := range []string{"node-a", "node-b", "node-c"} {
+		if err := s.Apply(mustEncode(t, control.CmdMemberPut, control.MemberPutBody{NodeID: nodeID, Status: control.MemberAdmitted}), now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return s
+}
+
+func admittedReplicationRoutes() []control.ReplicationRoute {
+	return []control.ReplicationRoute{
+		{SourceNodeID: "node-a", TargetNodeIDs: []string{"node-b"}},
+		{SourceNodeID: "node-b", TargetNodeIDs: []string{"node-a"}},
+		{SourceNodeID: "node-c", TargetNodeIDs: []string{"node-a"}},
 	}
 }
 

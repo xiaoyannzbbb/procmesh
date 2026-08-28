@@ -133,6 +133,7 @@ type ReplicationPolicy struct {
 	BandwidthLimit      int64              `json:"bandwidth_limit,omitempty"`
 	TopologyConstraints map[string]string  `json:"topology_constraints,omitempty"`
 	Revision            int64              `json:"revision,omitempty"`
+	ScheduleEpochUnix   int64              `json:"schedule_epoch_unix,omitempty"`
 }
 
 type FireRecord struct {
@@ -351,7 +352,9 @@ func (s *State) Apply(cmd Command, now time.Time) error {
 	case CmdBackupPolicyDelete:
 		return applyJSON(cmd.Body, s.applyBackupPolicyDelete)
 	case CmdReplicationPolicyPut:
-		return applyJSON(cmd.Body, s.applyReplicationPolicyPut)
+		return applyJSON(cmd.Body, func(b ReplicationPolicyPutBody) error {
+			return s.applyReplicationPolicyPut(b, now)
+		})
 	case CmdReplicationPolicyDelete:
 		return applyJSON(cmd.Body, s.applyReplicationPolicyDelete)
 	case CmdReplicationDeleteIntentPut:
@@ -1430,7 +1433,7 @@ func (s *State) applyRetryFailedTasks(b RetryFailedTasksBody) error {
 	}
 	retried := false
 	for key, task := range tasks {
-		if task.RunID != b.RunID || !retryableTaskStatus(task.Status) || (b.Replication && (task.SnapshotID == "" || task.SHA256 == "")) {
+		if task.RunID != b.RunID || !retryableTaskStatus(task.Status) {
 			continue
 		}
 		retried = true
@@ -1764,7 +1767,7 @@ func (s *State) applyPruneRunMetadata(b PruneRunMetadataBody) error {
 	return nil
 }
 
-func (s *State) applyReplicationPolicyPut(b ReplicationPolicyPutBody) error {
+func (s *State) applyReplicationPolicyPut(b ReplicationPolicyPutBody, now time.Time) error {
 	if err := requireOperationID(b.OperationID); err != nil {
 		return err
 	}
@@ -1787,23 +1790,8 @@ func (s *State) applyReplicationPolicyPut(b ReplicationPolicyPutBody) error {
 	if b.RetentionKeepLast < 0 || b.RetentionKeepDays < 0 || b.RetentionMaxBytes < 0 || b.MaxConcurrency < 0 || b.BandwidthLimit < 0 {
 		return errcode.E(errcode.INVALID, "invalid retention or limits")
 	}
-	if !validReplicationTrigger(b.Trigger) {
-		return errcode.E(errcode.INVALID, "trigger")
-	}
-	if b.Trigger == "SCHEDULE" {
-		if strings.TrimSpace(b.ScheduleCron) == "" {
-			return errcode.E(errcode.INVALID, "schedule cron required")
-		}
+	if strings.TrimSpace(b.ScheduleCron) != "" {
 		if err := validatePolicySchedule(b.ScheduleCron, b.Timezone); err != nil {
-			return err
-		}
-	} else if b.ScheduleCron != "" || b.Timezone != "" {
-		if err := validatePolicySchedule(b.ScheduleCron, b.Timezone); err != nil {
-			return err
-		}
-	}
-	if b.Trigger == "AFTER_PRIMARY_BACKUP" {
-		if err := s.validatePrimaryPolicies(b.PrimaryPolicyIDs); err != nil {
 			return err
 		}
 	}
@@ -1872,43 +1860,14 @@ func (s *State) applyReplicationPolicyPut(b ReplicationPolicyPutBody) error {
 	for i := range cur.Routes {
 		cur.Routes[i].TargetNodeIDs = append([]string(nil), cur.Routes[i].TargetNodeIDs...)
 	}
-	cur.Trigger, cur.PrimaryPolicyIDs = b.Trigger, append([]string(nil), b.PrimaryPolicyIDs...)
+	cur.Trigger, cur.PrimaryPolicyIDs = "", []string{}
 	cur.ScheduleCron, cur.Timezone = b.ScheduleCron, b.Timezone
 	cur.RetentionKeepLast, cur.RetentionKeepDays, cur.RetentionMaxBytes = b.RetentionKeepLast, b.RetentionKeepDays, b.RetentionMaxBytes
 	cur.MaxConcurrency, cur.VerifyAfterCopy, cur.BandwidthLimit = b.MaxConcurrency, b.VerifyAfterCopy, b.BandwidthLimit
 	cur.TopologyConstraints = mapsClone(b.TopologyConstraints)
+	cur.ScheduleEpochUnix = now.Unix()
 	cur.Revision++
 	s.ReplicationPolicies[b.PolicyID] = cur
-	return nil
-}
-
-func validReplicationTrigger(trigger string) bool {
-	switch trigger {
-	case "AFTER_PRIMARY_BACKUP", "SCHEDULE", "MANUAL":
-		return true
-	default:
-		return false
-	}
-}
-
-func (s *State) validatePrimaryPolicies(ids []string) error {
-	if len(ids) == 0 {
-		return errcode.E(errcode.INVALID, "primary policy ids required")
-	}
-	seen := make(map[string]struct{}, len(ids))
-	for _, id := range ids {
-		trimmed := strings.TrimSpace(id)
-		if trimmed == "" || trimmed != id {
-			return errcode.E(errcode.INVALID, "primary policy id")
-		}
-		if _, ok := seen[trimmed]; ok {
-			return errcode.E(errcode.INVALID, "duplicate primary policy")
-		}
-		if _, ok := s.BackupPolicies[trimmed]; !ok {
-			return errcode.E(errcode.INVALID, "primary backup policy not found")
-		}
-		seen[trimmed] = struct{}{}
-	}
 	return nil
 }
 
