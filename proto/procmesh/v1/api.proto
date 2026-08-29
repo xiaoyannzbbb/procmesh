@@ -1462,6 +1462,9 @@ message ReplicaSnapshot {
   int64 created_at = 5;
   int32 process_count = 6;
   repeated string process_ids = 7;
+  repeated string storage_node_ids = 8;
+  string freshness = 9;
+  int64 last_updated_unix_ms = 10;
 }
 
 message VerifyReplicaRequest {
@@ -1481,6 +1484,7 @@ message ListRecoverableSnapshotsRequest {}
 
 message ListRecoverableSnapshotsResponse {
   repeated ReplicaSnapshot snapshots = 1;
+  repeated ReplicaInventoryStatus inventory_statuses = 2;
 }
 
 message UpdateRoleRequest {
@@ -1505,3 +1509,10 @@ message RevokeRoleRequest {
   string scope_id = 5;
 }
 message RevokeRoleResponse {}
+
+message ReplicaInventoryStatus {
+  string node_id = 1;
+  string freshness = 2;
+  int64 last_updated_unix_ms = 3;
+  string error_code = 4;
+}

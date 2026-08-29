@@ -110,6 +110,16 @@ type RecoverableSnapshot = {
   createdAt?: bigint | number;
   processCount?: number;
   processIds?: string[];
+  storageNodeIds?: string[];
+  freshness?: string;
+  lastUpdatedUnixMs?: bigint | number;
+};
+
+type ReplicaInventoryStatus = {
+  nodeId?: string;
+  freshness?: string;
+  lastUpdatedUnixMs?: bigint | number;
+  errorCode?: string;
 };
 
 const { t } = useI18n();
@@ -174,6 +184,9 @@ const topologyNodes = computed(() => (topologyQuery.data.value?.nodes ?? []) as 
 const policies = computed(() => (policyQuery.data.value?.policies ?? []) as ReplicaPolicy[]);
 const runs = computed(() => (runQuery.data.value?.runs ?? []) as ReplicaRun[]);
 const snapshots = computed(() => (snapshotQuery.data.value?.snapshots ?? []) as RecoverableSnapshot[]);
+const inventoryStatuses = computed(
+  () => (snapshotQuery.data.value?.inventoryStatuses ?? []) as ReplicaInventoryStatus[],
+);
 const currentPolicy = computed(() => policies.value[0]);
 const routes = computed(() => currentPolicy.value?.routes ?? []);
 const selectedRun = computed(() => {
@@ -216,7 +229,18 @@ const snapshotsUnreachable = computed(
 const topologyStale = computed(() => Boolean(topologyQuery.error.value) && topologyNodes.value.length > 0);
 const policiesStale = computed(() => Boolean(policyQuery.error.value) && policies.value.length > 0);
 const runsStale = computed(() => Boolean(runQuery.error.value) && runs.value.length > 0);
-const snapshotsStale = computed(() => Boolean(snapshotQuery.error.value) && snapshots.value.length > 0);
+const inventoryHasUnknown = computed(() =>
+  inventoryStatuses.value.some((status) => status.freshness === UNKNOWN),
+);
+const inventoryHasStale = computed(() =>
+  inventoryStatuses.value.some((status) => status.freshness === STALE),
+);
+const snapshotsStale = computed(
+  () =>
+    (Boolean(snapshotQuery.error.value) && snapshots.value.length > 0) ||
+    inventoryHasUnknown.value ||
+    inventoryHasStale.value,
+);
 const hasStale = computed(
   () => topologyStale.value || policiesStale.value || runsStale.value || snapshotsStale.value,
 );
@@ -261,14 +285,26 @@ const runsFreshness = computed<Freshness>(() => {
   return LIVE;
 });
 const snapshotsFreshness = computed<Freshness>(() => {
-  if (snapshotsUnreachable.value) {
+  if (snapshotsUnreachable.value || inventoryHasUnknown.value) {
     return UNKNOWN;
   }
-  if (snapshotsStale.value) {
+  if (snapshotsStale.value || inventoryHasStale.value) {
     return STALE;
   }
   return LIVE;
 });
+
+function snapshotFreshness(snapshot: RecoverableSnapshot): Freshness {
+  if (snapshot.freshness === LIVE || snapshot.freshness === STALE || snapshot.freshness === UNKNOWN) {
+    return snapshot.freshness;
+  }
+  return UNKNOWN;
+}
+
+function storageNodeNames(snapshot: RecoverableSnapshot): string {
+  const nodes = snapshot.storageNodeIds ?? [];
+  return nodes.length ? nodes.map((nodeId) => nodeNameById(nodeId)).join(", ") : "—";
+}
 
 const overview = computed(() => {
   const tasks = latestTasks.value;
@@ -1227,7 +1263,9 @@ async function onStartRun(): Promise<void> {
               <tr>
                 <th>{{ t("replica.snapshotId") }}</th>
                 <th>{{ t("replica.owner") }}</th>
+                <th>{{ t("replica.storageNodes") }}</th>
                 <th>{{ t("replica.checksum") }}</th>
+                <th>{{ t("replica.freshness") }}</th>
                 <th></th>
               </tr>
             </thead>
@@ -1235,7 +1273,11 @@ async function onStartRun(): Promise<void> {
               <tr v-for="snap in snapshots" :key="`${snap.sourceNodeId}:${snap.snapshotId}`">
                 <td class="mono">{{ snap.snapshotId }}</td>
                 <td data-snapshot-owner>{{ nodeNameById(snap.sourceNodeId || "") }}</td>
+                <td data-snapshot-storage>{{ storageNodeNames(snap) }}</td>
                 <td class="mono">{{ shortSha(snap.sha256) }}</td>
+                <td data-snapshot-freshness>
+                  <FreshnessBadge :status="snapshotFreshness(snap)" />
+                </td>
                 <td>
                   <div class="row-actions">
                     <button
@@ -1261,7 +1303,7 @@ async function onStartRun(): Promise<void> {
                 </td>
               </tr>
               <tr v-if="!snapshots.length">
-                <td colspan="4" class="muted">{{ t("replica.noSnapshots") }}</td>
+                <td colspan="6" class="muted">{{ t("replica.noSnapshots") }}</td>
               </tr>
             </tbody>
           </table>

@@ -1154,6 +1154,7 @@ declare module "i18next" {
         'replica.verify': string
         'replica.restoreOwner': string
         'replica.owner': string
+        'replica.storageNodes': string
         'replica.snapshotId': string
         'replica.checksum': string
         'replica.noRoutes': string

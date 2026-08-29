@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"connectrpc.com/connect"
@@ -17,10 +18,12 @@ import (
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/freshness"
 	"github.com/qleelulu/procmesh/internal/rpc"
 	"github.com/qleelulu/procmesh/internal/store"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
+	"golang.org/x/sync/errgroup"
 )
 
 var _ procmeshv1connect.DisasterReplicationServiceHandler = (*DisasterReplicationAPI)(nil)
@@ -53,7 +56,17 @@ type DisasterReplicationAPI struct {
 	}
 	Members     func() []cluster.NodeSummary
 	DispatchRun func(backup.FrozenReplicationRun)
+
+	inventoryMu    sync.Mutex
+	inventoryCache map[string]cachedReplicaInventory
 }
+
+type cachedReplicaInventory struct {
+	snapshots   []*procmeshv1.ReplicaSnapshot
+	lastUpdated int64
+}
+
+const recoverableSnapshotHopTimeout = 2 * time.Second
 
 // GetTopology returns the cluster topology for replication planning.
 func (d *DisasterReplicationAPI) GetTopology(ctx context.Context, req *connect.Request[procmeshv1.GetTopologyRequest]) (*connect.Response[procmeshv1.GetTopologyResponse], error) {
@@ -996,6 +1009,15 @@ func (d *DisasterReplicationAPI) VerifyReplica(ctx context.Context, req *connect
 
 	meta, err := d.PeerStore.GetReplicaMetadata(ctx, req.Msg.SourceNodeId, d.clusterID(), req.Msg.SnapshotId)
 	if err != nil {
+		if !d.LocalOnly && errcode.Is(err, errcode.NOT_FOUND) {
+			response, forwardErr := d.verifyRemoteReplica(ctx, req)
+			if forwardErr == nil {
+				return response, nil
+			}
+			if !errcode.Is(forwardErr, errcode.NOT_FOUND) && connect.CodeOf(forwardErr) != connect.CodeNotFound {
+				return nil, mapForwardErr(forwardErr)
+			}
+		}
 		return nil, ToConnect(err)
 	}
 
@@ -1028,6 +1050,62 @@ func (d *DisasterReplicationAPI) VerifyReplica(ctx context.Context, req *connect
 	}), nil
 }
 
+func (d *DisasterReplicationAPI) verifyRemoteReplica(ctx context.Context, req *connect.Request[procmeshv1.VerifyReplicaRequest]) (*connect.Response[procmeshv1.VerifyReplicaResponse], error) {
+	targets := make(map[string]struct{})
+	for _, task := range d.state().ReplicationTasks {
+		if task.SourceNodeID == req.Msg.GetSourceNodeId() && task.SnapshotID == req.Msg.GetSnapshotId() && task.Status == "SUCCEEDED" && task.NodeID != "" && task.NodeID != d.localNodeID() {
+			targets[task.NodeID] = struct{}{}
+		}
+	}
+	nodeIDs := make([]string, 0, len(targets))
+	for nodeID := range targets {
+		nodeIDs = append(nodeIDs, nodeID)
+	}
+	sort.Strings(nodeIDs)
+	if len(nodeIDs) == 0 {
+		return nil, errcode.E(errcode.NOT_FOUND, "snapshot not found")
+	}
+	forwarder, ok := d.Forward.(DisasterReplicationForwarder)
+	if !ok || forwarder == nil || d.Members == nil {
+		return nil, errcode.E(errcode.UNAVAILABLE, "replica storage unavailable")
+	}
+	members := make(map[string]cluster.NodeSummary)
+	for _, member := range d.Members() {
+		members[member.NodeID] = member
+	}
+	var lastErr error
+	for _, nodeID := range nodeIDs {
+		member := members[nodeID]
+		if member.State != cluster.StateAlive || member.RPCAddress == "" {
+			continue
+		}
+		hopCtx, cancel := context.WithTimeout(ctx, recoverableSnapshotHopTimeout)
+		client, err := forwarder.DisasterReplication(hopCtx, Route{NodeID: nodeID, RPC: member.RPCAddress})
+		if err == nil {
+			forwarded := connect.NewRequest(&procmeshv1.VerifyReplicaRequest{SourceNodeId: req.Msg.GetSourceNodeId(), SnapshotId: req.Msg.GetSnapshotId()})
+			for key, values := range req.Header() {
+				for _, value := range values {
+					forwarded.Header().Add(key, value)
+				}
+			}
+			stampHop(forwarded.Header(), d.localNodeID(), nodeID)
+			stampIdentity(forwarded.Header(), ctx)
+			var response *connect.Response[procmeshv1.VerifyReplicaResponse]
+			response, err = client.VerifyReplica(hopCtx, forwarded)
+			if err == nil {
+				cancel()
+				return response, nil
+			}
+		}
+		cancel()
+		lastErr = err
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, errcode.E(errcode.UNAVAILABLE, "replica storage unavailable")
+}
+
 func (d *DisasterReplicationAPI) frozenReplicaChecksum(ctx context.Context, sourceNodeID, snapshotID string) string {
 	state := d.state()
 	for _, task := range state.ReplicationTasks {
@@ -1049,25 +1127,55 @@ func (d *DisasterReplicationAPI) frozenReplicaChecksum(ctx context.Context, sour
 	return ""
 }
 
-// ListRecoverableSnapshots lists snapshots available for recovery.
-// Returns source Owner and checksum.
+// ListRecoverableSnapshots lists disaster-replication snapshots available for
+// recovery. Public requests aggregate every admitted Agent; internal hops set
+// LocalOnly and return only that Agent's inventory.
 func (d *DisasterReplicationAPI) ListRecoverableSnapshots(ctx context.Context, req *connect.Request[procmeshv1.ListRecoverableSnapshotsRequest]) (*connect.Response[procmeshv1.ListRecoverableSnapshotsResponse], error) {
 	if err := requirePerm(ctx, d.Auth, auth.PermReplicationRead, d.NodeID, false, true); err != nil {
 		return nil, err
 	}
 
-	if d.PeerStore == nil {
-		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "peer store unavailable"))
+	local, err := d.listLocalRecoverableSnapshots(ctx)
+	if err != nil {
+		return nil, ToConnect(err)
+	}
+	nowMs := d.now().UnixMilli()
+	localID := d.localNodeID()
+	for _, snapshot := range local {
+		snapshot.Freshness = freshness.LIVE
+		snapshot.LastUpdatedUnixMs = nowMs
+	}
+	localStatus := &procmeshv1.ReplicaInventoryStatus{NodeId: localID, Freshness: freshness.LIVE, LastUpdatedUnixMs: nowMs}
+	if d.LocalOnly {
+		return connect.NewResponse(&procmeshv1.ListRecoverableSnapshotsResponse{Snapshots: local, InventoryStatuses: []*procmeshv1.ReplicaInventoryStatus{localStatus}}), nil
 	}
 
+	inventories := map[string][]*procmeshv1.ReplicaSnapshot{localID: local}
+	statuses := map[string]*procmeshv1.ReplicaInventoryStatus{localID: localStatus}
+	d.storeReplicaInventory(localID, local, nowMs)
+	d.aggregateReplicaInventories(ctx, req, inventories, statuses)
+	return connect.NewResponse(&procmeshv1.ListRecoverableSnapshotsResponse{
+		Snapshots:         mergeReplicaInventories(inventories),
+		InventoryStatuses: sortedReplicaInventoryStatuses(statuses),
+	}), nil
+}
+
+func (d *DisasterReplicationAPI) listLocalRecoverableSnapshots(ctx context.Context) ([]*procmeshv1.ReplicaSnapshot, error) {
+	if d.PeerStore == nil {
+		return nil, errcode.E(errcode.UNAVAILABLE, "peer store unavailable")
+	}
 	clusterID := d.clusterID()
+	storageNodeID := d.localNodeID()
 	merged := make(map[string]*procmeshv1.ReplicaSnapshot)
 	if d.SnapshotLister != nil {
 		metas, err := d.SnapshotLister.ListLocal(ctx)
 		if err != nil {
-			return nil, ToConnect(err)
+			return nil, err
 		}
 		for _, meta := range metas {
+			if meta.Sink != backup.ReplicaSinkName || meta.ClusterID != clusterID {
+				continue
+			}
 			owner := meta.SourceNodeID
 			if owner == "" {
 				owner = meta.NodeID
@@ -1076,12 +1184,12 @@ func (d *DisasterReplicationAPI) ListRecoverableSnapshots(ctx context.Context, r
 				continue
 			}
 			key := owner + "\x00" + meta.SnapshotID + "\x00" + meta.SHA256
-			merged[key] = &procmeshv1.ReplicaSnapshot{SnapshotId: meta.SnapshotID, ClusterId: meta.ClusterID, SourceNodeId: owner, Sha256: meta.SHA256, CreatedAt: meta.CreatedAt.Unix(), ProcessCount: int32(len(meta.ProcessIDs)), ProcessIds: append([]string(nil), meta.ProcessIDs...)}
+			merged[key] = replicaSnapshotFromMeta(meta, owner, storageNodeID)
 		}
 	}
 	listed, err := d.PeerStore.ListAllSnapshots(ctx, clusterID)
 	if err != nil {
-		return nil, ToConnect(err)
+		return nil, err
 	}
 	for _, item := range listed {
 		meta, err := d.PeerStore.GetReplicaMetadata(ctx, item.SourceNodeID, clusterID, item.SnapshotID)
@@ -1090,7 +1198,7 @@ func (d *DisasterReplicationAPI) ListRecoverableSnapshots(ctx context.Context, r
 		}
 		owner := item.SourceNodeID
 		key := owner + "\x00" + meta.SnapshotID + "\x00" + meta.SHA256
-		merged[key] = &procmeshv1.ReplicaSnapshot{SnapshotId: meta.SnapshotID, ClusterId: meta.ClusterID, SourceNodeId: owner, Sha256: meta.SHA256, CreatedAt: meta.CreatedAt.Unix(), ProcessCount: int32(len(meta.ProcessIDs)), ProcessIds: append([]string(nil), meta.ProcessIDs...)}
+		merged[key] = replicaSnapshotFromMeta(meta, owner, storageNodeID)
 	}
 	out := make([]*procmeshv1.ReplicaSnapshot, 0, len(merged))
 	for _, snapshot := range merged {
@@ -1105,7 +1213,190 @@ func (d *DisasterReplicationAPI) ListRecoverableSnapshots(ctx context.Context, r
 		}
 		return out[i].SourceNodeId < out[j].SourceNodeId
 	})
-	return connect.NewResponse(&procmeshv1.ListRecoverableSnapshotsResponse{Snapshots: out}), nil
+	return out, nil
+}
+
+func replicaSnapshotFromMeta(meta backup.Meta, owner, storageNodeID string) *procmeshv1.ReplicaSnapshot {
+	return &procmeshv1.ReplicaSnapshot{
+		SnapshotId: meta.SnapshotID, ClusterId: meta.ClusterID, SourceNodeId: owner,
+		Sha256: meta.SHA256, CreatedAt: meta.CreatedAt.Unix(), ProcessCount: int32(len(meta.ProcessIDs)),
+		ProcessIds: append([]string(nil), meta.ProcessIDs...), StorageNodeIds: []string{storageNodeID},
+	}
+}
+
+func (d *DisasterReplicationAPI) localNodeID() string {
+	if d.LocalID != "" {
+		return d.LocalID
+	}
+	return d.NodeID
+}
+
+func (d *DisasterReplicationAPI) aggregateReplicaInventories(ctx context.Context, req *connect.Request[procmeshv1.ListRecoverableSnapshotsRequest], inventories map[string][]*procmeshv1.ReplicaSnapshot, statuses map[string]*procmeshv1.ReplicaInventoryStatus) {
+	forwarder, ok := d.Forward.(DisasterReplicationForwarder)
+	if !ok {
+		forwarder = nil
+	}
+	state := d.state()
+	members := make(map[string]cluster.NodeSummary)
+	if d.Members != nil {
+		for _, member := range d.Members() {
+			members[member.NodeID] = member
+		}
+	}
+	var mu sync.Mutex
+	var group errgroup.Group
+	for nodeID, memberState := range state.Members {
+		if memberState.Status != control.MemberAdmitted || nodeID == "" || nodeID == d.localNodeID() {
+			continue
+		}
+		nodeID := nodeID
+		member := members[nodeID]
+		if member.State != cluster.StateAlive || member.RPCAddress == "" || forwarder == nil {
+			mu.Lock()
+			d.addUnavailableReplicaInventory(nodeID, member, inventories, statuses)
+			mu.Unlock()
+			continue
+		}
+		group.Go(func() error {
+			hopCtx, cancel := context.WithTimeout(ctx, recoverableSnapshotHopTimeout)
+			defer cancel()
+			client, err := forwarder.DisasterReplication(hopCtx, Route{NodeID: nodeID, RPC: member.RPCAddress})
+			if err == nil {
+				forwarded := connect.NewRequest(&procmeshv1.ListRecoverableSnapshotsRequest{})
+				for key, values := range req.Header() {
+					for _, value := range values {
+						forwarded.Header().Add(key, value)
+					}
+				}
+				stampHop(forwarded.Header(), d.localNodeID(), nodeID)
+				stampIdentity(forwarded.Header(), ctx)
+				var response *connect.Response[procmeshv1.ListRecoverableSnapshotsResponse]
+				response, err = client.ListRecoverableSnapshots(hopCtx, forwarded)
+				if err == nil && response != nil && response.Msg != nil {
+					nowMs := d.now().UnixMilli()
+					snapshots := cloneReplicaSnapshots(response.Msg.GetSnapshots())
+					for _, snapshot := range snapshots {
+						snapshot.Freshness = freshness.LIVE
+						snapshot.LastUpdatedUnixMs = nowMs
+					}
+					mu.Lock()
+					inventories[nodeID] = snapshots
+					statuses[nodeID] = &procmeshv1.ReplicaInventoryStatus{NodeId: nodeID, Freshness: freshness.LIVE, LastUpdatedUnixMs: nowMs}
+					d.storeReplicaInventory(nodeID, snapshots, nowMs)
+					mu.Unlock()
+					return nil
+				}
+			}
+			mu.Lock()
+			d.addUnavailableReplicaInventory(nodeID, member, inventories, statuses)
+			mu.Unlock()
+			return nil
+		})
+	}
+	_ = group.Wait()
+}
+
+func (d *DisasterReplicationAPI) addUnavailableReplicaInventory(nodeID string, member cluster.NodeSummary, inventories map[string][]*procmeshv1.ReplicaSnapshot, statuses map[string]*procmeshv1.ReplicaInventoryStatus) {
+	cached, ok := d.loadReplicaInventory(nodeID)
+	if ok {
+		snapshots := cloneReplicaSnapshots(cached.snapshots)
+		for _, snapshot := range snapshots {
+			snapshot.Freshness = freshness.STALE
+			snapshot.LastUpdatedUnixMs = cached.lastUpdated
+		}
+		inventories[nodeID] = snapshots
+		statuses[nodeID] = &procmeshv1.ReplicaInventoryStatus{NodeId: nodeID, Freshness: freshness.STALE, LastUpdatedUnixMs: cached.lastUpdated, ErrorCode: string(errcode.UNAVAILABLE)}
+		return
+	}
+	statuses[nodeID] = &procmeshv1.ReplicaInventoryStatus{NodeId: nodeID, Freshness: freshness.UNKNOWN, LastUpdatedUnixMs: member.LastUpdatedUnixMs, ErrorCode: string(errcode.UNAVAILABLE)}
+}
+
+func (d *DisasterReplicationAPI) storeReplicaInventory(nodeID string, snapshots []*procmeshv1.ReplicaSnapshot, lastUpdated int64) {
+	d.inventoryMu.Lock()
+	defer d.inventoryMu.Unlock()
+	if d.inventoryCache == nil {
+		d.inventoryCache = make(map[string]cachedReplicaInventory)
+	}
+	d.inventoryCache[nodeID] = cachedReplicaInventory{snapshots: cloneReplicaSnapshots(snapshots), lastUpdated: lastUpdated}
+}
+
+func (d *DisasterReplicationAPI) loadReplicaInventory(nodeID string) (cachedReplicaInventory, bool) {
+	d.inventoryMu.Lock()
+	defer d.inventoryMu.Unlock()
+	cached, ok := d.inventoryCache[nodeID]
+	return cachedReplicaInventory{snapshots: cloneReplicaSnapshots(cached.snapshots), lastUpdated: cached.lastUpdated}, ok
+}
+
+func cloneReplicaSnapshots(in []*procmeshv1.ReplicaSnapshot) []*procmeshv1.ReplicaSnapshot {
+	out := make([]*procmeshv1.ReplicaSnapshot, 0, len(in))
+	for _, snapshot := range in {
+		if snapshot == nil {
+			continue
+		}
+		copy := *snapshot
+		copy.ProcessIds = append([]string(nil), snapshot.ProcessIds...)
+		copy.StorageNodeIds = append([]string(nil), snapshot.StorageNodeIds...)
+		out = append(out, &copy)
+	}
+	return out
+}
+
+func mergeReplicaInventories(inventories map[string][]*procmeshv1.ReplicaSnapshot) []*procmeshv1.ReplicaSnapshot {
+	merged := make(map[string]*procmeshv1.ReplicaSnapshot)
+	for storageNodeID, snapshots := range inventories {
+		for _, snapshot := range snapshots {
+			key := snapshot.GetClusterId() + "\x00" + snapshot.GetSourceNodeId() + "\x00" + snapshot.GetSnapshotId() + "\x00" + snapshot.GetSha256()
+			current, ok := merged[key]
+			if !ok {
+				current = cloneReplicaSnapshots([]*procmeshv1.ReplicaSnapshot{snapshot})[0]
+				current.StorageNodeIds = nil
+				merged[key] = current
+			}
+			locations := snapshot.GetStorageNodeIds()
+			if len(locations) == 0 {
+				locations = []string{storageNodeID}
+			}
+			for _, location := range locations {
+				if !containsString(current.StorageNodeIds, location) {
+					current.StorageNodeIds = append(current.StorageNodeIds, location)
+				}
+			}
+			if snapshot.GetFreshness() == freshness.LIVE || current.GetFreshness() == "" {
+				current.Freshness = snapshot.GetFreshness()
+				current.LastUpdatedUnixMs = snapshot.GetLastUpdatedUnixMs()
+			}
+		}
+	}
+	out := make([]*procmeshv1.ReplicaSnapshot, 0, len(merged))
+	for _, snapshot := range merged {
+		sort.Strings(snapshot.StorageNodeIds)
+		out = append(out, snapshot)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].SourceNodeId == out[j].SourceNodeId {
+			return out[i].SnapshotId < out[j].SnapshotId
+		}
+		return out[i].SourceNodeId < out[j].SourceNodeId
+	})
+	return out
+}
+
+func containsString(values []string, value string) bool {
+	for _, existing := range values {
+		if existing == value {
+			return true
+		}
+	}
+	return false
+}
+
+func sortedReplicaInventoryStatuses(statuses map[string]*procmeshv1.ReplicaInventoryStatus) []*procmeshv1.ReplicaInventoryStatus {
+	out := make([]*procmeshv1.ReplicaInventoryStatus, 0, len(statuses))
+	for _, status := range statuses {
+		out = append(out, status)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].GetNodeId() < out[j].GetNodeId() })
+	return out
 }
 
 // Helper functions

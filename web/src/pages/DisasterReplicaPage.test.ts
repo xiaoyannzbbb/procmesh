@@ -308,6 +308,9 @@ const recoverableSnapshot = {
   createdAt: 1_700_000_000n,
   processCount: 1,
   processIds: ["web"],
+  storageNodeIds: ["n1", "n2"],
+  freshness: "LIVE",
+  lastUpdatedUnixMs: 1_700_000_000_000n,
 };
 
 const mounted: Array<{ unmount: () => void }> = [];
@@ -320,6 +323,7 @@ async function mountPage(
     runs?: unknown[];
     run?: unknown;
     snapshots?: unknown[];
+    inventoryStatuses?: unknown[];
     draft?: unknown;
     topologyError?: Error;
     policiesError?: Error;
@@ -341,6 +345,11 @@ async function mountPage(
   const runs = opts.runs ?? [{ ...replicaRun, tasks: replicaTasks }];
   const run = opts.run ?? replicaRun;
   const snapshots = opts.snapshots ?? [recoverableSnapshot];
+  const inventoryStatuses = opts.inventoryStatuses ?? [
+    { nodeId: "n1", freshness: "LIVE", lastUpdatedUnixMs: 1_700_000_000_000n },
+    { nodeId: "n2", freshness: "LIVE", lastUpdatedUnixMs: 1_700_000_000_000n },
+    { nodeId: "n3", freshness: "LIVE", lastUpdatedUnixMs: 1_700_000_000_000n },
+  ];
   const draft = opts.draft ?? policyDraft;
   const replicationClient = {
     getTopology: opts.topologyError
@@ -369,7 +378,7 @@ async function mountPage(
     }),
     listRecoverableSnapshots: opts.snapshotsError
       ? vi.fn().mockRejectedValue(opts.snapshotsError)
-      : vi.fn().mockResolvedValue({ snapshots }),
+      : vi.fn().mockResolvedValue({ snapshots, inventoryStatuses }),
   };
   const memoryRouter = createRouter({
     history: createMemoryHistory(),
@@ -470,6 +479,24 @@ describe("DisasterReplicaPage", () => {
     expect(overview.get("[data-failed-count]").text()).toContain("1");
     expect(overview.get("[data-recoverable-count]").text()).toContain("1");
     expect(overview.get("[data-last-success]").text()).not.toBe("—");
+  });
+
+  it("shows recovery Owner, storage nodes, and inventory freshness", async () => {
+    const { wrapper } = await mountPage({
+      inventoryStatuses: [
+        { nodeId: "n1", freshness: "LIVE", lastUpdatedUnixMs: 1_700_000_000_000n },
+        { nodeId: "n2", freshness: "STALE", lastUpdatedUnixMs: 1_700_000_000_000n },
+        { nodeId: "n3", freshness: "UNKNOWN", errorCode: "UNAVAILABLE" },
+      ],
+      snapshots: [{ ...recoverableSnapshot, freshness: "STALE" }],
+    });
+    const recovery = wrapper.get('[data-section="recovery"]');
+    expect(recovery.get("[data-snapshot-owner]").text()).toBe("agent-one");
+    expect(recovery.get("[data-snapshot-storage]").text()).toContain("agent-one");
+    expect(recovery.get("[data-snapshot-storage]").text()).toContain("agent-two");
+    expect(recovery.get("[data-snapshot-freshness]").text()).toMatch(/stale/i);
+    expect(recovery.get(".section-header .freshness-badge").text()).toMatch(/unknown/i);
+    expect(wrapper.text()).toContain("Some replica sources are unreachable");
   });
 
   it("keeps offline admitted nodes in topology as warnings, not exclusions", async () => {

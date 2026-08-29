@@ -1301,6 +1301,7 @@
     "verify": "校验 checksum",
     "restoreOwner": "在 Owner 上恢复",
     "owner": "Owner",
+    "storageNodes": "存放节点",
     "snapshotId": "快照 ID",
     "checksum": "Checksum",
     "noRoutes": "没有副本路由",

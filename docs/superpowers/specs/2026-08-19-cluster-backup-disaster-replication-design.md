@@ -387,6 +387,15 @@ FS、S3、Peer 只共享保留意图，不共享删除实现。S3 可以交给 b
 - `VerifyReplica`
 - `ListRecoverableSnapshots`
 
+`ListRecoverableSnapshots` 在公开 API 入口聚合所有已准入 Agent 的本地
+`replica` 快照索引与 PeerStore 清单；Agent 间内部 hop 只返回本机 inventory，
+禁止递归 fan-out。逻辑快照按 cluster、Owner、snapshot ID 和 checksum 去重，
+同时返回实际存放节点。普通 FS/S3 主备份不进入灾备恢复清单。远端 inventory
+查询失败时保留最近一次成功清单并标记 `STALE`；从未成功查询过则标记
+`UNKNOWN`，不得把不可达节点表现为空清单或实时健康。
+`VerifyReplica` 根据已冻结且成功的复制任务路由到实际 Peer 持有节点校验，
+不能假定 Web 入口节点本地持有该副本。
+
 Draft API 不直接写 Raft；`ApplyPolicyDraft` 必须带 draft revision 和规范化策略摘要 hash，防止用户基于旧拓扑或已修改的策略输入覆盖当前状态；可编辑 route 由 FSM 独立校验。
 
 ### 12.3 内部 `PeerReplicationService`

@@ -1301,6 +1301,7 @@
     "verify": "Verify checksum",
     "restoreOwner": "Restore on Owner",
     "owner": "Owner",
+    "storageNodes": "Stored on",
     "snapshotId": "Snapshot ID",
     "checksum": "Checksum",
     "noRoutes": "No replica routes",

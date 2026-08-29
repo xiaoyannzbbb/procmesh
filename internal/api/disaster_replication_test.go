@@ -1348,6 +1348,22 @@ func (f disasterReplicationForwarder) DisasterReplication(context.Context, Route
 	return f.client, nil
 }
 
+type disasterReplicationRouteForwarder map[string]procmeshv1connect.DisasterReplicationServiceClient
+
+func (f disasterReplicationRouteForwarder) DisasterReplication(_ context.Context, route Route) (procmeshv1connect.DisasterReplicationServiceClient, error) {
+	client, ok := f[route.NodeID]
+	if !ok {
+		return nil, errors.New("replication route unavailable")
+	}
+	return client, nil
+}
+
+type staticSnapshotLister []backup.Meta
+
+func (s staticSnapshotLister) ListLocal(context.Context) ([]backup.Meta, error) {
+	return append([]backup.Meta(nil), s...), nil
+}
+
 func TestDisasterReplicationAPI_NonLeaderForwardsMutation(t *testing.T) {
 	leaderState := control.NewState()
 	leaderState.ReplicationPolicies["policy-forward"] = control.ReplicationPolicy{
@@ -2042,6 +2058,195 @@ func TestDisasterReplicationAPI_ListRecoverableSnapshots_RetainsPeerSourceOwner(
 	}
 	if len(resp.Msg.Snapshots) != 1 || resp.Msg.Snapshots[0].GetSourceNodeId() != "owner-node" || resp.Msg.Snapshots[0].GetSha256() != checksum {
 		t.Fatalf("recoverable snapshots=%+v", resp.Msg.Snapshots)
+	}
+}
+
+func TestDisasterReplicationAPI_ListRecoverableSnapshots_AggregatesAllAgents(t *testing.T) {
+	api, _, authSvc := setupMinimalAPI(t)
+	now := time.Unix(1_800_000_000, 0)
+	localSnapshot := func(nodeID string) backup.Meta {
+		return backup.Meta{
+			SnapshotID: "snap-" + nodeID,
+			ClusterID:  "test-cluster",
+			NodeID:     nodeID,
+			CreatedAt:  now,
+			ProcessIDs: []string{"process-" + nodeID},
+			SHA256:     strings.Repeat(nodeID[len(nodeID)-1:], 64),
+			Sink:       backup.ReplicaSinkName,
+		}
+	}
+
+	clients := disasterReplicationRouteForwarder{}
+	for _, nodeID := range []string{"node-2", "node-3"} {
+		remote := &DisasterReplicationAPI{
+			ClusterID:      "test-cluster",
+			NodeID:         nodeID,
+			LocalID:        nodeID,
+			LocalOnly:      true,
+			PeerStore:      &backup.PeerStore{Root: t.TempDir()},
+			SnapshotLister: staticSnapshotLister{localSnapshot(nodeID)},
+		}
+		clients[nodeID] = newDisasterReplicationClient(t, remote)
+	}
+
+	api.NodeID = "node-1"
+	api.LocalID = "node-1"
+	api.SnapshotLister = staticSnapshotLister{localSnapshot("node-1")}
+	api.Forward = clients
+	api.Members = func() []cluster.NodeSummary {
+		return []cluster.NodeSummary{
+			{NodeID: "node-1", State: cluster.StateAlive, RPCAddress: "node-1:18683"},
+			{NodeID: "node-2", State: cluster.StateAlive, RPCAddress: "node-2:18683"},
+			{NodeID: "node-3", State: cluster.StateAlive, RPCAddress: "node-3:18683"},
+		}
+	}
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := api.ListRecoverableSnapshots(context.Background(), bearerReq(sid, &procmeshv1.ListRecoverableSnapshotsRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	owners := make([]string, 0, len(resp.Msg.GetSnapshots()))
+	for _, snapshot := range resp.Msg.GetSnapshots() {
+		owners = append(owners, snapshot.GetSourceNodeId())
+	}
+	if got, want := strings.Join(owners, ","), "node-1,node-2,node-3"; got != want {
+		t.Fatalf("recoverable owners=%s, want %s", got, want)
+	}
+}
+
+func TestDisasterReplicationAPI_ListRecoverableSnapshots_ExcludesPrimaryBackups(t *testing.T) {
+	api, _, authSvc := setupMinimalAPI(t)
+	api.LocalOnly = true
+	api.SnapshotLister = staticSnapshotLister{
+		{SnapshotID: "replica", ClusterID: "test-cluster", NodeID: "node-1", SHA256: strings.Repeat("a", 64), Sink: backup.ReplicaSinkName},
+		{SnapshotID: "primary", ClusterID: "test-cluster", NodeID: "node-1", SHA256: strings.Repeat("b", 64), Sink: "fs"},
+	}
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := api.ListRecoverableSnapshots(context.Background(), bearerReq(sid, &procmeshv1.ListRecoverableSnapshotsRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resp.Msg.GetSnapshots(); len(got) != 1 || got[0].GetSnapshotId() != "replica" {
+		t.Fatalf("recoverable snapshots=%+v, want only replica capture", got)
+	}
+}
+
+func TestDisasterReplicationAPI_ListRecoverableSnapshots_DeduplicatesStorageLocations(t *testing.T) {
+	api, _, authSvc := setupMinimalAPI(t)
+	api.NodeID = "node-1"
+	api.LocalID = "node-1"
+	meta := backup.Meta{SnapshotID: "snap-shared", ClusterID: "test-cluster", NodeID: "node-1", SHA256: strings.Repeat("a", 64), Sink: backup.ReplicaSinkName}
+	api.SnapshotLister = staticSnapshotLister{meta}
+	remoteStore := &backup.PeerStore{Root: t.TempDir()}
+	snapshot := backup.Snapshot{FormatVersion: 1, SnapshotID: meta.SnapshotID, ClusterID: meta.ClusterID, NodeID: meta.NodeID, Processes: []backup.ProcessDump{}}
+	payload, checksum, err := backup.Encode(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta.SHA256 = checksum
+	api.SnapshotLister = staticSnapshotLister{meta}
+	if _, err := remoteStore.ReceiveWithMetadata(context.Background(), backup.ReceiveParams{SourceNodeID: "node-1", ClusterID: "test-cluster", SnapshotID: meta.SnapshotID, SHA256: checksum, Payload: payload}); err != nil {
+		t.Fatal(err)
+	}
+	remote := &DisasterReplicationAPI{ClusterID: "test-cluster", NodeID: "node-2", LocalOnly: true, PeerStore: remoteStore}
+	api.Forward = disasterReplicationRouteForwarder{"node-2": newDisasterReplicationClient(t, remote)}
+	api.Members = func() []cluster.NodeSummary {
+		return []cluster.NodeSummary{{NodeID: "node-1", State: cluster.StateAlive, RPCAddress: "node-1:18683"}, {NodeID: "node-2", State: cluster.StateAlive, RPCAddress: "node-2:18683"}}
+	}
+	state := api.state()
+	delete(state.Members, "node-3")
+	api.StateFn = func() control.State { return state }
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := api.ListRecoverableSnapshots(context.Background(), bearerReq(sid, &procmeshv1.ListRecoverableSnapshotsRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Msg.GetSnapshots()) != 1 {
+		t.Fatalf("snapshots=%+v, want one logical snapshot", resp.Msg.GetSnapshots())
+	}
+	if got, want := strings.Join(resp.Msg.GetSnapshots()[0].GetStorageNodeIds(), ","), "node-1,node-2"; got != want {
+		t.Fatalf("storage nodes=%s, want %s", got, want)
+	}
+}
+
+func TestDisasterReplicationAPI_ListRecoverableSnapshots_ReportsStaleAndUnknownInventories(t *testing.T) {
+	api, _, authSvc := setupMinimalAPI(t)
+	api.NodeID = "node-1"
+	api.LocalID = "node-1"
+	api.SnapshotLister = staticSnapshotLister{}
+	remoteMeta := backup.Meta{SnapshotID: "snap-node-2", ClusterID: "test-cluster", NodeID: "node-2", SHA256: strings.Repeat("a", 64), Sink: backup.ReplicaSinkName}
+	remote := &DisasterReplicationAPI{ClusterID: "test-cluster", NodeID: "node-2", LocalOnly: true, PeerStore: &backup.PeerStore{Root: t.TempDir()}, SnapshotLister: staticSnapshotLister{remoteMeta}}
+	api.Forward = disasterReplicationRouteForwarder{"node-2": newDisasterReplicationClient(t, remote)}
+	members := []cluster.NodeSummary{{NodeID: "node-1", State: cluster.StateAlive, RPCAddress: "node-1:18683"}, {NodeID: "node-2", State: cluster.StateAlive, RPCAddress: "node-2:18683"}, {NodeID: "node-3", State: cluster.StateFailed}}
+	api.Members = func() []cluster.NodeSummary { return append([]cluster.NodeSummary(nil), members...) }
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := bearerReq(sid, &procmeshv1.ListRecoverableSnapshotsRequest{})
+	if _, err := api.ListRecoverableSnapshots(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	members[1].State = cluster.StateFailed
+
+	resp, err := api.ListRecoverableSnapshots(context.Background(), bearerReq(sid, &procmeshv1.ListRecoverableSnapshotsRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	statusByNode := make(map[string]string)
+	for _, status := range resp.Msg.GetInventoryStatuses() {
+		statusByNode[status.GetNodeId()] = status.GetFreshness()
+	}
+	if statusByNode["node-2"] != "STALE" || statusByNode["node-3"] != "UNKNOWN" {
+		t.Fatalf("inventory freshness=%v", statusByNode)
+	}
+	if len(resp.Msg.GetSnapshots()) != 1 || resp.Msg.GetSnapshots()[0].GetFreshness() != "STALE" {
+		t.Fatalf("cached snapshots=%+v", resp.Msg.GetSnapshots())
+	}
+}
+
+func TestDisasterReplicationAPI_VerifyReplicaRoutesToStorageNode(t *testing.T) {
+	api, state, authSvc := setupMinimalAPI(t)
+	api.NodeID = "node-1"
+	api.LocalID = "node-1"
+	snapshot := backup.Snapshot{FormatVersion: 1, SnapshotID: "snap-remote", ClusterID: "test-cluster", NodeID: "node-3", Processes: []backup.ProcessDump{}}
+	payload, checksum, err := backup.Encode(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteStore := &backup.PeerStore{Root: t.TempDir()}
+	if _, err := remoteStore.ReceiveWithMetadata(context.Background(), backup.ReceiveParams{SourceNodeID: "node-3", ClusterID: "test-cluster", SnapshotID: snapshot.SnapshotID, SHA256: checksum, Payload: payload}); err != nil {
+		t.Fatal(err)
+	}
+	state.ReplicationTasks["run-1:task-1"] = control.ClusterBackupTask{RunID: "run-1", TaskID: "task-1", SourceNodeID: "node-3", NodeID: "node-2", SnapshotID: snapshot.SnapshotID, SHA256: checksum, Status: "SUCCEEDED"}
+	remote := &DisasterReplicationAPI{ClusterID: "test-cluster", NodeID: "node-2", LocalOnly: true, PeerStore: remoteStore, StateFn: func() control.State { return *state }}
+	api.Forward = disasterReplicationRouteForwarder{"node-2": newDisasterReplicationClient(t, remote)}
+	api.Members = func() []cluster.NodeSummary {
+		return []cluster.NodeSummary{{NodeID: "node-1", State: cluster.StateAlive, RPCAddress: "node-1:18683"}, {NodeID: "node-2", State: cluster.StateAlive, RPCAddress: "node-2:18683"}}
+	}
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := api.VerifyReplica(context.Background(), bearerReq(sid, &procmeshv1.VerifyReplicaRequest{SourceNodeId: "node-3", SnapshotId: snapshot.SnapshotID}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Msg.GetValid() || resp.Msg.GetSha256() != checksum {
+		t.Fatalf("verify response=%+v", resp.Msg)
 	}
 }
 
