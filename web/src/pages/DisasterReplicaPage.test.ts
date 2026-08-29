@@ -1,10 +1,12 @@
 import { QueryClient, VueQueryPlugin } from "@tanstack/vue-query";
+import { Code, ConnectError } from "@connectrpc/connect";
 import { flushPromises, mount } from "@vue/test-utils";
 import i18next from "i18next";
 import I18NextVue from "i18next-vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, h } from "vue";
 import { createMemoryHistory, createRouter } from "vue-router";
+import { ErrorInfoSchema } from "../gen/procmesh/v1/api_pb";
 import { useClusterBackupClient, useReplicationClient } from "../lib/rpc";
 import { session } from "../lib/session";
 import { router as appRouter } from "../router";
@@ -39,6 +41,8 @@ const replicationMethods = [
   "retryFailedRoutes",
   "verifyReplica",
   "listRecoverableSnapshots",
+  "prepareRecoverableSnapshotRestore",
+  "restoreRecoverableSnapshot",
 ] as const;
 
 const replicaI18n = {
@@ -95,6 +99,26 @@ const replicaI18n = {
   retryFailed: "Retry failed routes",
   verify: "Verify checksum",
   restoreOwner: "Restore on Owner",
+  restore: "Restore",
+  restoreConfirm: "Restore recoverable snapshot",
+  restoreWarning: "The selected snapshot will replace process specs on the Owner using CAS.",
+  snapshot: "Snapshot",
+  storageNodes: "Stored on",
+  storageNode: "Restore source",
+  automaticStorage: "Automatic",
+  ownerCopy: "Owner copy",
+  peerCopy: "Peer copy",
+  process: "Process",
+  snapshotRevision: "Snapshot revision",
+  expectedRevision: "Expected revision",
+  currentMissing: "Not currently present",
+  prepareRestoreFailed: "Cannot prepare restore: {{detail}}",
+  ownerUnavailable: "Owner is unavailable. Restore cannot run until the Owner is reachable.",
+  confirmRestore: "Confirm restore",
+  restoreSuccess: "Restore completed",
+  restoreConflict: "Restore conflict: {{detail}}",
+  restoreFailed: "Restore failed: {{detail}}",
+  restoredFrom: "Restored from {{node}}",
   owner: "Owner",
   snapshotId: "Snapshot ID",
   checksum: "Checksum",
@@ -329,13 +353,16 @@ async function mountPage(
     policiesError?: Error;
     runsError?: Error;
     snapshotsError?: Error;
+    prepareRestore?: unknown;
+    prepareRestoreError?: Error;
+    restoreResults?: unknown[];
   } = {},
 ) {
   session.value = {
     userId: "u1",
     username: "admin",
     csrfToken: "csrf",
-    permissions: opts.permissions ?? ["replication.read", "replication.manage"],
+    permissions: opts.permissions ?? ["replication.read", "replication.manage", "backup.manage"],
   };
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -379,6 +406,31 @@ async function mountPage(
     listRecoverableSnapshots: opts.snapshotsError
       ? vi.fn().mockRejectedValue(opts.snapshotsError)
       : vi.fn().mockResolvedValue({ snapshots, inventoryStatuses }),
+    prepareRecoverableSnapshotRestore: opts.prepareRestoreError
+      ? vi.fn().mockRejectedValue(opts.prepareRestoreError)
+      : vi.fn().mockResolvedValue(
+          opts.prepareRestore ?? {
+            snapshot: recoverableSnapshot,
+            candidates: [
+              {
+                processId: "web",
+                processName: "web",
+                snapshotRevision: 7n,
+                currentRevision: 11n,
+                currentExists: true,
+              },
+            ],
+            selectedStorageNodeId: "n1",
+            ownerCopy: true,
+          },
+        ),
+    restoreRecoverableSnapshot: vi.fn().mockResolvedValue({
+      results: opts.restoreResults ?? [
+        { processId: "web", status: "SUCCESS", newRevision: 12n, error: "" },
+      ],
+      restoredFromNodeId: "n1",
+      fetchedFromPeer: false,
+    }),
   };
   const memoryRouter = createRouter({
     history: createMemoryHistory(),
@@ -411,6 +463,7 @@ afterEach(() => {
   while (mounted.length) {
     mounted.pop()?.unmount();
   }
+  document.body.style.overflow = "";
 });
 
 describe("cluster backup and replication clients", () => {
@@ -718,14 +771,268 @@ describe("DisasterReplicaPage", () => {
     expect(wrapper.text()).toMatch(/checksum matches/i);
   });
 
-  it("exposes an Owner restore entry that keeps source identity and links to Backup", async () => {
-    const { wrapper } = await mountPage();
+  it("opens restore on the replica page with the clicked snapshot selected", async () => {
+    const otherSnapshot = {
+      ...recoverableSnapshot,
+      snapshotId: "snap-n1-newer",
+      sha256: "9999999999999999",
+      createdAt: 1_700_000_100n,
+      storageNodeIds: ["n2", "n3"],
+    };
+    const otherOwnerSnapshot = {
+      ...recoverableSnapshot,
+      snapshotId: "snap-n3",
+      sourceNodeId: "n3",
+    };
+    const { wrapper, replicationClient, memoryRouter } = await mountPage({
+      snapshots: [recoverableSnapshot, otherSnapshot, otherOwnerSnapshot],
+    });
     const recovery = wrapper.get('[data-section="recovery"]');
     expect(recovery.get("[data-snapshot-owner]").text()).toBe("agent-one");
-    expect(recovery.text()).toMatch(/cannot be applied directly|Restore on the source Owner/i);
-    const link = wrapper.get('[data-action="restore-owner"]');
-    expect(link.attributes("href") ?? link.attributes("to") ?? link.html()).toMatch(/\/backup/);
-    expect(link.text()).toMatch(/Owner/i);
+    const restoreButtons = recovery.findAll('[data-action="restore"]');
+    await restoreButtons[0].trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+
+    expect(memoryRouter.currentRoute.value.path).toBe("/disaster-replica");
+    expect(replicationClient.prepareRecoverableSnapshotRestore).toHaveBeenCalledWith({
+      sourceNodeId: "n1",
+      snapshotId: "snap-n1",
+      sha256: "abc123def4567890",
+      storageNodeId: "",
+    });
+    const dialog = wrapper.get("[data-restore-dialog]");
+    expect(dialog.attributes("role")).toBe("dialog");
+    expect((dialog.get('[data-field="restore-snapshot"]').element as HTMLSelectElement).value).toBe("snap-n1");
+    expect(dialog.get('[data-field="restore-snapshot"]').findAll("option").map((option) => option.attributes("value"))).toEqual([
+      "snap-n1",
+      "snap-n1-newer",
+    ]);
+    expect(dialog.text()).toContain("agent-one");
+    expect(dialog.text()).toContain("abc123def4567890");
+    expect(dialog.text()).toContain("LIVE");
+    expect(dialog.text()).toContain("agent-two");
+    expect(dialog.text()).toContain("web");
+    expect((dialog.get('input[name="expectedRevision"]').element as HTMLInputElement).value).toBe("11");
+  });
+
+  it("restores on the Owner with CAS targets and shows per-process results in the dialog", async () => {
+    const { wrapper, replicationClient, memoryRouter } = await mountPage();
+    await wrapper.get('[data-action="restore"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+
+    await wrapper.get('[data-action="confirm-restore"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+
+    expect(replicationClient.restoreRecoverableSnapshot).toHaveBeenCalledWith({
+      meta: expect.objectContaining({ operationId: expect.any(String), operator: "admin" }),
+      sourceNodeId: "n1",
+      snapshotId: "snap-n1",
+      sha256: "abc123def4567890",
+      storageNodeId: "n1",
+      targets: [{ processId: "web", expectedRevision: 11n }],
+    });
+    expect(memoryRouter.currentRoute.value.path).toBe("/disaster-replica");
+    const dialog = wrapper.get("[data-restore-dialog]");
+    expect(dialog.get('[data-restore-result="web"]').text()).toContain("SUCCESS");
+    expect(dialog.text()).toContain("agent-one");
+    expect(wrapper.text()).toContain("Restore completed");
+  });
+
+  it("requires backup.manage for restore independently from replication.manage", async () => {
+    const { wrapper } = await mountPage({
+      permissions: ["replication.read", "replication.manage"],
+    });
+    expect(wrapper.find('[data-action="verify"]').exists()).toBe(true);
+    expect(wrapper.find('[data-action="restore"]').exists()).toBe(false);
+  });
+
+  it("keeps CAS conflicts visible and does not report restore success", async () => {
+    const { wrapper } = await mountPage({
+      restoreResults: [
+        { processId: "web", status: "CONFLICT", newRevision: 11n, error: "revision mismatch" },
+      ],
+    });
+    await wrapper.get('[data-action="restore"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-action="confirm-restore"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.get('[data-restore-result="web"]').text()).toContain("CONFLICT");
+    expect(wrapper.get('[data-restore-result="web"]').text()).toContain("revision mismatch");
+    expect(wrapper.text()).toContain("Restore conflict: web: revision mismatch");
+    expect(wrapper.text()).not.toContain("Restore completed");
+  });
+
+  it("keeps the operator on the replica page when the Owner is unavailable", async () => {
+    const { wrapper, replicationClient, memoryRouter } = await mountPage({
+      prepareRestoreError: new ConnectError("UNAVAILABLE", Code.Unavailable, undefined, [
+        {
+          desc: ErrorInfoSchema,
+          value: { code: "UNAVAILABLE", message: "UNAVAILABLE: owner unreachable" },
+        },
+      ]),
+    });
+    await wrapper.get('[data-action="restore"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+
+    expect(replicationClient.prepareRecoverableSnapshotRestore).toHaveBeenCalledOnce();
+    expect(memoryRouter.currentRoute.value.path).toBe("/disaster-replica");
+    const dialog = wrapper.get("[data-restore-dialog]");
+    expect(dialog.get('[role="alert"]').text()).toContain(
+      "Owner is unavailable. Restore cannot run until the Owner is reachable.",
+    );
+    expect((dialog.get('[data-action="confirm-restore"]').element as HTMLButtonElement).disabled).toBe(true);
+    expect(replicationClient.restoreRecoverableSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("does not misreport another UNAVAILABLE prepare failure as an unreachable Owner", async () => {
+    const { wrapper } = await mountPage({
+      prepareRestoreError: new ConnectError("replica storage unavailable", Code.Unavailable),
+    });
+    await wrapper.get('[data-action="restore"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+
+    const alert = wrapper.get("[data-restore-dialog]").get('[role="alert"]');
+    expect(alert.text()).toContain("Cannot prepare restore: UNAVAILABLE");
+    expect(alert.text()).not.toContain("Owner is unavailable");
+  });
+
+  it("closes restore with Escape and restores body scrolling", async () => {
+    document.body.style.overflow = "auto";
+    const { wrapper } = await mountPage();
+    await wrapper.get('[data-action="restore"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.find("[data-restore-dialog]").exists()).toBe(true);
+    expect(document.body.style.overflow).toBe("hidden");
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.find("[data-restore-dialog]").exists()).toBe(false);
+    expect(document.body.style.overflow).toBe("auto");
+  });
+
+  it("keeps restore open on Escape while prepare or restore is running", async () => {
+    let resolvePrepare!: (value: unknown) => void;
+    const pendingPrepare = new Promise((resolve) => {
+      resolvePrepare = resolve;
+    });
+    const { wrapper, replicationClient } = await mountPage();
+    replicationClient.prepareRecoverableSnapshotRestore.mockReturnValueOnce(pendingPrepare);
+
+    await wrapper.get('[data-action="restore"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find("[data-restore-dialog]").exists()).toBe(true);
+    expect(document.body.style.overflow).toBe("hidden");
+
+    resolvePrepare({
+      snapshot: recoverableSnapshot,
+      candidates: [
+        {
+          processId: "web",
+          processName: "web",
+          snapshotRevision: 7n,
+          currentRevision: 11n,
+          currentExists: true,
+        },
+      ],
+      selectedStorageNodeId: "n1",
+      ownerCopy: true,
+    });
+    await flushPromises();
+
+    let resolveRestore!: (value: unknown) => void;
+    const pendingRestore = new Promise((resolve) => {
+      resolveRestore = resolve;
+    });
+    replicationClient.restoreRecoverableSnapshot.mockReturnValueOnce(pendingRestore);
+    await wrapper.get('[data-action="confirm-restore"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find("[data-restore-dialog]").exists()).toBe(true);
+    expect(document.body.style.overflow).toBe("hidden");
+
+    resolveRestore({
+      results: [{ processId: "web", status: "SUCCESS", newRevision: 12n, error: "" }],
+      restoredFromNodeId: "n1",
+      fetchedFromPeer: false,
+    });
+    await flushPromises();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find("[data-restore-dialog]").exists()).toBe(false);
+  });
+
+  it("prepares again when the operator selects a different storage node", async () => {
+    const { wrapper, replicationClient } = await mountPage();
+    await wrapper.get('[data-action="restore"]').trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+
+    replicationClient.prepareRecoverableSnapshotRestore.mockResolvedValue({
+      snapshot: recoverableSnapshot,
+      candidates: [
+        {
+          processId: "web",
+          processName: "web",
+          snapshotRevision: 7n,
+          currentRevision: 12n,
+          currentExists: true,
+        },
+      ],
+      selectedStorageNodeId: "n2",
+      ownerCopy: false,
+    });
+    await wrapper.get('[data-field="restore-storage"]').setValue("n2");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+
+    expect(replicationClient.prepareRecoverableSnapshotRestore).toHaveBeenLastCalledWith({
+      sourceNodeId: "n1",
+      snapshotId: "snap-n1",
+      sha256: "abc123def4567890",
+      storageNodeId: "n2",
+    });
+    expect((wrapper.get('input[name="expectedRevision"]').element as HTMLInputElement).value).toBe("12");
+  });
+
+  it("uses create CAS revision zero when a snapshot process is missing on the Owner", async () => {
+    const { wrapper, replicationClient } = await mountPage({
+      prepareRestore: {
+        snapshot: recoverableSnapshot,
+        candidates: [
+          {
+            processId: "worker",
+            processName: "worker",
+            snapshotRevision: 4n,
+            currentExists: false,
+          },
+        ],
+        selectedStorageNodeId: "n2",
+        ownerCopy: false,
+      },
+    });
+    await wrapper.get('[data-action="restore"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get("[data-restore-dialog]").text()).toContain("Not currently present");
+
+    await wrapper.get('[data-action="confirm-restore"]').trigger("click");
+    await flushPromises();
+    expect(replicationClient.restoreRecoverableSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targets: [{ processId: "worker", expectedRevision: 0n }],
+      }),
+    );
   });
 
   it("does not present topology, policy, run, or snapshot errors as an empty catalog", async () => {

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
-import { ArrowRight, CopyPlus, ShieldCheck, TriangleAlert, X } from "lucide-vue-next";
+import { Code, ConnectError } from "@connectrpc/connect";
+import { ArchiveRestore, ArrowRight, CopyPlus, ShieldCheck, TriangleAlert, X } from "lucide-vue-next";
 import { computed, ref, useId, watch } from "vue";
-import { RouterLink } from "vue-router";
 import Drawer from "../components/Drawer.vue";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
+import { appMessage } from "../lib/connecterr";
 import { LIVE, STALE, UNKNOWN, formatAge, type Freshness } from "../lib/freshness";
 import { newOperationId } from "../lib/opid";
 import { useReplicationClient } from "../lib/rpc";
@@ -122,8 +123,24 @@ type ReplicaInventoryStatus = {
   errorCode?: string;
 };
 
+type RecoverableRestoreCandidate = {
+  processId?: string;
+  processName?: string;
+  snapshotRevision?: bigint | number;
+  currentRevision?: bigint | number;
+  currentExists?: boolean;
+};
+
+type RestoreProcessResult = {
+  processId?: string;
+  status?: string;
+  newRevision?: bigint | number;
+  error?: string;
+};
+
 const { t } = useI18n();
 const POLL_MS = 5000;
+const NUMERIC_INPUT_MODE = "numeric" as const;
 const PREVIEW_PANEL_STYLE = { width: "min(100%, 56rem)", maxHeight: "90vh" } as const;
 const previewTitleId = useId();
 const timezoneHintId = useId();
@@ -138,10 +155,23 @@ const draft = ref<PolicyDraft | null>(null);
 const generatedDraftInputFingerprint = ref("");
 const appliedRevision = ref<bigint | number | "">("");
 const verifyNotice = ref("");
+const restoreOpen = ref(false);
+const restoreOwnerId = ref("");
+const restoreSnapshotId = ref("");
+const restoreStorageNodeId = ref("");
+const restoreSelectedStorageNodeId = ref("");
+const restoreOwnerCopy = ref(false);
+const restoreCandidates = ref<RecoverableRestoreCandidate[]>([]);
+const restorePreparing = ref(false);
+const restorePrepareError = ref("");
+const restoreExecuting = ref(false);
+const restoreResults = ref<RestoreProcessResult[]>([]);
+const restoredFromNodeId = ref("");
 
 const perms = computed(() => new Set(session.value?.permissions ?? []));
 const canRead = computed(() => perms.value.has("replication.read"));
 const canManage = computed(() => perms.value.has("replication.manage"));
+const canRestore = computed(() => perms.value.has("backup.manage"));
 
 const topologyQuery = useQuery({
   queryKey: ["replica-topology"],
@@ -199,6 +229,23 @@ const selectedRun = computed(() => {
 const selectedTasks = computed(() => selectedRun.value?.tasks ?? []);
 const latestRun = computed(() => latestRunOf(runs.value));
 const latestTasks = computed(() => latestRun.value?.tasks ?? []);
+const restoreSnapshotOptions = computed(() =>
+  snapshots.value.filter((snapshot) => snapshot.sourceNodeId === restoreOwnerId.value),
+);
+const selectedRestoreSnapshot = computed(
+  () =>
+    restoreSnapshotOptions.value.find((snapshot) => snapshot.snapshotId === restoreSnapshotId.value) ??
+    null,
+);
+const restoreReady = computed(
+  () =>
+    canRestore.value &&
+    !restorePreparing.value &&
+    !restoreExecuting.value &&
+    !restorePrepareError.value &&
+    restoreCandidates.value.length > 0 &&
+    restoreCandidates.value.every((candidate) => Boolean(candidate.processId)),
+);
 const hasExistingRoutes = computed(() => routes.value.length > 0);
 const acting = computed(
   () =>
@@ -304,6 +351,163 @@ function snapshotFreshness(snapshot: RecoverableSnapshot): Freshness {
 function storageNodeNames(snapshot: RecoverableSnapshot): string {
   const nodes = snapshot.storageNodeIds ?? [];
   return nodes.length ? nodes.map((nodeId) => nodeNameById(nodeId)).join(", ") : "—";
+}
+
+function revisionText(revision: bigint | number | undefined): string {
+  return revision === undefined ? "" : String(revision);
+}
+
+function expectedRestoreRevision(candidate: RecoverableRestoreCandidate): bigint {
+  return candidate.currentExists === false ? 0n : BigInt(candidate.currentRevision ?? 0);
+}
+
+function isOwnerUnreachable(error: unknown): boolean {
+  const connectError = ConnectError.from(error);
+  if (connectError.code !== Code.Unavailable) {
+    return false;
+  }
+  return [connectError.rawMessage, connectError.message, appMessage(connectError)].some((message) =>
+    message.toLowerCase().includes("owner unreachable"),
+  );
+}
+
+async function prepareRestore(): Promise<void> {
+  const snapshot = selectedRestoreSnapshot.value;
+  if (!restoreOpen.value || !snapshot?.snapshotId || !snapshot.sourceNodeId) {
+    return;
+  }
+  restorePreparing.value = true;
+  restorePrepareError.value = "";
+  restoreCandidates.value = [];
+  restoreResults.value = [];
+  restoredFromNodeId.value = "";
+  try {
+    const response = await client.prepareRecoverableSnapshotRestore({
+      sourceNodeId: snapshot.sourceNodeId,
+      snapshotId: snapshot.snapshotId,
+      sha256: snapshot.sha256 || "",
+      storageNodeId: restoreStorageNodeId.value,
+    });
+    restoreSelectedStorageNodeId.value = response.selectedStorageNodeId || "";
+    restoreStorageNodeId.value = response.selectedStorageNodeId || restoreStorageNodeId.value;
+    restoreOwnerCopy.value = Boolean(response.ownerCopy);
+    restoreCandidates.value = (response.candidates ?? []).map((candidate) => ({ ...candidate }));
+  } catch (error) {
+    restorePrepareError.value =
+      isOwnerUnreachable(error)
+        ? t("replica.ownerUnavailable")
+        : formatRemoteError(error);
+  } finally {
+    restorePreparing.value = false;
+  }
+}
+
+async function openRestore(snapshot: RecoverableSnapshot): Promise<void> {
+  if (!canRestore.value || !snapshot.snapshotId || !snapshot.sourceNodeId) {
+    return;
+  }
+  actionError.value = "";
+  actionNotice.value = "";
+  restoreOwnerId.value = snapshot.sourceNodeId;
+  restoreSnapshotId.value = snapshot.snapshotId;
+  restoreStorageNodeId.value = "";
+  restoreSelectedStorageNodeId.value = "";
+  restoreOwnerCopy.value = false;
+  restoreResults.value = [];
+  restoredFromNodeId.value = "";
+  restoreOpen.value = true;
+  await prepareRestore();
+}
+
+async function onRestoreSnapshotChange(): Promise<void> {
+  restoreStorageNodeId.value = "";
+  restoreSelectedStorageNodeId.value = "";
+  await prepareRestore();
+}
+
+async function onRestoreStorageChange(): Promise<void> {
+  await prepareRestore();
+}
+
+function closeRestore(): void {
+  if (restorePreparing.value || restoreExecuting.value) {
+    return;
+  }
+  restoreOpen.value = false;
+  restoreOwnerId.value = "";
+  restoreSnapshotId.value = "";
+  restoreStorageNodeId.value = "";
+  restoreSelectedStorageNodeId.value = "";
+  restoreCandidates.value = [];
+  restorePrepareError.value = "";
+  restoreResults.value = [];
+  restoredFromNodeId.value = "";
+}
+
+watch(restoreOpen, (open, _previous, onCleanup) => {
+  if (!open) {
+    return;
+  }
+  const onKeydown = (event: KeyboardEvent) => {
+    if (event.key === "Escape") {
+      closeRestore();
+    }
+  };
+  const previousOverflow = document.body.style.overflow;
+  document.addEventListener("keydown", onKeydown);
+  document.body.style.overflow = "hidden";
+  onCleanup(() => {
+    document.removeEventListener("keydown", onKeydown);
+    document.body.style.overflow = previousOverflow;
+  });
+});
+
+async function onConfirmRestore(): Promise<void> {
+  const snapshot = selectedRestoreSnapshot.value;
+  if (!restoreReady.value || !snapshot?.snapshotId || !snapshot.sourceNodeId) {
+    return;
+  }
+  restoreExecuting.value = true;
+  restoreResults.value = [];
+  actionError.value = "";
+  actionNotice.value = "";
+  try {
+    const response = await client.restoreRecoverableSnapshot({
+      meta: mutationMeta(),
+      sourceNodeId: snapshot.sourceNodeId,
+      snapshotId: snapshot.snapshotId,
+      sha256: snapshot.sha256 || "",
+      storageNodeId: restoreSelectedStorageNodeId.value || restoreStorageNodeId.value,
+      targets: restoreCandidates.value.map((candidate) => ({
+        processId: candidate.processId || "",
+        expectedRevision: expectedRestoreRevision(candidate),
+      })),
+    });
+    restoreResults.value = response.results ?? [];
+    restoredFromNodeId.value = response.restoredFromNodeId || "";
+    const conflicts = restoreResults.value.filter(
+      (result) => (result.status || "").toUpperCase() === "CONFLICT",
+    );
+    const failures = restoreResults.value.filter(
+      (result) => (result.status || "").toUpperCase() !== "SUCCESS",
+    );
+    if (conflicts.length) {
+      actionError.value = t("replica.restoreConflict", {
+        detail: conflicts.map((result) => `${result.processId}: ${result.error || result.status}`).join("; "),
+      });
+    } else if (failures.length) {
+      actionError.value = t("replica.restoreFailed", {
+        detail: failures.map((result) => `${result.processId}: ${result.error || result.status}`).join("; "),
+      });
+    } else {
+      actionNotice.value = t("replica.restoreSuccess");
+    }
+    await invalidateReplica();
+  } catch (error) {
+    actionError.value = formatRemoteError(error);
+  } finally {
+    restoreExecuting.value = false;
+  }
 }
 
 const overview = computed(() => {
@@ -1292,13 +1496,17 @@ async function onStartRun(): Promise<void> {
                       <ShieldCheck :size="16" aria-hidden="true" />
                       {{ t("replica.verify") }}
                     </button>
-                    <RouterLink
+                    <button
+                      v-if="canRestore"
+                      type="button"
                       class="btn"
-                      data-action="restore-owner"
-                      :to="{ path: '/backup', query: { owner: snap.sourceNodeId || '', snapshot: snap.snapshotId || '' } }"
+                      data-action="restore"
+                      :disabled="restorePreparing"
+                      @click="openRestore(snap)"
                     >
-                      {{ t("replica.restoreOwner") }}
-                    </RouterLink>
+                      <ArchiveRestore :size="16" aria-hidden="true" />
+                      {{ t("replica.restore") }}
+                    </button>
                   </div>
                 </td>
               </tr>
@@ -1312,6 +1520,171 @@ async function onStartRun(): Promise<void> {
     </template>
 
   <Teleport to="body">
+    <div v-if="restoreOpen && selectedRestoreSnapshot" class="preview-backdrop" @click.self="closeRestore">
+      <section
+        class="preview-panel restore-panel"
+        data-restore-dialog
+        role="dialog"
+        :aria-modal="true"
+        :aria-busy="restorePreparing || restoreExecuting"
+        :aria-labelledby="`${previewTitleId}-restore`"
+      >
+        <header class="preview-header">
+          <div>
+            <h2 :id="`${previewTitleId}-restore`">{{ t("replica.restoreConfirm") }}</h2>
+            <p class="muted">{{ t("replica.restoreWarning") }}</p>
+          </div>
+          <button
+            type="button"
+            class="preview-close"
+            :aria-label="t('actions.close')"
+            :disabled="restorePreparing || restoreExecuting"
+            @click="closeRestore"
+          >
+            <X :size="18" aria-hidden="true" />
+          </button>
+        </header>
+        <div class="preview-body">
+          <p v-if="restorePrepareError" class="banner warning-banner" role="alert">
+            {{ t("replica.prepareRestoreFailed", { detail: restorePrepareError }) }}
+          </p>
+          <div class="restore-selectors">
+            <label class="field">
+              <span>{{ t("replica.snapshot") }}</span>
+              <select
+                v-model="restoreSnapshotId"
+                class="input"
+                data-field="restore-snapshot"
+                :disabled="restorePreparing"
+                @change="onRestoreSnapshotChange"
+              >
+                <option v-for="snapshot in restoreSnapshotOptions" :key="snapshot.snapshotId" :value="snapshot.snapshotId">
+                  {{ snapshot.snapshotId }} · {{ formatUnix(snapshot.createdAt) }}
+                </option>
+              </select>
+            </label>
+            <label class="field">
+              <span>{{ t("replica.storageNode") }}</span>
+              <select
+                v-model="restoreStorageNodeId"
+                class="input"
+                data-field="restore-storage"
+                :disabled="restorePreparing"
+                @change="onRestoreStorageChange"
+              >
+                <option value="">{{ t("replica.automaticStorage") }}</option>
+                <option
+                  v-for="nodeId in selectedRestoreSnapshot.storageNodeIds ?? []"
+                  :key="nodeId"
+                  :value="nodeId"
+                >
+                  {{ nodeNameById(nodeId) }}
+                </option>
+              </select>
+            </label>
+          </div>
+          <dl class="facts restore-facts">
+            <div data-restore-owner>
+              <dt>{{ t("replica.owner") }}</dt>
+              <dd>{{ nodeNameById(restoreOwnerId) }}</dd>
+            </div>
+            <div>
+              <dt>{{ t("replica.checksum") }}</dt>
+              <dd class="mono checksum-full">{{ selectedRestoreSnapshot.sha256 || "—" }}</dd>
+            </div>
+            <div>
+              <dt>{{ t("replica.freshness") }}</dt>
+              <dd><FreshnessBadge :status="snapshotFreshness(selectedRestoreSnapshot)" /></dd>
+            </div>
+            <div>
+              <dt>{{ t("replica.storageNodes") }}</dt>
+              <dd>{{ storageNodeNames(selectedRestoreSnapshot) }}</dd>
+            </div>
+            <div v-if="restoreSelectedStorageNodeId" data-restore-source>
+              <dt>{{ t("replica.storageNode") }}</dt>
+              <dd>
+                {{ nodeNameById(restoreSelectedStorageNodeId) }} ·
+                {{ restoreOwnerCopy ? t("replica.ownerCopy") : t("replica.peerCopy") }}
+              </dd>
+            </div>
+          </dl>
+          <p v-if="restorePreparing" class="muted" role="status">{{ t("replica.loading") }}</p>
+          <div v-else-if="restoreCandidates.length" class="card restore-targets">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>{{ t("replica.process") }}</th>
+                  <th>{{ t("replica.snapshotRevision") }}</th>
+                  <th>{{ t("replica.expectedRevision") }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="candidate in restoreCandidates" :key="candidate.processId">
+                  <td>{{ candidate.processName || candidate.processId }}</td>
+                  <td class="mono">{{ revisionText(candidate.snapshotRevision) || "—" }}</td>
+                  <td>
+                    <div class="revision-value">
+                      <input
+                        class="input revision-input"
+                        name="expectedRevision"
+                        type="text"
+                        :inputmode="NUMERIC_INPUT_MODE"
+                        :value="String(expectedRestoreRevision(candidate))"
+                        readonly
+                      />
+                      <span v-if="candidate.currentExists === false" class="muted">
+                        {{ t("replica.currentMissing") }}
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div v-if="restoreResults.length" class="restore-results" role="status">
+            <p v-if="restoredFromNodeId" class="muted">
+              {{ t("replica.restoredFrom", { node: nodeNameById(restoredFromNodeId) }) }}
+            </p>
+            <ul>
+              <li
+                v-for="result in restoreResults"
+                :key="result.processId"
+                :data-restore-result="result.processId"
+              >
+                <span>{{ result.processId }}</span>
+                <span class="status-badge" :class="statusClass(result.status)" :data-status="result.status">
+                  {{ result.status }}
+                </span>
+                <span v-if="result.error" class="error">{{ result.error }}</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+        <footer class="preview-footer">
+          <div></div>
+          <div class="preview-actions">
+            <button
+              type="button"
+              class="btn"
+              :disabled="restorePreparing || restoreExecuting"
+              @click="closeRestore"
+            >
+              {{ t("actions.cancel") }}
+            </button>
+            <button
+              type="button"
+              class="btn btn-primary"
+              data-action="confirm-restore"
+              :disabled="!restoreReady || restoreResults.length > 0"
+              @click="onConfirmRestore"
+            >
+              {{ t("replica.confirmRestore") }}
+            </button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
     <div v-if="previewOpen && draft" class="preview-backdrop" @click.self="closePreview">
       <section
         class="preview-panel"
@@ -1804,6 +2177,55 @@ h3 {
   box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.3);
   color: var(--color-text);
 }
+.restore-panel {
+  width: min(100%, 48rem);
+}
+.restore-selectors {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+.restore-facts {
+  padding: 0.875rem 0;
+  border-top: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+}
+.checksum-full {
+  overflow-wrap: anywhere;
+}
+.restore-targets {
+  max-height: 18rem;
+}
+.revision-input {
+  width: 8rem;
+  max-width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+.revision-value {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.restore-results {
+  padding: 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+.restore-results ul {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.restore-results li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.625rem;
+}
 .preview-panel:focus {
   outline: none;
 }
@@ -2047,6 +2469,9 @@ h3 {
     padding-right: 1rem;
   }
   .preview-facts {
+    grid-template-columns: 1fr;
+  }
+  .restore-selectors {
     grid-template-columns: 1fr;
   }
   .preview-route {

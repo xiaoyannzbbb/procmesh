@@ -1,16 +1,18 @@
 # 灾备副本自行捕获并按路由复制 Implementation Plan
 
+更新：2026-08-29（补充灾备页内恢复与 Peer 回源到 Owner）
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 让灾备副本在应用路由后按 cron（或手动）自己捕获源节点配置快照，再按路由复制到 Peer，不再要求用户先去备份页跑一次并粘贴主备份 `run_id`。
+**Goal:** 让灾备副本在应用路由后按 cron（或手动）自己捕获源节点配置快照，再按路由复制到 Peer，不再要求用户先去备份页跑一次并粘贴主备份 `run_id`；并在灾备副本页内完成 Owner 恢复，Owner 本地副本丢失时可从 Peer 安全回源。
 
-**Architecture:** `ReplicationPolicy` 只保留可选 cron + enabled + routes。一次 replication run 的每个源节点先用现有备份引擎打本地 `sink=replica` 快照（稳定 `snapshot_id`），再走现有 mTLS `PutSnapshot`。Raft 只存 run/task 元数据。调度用 `PreviousOrEqual` 命中当前 fire，但跳过 `fire <= ScheduleEpochUnix` 的补跑；同策略已有 `RUNNING` 则把该 fire 记为 `SKIPPED`。
+**Architecture:** `ReplicationPolicy` 只保留可选 cron + enabled + routes。一次 replication run 的每个源节点先用现有备份引擎打本地 `sink=replica` 快照（稳定 `snapshot_id`），再走现有 mTLS `PutSnapshot`。Raft 只存 run/task 元数据。调度用 `PreviousOrEqual` 命中当前 fire，但跳过 `fire <= ScheduleEpochUnix` 的补跑；同策略已有 `RUNNING` 则把该 fire 记为 `SKIPPED`。恢复请求从任意公开入口路由到 Owner：Owner 优先读本地 replica，本地丢失时经 mTLS 从选定 Peer 取回并 hydrate，最后逐进程 CAS apply；payload 不经过 Browser 或 Leader。
 
 **Tech Stack:** Go、Raft FSM、ConnectRPC、现有 `backup.Engine` / Peer mTLS、Vue 3 + TanStack Query、i18n。
 
-**Contract:** 会话中拍板的 11 条（Q1-B / Q2-B+手动 / Q3-B / Q4-B / Q5-A / Q6-B / Q7-A / Q8-A / Q9-A / Q10-A / Q11-A / Q12-A / Q13-A / Q14-A）。本计划取代 `docs/superpowers/specs/2026-08-19-cluster-backup-disaster-replication-design.md` §10.3 的 trigger 模型；拓扑生成、Peer 落盘、checksum 冲突、Owner CAS 恢复不变。
+**Contract:** 会话中拍板的捕获/调度约定（Q1-B / Q2-B+手动 / Q3-B / Q4-B / Q5-A / Q6-B / Q7-A / Q8-A / Q9-A / Q10-A / Q11-A / Q12-A / Q13-A / Q14-A），以及 2026-08-29 补充的页面内 Prepare/Restore、Peer 回源和 Owner hydrate 合同。本计划取代 `docs/superpowers/specs/2026-08-19-cluster-backup-disaster-replication-design.md` §10.3 的旧 trigger 与跳转备份页模型；Owner 单写者和 Restore CAS 约束不变。
 
-**Non-goals:** 不合并备份页；不写 S3/BackupPolicy；不自动 adopt Peer 副本；不改进程 Owner 语义；不在应用策略时立刻打快照。
+**Non-goals:** 不合并备份页；不写 S3/BackupPolicy；不把 Peer adopt 为新 Owner；不改进程 Owner 语义；不在应用策略时立刻打快照；Owner 不可达时不提供异地 apply。
 
 ---
 
@@ -27,6 +29,14 @@
 9. 同策略同时一个 `RUNNING`。cron 碰到运行中：ledger `SKIPPED`，不排队。
 10. 保留：一组 `keep_last` / `keep_days` / `max_bytes`；源 `replica` 与 Peer 各自执行；进行中/恢复中/最后一份不删。
 11. 去掉产品面 `trigger` / `primary_policy_ids` / 主备份 run_id。旧 `AFTER_PRIMARY_BACKUP` 不再跟跑备份页（视为仅手动，直到用户写 cron）。
+12. 可恢复快照在灾备副本页内 Prepare/Restore，不跳转 `/backup`；恢复弹窗默认选中点击的快照。
+13. 任何公开入口都按 `source_node_id` 把 Prepare/Restore 路由到 Owner；Owner 不可达只返回 `UNAVAILABLE` 并提示，Peer 永不 apply。
+14. Owner 优先读取本地 `replica`；文件丢失时从 Prepare 选定的当前可达 Peer 经 mTLS `FetchSnapshot` 回源。
+15. Peer 验证调用方证书为 source Owner，并按冻结任务校验 cluster/source/target/snapshot/checksum；Owner 收到后再次验证再 hydrate。
+16. hydrate 对相同 checksum 幂等；同一 snapshot ID 的 checksum 或身份不同返回 `CONFLICT`，禁止覆盖。
+17. hydrate 后只在 Owner 调用现有逐进程 `ApplySpec + expected_revision`；不存在进程使用 revision 0，CAS 冲突不自动重试。
+18. Prepare/Restore 都要求 `backup.manage`，并在 Owner 重验用户 scope、目标进程身份和 revision；`replication.manage` 不能替代。
+19. snapshot payload 只走选定 Peer -> Owner 的内部 mTLS，不经过 Browser、公开入口 Agent、Leader、Raft、Gossip 或 audit。
 
 ---
 
@@ -37,17 +47,22 @@
 | `internal/control/fsm.go` | 策略校验改为可选 cron；写入 `ScheduleEpochUnix`；去掉 trigger 强制；retry 允许空快照；新增 replication fire ledger |
 | `internal/control/command.go` | `ReplicationPolicy` / put body 增加 `ScheduleEpochUnix`；`RetryFailedTasks` 语义保持但 FSM 放宽 |
 | `internal/control/fsm_test.go` | 替换 trigger/primary 用例 |
-| `internal/backup/engine.go` | `CaptureReplicationSnapshot`；`ReplicateSnapshot` 读 `sink=replica`；失败不丢 snapshot 身份 |
+| `internal/backup/engine.go` | `CaptureReplicationSnapshot`；`ReplicateSnapshot` 读 `sink=replica`；失败不丢 snapshot 身份；`HydrateReplica` 同 checksum 幂等导入，冲突不覆盖，hydrate 后复用 `Restore` |
 | `internal/backup/replica_fs.go`（小文件，可内嵌 engine） | `replica` sink：`{data_dir}/backup/replica/{cluster_id}/{node_id}/{snapshot_id}.json` |
 | `internal/agent/replication_scheduler.go` | 按 cron+epoch 建 **空快照** run；RUNNING 时 SKIPPED fire；不再读 `BackupRuns` |
 | `internal/agent/replication_scheduler_test.go` | 重写自动调度测试 |
 | `internal/backup/replication_coordinator.go` | 允许 dispatch 空 `SnapshotID` 任务（捕获阶段） |
-| `internal/api/disaster_replication.go` | `StartRun` 自捕获；retry 含空快照；ListPolicies 计算下次运行文案字段（可选 `next_run_at`） |
+| `internal/api/disaster_replication.go` | `StartRun` 自捕获；retry 含空快照；ListPolicies 计算下次运行文案字段（可选 `next_run_at`）；页面内 Prepare/Restore；路由 Owner；选择/拉取 Peer；Owner scope、checksum、CAS 与审计 |
+| `internal/api/peer_replication.go` | mTLS-only `FetchSnapshot`；只向 source Owner 返回已授权且 checksum 匹配的 payload |
+| `internal/backup/peer.go` | Peer payload 读取时重新验证 cluster/source/snapshot 身份和 checksum |
+| `internal/api/rbac.go` | 新 Prepare/Restore hop 使用 `backup.manage`，Owner 端再次鉴权 |
+| `internal/api/server.go`、`internal/agent/rpc.go` | 公开 Owner 路由与内部 Peer mTLS client/handler 接线；payload 不走公开入口 |
+| `proto/procmesh/v1/api.proto` | 只追加 Prepare/Restore 与内部 Fetch RPC/messages，保留既有字段号 |
 | `internal/api/disaster_replication_test.go` | 替换 MANUAL/`primary_run_id` 测试 |
-| `web/src/pages/DisasterReplicaPage.vue` | 预览编辑 cron/tz/enabled；去掉主备份 run_id；下次运行/仅手动/已禁用定时 |
-| `web/src/pages/DisasterReplicaPage.test.ts` | 对应 UI 测试 |
+| `web/src/pages/DisasterReplicaPage.vue` | 预览编辑 cron/tz/enabled；去掉主备份 run id；页面内恢复弹窗、快照默认选择、Owner/Peer/CAS 结果 |
+| `web/src/pages/DisasterReplicaPage.test.ts` | 调度与页面内恢复 UI 测试 |
 | `web/public/locales/{en,zh}/common.json` | 文案 |
-| `docs/superpowers/specs/2026-08-19-cluster-backup-disaster-replication-design.md` | §10.1 / §10.3 与本计划对齐 |
+| `docs/superpowers/specs/2026-08-19-cluster-backup-disaster-replication-design.md` | §10.1 / §10.3 / §12-15 / §18 与本计划对齐 |
 
 Proto `trigger` / `primary_run_id` / `snapshot_refs` **保留字段号**（兼容旧客户端），服务端忽略写入、拒绝再作为捕获前置。本计划默认 **不改 `.proto` 字段号**；若要在 ListPolicies 回 `next_run_at`，再追加 optional `int64 next_run_at = 22` 并 `make proto && make proto-ts`。推荐追加，预览端也可先用 cron 字符串。
 
@@ -798,8 +813,8 @@ git commit -m "feat(web): schedule replica capture from disaster-replica page"
 ### Task 9: 文档与交叉引用
 
 **Files:**
-- Modify: `docs/superpowers/specs/2026-08-19-cluster-backup-disaster-replication-design.md` §10.1、§10.3、§13.2
-- Modify: 本计划无需再改
+- Modify: `docs/superpowers/specs/2026-08-19-cluster-backup-disaster-replication-design.md` §10.1、§10.3、§12.2、§12.3、§13.2、§14、§15、§18
+- Modify: 本计划的 2026-08-29 灾备恢复增量合同与验收项
 
 - [ ] **Step 1: 改 spec**
 
@@ -817,7 +832,7 @@ git commit -m "feat(web): schedule replica capture from disaster-replica page"
 
 §13.2：预览必须可编辑 cron/时区/enabled；去掉「选择已有 ClusterBackupRun」。
 
-文首修订日期改为 2026-08-28，注明「灾备自行捕获」增量。
+文首修订日期最终更新为 2026-08-29，同时注明「灾备自行捕获」与「页面内恢复、Peer 回源」增量。
 
 - [ ] **Step 2: Commit**
 
@@ -851,11 +866,67 @@ cd web && npm run i18n:check
 7. 下午应用每天 02:00 → 当天不跑；第二天 02:00 后出现 run。
 8. 备份页跑一次集群备份 **不会** 自动引出灾备 run。
 9. PARTIAL 不显示成成功；重试只动失败路由。
-10. 可恢复快照能跳到 Owner CAS 恢复。
+10. 可恢复快照在灾备页打开恢复弹窗，默认选中点击项，不跳转备份页。
+11. Owner 本地 replica 存在时直接 Prepare/Restore，并逐进程 CAS apply。
+12. 删除 Owner 本地 replica 后，选择仍持有副本的 Peer；payload 经 mTLS 回源并 hydrate 到 Owner 后恢复成功。
+13. 停止 Owner 后从任意入口发起恢复，只看到 Owner 不可达提示，Peer 上没有 `ApplySpec` 副作用。
+14. 构造同 snapshot ID、不同 checksum，返回 `CONFLICT`，Owner 本地对象不被覆盖。
+15. 无 `backup.manage` 看不到恢复按钮；有权限时 Owner 仍重验 scope。Browser/Leader 响应、日志和审计中不出现 payload。
 
 Linux 上再跑 `make test-acceptance` 中与 backup/replication 相关的部分（macOS 无 cgroup 也可跑多数 API/FSM 测试）。
 
 - [ ] **Step 3: Final commit only if docs/tests leftover**
+
+---
+
+### Task 11: 灾备页内恢复与 Peer 回源
+
+**Files:**
+
+- Modify: `proto/procmesh/v1/api.proto`
+- Modify: `internal/api/disaster_replication.go`、`internal/api/peer_replication.go`、`internal/api/rbac.go`
+- Modify: `internal/api/server.go`、`internal/agent/rpc.go`
+- Modify: `internal/backup/engine.go`、`internal/backup/peer.go`
+- Modify: `web/src/pages/DisasterReplicaPage.vue`、对应测试和 i18n
+
+**Public contract:**
+
+- `PrepareRecoverableSnapshotRestore(source_node_id, snapshot_id, sha256, storage_node_id?)` 返回 Owner 当前 revision、快照 revision 和选定存储节点，不返回 payload。
+- `RestoreRecoverableSnapshot(meta, source_node_id, snapshot_id, sha256, storage_node_id, targets)` 只在 Owner 执行；targets 必须逐项携带 `expected_revision`。
+- 两个请求都可从任意公开 Agent 进入，但必须转发到 Owner。Owner 不可达返回 `UNAVAILABLE`，不得转给 Peer apply。
+
+**Internal contract:**
+
+- `PeerReplicationService.FetchSnapshot` 只监听 Agent mTLS 面。调用方证书必须等于 `source_node_id`，Raft 冻结任务必须证明该 Peer 持有相同 snapshot/checksum。
+- Owner 本地副本优先；本地缺失时从选定 Peer 拉取，校验 cluster、Owner、snapshot ID 和 checksum 后调用 `HydrateReplica`。
+- `HydrateReplica` 同 checksum 幂等；同 ID 不同 checksum/身份返回 `CONFLICT`。成功后复用现有 `Engine.Restore` 逐进程 CAS apply。
+- payload 不进入 Browser、公开入口、Leader、Raft、Gossip、audit 或错误详情。
+
+- [ ] **Step 1: Append Proto interfaces and regenerate**
+
+只追加公开 Prepare/Restore 和内部 `FetchSnapshot`，保留所有既有字段号；运行 `make proto && make proto-ts`，不得手改生成文件。
+
+- [ ] **Step 2: Implement Owner routing, Peer fetch, hydrate and CAS**
+
+先写 Owner 本地优先、文件丢失回源、Owner 不可达、mTLS 非 Owner 拒绝、checksum 冲突不覆盖和 Peer 零 apply 的失败测试，再实现最小路径。所有鉴权与身份/checksum 校验必须发生在 apply 前。
+
+- [ ] **Step 3: Replace Backup deep link with in-page restore dialog**
+
+按钮只受 `backup.manage` 控制；弹窗默认选中点击快照，只切换同 Owner 快照，Prepare 成功后显示当前 revision，确认后直接 Restore 并保留逐进程结果。
+
+- [ ] **Step 4: Run focused verification**
+
+**Required verification:**
+
+```bash
+go test ./internal/backup -run 'HydrateReplica|Peer' -count=1
+go test ./internal/api -run 'RecoverableSnapshotRestore|FetchSnapshot|Restore' -count=1
+go test ./internal/agent -run 'PeerOperation|PeerReplication' -count=1
+cd web && npx vitest run src/pages/DisasterReplicaPage.test.ts
+cd web && npm run i18n:check
+```
+
+验收必须覆盖 Owner 本地优先、Owner 文件丢失后 Peer 回源、Owner 不可达、Peer 非 Owner 证书拒绝、checksum 冲突不覆盖、`backup.manage`/scope 拒绝、CAS 冲突以及 Peer 零 apply。
 
 ---
 
@@ -878,7 +949,14 @@ Linux 上再跑 `make test-acceptance` 中与 backup/replication 相关的部分
 | 无 trigger | 1, 8, 9 |
 | enabled 只关定时 | 3, 5, 8 |
 | 备份页独立 | 10 回归 |
-| Owner CAS 恢复不变 | 不改 restore |
+| 灾备页内 Prepare/Restore | 11 |
+| Owner 本地 replica 优先 | 11 |
+| Owner 丢失后 Peer mTLS 回源 + hydrate | 11 |
+| Owner 不可达、Peer 永不 apply | 11 |
+| `backup.manage` + Owner scope 重验 | 11 |
+| payload 不经 Browser/Leader | 11 |
+| 同 ID 不同 checksum=`CONFLICT` | 11 |
+| Owner 逐进程 CAS 恢复 | 11，复用现有 restore |
 
 ## 实现时不要做的事
 
@@ -887,6 +965,10 @@ Linux 上再跑 `make test-acceptance` 中与 backup/replication 相关的部分
 - 不要把 replica 快照编进 `BackupRuns` 或备份页列表。
 - 不要在 ApplyPolicyDraft 成功后自动 `StartRun`。
 - 不要为了让旧 `AFTER_PRIMARY_BACKUP` 测试通过而继续读 `BackupRuns`。
+- 不要让 Browser、公开入口或 Leader 中转 `FetchSnapshot` payload。
+- 不要在 Owner 不可达或本地文件丢失时改到 Peer 上 `ApplySpec`。
+- 不要把 `STALE` / `UNKNOWN` inventory 当作当前可读证明；Prepare/Restore 必须实时重验。
+- 不要用相同 snapshot ID 覆盖不同 checksum 的 Owner 本地对象。
 
 ---
 

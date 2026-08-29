@@ -308,6 +308,9 @@ const (
 	// PeerReplicationServiceGetReplicaMetadataProcedure is the fully-qualified name of the
 	// PeerReplicationService's GetReplicaMetadata RPC.
 	PeerReplicationServiceGetReplicaMetadataProcedure = "/procmesh.v1.PeerReplicationService/GetReplicaMetadata"
+	// PeerReplicationServiceFetchSnapshotProcedure is the fully-qualified name of the
+	// PeerReplicationService's FetchSnapshot RPC.
+	PeerReplicationServiceFetchSnapshotProcedure = "/procmesh.v1.PeerReplicationService/FetchSnapshot"
 	// DisasterReplicationServiceGetTopologyProcedure is the fully-qualified name of the
 	// DisasterReplicationService's GetTopology RPC.
 	DisasterReplicationServiceGetTopologyProcedure = "/procmesh.v1.DisasterReplicationService/GetTopology"
@@ -347,6 +350,12 @@ const (
 	// DisasterReplicationServiceListRecoverableSnapshotsProcedure is the fully-qualified name of the
 	// DisasterReplicationService's ListRecoverableSnapshots RPC.
 	DisasterReplicationServiceListRecoverableSnapshotsProcedure = "/procmesh.v1.DisasterReplicationService/ListRecoverableSnapshots"
+	// DisasterReplicationServicePrepareRecoverableSnapshotRestoreProcedure is the fully-qualified name
+	// of the DisasterReplicationService's PrepareRecoverableSnapshotRestore RPC.
+	DisasterReplicationServicePrepareRecoverableSnapshotRestoreProcedure = "/procmesh.v1.DisasterReplicationService/PrepareRecoverableSnapshotRestore"
+	// DisasterReplicationServiceRestoreRecoverableSnapshotProcedure is the fully-qualified name of the
+	// DisasterReplicationService's RestoreRecoverableSnapshot RPC.
+	DisasterReplicationServiceRestoreRecoverableSnapshotProcedure = "/procmesh.v1.DisasterReplicationService/RestoreRecoverableSnapshot"
 )
 
 // ProcessServiceClient is a client for the procmesh.v1.ProcessService service.
@@ -3272,6 +3281,7 @@ type PeerReplicationServiceClient interface {
 	CheckSnapshot(context.Context, *connect.Request[v1.CheckSnapshotRequest]) (*connect.Response[v1.CheckSnapshotResponse], error)
 	DeleteSnapshot(context.Context, *connect.Request[v1.DeleteSnapshotRequest]) (*connect.Response[v1.DeleteSnapshotResponse], error)
 	GetReplicaMetadata(context.Context, *connect.Request[v1.GetReplicaMetadataRequest]) (*connect.Response[v1.GetReplicaMetadataResponse], error)
+	FetchSnapshot(context.Context, *connect.Request[v1.FetchSnapshotRequest]) (*connect.Response[v1.FetchSnapshotResponse], error)
 }
 
 // NewPeerReplicationServiceClient constructs a client for the procmesh.v1.PeerReplicationService
@@ -3315,6 +3325,12 @@ func NewPeerReplicationServiceClient(httpClient connect.HTTPClient, baseURL stri
 			connect.WithSchema(peerReplicationServiceMethods.ByName("GetReplicaMetadata")),
 			connect.WithClientOptions(opts...),
 		),
+		fetchSnapshot: connect.NewClient[v1.FetchSnapshotRequest, v1.FetchSnapshotResponse](
+			httpClient,
+			baseURL+PeerReplicationServiceFetchSnapshotProcedure,
+			connect.WithSchema(peerReplicationServiceMethods.ByName("FetchSnapshot")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -3325,6 +3341,7 @@ type peerReplicationServiceClient struct {
 	checkSnapshot      *connect.Client[v1.CheckSnapshotRequest, v1.CheckSnapshotResponse]
 	deleteSnapshot     *connect.Client[v1.DeleteSnapshotRequest, v1.DeleteSnapshotResponse]
 	getReplicaMetadata *connect.Client[v1.GetReplicaMetadataRequest, v1.GetReplicaMetadataResponse]
+	fetchSnapshot      *connect.Client[v1.FetchSnapshotRequest, v1.FetchSnapshotResponse]
 }
 
 // PutSnapshot calls procmesh.v1.PeerReplicationService.PutSnapshot.
@@ -3352,6 +3369,11 @@ func (c *peerReplicationServiceClient) GetReplicaMetadata(ctx context.Context, r
 	return c.getReplicaMetadata.CallUnary(ctx, req)
 }
 
+// FetchSnapshot calls procmesh.v1.PeerReplicationService.FetchSnapshot.
+func (c *peerReplicationServiceClient) FetchSnapshot(ctx context.Context, req *connect.Request[v1.FetchSnapshotRequest]) (*connect.Response[v1.FetchSnapshotResponse], error) {
+	return c.fetchSnapshot.CallUnary(ctx, req)
+}
+
 // PeerReplicationServiceHandler is an implementation of the procmesh.v1.PeerReplicationService
 // service.
 type PeerReplicationServiceHandler interface {
@@ -3360,6 +3382,7 @@ type PeerReplicationServiceHandler interface {
 	CheckSnapshot(context.Context, *connect.Request[v1.CheckSnapshotRequest]) (*connect.Response[v1.CheckSnapshotResponse], error)
 	DeleteSnapshot(context.Context, *connect.Request[v1.DeleteSnapshotRequest]) (*connect.Response[v1.DeleteSnapshotResponse], error)
 	GetReplicaMetadata(context.Context, *connect.Request[v1.GetReplicaMetadataRequest]) (*connect.Response[v1.GetReplicaMetadataResponse], error)
+	FetchSnapshot(context.Context, *connect.Request[v1.FetchSnapshotRequest]) (*connect.Response[v1.FetchSnapshotResponse], error)
 }
 
 // NewPeerReplicationServiceHandler builds an HTTP handler from the service implementation. It
@@ -3399,6 +3422,12 @@ func NewPeerReplicationServiceHandler(svc PeerReplicationServiceHandler, opts ..
 		connect.WithSchema(peerReplicationServiceMethods.ByName("GetReplicaMetadata")),
 		connect.WithHandlerOptions(opts...),
 	)
+	peerReplicationServiceFetchSnapshotHandler := connect.NewUnaryHandler(
+		PeerReplicationServiceFetchSnapshotProcedure,
+		svc.FetchSnapshot,
+		connect.WithSchema(peerReplicationServiceMethods.ByName("FetchSnapshot")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/procmesh.v1.PeerReplicationService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case PeerReplicationServicePutSnapshotProcedure:
@@ -3411,6 +3440,8 @@ func NewPeerReplicationServiceHandler(svc PeerReplicationServiceHandler, opts ..
 			peerReplicationServiceDeleteSnapshotHandler.ServeHTTP(w, r)
 		case PeerReplicationServiceGetReplicaMetadataProcedure:
 			peerReplicationServiceGetReplicaMetadataHandler.ServeHTTP(w, r)
+		case PeerReplicationServiceFetchSnapshotProcedure:
+			peerReplicationServiceFetchSnapshotHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -3440,6 +3471,10 @@ func (UnimplementedPeerReplicationServiceHandler) GetReplicaMetadata(context.Con
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.PeerReplicationService.GetReplicaMetadata is not implemented"))
 }
 
+func (UnimplementedPeerReplicationServiceHandler) FetchSnapshot(context.Context, *connect.Request[v1.FetchSnapshotRequest]) (*connect.Response[v1.FetchSnapshotResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.PeerReplicationService.FetchSnapshot is not implemented"))
+}
+
 // DisasterReplicationServiceClient is a client for the procmesh.v1.DisasterReplicationService
 // service.
 type DisasterReplicationServiceClient interface {
@@ -3456,6 +3491,8 @@ type DisasterReplicationServiceClient interface {
 	RetryFailedRoutes(context.Context, *connect.Request[v1.RetryFailedRoutesRequest]) (*connect.Response[v1.RetryFailedRoutesResponse], error)
 	VerifyReplica(context.Context, *connect.Request[v1.VerifyReplicaRequest]) (*connect.Response[v1.VerifyReplicaResponse], error)
 	ListRecoverableSnapshots(context.Context, *connect.Request[v1.ListRecoverableSnapshotsRequest]) (*connect.Response[v1.ListRecoverableSnapshotsResponse], error)
+	PrepareRecoverableSnapshotRestore(context.Context, *connect.Request[v1.PrepareRecoverableSnapshotRestoreRequest]) (*connect.Response[v1.PrepareRecoverableSnapshotRestoreResponse], error)
+	RestoreRecoverableSnapshot(context.Context, *connect.Request[v1.RestoreRecoverableSnapshotRequest]) (*connect.Response[v1.RestoreRecoverableSnapshotResponse], error)
 }
 
 // NewDisasterReplicationServiceClient constructs a client for the
@@ -3547,24 +3584,38 @@ func NewDisasterReplicationServiceClient(httpClient connect.HTTPClient, baseURL 
 			connect.WithSchema(disasterReplicationServiceMethods.ByName("ListRecoverableSnapshots")),
 			connect.WithClientOptions(opts...),
 		),
+		prepareRecoverableSnapshotRestore: connect.NewClient[v1.PrepareRecoverableSnapshotRestoreRequest, v1.PrepareRecoverableSnapshotRestoreResponse](
+			httpClient,
+			baseURL+DisasterReplicationServicePrepareRecoverableSnapshotRestoreProcedure,
+			connect.WithSchema(disasterReplicationServiceMethods.ByName("PrepareRecoverableSnapshotRestore")),
+			connect.WithClientOptions(opts...),
+		),
+		restoreRecoverableSnapshot: connect.NewClient[v1.RestoreRecoverableSnapshotRequest, v1.RestoreRecoverableSnapshotResponse](
+			httpClient,
+			baseURL+DisasterReplicationServiceRestoreRecoverableSnapshotProcedure,
+			connect.WithSchema(disasterReplicationServiceMethods.ByName("RestoreRecoverableSnapshot")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // disasterReplicationServiceClient implements DisasterReplicationServiceClient.
 type disasterReplicationServiceClient struct {
-	getTopology              *connect.Client[v1.GetTopologyRequest, v1.GetTopologyResponse]
-	generatePolicyDraft      *connect.Client[v1.GeneratePolicyDraftRequest, v1.GeneratePolicyDraftResponse]
-	applyPolicyDraft         *connect.Client[v1.ApplyPolicyDraftRequest, v1.ApplyPolicyDraftResponse]
-	listPolicies             *connect.Client[v1.ListPoliciesRequest, v1.ListPoliciesResponse]
-	getPolicy                *connect.Client[v1.GetPolicyRequest, v1.GetPolicyResponse]
-	updatePolicy             *connect.Client[v1.UpdatePolicyRequest, v1.UpdatePolicyResponse]
-	deletePolicy             *connect.Client[v1.DeletePolicyRequest, v1.DeletePolicyResponse]
-	startRun                 *connect.Client[v1.StartRunRequest, v1.StartRunResponse]
-	getRun                   *connect.Client[v1.GetRunRequest, v1.GetRunResponse]
-	listRuns                 *connect.Client[v1.ListRunsRequest, v1.ListRunsResponse]
-	retryFailedRoutes        *connect.Client[v1.RetryFailedRoutesRequest, v1.RetryFailedRoutesResponse]
-	verifyReplica            *connect.Client[v1.VerifyReplicaRequest, v1.VerifyReplicaResponse]
-	listRecoverableSnapshots *connect.Client[v1.ListRecoverableSnapshotsRequest, v1.ListRecoverableSnapshotsResponse]
+	getTopology                       *connect.Client[v1.GetTopologyRequest, v1.GetTopologyResponse]
+	generatePolicyDraft               *connect.Client[v1.GeneratePolicyDraftRequest, v1.GeneratePolicyDraftResponse]
+	applyPolicyDraft                  *connect.Client[v1.ApplyPolicyDraftRequest, v1.ApplyPolicyDraftResponse]
+	listPolicies                      *connect.Client[v1.ListPoliciesRequest, v1.ListPoliciesResponse]
+	getPolicy                         *connect.Client[v1.GetPolicyRequest, v1.GetPolicyResponse]
+	updatePolicy                      *connect.Client[v1.UpdatePolicyRequest, v1.UpdatePolicyResponse]
+	deletePolicy                      *connect.Client[v1.DeletePolicyRequest, v1.DeletePolicyResponse]
+	startRun                          *connect.Client[v1.StartRunRequest, v1.StartRunResponse]
+	getRun                            *connect.Client[v1.GetRunRequest, v1.GetRunResponse]
+	listRuns                          *connect.Client[v1.ListRunsRequest, v1.ListRunsResponse]
+	retryFailedRoutes                 *connect.Client[v1.RetryFailedRoutesRequest, v1.RetryFailedRoutesResponse]
+	verifyReplica                     *connect.Client[v1.VerifyReplicaRequest, v1.VerifyReplicaResponse]
+	listRecoverableSnapshots          *connect.Client[v1.ListRecoverableSnapshotsRequest, v1.ListRecoverableSnapshotsResponse]
+	prepareRecoverableSnapshotRestore *connect.Client[v1.PrepareRecoverableSnapshotRestoreRequest, v1.PrepareRecoverableSnapshotRestoreResponse]
+	restoreRecoverableSnapshot        *connect.Client[v1.RestoreRecoverableSnapshotRequest, v1.RestoreRecoverableSnapshotResponse]
 }
 
 // GetTopology calls procmesh.v1.DisasterReplicationService.GetTopology.
@@ -3632,6 +3683,18 @@ func (c *disasterReplicationServiceClient) ListRecoverableSnapshots(ctx context.
 	return c.listRecoverableSnapshots.CallUnary(ctx, req)
 }
 
+// PrepareRecoverableSnapshotRestore calls
+// procmesh.v1.DisasterReplicationService.PrepareRecoverableSnapshotRestore.
+func (c *disasterReplicationServiceClient) PrepareRecoverableSnapshotRestore(ctx context.Context, req *connect.Request[v1.PrepareRecoverableSnapshotRestoreRequest]) (*connect.Response[v1.PrepareRecoverableSnapshotRestoreResponse], error) {
+	return c.prepareRecoverableSnapshotRestore.CallUnary(ctx, req)
+}
+
+// RestoreRecoverableSnapshot calls
+// procmesh.v1.DisasterReplicationService.RestoreRecoverableSnapshot.
+func (c *disasterReplicationServiceClient) RestoreRecoverableSnapshot(ctx context.Context, req *connect.Request[v1.RestoreRecoverableSnapshotRequest]) (*connect.Response[v1.RestoreRecoverableSnapshotResponse], error) {
+	return c.restoreRecoverableSnapshot.CallUnary(ctx, req)
+}
+
 // DisasterReplicationServiceHandler is an implementation of the
 // procmesh.v1.DisasterReplicationService service.
 type DisasterReplicationServiceHandler interface {
@@ -3648,6 +3711,8 @@ type DisasterReplicationServiceHandler interface {
 	RetryFailedRoutes(context.Context, *connect.Request[v1.RetryFailedRoutesRequest]) (*connect.Response[v1.RetryFailedRoutesResponse], error)
 	VerifyReplica(context.Context, *connect.Request[v1.VerifyReplicaRequest]) (*connect.Response[v1.VerifyReplicaResponse], error)
 	ListRecoverableSnapshots(context.Context, *connect.Request[v1.ListRecoverableSnapshotsRequest]) (*connect.Response[v1.ListRecoverableSnapshotsResponse], error)
+	PrepareRecoverableSnapshotRestore(context.Context, *connect.Request[v1.PrepareRecoverableSnapshotRestoreRequest]) (*connect.Response[v1.PrepareRecoverableSnapshotRestoreResponse], error)
+	RestoreRecoverableSnapshot(context.Context, *connect.Request[v1.RestoreRecoverableSnapshotRequest]) (*connect.Response[v1.RestoreRecoverableSnapshotResponse], error)
 }
 
 // NewDisasterReplicationServiceHandler builds an HTTP handler from the service implementation. It
@@ -3735,6 +3800,18 @@ func NewDisasterReplicationServiceHandler(svc DisasterReplicationServiceHandler,
 		connect.WithSchema(disasterReplicationServiceMethods.ByName("ListRecoverableSnapshots")),
 		connect.WithHandlerOptions(opts...),
 	)
+	disasterReplicationServicePrepareRecoverableSnapshotRestoreHandler := connect.NewUnaryHandler(
+		DisasterReplicationServicePrepareRecoverableSnapshotRestoreProcedure,
+		svc.PrepareRecoverableSnapshotRestore,
+		connect.WithSchema(disasterReplicationServiceMethods.ByName("PrepareRecoverableSnapshotRestore")),
+		connect.WithHandlerOptions(opts...),
+	)
+	disasterReplicationServiceRestoreRecoverableSnapshotHandler := connect.NewUnaryHandler(
+		DisasterReplicationServiceRestoreRecoverableSnapshotProcedure,
+		svc.RestoreRecoverableSnapshot,
+		connect.WithSchema(disasterReplicationServiceMethods.ByName("RestoreRecoverableSnapshot")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/procmesh.v1.DisasterReplicationService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case DisasterReplicationServiceGetTopologyProcedure:
@@ -3763,6 +3840,10 @@ func NewDisasterReplicationServiceHandler(svc DisasterReplicationServiceHandler,
 			disasterReplicationServiceVerifyReplicaHandler.ServeHTTP(w, r)
 		case DisasterReplicationServiceListRecoverableSnapshotsProcedure:
 			disasterReplicationServiceListRecoverableSnapshotsHandler.ServeHTTP(w, r)
+		case DisasterReplicationServicePrepareRecoverableSnapshotRestoreProcedure:
+			disasterReplicationServicePrepareRecoverableSnapshotRestoreHandler.ServeHTTP(w, r)
+		case DisasterReplicationServiceRestoreRecoverableSnapshotProcedure:
+			disasterReplicationServiceRestoreRecoverableSnapshotHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -3822,4 +3903,12 @@ func (UnimplementedDisasterReplicationServiceHandler) VerifyReplica(context.Cont
 
 func (UnimplementedDisasterReplicationServiceHandler) ListRecoverableSnapshots(context.Context, *connect.Request[v1.ListRecoverableSnapshotsRequest]) (*connect.Response[v1.ListRecoverableSnapshotsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.DisasterReplicationService.ListRecoverableSnapshots is not implemented"))
+}
+
+func (UnimplementedDisasterReplicationServiceHandler) PrepareRecoverableSnapshotRestore(context.Context, *connect.Request[v1.PrepareRecoverableSnapshotRestoreRequest]) (*connect.Response[v1.PrepareRecoverableSnapshotRestoreResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.DisasterReplicationService.PrepareRecoverableSnapshotRestore is not implemented"))
+}
+
+func (UnimplementedDisasterReplicationServiceHandler) RestoreRecoverableSnapshot(context.Context, *connect.Request[v1.RestoreRecoverableSnapshotRequest]) (*connect.Response[v1.RestoreRecoverableSnapshotResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.DisasterReplicationService.RestoreRecoverableSnapshot is not implemented"))
 }

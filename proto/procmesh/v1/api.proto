@@ -1120,6 +1120,7 @@ service PeerReplicationService {
   rpc CheckSnapshot(CheckSnapshotRequest) returns (CheckSnapshotResponse);
   rpc DeleteSnapshot(DeleteSnapshotRequest) returns (DeleteSnapshotResponse);
   rpc GetReplicaMetadata(GetReplicaMetadataRequest) returns (GetReplicaMetadataResponse);
+  rpc FetchSnapshot(FetchSnapshotRequest) returns (FetchSnapshotResponse);
 }
 
 message PutSnapshotRequest {
@@ -1204,8 +1205,27 @@ message GetReplicaMetadataResponse {
   repeated string process_ids = 7;
 }
 
+// FetchSnapshot is an internal mTLS-only pull used by the source Owner during
+// disaster recovery. The requester certificate must identify source_node_id.
+message FetchSnapshotRequest {
+  string source_node_id = 1;
+  string cluster_id = 2;
+  string snapshot_id = 3;
+  string sha256 = 4;
+}
+
+message FetchSnapshotResponse {
+  string source_node_id = 1;
+  string cluster_id = 2;
+  string snapshot_id = 3;
+  string sha256 = 4;
+  repeated string process_ids = 5;
+  bytes payload = 6;
+}
+
 // DisasterReplicationService provides disaster recovery replication management.
-// Accessible via Web UI with proper permissions (replication.read/manage).
+// Replication operations use replication.read/manage; recovery prepare/restore
+// use backup.manage and revalidate process scope on the Owner.
 service DisasterReplicationService {
   rpc GetTopology(GetTopologyRequest) returns (GetTopologyResponse);
   rpc GeneratePolicyDraft(GeneratePolicyDraftRequest) returns (GeneratePolicyDraftResponse);
@@ -1220,6 +1240,8 @@ service DisasterReplicationService {
   rpc RetryFailedRoutes(RetryFailedRoutesRequest) returns (RetryFailedRoutesResponse);
   rpc VerifyReplica(VerifyReplicaRequest) returns (VerifyReplicaResponse);
   rpc ListRecoverableSnapshots(ListRecoverableSnapshotsRequest) returns (ListRecoverableSnapshotsResponse);
+  rpc PrepareRecoverableSnapshotRestore(PrepareRecoverableSnapshotRestoreRequest) returns (PrepareRecoverableSnapshotRestoreResponse);
+  rpc RestoreRecoverableSnapshot(RestoreRecoverableSnapshotRequest) returns (RestoreRecoverableSnapshotResponse);
 }
 
 message AgentTopologyNode {
@@ -1485,6 +1507,45 @@ message ListRecoverableSnapshotsRequest {}
 message ListRecoverableSnapshotsResponse {
   repeated ReplicaSnapshot snapshots = 1;
   repeated ReplicaInventoryStatus inventory_statuses = 2;
+}
+
+message PrepareRecoverableSnapshotRestoreRequest {
+  string source_node_id = 1;
+  string snapshot_id = 2;
+  string sha256 = 3;
+  // Optional. Empty selects the Owner copy first, then a currently LIVE Peer.
+  string storage_node_id = 4;
+}
+
+message RecoverableRestoreCandidate {
+  string process_id = 1;
+  string process_name = 2;
+  int64 snapshot_revision = 3;
+  int64 current_revision = 4;
+  bool current_exists = 5;
+}
+
+message PrepareRecoverableSnapshotRestoreResponse {
+  ReplicaSnapshot snapshot = 1;
+  repeated RecoverableRestoreCandidate candidates = 2;
+  string selected_storage_node_id = 3;
+  bool owner_copy = 4;
+}
+
+message RestoreRecoverableSnapshotRequest {
+  MutationMeta meta = 1;
+  string source_node_id = 2;
+  string snapshot_id = 3;
+  string sha256 = 4;
+  // Storage node selected during prepare. The Owner revalidates it at execute.
+  string storage_node_id = 5;
+  repeated RestoreTarget targets = 6;
+}
+
+message RestoreRecoverableSnapshotResponse {
+  repeated RestoreProcessResult results = 1;
+  string restored_from_node_id = 2;
+  bool fetched_from_peer = 3;
 }
 
 message UpdateRoleRequest {

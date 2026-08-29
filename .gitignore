@@ -13,8 +13,9 @@
 *.test
 /bin/
 dist/
-internal/web/dist/
-internal/web/dist/**
+# The Go server embeds these generated Web assets; keep them versioned.
+!internal/web/dist/
+!internal/web/dist/**
 web/node_modules/
 web/dist/
 web/test-results/

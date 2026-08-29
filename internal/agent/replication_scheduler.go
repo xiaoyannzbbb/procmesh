@@ -550,6 +550,9 @@ func (r *rpcRuntime) authorizePeerOperation(peerNodeID string, operation api.Pee
 		if task.SourceNodeID != peerNodeID || task.NodeID != r.nodeID {
 			continue
 		}
+		if operation.Kind == "FETCH" && task.Status != "SUCCEEDED" {
+			continue
+		}
 		if task.SnapshotID != operation.SnapshotID {
 			if operation.Kind != "PUT" || task.SnapshotID != "" || operation.SnapshotID == "" || (task.Status != "PENDING" && task.Status != "RUNNING") {
 				continue

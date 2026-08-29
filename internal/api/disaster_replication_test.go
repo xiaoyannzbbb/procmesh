@@ -2,9 +2,12 @@ package api
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +19,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
+	"github.com/qleelulu/procmesh/internal/process"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
@@ -2285,6 +2289,402 @@ func TestDisasterReplicationAPI_ListRecoverableSnapshots_Unauthorized(t *testing
 	}
 }
 
+func testRecoverableRestoreAPI(t *testing.T) (*DisasterReplicationAPI, *backup.Engine, *auth.Service, backup.Meta) {
+	t.Helper()
+	_, authSvc := newBootstrappedAuth(t)
+	engine, _ := testBackupEngine(t, "owner-1")
+	engine.ClusterID = "test-cluster"
+	engine.Sinks[backup.ReplicaSinkName] = backup.NewFSSink(filepath.Join(t.TempDir(), "backup", "replica"))
+	meta, err := engine.CaptureReplicationSnapshot(context.Background(), backup.ReplicationCaptureRequest{
+		RunID: "run-restore", PolicyID: "rp-1", SourceNodeID: engine.NodeID, SnapshotID: "snap-restore",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := engine.Apply.GetSpec(context.Background(), "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	current.Command = "/bin/changed"
+	if _, err := engine.Apply.ApplySpec(context.Background(), current, current.LatestRevision, "op-change", "test", ""); err != nil {
+		t.Fatal(err)
+	}
+	state := control.NewState()
+	state.Members["owner-1"] = control.Member{NodeID: "owner-1", Status: control.MemberAdmitted}
+	api := &DisasterReplicationAPI{
+		ClusterID: "test-cluster", NodeID: "owner-1", LocalID: "owner-1", LocalOnly: true,
+		Auth: authSvc, Backup: engine, PeerStore: engine.PeerStore, SnapshotLister: engine,
+		StateFn: func() control.State { return *state },
+	}
+	return api, engine, authSvc, meta
+}
+
+func TestDisasterReplicationAPI_PrepareRecoverableSnapshotRestoreUsesOwnerCurrentRevision(t *testing.T) {
+	api, _, authSvc, meta := testRecoverableRestoreAPI(t)
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := newDisasterReplicationClient(t, api).PrepareRecoverableSnapshotRestore(context.Background(), bearerReq(sid, &procmeshv1.PrepareRecoverableSnapshotRestoreRequest{
+		SourceNodeId: "owner-1", SnapshotId: meta.SnapshotID, Sha256: meta.SHA256,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Msg.GetCandidates()) != 1 || resp.Msg.GetCandidates()[0].GetCurrentRevision() != 2 || resp.Msg.GetCandidates()[0].GetSnapshotRevision() != 1 {
+		t.Fatalf("candidates=%+v", resp.Msg.GetCandidates())
+	}
+	if !resp.Msg.GetOwnerCopy() || resp.Msg.GetSelectedStorageNodeId() != "owner-1" {
+		t.Fatalf("response=%+v", resp.Msg)
+	}
+}
+
+func TestDisasterReplicationAPI_RestoreRecoverableSnapshotAppliesCASOnOwner(t *testing.T) {
+	api, engine, authSvc, meta := testRecoverableRestoreAPI(t)
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := newDisasterReplicationClient(t, api).RestoreRecoverableSnapshot(context.Background(), bearerReq(sid, &procmeshv1.RestoreRecoverableSnapshotRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-restore", Operator: "admin"}, SourceNodeId: "owner-1",
+		SnapshotId: meta.SnapshotID, Sha256: meta.SHA256, Targets: []*procmeshv1.RestoreTarget{{ProcessId: "p1", ExpectedRevision: 2}},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Msg.GetResults()) != 1 || resp.Msg.GetResults()[0].GetStatus() != "SUCCESS" || resp.Msg.GetFetchedFromPeer() {
+		t.Fatalf("response=%+v", resp.Msg)
+	}
+	current, err := engine.Apply.GetSpec(context.Background(), "p1")
+	if err != nil || current.LatestRevision != 3 || current.Command != "/bin/true" {
+		t.Fatalf("current=%+v err=%v", current, err)
+	}
+}
+
+func TestDisasterReplicationAPI_RecoveryRoutesToOwner(t *testing.T) {
+	owner, engine, authSvc, meta := testRecoverableRestoreAPI(t)
+	owner.LocalOnly = true
+	// The lightweight test client has no OwnerAuthInterceptor for trusted hop
+	// identity. Entry permission and Owner revalidation are covered separately.
+	owner.Auth = nil
+	ownerClient := newDisasterReplicationClient(t, owner)
+	state := owner.state()
+	state.Members["entry-1"] = control.Member{NodeID: "entry-1", Status: control.MemberAdmitted}
+	members := func() []cluster.NodeSummary {
+		return []cluster.NodeSummary{
+			{NodeID: "entry-1", State: cluster.StateAlive, RPCAddress: "entry-1:18683"},
+			{NodeID: "owner-1", State: cluster.StateAlive, RPCAddress: "owner-1:18683"},
+		}
+	}
+	entry := &DisasterReplicationAPI{
+		ClusterID: "test-cluster", NodeID: "entry-1", LocalID: "entry-1", Auth: authSvc,
+		StateFn: func() control.State { return state }, Members: members,
+		Forward: disasterReplicationRouteForwarder{"owner-1": ownerClient},
+	}
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := newDisasterReplicationClient(t, entry)
+	prepared, err := client.PrepareRecoverableSnapshotRestore(context.Background(), bearerReq(sid, &procmeshv1.PrepareRecoverableSnapshotRestoreRequest{
+		SourceNodeId: "owner-1", SnapshotId: meta.SnapshotID, Sha256: meta.SHA256,
+	}))
+	if err != nil || prepared.Msg.GetSelectedStorageNodeId() != "owner-1" {
+		t.Fatalf("prepared=%+v err=%v", prepared, err)
+	}
+	restored, err := client.RestoreRecoverableSnapshot(context.Background(), bearerReq(sid, &procmeshv1.RestoreRecoverableSnapshotRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-routed"}, SourceNodeId: "owner-1", SnapshotId: meta.SnapshotID, Sha256: meta.SHA256,
+		Targets: []*procmeshv1.RestoreTarget{{ProcessId: "p1", ExpectedRevision: 2}},
+	}))
+	if err != nil || len(restored.Msg.GetResults()) != 1 || restored.Msg.GetResults()[0].GetStatus() != "SUCCESS" {
+		t.Fatalf("restored=%+v err=%v", restored, err)
+	}
+	current, err := engine.Apply.GetSpec(context.Background(), "p1")
+	if err != nil || current.LatestRevision != 3 {
+		t.Fatalf("current=%+v err=%v", current, err)
+	}
+}
+
+func TestDisasterReplicationAPI_RecoveryOwnerUnavailable(t *testing.T) {
+	_, authSvc := newBootstrappedAuth(t)
+	state := control.NewState()
+	state.Members["entry-1"] = control.Member{NodeID: "entry-1", Status: control.MemberAdmitted}
+	state.Members["owner-1"] = control.Member{NodeID: "owner-1", Status: control.MemberAdmitted}
+	entry := &DisasterReplicationAPI{
+		ClusterID: "test-cluster", NodeID: "entry-1", LocalID: "entry-1", Auth: authSvc,
+		StateFn: func() control.State { return *state },
+		Members: func() []cluster.NodeSummary {
+			return []cluster.NodeSummary{{NodeID: "owner-1", State: cluster.StateFailed}}
+		},
+	}
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = newDisasterReplicationClient(t, entry).PrepareRecoverableSnapshotRestore(context.Background(), bearerReq(sid, &procmeshv1.PrepareRecoverableSnapshotRestoreRequest{
+		SourceNodeId: "owner-1", SnapshotId: "snap-unavailable", Sha256: strings.Repeat("a", 64),
+	}))
+	if connect.CodeOf(err) != connect.CodeUnavailable {
+		t.Fatalf("err=%v, want UNAVAILABLE", err)
+	}
+}
+
+type recoverableRestoreForwarder struct {
+	peer procmeshv1connect.PeerReplicationServiceClient
+}
+
+func (f recoverableRestoreForwarder) DisasterReplication(context.Context, Route) (procmeshv1connect.DisasterReplicationServiceClient, error) {
+	return nil, errors.New("unexpected disaster forward")
+}
+
+func (f recoverableRestoreForwarder) PeerReplication(context.Context, Route) (procmeshv1connect.PeerReplicationServiceClient, error) {
+	return f.peer, nil
+}
+
+func TestDisasterReplicationAPI_RestoreFetchesOnlyFromPeerThenAppliesOnOwner(t *testing.T) {
+	owner, engine, authSvc, meta := testRecoverableRestoreAPI(t)
+	_, payload, err := engine.Get(context.Background(), meta.SnapshotID, backup.ReplicaSinkName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(meta.Location); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Store.DeleteBackup(context.Background(), meta.SnapshotID); err != nil {
+		t.Fatal(err)
+	}
+	peerStore := &backup.PeerStore{Root: t.TempDir()}
+	if _, err := peerStore.ReceiveWithMetadata(context.Background(), backup.ReceiveParams{
+		SourceNodeID: "owner-1", ClusterID: "test-cluster", SnapshotID: meta.SnapshotID, SHA256: meta.SHA256, Payload: payload,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ownerCreds := genAgentCreds(t, "test-cluster", "owner-1")
+	peerClient := newPeerReplicationClient(t, &PeerReplicationAPI{PeerStore: peerStore, ClusterID: "test-cluster", NodeID: "peer-1"}, &tls.ConnectionState{PeerCertificates: []*x509.Certificate{ownerCreds.Cert}})
+	state := owner.state()
+	state.Members["peer-1"] = control.Member{NodeID: "peer-1", Status: control.MemberAdmitted}
+	state.ReplicationTasks["run-restore:task-peer"] = control.ClusterBackupTask{
+		RunID: "run-restore", TaskID: "task-peer", SourceNodeID: "owner-1", NodeID: "peer-1",
+		SnapshotID: meta.SnapshotID, SHA256: meta.SHA256, Status: "SUCCEEDED",
+	}
+	owner.StateFn = func() control.State { return state }
+	owner.Members = func() []cluster.NodeSummary {
+		return []cluster.NodeSummary{{NodeID: "owner-1", State: cluster.StateAlive, RPCAddress: "owner:18683"}, {NodeID: "peer-1", State: cluster.StateAlive, RPCAddress: "peer:18683"}}
+	}
+	owner.Forward = recoverableRestoreForwarder{peer: peerClient}
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := newDisasterReplicationClient(t, owner)
+	prepared, err := client.PrepareRecoverableSnapshotRestore(context.Background(), bearerReq(sid, &procmeshv1.PrepareRecoverableSnapshotRestoreRequest{
+		SourceNodeId: "owner-1", SnapshotId: meta.SnapshotID, Sha256: meta.SHA256, StorageNodeId: "peer-1",
+	}))
+	if err != nil || prepared.Msg.GetOwnerCopy() || prepared.Msg.GetSelectedStorageNodeId() != "peer-1" {
+		t.Fatalf("prepared=%+v err=%v", prepared, err)
+	}
+	restored, err := client.RestoreRecoverableSnapshot(context.Background(), bearerReq(sid, &procmeshv1.RestoreRecoverableSnapshotRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-peer-restore"}, SourceNodeId: "owner-1",
+		SnapshotId: meta.SnapshotID, Sha256: meta.SHA256, StorageNodeId: "peer-1",
+		Targets: []*procmeshv1.RestoreTarget{{ProcessId: "p1", ExpectedRevision: 2}},
+	}))
+	if err != nil || !restored.Msg.GetFetchedFromPeer() || restored.Msg.GetRestoredFromNodeId() != "peer-1" || restored.Msg.GetResults()[0].GetStatus() != "SUCCESS" {
+		t.Fatalf("restored=%+v err=%v", restored, err)
+	}
+	if _, _, err := engine.Get(context.Background(), meta.SnapshotID, backup.ReplicaSinkName); err != nil {
+		t.Fatalf("owner replica was not hydrated: %v", err)
+	}
+	current, err := engine.Apply.GetSpec(context.Background(), "p1")
+	if err != nil || current.LatestRevision != 3 || current.Command != "/bin/true" {
+		t.Fatalf("owner current=%+v err=%v", current, err)
+	}
+}
+
+func TestDisasterReplicationAPI_RecoveryRequiresBackupManage(t *testing.T) {
+	api, _, authSvc, meta := testRecoverableRestoreAPI(t)
+	sid := createCustomRoleUser(t, authSvc, "replicator-restore", "user-repl-restore", auth.PermReplicationRead, auth.PermReplicationManage)
+	client := newDisasterReplicationClient(t, api)
+	_, err := client.PrepareRecoverableSnapshotRestore(context.Background(), bearerReq(sid, &procmeshv1.PrepareRecoverableSnapshotRestoreRequest{
+		SourceNodeId: "owner-1", SnapshotId: meta.SnapshotID, Sha256: meta.SHA256,
+	}))
+	if connect.CodeOf(err) != connect.CodePermissionDenied {
+		t.Fatalf("prepare err=%v, want DENIED", err)
+	}
+	_, err = client.RestoreRecoverableSnapshot(context.Background(), bearerReq(sid, &procmeshv1.RestoreRecoverableSnapshotRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-denied"}, SourceNodeId: "owner-1", SnapshotId: meta.SnapshotID, Sha256: meta.SHA256,
+		Targets: []*procmeshv1.RestoreTarget{{ProcessId: "p1", ExpectedRevision: 2}},
+	}))
+	if connect.CodeOf(err) != connect.CodePermissionDenied {
+		t.Fatalf("restore err=%v, want DENIED", err)
+	}
+}
+
+type countingRestoreApplier struct {
+	inner   backup.Applier
+	applies int
+}
+
+func (a *countingRestoreApplier) ApplySpec(ctx context.Context, spec process.ProcessSpec, expectedRevision int64, opID, operator, comment string) (process.ProcessSpec, error) {
+	a.applies++
+	return a.inner.ApplySpec(ctx, spec, expectedRevision, opID, operator, comment)
+}
+
+func (a *countingRestoreApplier) GetSpec(ctx context.Context, processID string) (process.ProcessSpec, error) {
+	return a.inner.GetSpec(ctx, processID)
+}
+
+func setupGroupRecoverableRestoreAPI(t *testing.T, snapshotGroup, currentGroup string) (*DisasterReplicationAPI, *backup.Engine, *auth.Service, backup.Meta, int64) {
+	t.Helper()
+	api, engine, authSvc, _ := testRecoverableRestoreAPI(t)
+	current, err := engine.Apply.GetSpec(context.Background(), "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	current.Group = snapshotGroup
+	current, err = engine.Apply.ApplySpec(context.Background(), current, current.LatestRevision, "op-snapshot-group", "test", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta, err := engine.CaptureReplicationSnapshot(context.Background(), backup.ReplicationCaptureRequest{
+		RunID: "run-group", PolicyID: "rp-1", SourceNodeID: engine.NodeID, SnapshotID: "snap-group",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current.Group = currentGroup
+	current.Command = "/bin/post-capture"
+	current, err = engine.Apply.ApplySpec(context.Background(), current, current.LatestRevision, "op-current-group", "test", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return api, engine, authSvc, meta, current.LatestRevision
+}
+
+func putBackupGroupUser(t *testing.T, svc *auth.Service, userID, username, group string) string {
+	t.Helper()
+	applyAuthCmd(t, svc, control.CmdUserPut, control.UserPutBody{ID: userID, Username: username, PasswordHash: testAdminHash(t)})
+	roleID := "backup-group-" + userID
+	applyAuthCmd(t, svc, control.CmdRolePut, control.RolePutBody{ID: roleID, Name: roleID, Perms: []string{auth.PermBackupManage}})
+	applyAuthCmd(t, svc, control.CmdBindPut, control.BindPutBody{UserID: userID, RoleID: roleID, Scope: control.ScopeProcessGroup, ScopeID: group})
+	sid, _, _, _, err := svc.Login(username, testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sid
+}
+
+func TestDisasterReplicationAPI_RecoveryAllowsMatchingProcessGroupScope(t *testing.T) {
+	api, engine, authSvc, meta, currentRevision := setupGroupRecoverableRestoreAPI(t, "finance", "finance")
+	sid := putBackupGroupUser(t, authSvc, "user-finance-backup", "finance-backup", "finance")
+	client := newDisasterReplicationClient(t, api)
+	prepared, err := client.PrepareRecoverableSnapshotRestore(context.Background(), bearerReq(sid, &procmeshv1.PrepareRecoverableSnapshotRestoreRequest{
+		SourceNodeId: api.localNodeID(), SnapshotId: meta.SnapshotID, Sha256: meta.SHA256,
+	}))
+	if err != nil || len(prepared.Msg.GetCandidates()) != 1 {
+		t.Fatalf("prepared=%+v err=%v", prepared, err)
+	}
+	restored, err := client.RestoreRecoverableSnapshot(context.Background(), bearerReq(sid, &procmeshv1.RestoreRecoverableSnapshotRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-finance-restore"}, SourceNodeId: api.localNodeID(),
+		SnapshotId: meta.SnapshotID, Sha256: meta.SHA256,
+		Targets: []*procmeshv1.RestoreTarget{{ProcessId: "p1", ExpectedRevision: currentRevision}},
+	}))
+	if err != nil || len(restored.Msg.GetResults()) != 1 || restored.Msg.GetResults()[0].GetStatus() != "SUCCESS" {
+		t.Fatalf("restored=%+v err=%v", restored, err)
+	}
+	current, err := engine.Apply.GetSpec(context.Background(), "p1")
+	if err != nil || current.Group != "finance" || current.Command != "/bin/changed" {
+		t.Fatalf("current=%+v err=%v", current, err)
+	}
+}
+
+func TestDisasterReplicationAPI_RecoveryRejectsDifferentProcessGroupScopeBeforeApply(t *testing.T) {
+	api, engine, authSvc, meta, currentRevision := setupGroupRecoverableRestoreAPI(t, "finance", "finance")
+	sid := putBackupGroupUser(t, authSvc, "user-ads-backup", "ads-backup", "ads")
+	tracker := &countingRestoreApplier{inner: engine.Apply}
+	engine.Apply = tracker
+	client := newDisasterReplicationClient(t, api)
+	_, err := client.PrepareRecoverableSnapshotRestore(context.Background(), bearerReq(sid, &procmeshv1.PrepareRecoverableSnapshotRestoreRequest{
+		SourceNodeId: api.localNodeID(), SnapshotId: meta.SnapshotID, Sha256: meta.SHA256,
+	}))
+	if connect.CodeOf(err) != connect.CodePermissionDenied {
+		t.Fatalf("prepare err=%v, want DENIED", err)
+	}
+	_, err = client.RestoreRecoverableSnapshot(context.Background(), bearerReq(sid, &procmeshv1.RestoreRecoverableSnapshotRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-ads-denied"}, SourceNodeId: api.localNodeID(),
+		SnapshotId: meta.SnapshotID, Sha256: meta.SHA256,
+		Targets: []*procmeshv1.RestoreTarget{{ProcessId: "p1", ExpectedRevision: currentRevision}},
+	}))
+	if connect.CodeOf(err) != connect.CodePermissionDenied || tracker.applies != 0 {
+		t.Fatalf("restore err=%v applies=%d, want DENIED before apply", err, tracker.applies)
+	}
+}
+
+func TestDisasterReplicationAPI_RecoveryChecksCurrentAndSnapshotGroupsBeforeApply(t *testing.T) {
+	api, engine, authSvc, meta, currentRevision := setupGroupRecoverableRestoreAPI(t, "finance", "ads")
+	sid := putBackupGroupUser(t, authSvc, "user-finance-current", "finance-current", "finance")
+	tracker := &countingRestoreApplier{inner: engine.Apply}
+	engine.Apply = tracker
+	_, err := newDisasterReplicationClient(t, api).RestoreRecoverableSnapshot(context.Background(), bearerReq(sid, &procmeshv1.RestoreRecoverableSnapshotRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-current-group-denied"}, SourceNodeId: api.localNodeID(),
+		SnapshotId: meta.SnapshotID, Sha256: meta.SHA256,
+		Targets: []*procmeshv1.RestoreTarget{{ProcessId: "p1", ExpectedRevision: currentRevision}},
+	}))
+	if connect.CodeOf(err) != connect.CodePermissionDenied || tracker.applies != 0 {
+		t.Fatalf("restore err=%v applies=%d, want DENIED before apply", err, tracker.applies)
+	}
+}
+
+func TestDisasterReplicationAPI_RecoveryAuthorizesAllTargetsBeforeAnyApply(t *testing.T) {
+	api, engine, authSvc, _ := testRecoverableRestoreAPI(t)
+	p1, err := engine.Apply.GetSpec(context.Background(), "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p1.Group = "finance"
+	p1, err = engine.Apply.ApplySpec(context.Background(), p1, p1.LatestRevision, "op-mixed-p1", "test", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2, err := engine.Apply.ApplySpec(context.Background(), process.ProcessSpec{ProcessID: "p2", Name: "ads", Group: "ads", Command: "/bin/true"}, 0, "op-mixed-p2", "test", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta, err := engine.CaptureReplicationSnapshot(context.Background(), backup.ReplicationCaptureRequest{
+		RunID: "run-mixed", PolicyID: "rp-1", SourceNodeID: engine.NodeID, SnapshotID: "snap-mixed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid := putBackupGroupUser(t, authSvc, "user-finance-mixed", "finance-mixed", "finance")
+	tracker := &countingRestoreApplier{inner: engine.Apply}
+	engine.Apply = tracker
+	_, err = newDisasterReplicationClient(t, api).RestoreRecoverableSnapshot(context.Background(), bearerReq(sid, &procmeshv1.RestoreRecoverableSnapshotRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-mixed-denied"}, SourceNodeId: api.localNodeID(), SnapshotId: meta.SnapshotID, Sha256: meta.SHA256,
+		Targets: []*procmeshv1.RestoreTarget{{ProcessId: "p1", ExpectedRevision: p1.LatestRevision}, {ProcessId: "p2", ExpectedRevision: p2.LatestRevision}},
+	}))
+	if connect.CodeOf(err) != connect.CodePermissionDenied || tracker.applies != 0 {
+		t.Fatalf("restore err=%v applies=%d, want second target DENIED before any apply", err, tracker.applies)
+	}
+}
+
+func TestRecoveryHopPermissionAllowsProcessGroupScopedBackupManage(t *testing.T) {
+	_, authSvc := newBootstrappedAuth(t)
+	sid := putBackupGroupUser(t, authSvc, "user-finance-hop", "finance-hop", "finance")
+	principal, err := authSvc.AuthenticateBearer(sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := WithPrincipal(context.Background(), principal)
+	for _, procedure := range []string{
+		procmeshv1connect.DisasterReplicationServicePrepareRecoverableSnapshotRestoreProcedure,
+		procmeshv1connect.DisasterReplicationServiceRestoreRecoverableSnapshotProcedure,
+	} {
+		if err := requireHopPerm(ctx, authSvc, procedure, "owner-1"); err != nil {
+			t.Fatalf("process-group scoped hop %s rejected: %v", rpcName(procedure), err)
+		}
+	}
+}
+
 func TestReplicationRoleCanCallDocumentedRPCs(t *testing.T) {
 	api, _, authSvc := setupMinimalAPI(t)
 	sid := createCustomRoleUser(t, authSvc, "replicator", "user-repl", auth.PermReplicationRead, auth.PermReplicationManage)
@@ -2346,6 +2746,14 @@ func TestReplicationRoleHopPerms(t *testing.T) {
 	perm, write, ok = hopRPCPerm(procmeshv1connect.DisasterReplicationServiceApplyPolicyDraftProcedure)
 	if !ok || perm != auth.PermReplicationManage || !write {
 		t.Fatalf("ApplyPolicyDraft: perm=%s write=%v ok=%v", perm, write, ok)
+	}
+	perm, write, ok = hopRPCPerm(procmeshv1connect.DisasterReplicationServicePrepareRecoverableSnapshotRestoreProcedure)
+	if !ok || perm != auth.PermBackupManage || write {
+		t.Fatalf("PrepareRecoverableSnapshotRestore: perm=%s write=%v ok=%v", perm, write, ok)
+	}
+	perm, write, ok = hopRPCPerm(procmeshv1connect.DisasterReplicationServiceRestoreRecoverableSnapshotProcedure)
+	if !ok || perm != auth.PermBackupManage || !write {
+		t.Fatalf("RestoreRecoverableSnapshot: perm=%s write=%v ok=%v", perm, write, ok)
 	}
 	perm, write, ok = hopRPCPerm(procmeshv1connect.ClusterBackupServiceListPoliciesProcedure)
 	if !ok || perm != auth.PermBackupRead || write {

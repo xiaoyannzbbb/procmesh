@@ -1,7 +1,7 @@
 # ProcMesh 集群备份与灾备副本设计
 
 日期：2026-08-19
-修订：2026-08-28（灾备自行捕获增量：副本 run 自行捕获源快照后再按路由复制，不再依赖主备份 run / trigger）
+修订：2026-08-29（灾备恢复增量：灾备页内 Prepare/Restore；Owner 本地丢失时从 Peer 经 mTLS 回源并 hydrate 后 CAS apply）
 状态：待用户审阅
 范围：在现有 Q5 配置备份能力之上的集群级备份、定时备份与 Peer 灾备副本
 
@@ -30,6 +30,7 @@
 6. Peer 复制具备 checksum 校验、幂等、逐 Agent 重试、保留策略和健康状态。
 7. 备份和副本载荷始终留在本地文件系统或对象存储，不写入 Raft、Gossip 或 Leader 内存中的大对象。
 8. 恢复仍然只能在目标进程 Owner 上通过 `ApplySpec + expected_revision` 产生新 revision；Peer 文件绝不直接 apply。
+9. 灾备恢复留在 `/disaster-replica` 页面内完成；Owner 本地副本丢失时可以从仍持有相同 checksum 的 Peer 安全回源，不把 Peer 提升为 Owner。
 
 ## 3. 非目标
 
@@ -301,7 +302,21 @@ Preview 返回完整 route 表、故障域信息、每个目标的预计 inbound
 
 重试只处理失败任务：已有冻结快照则只重传；快照为空或源文件丢失则对该源重捕获。成功任务不动。目标节点已存在相同 snapshot ID 和 checksum 时直接返回幂等成功；ID 相同但 checksum 不同视为冲突并阻止覆盖。
 
-恢复页面可以列出 Peer 副本，并跳转到 Owner 选择和 CAS 恢复流程。Peer 目标本身不是新的 Owner，不能在目标节点直接启动源节点的进程。
+#### 10.3.1 灾备副本恢复
+
+恢复在 `/disaster-replica` 页面内完成，不再跳转到普通备份页。每条可恢复快照提供恢复入口；点击后调用 `PrepareRecoverableSnapshotRestore`，弹窗默认选中被点击的快照，并可切换同一 Owner 的其它可恢复快照。Prepare 返回快照中的进程、快照 revision、Owner 当前 revision、当前是否存在以及本次选定的存储节点；Browser 不下载 snapshot payload。
+
+Prepare 和 Restore 无论从哪个公开 Agent 进入，都必须按 `source_node_id` 转发到 Owner。Owner 不可达时只返回 `UNAVAILABLE` 并在页面提示暂时无法恢复；入口 Agent、Leader 和 Peer 均不得代替 Owner apply，更不能因为 Owner `FAILED`、离线或本地文件丢失而在其它节点创建这些进程。
+
+Owner 按以下顺序准备恢复载荷：
+
+1. 优先读取 Owner 本地 `sink=replica` 的同一 `snapshot_id`，并校验 cluster、Owner、snapshot ID 和 checksum。
+2. Owner 本地文件不存在时，使用 Prepare 选定的存储 Peer；未显式指定时，只能从当前可达且持有同一逻辑快照的 Peer 中选择。
+3. Owner 通过内部 mTLS `FetchSnapshot` 直接向该 Peer 拉取 payload。Peer 必须验证调用方证书就是 source Owner，并根据已冻结的复制任务重新验证 cluster、source、target、snapshot ID 和 checksum 后才可返回字节。
+4. Owner 收到 payload 后再次计算 checksum、解码并校验 cluster、snapshot ID 与 `snapshot.node_id == Owner`，然后幂等 hydrate 到 Owner 本地 `replica` sink。同一 snapshot ID 已存在但 checksum 或身份不同必须返回 `CONFLICT`，禁止覆盖。
+5. hydrate 成功后，Owner 才调用现有 Restore 流程，按进程执行 `ApplySpec + expected_revision`。当前进程不存在时 `expected_revision=0` 表示 CAS create；其它 revision 不匹配逐进程返回 `CONFLICT`，不得自动重试或静默覆盖。
+
+`operation_id` 在 Owner 上继续派生为逐进程幂等键。Prepare 与 Restore 都必须在 Owner 重新校验 `backup.manage` scope；Restore 在任何 apply 发生前校验所有目标、当前进程身份及 expected revision 输入。snapshot payload 只经过选定 Peer 到 Owner 的 mTLS 连接，不经过 Browser、公开入口 Agent 或 Raft Leader，也不得写入 Raft、Gossip、audit 或 API 错误详情。
 
 ### 10.4 Draft 一致性与 source selector
 
@@ -386,6 +401,8 @@ FS、S3、Peer 只共享保留意图，不共享删除实现。S3 可以交给 b
 - `RetryFailedRoutes`
 - `VerifyReplica`
 - `ListRecoverableSnapshots`
+- `PrepareRecoverableSnapshotRestore`
+- `RestoreRecoverableSnapshot`
 
 `ListRecoverableSnapshots` 在公开 API 入口聚合所有已准入 Agent 的本地
 `replica` 快照索引与 PeerStore 清单；Agent 间内部 hop 只返回本机 inventory，
@@ -395,6 +412,10 @@ FS、S3、Peer 只共享保留意图，不共享删除实现。S3 可以交给 b
 `UNKNOWN`，不得把不可达节点表现为空清单或实时健康。
 `VerifyReplica` 根据已冻结且成功的复制任务路由到实际 Peer 持有节点校验，
 不能假定 Web 入口节点本地持有该副本。
+`PrepareRecoverableSnapshotRestore` 与 `RestoreRecoverableSnapshot` 按请求中的
+`source_node_id` 路由到 Owner；前者只准备元数据和当前 CAS revision，后者在
+Owner 完成必要的 Peer 回源、hydrate 和逐进程 apply。两者都不得把 payload
+返回给公开调用方。
 
 Draft API 不直接写 Raft；`ApplyPolicyDraft` 必须带 draft revision 和规范化策略摘要 hash，防止用户基于旧拓扑或已修改的策略输入覆盖当前状态；可编辑 route 由 FSM 独立校验。
 
@@ -404,8 +425,9 @@ Draft API 不直接写 Raft；`ApplyPolicyDraft` 必须带 draft revision 和规
 - `CheckSnapshot`
 - `DeleteSnapshot`
 - `GetReplicaMetadata`
+- `FetchSnapshot`
 
-该服务只监听现有 mTLS Agent RPC 面，禁止使用普通 Web 用户凭据作为节点认证。Leader 通过控制任务授权 source/target，目标 Agent 仍校验 cluster ID、source admission、snapshot checksum 和 policy revision。
+该服务只监听现有 mTLS Agent RPC 面，禁止使用普通 Web 用户凭据作为节点认证。Leader 通过控制任务授权 source/target，目标 Agent 仍校验 cluster ID、source admission、snapshot checksum 和 policy revision。`FetchSnapshot` 只允许 source Owner 以自身 Agent 证书从实际存储 Peer 取回自己的副本；Peer 必须先完成路由授权，读取后重新计算并校验 checksum，只有校验成功才可返回文件，响应 payload 只能发给 Owner，不能经 Leader 或 Web 转发。
 
 ## 13. Web 设计
 
@@ -427,7 +449,9 @@ Draft API 不直接写 Raft；`ApplyPolicyDraft` 必须带 draft revision 和规
 
 1. **概览**：路由总数、健康/延迟/失败数量、最近一次成功复制、可恢复快照数量。
 2. **副本配置**：当前路由表、复制因子、cron/时区/enabled、保留、并发和拓扑约束。
-3. **运行与恢复**：复制运行详情、按 route 重试、checksum 验证、可恢复快照和 Owner 恢复入口。不提供选择已有 `ClusterBackupRun` 或粘贴主备份 `run_id`。
+3. **运行与恢复**：复制运行详情、按 route 重试、checksum 验证、可恢复快照和页面内 Owner 恢复。不提供选择已有 `ClusterBackupRun`、粘贴主备份 `run_id` 或跳转普通备份页。
+
+恢复弹窗默认选中用户点击的快照，只列出同一 Owner 的其它可恢复快照；展示 Owner、完整 checksum、存储节点、新鲜度和逐进程 snapshot/current revision。确认后直接调用 `RestoreRecoverableSnapshot`。`STALE` / `UNKNOWN` 清单只能作为最后已知信息，不能证明副本当前可读；Prepare 和 Restore 必须实时重新验证 Owner、选定 Peer 和 checksum。Owner 不可达时弹窗保留上下文并明确提示，不能提供“在 Peer 上恢复”的替代按钮。
 
 “一键生成整个集群副本配置”打开轻量预览确认：默认预填 `schedule_cron=0 2 * * *`、浏览器 IANA 时区、`enabled=true`；预览中必须可编辑 cron、时区与 enabled（cron 可清空为仅手动）；同时展示生成规则、route 表、故障域警告和开销估算。确认应用后只写入策略与路由，不立刻创建 run；页面显示 policy revision。已有人工修改的 route 不被静默覆盖，必须由用户明确选择“替换当前配置”。
 
@@ -446,7 +470,7 @@ Peer 不出现在 `/backup` 的普通 sink 选择器中，避免用户误以为�
 | `replication.read` | 查看灾备拓扑、复制运行、健康和可恢复快照 |
 | `replication.manage` | 生成/应用副本配置、修改路由、启动/重试/验证复制、删除副本 |
 
-Peer 恢复最终仍需要 `backup.manage`，并且在 Owner 上重新校验 scope、expected revision 和当前进程身份。
+Peer 恢复的 Prepare 与 Restore 都需要 `backup.manage`，不以 `replication.manage` 代替。公开入口只做路由，Owner 必须重新校验用户 scope、全部目标进程身份和 `expected_revision`；任一目标越权时在 apply 前拒绝，Peer mTLS 身份不能替代用户权限。
 
 所有控制面写入产生 audit：策略创建/修改/删除、手动运行、重试、生成草稿、应用草稿、路由替换、验证、保留删除和恢复请求。审计只记录用户、时间、policy/run/task ID、结果和错误摘要，不记录快照 payload、S3 secret 或完整路径中的凭据。
 
@@ -461,6 +485,11 @@ Peer 恢复最终仍需要 `backup.manage`，并且在 Owner 上重新校验 sco
 | S3 网络/权限错误 | task=`FAILED`，指数退避重试 |
 | Peer 目标离线 | route=`UNAVAILABLE`，源快照保留等待重试 |
 | Peer checksum 不一致 | route=`FAILED`，禁止覆盖，需重新传输或人工处理 |
+| 恢复时 Owner 不可达 | `UNAVAILABLE`，页面提示等待 Owner 恢复；Peer 不 apply |
+| Owner 本地 replica 丢失且没有可达 Peer | `UNAVAILABLE`，不使用 `STALE` / `UNKNOWN` 清单假装可恢复 |
+| Peer 回源身份或 checksum 不匹配 | `DENIED` 或 `CONFLICT`，不 hydrate、不 apply |
+| Owner 已有同 snapshot ID、不同 checksum | `CONFLICT`，禁止覆盖本地对象 |
+| Restore expected revision 过期 | 该进程=`CONFLICT`，其它结果按现有逐进程语义返回，不自动重试 |
 | Leader 变化 | 复用 run/task ID，按 lease 和幂等规则恢复 |
 | policy 在运行中修改 | 当前运行继续使用冻结的 policy revision，下一次运行使用新 revision |
 | target 被撤销 | 新运行拒绝；旧运行保留结果，不自动迁移副本 |
@@ -502,6 +531,7 @@ Peer 恢复最终仍需要 `backup.manage`，并且在 Owner 上重新校验 sco
 - FS/S3 namespace、原子写入、checksum、保留策略和路径安全。
 - Peer route 生成：N=1、N=2、环形、副本因子、故障域、负载均衡和稳定排序。
 - route/task 幂等、checksum 冲突和按失败项重试。
+- Owner hydrate 同 checksum 幂等、同 ID 不同 checksum 冲突、错误身份拒绝且不 apply。
 
 ### 18.2 集成测试
 
@@ -513,6 +543,8 @@ Peer 恢复最终仍需要 `backup.manage`，并且在 Owner 上重新校验 sco
 - 保留策略只删除 ProcMesh namespace，不删除其它对象或其它 policy 的快照。
 - Raft/FSM 检查不包含 payload、secret 和本地 backup index。
 - Restore 只能到 Owner，使用 CAS 产生新 revision，Peer 副本不会直接启动进程。
+- 删除 Owner 本地 replica 后从选定 Peer 经 mTLS 回源，验证 hydrate 到 Owner 后才能 CAS apply；Owner 不可达时不发生 apply。
+- 恢复 payload 不经过 Browser、公开入口 Agent、Leader、Raft 或 Gossip，审计不包含 payload 和完整路径。
 
 ### 18.3 Web 测试
 
@@ -522,6 +554,7 @@ Peer 恢复最终仍需要 `backup.manage`，并且在 Owner 上重新校验 sco
 - 灾备页面一键生成、预览警告、应用、手工修改冲突和 route 重试。
 - `LIVE` / `STALE` / `UNKNOWN` 状态，以及不可达节点不被显示为空。
 - 权限拒绝、错误文案、异步 polling 停止条件和移动端布局。
+- 灾备页内恢复弹窗默认选中点击快照，`backup.manage` 控制按钮；Owner 不可达、Peer 回源成功和逐进程 CAS 冲突均正确展示且不跳转备份页。
 
 ## 19. 实施切分建议
 

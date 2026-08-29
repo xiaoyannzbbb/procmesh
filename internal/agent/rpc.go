@@ -301,8 +301,11 @@ func (r *rpcRuntime) localHandler() http.Handler {
 	drp, drh := procmeshv1connect.NewDisasterReplicationServiceHandler(&api.DisasterReplicationAPI{
 		ClusterID: r.clusterID,
 		NodeID:    r.nodeID,
+		LocalID:   r.nodeID,
 		Auth:      r.auth,
 		Store:     r.st,
+		Backup:    r.backup,
+		Forward:   r.fwd,
 		StateFn: func() control.State {
 			n := r.control()
 			if n == nil {

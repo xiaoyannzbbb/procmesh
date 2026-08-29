@@ -91,6 +91,15 @@ func (f *countingForwarder) DisasterReplication(ctx context.Context, rt Route) (
 	return forwarder.DisasterReplication(ctx, rt)
 }
 
+func (f *countingForwarder) PeerReplication(ctx context.Context, rt Route) (procmeshv1connect.PeerReplicationServiceClient, error) {
+	f.n.Add(1)
+	forwarder, ok := f.inner.(PeerReplicationForwarder)
+	if !ok {
+		return nil, unavailableOwner()
+	}
+	return forwarder.PeerReplication(ctx, rt)
+}
+
 func wrapForwarder(f Forwarder, n *atomic.Uint64) Forwarder {
 	if f == nil || n == nil {
 		return f

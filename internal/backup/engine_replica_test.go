@@ -1,6 +1,7 @@
 package backup_test
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -52,6 +53,86 @@ func TestEngine_CaptureReplicationSnapshot_IdempotentPerRunAndSource(t *testing.
 	})
 	if err != nil || second.SHA256 != first.SHA256 || second.SnapshotID != first.SnapshotID {
 		t.Fatalf("second=%+v", second)
+	}
+}
+
+func TestEngine_HydrateReplicaValidatesIdentityAndIsIdempotent(t *testing.T) {
+	eng := testEngineWithProcess(t)
+	snapshot := backup.Snapshot{
+		FormatVersion: 1, SnapshotID: "snap-hydrate", ClusterID: eng.ClusterID, NodeID: eng.NodeID,
+		CreatedAt: time.Unix(1_700_000_100, 0).UTC(),
+		Processes: []backup.ProcessDump{{ProcessID: "p1", Name: "web", MinRevision: 1, MaxRevision: 1}},
+	}
+	payload, checksum, err := backup.Encode(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := eng.HydrateReplica(context.Background(), snapshot.SnapshotID, checksum, payload)
+	if err != nil || first.Sink != backup.ReplicaSinkName || first.NodeID != eng.NodeID {
+		t.Fatalf("first=%+v err=%v", first, err)
+	}
+	second, err := eng.HydrateReplica(context.Background(), snapshot.SnapshotID, checksum, payload)
+	if err != nil || second.SHA256 != first.SHA256 {
+		t.Fatalf("second=%+v err=%v", second, err)
+	}
+	_, stored, err := eng.Get(context.Background(), snapshot.SnapshotID, backup.ReplicaSinkName)
+	if err != nil || !bytes.Equal(stored, payload) {
+		t.Fatalf("stored bytes mismatch err=%v", err)
+	}
+}
+
+func TestEngine_HydrateReplicaNeverOverwritesDifferentChecksum(t *testing.T) {
+	eng := testEngineWithProcess(t)
+	snapshot := backup.Snapshot{FormatVersion: 1, SnapshotID: "snap-hydrate", ClusterID: eng.ClusterID, NodeID: eng.NodeID, CreatedAt: time.Unix(1_700_000_100, 0).UTC()}
+	payload, checksum, err := backup.Encode(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := eng.HydrateReplica(context.Background(), snapshot.SnapshotID, checksum, payload); err != nil {
+		t.Fatal(err)
+	}
+	changed := snapshot
+	changed.CreatedAt = changed.CreatedAt.Add(time.Second)
+	changedPayload, changedChecksum, err := backup.Encode(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = eng.HydrateReplica(context.Background(), snapshot.SnapshotID, changedChecksum, changedPayload)
+	if !errcode.Is(err, errcode.CONFLICT) {
+		t.Fatalf("err=%v, want CONFLICT", err)
+	}
+	_, stored, err := eng.Get(context.Background(), snapshot.SnapshotID, backup.ReplicaSinkName)
+	if err != nil || !bytes.Equal(stored, payload) {
+		t.Fatalf("existing replica overwritten err=%v", err)
+	}
+}
+
+func TestEngine_HydrateReplicaNeverOverwritesUnindexedFile(t *testing.T) {
+	eng := testEngineWithProcess(t)
+	snapshot := backup.Snapshot{FormatVersion: 1, SnapshotID: "snap-unindexed", ClusterID: eng.ClusterID, NodeID: eng.NodeID, CreatedAt: time.Unix(1_700_000_100, 0).UTC()}
+	payload, checksum, err := backup.Encode(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := eng.HydrateReplica(context.Background(), snapshot.SnapshotID, checksum, payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.Store.DeleteBackup(context.Background(), snapshot.SnapshotID); err != nil {
+		t.Fatal(err)
+	}
+	changed := snapshot
+	changed.CreatedAt = changed.CreatedAt.Add(time.Second)
+	changedPayload, changedChecksum, err := backup.Encode(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = eng.HydrateReplica(context.Background(), snapshot.SnapshotID, changedChecksum, changedPayload)
+	if !errcode.Is(err, errcode.CONFLICT) {
+		t.Fatalf("err=%v, want CONFLICT", err)
+	}
+	stored, err := eng.Sinks[backup.ReplicaSinkName].Get(context.Background(), snapshot.SnapshotID)
+	if err != nil || !bytes.Equal(stored, payload) {
+		t.Fatalf("unindexed replica overwritten err=%v", err)
 	}
 }
 

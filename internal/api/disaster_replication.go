@@ -19,6 +19,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/freshness"
+	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/rpc"
 	"github.com/qleelulu/procmesh/internal/store"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
@@ -30,6 +31,10 @@ var _ procmeshv1connect.DisasterReplicationServiceHandler = (*DisasterReplicatio
 
 type DisasterReplicationForwarder interface {
 	DisasterReplication(context.Context, Route) (procmeshv1connect.DisasterReplicationServiceClient, error)
+}
+
+type PeerReplicationForwarder interface {
+	PeerReplication(context.Context, Route) (procmeshv1connect.PeerReplicationServiceClient, error)
 }
 
 // DisasterReplicationAPI implements DisasterReplicationService for disaster recovery replication.
@@ -50,6 +55,7 @@ type DisasterReplicationAPI struct {
 	Router         *Router
 	LocalOnly      bool
 	Now            func() time.Time
+	Backup         *backup.Engine
 	PeerStore      *backup.PeerStore
 	SnapshotLister interface {
 		ListLocal(context.Context) ([]backup.Meta, error)
@@ -1158,6 +1164,282 @@ func (d *DisasterReplicationAPI) ListRecoverableSnapshots(ctx context.Context, r
 		Snapshots:         mergeReplicaInventories(inventories),
 		InventoryStatuses: sortedReplicaInventoryStatuses(statuses),
 	}), nil
+}
+
+func (d *DisasterReplicationAPI) PrepareRecoverableSnapshotRestore(ctx context.Context, req *connect.Request[procmeshv1.PrepareRecoverableSnapshotRestoreRequest]) (*connect.Response[procmeshv1.PrepareRecoverableSnapshotRestoreResponse], error) {
+	if req.Msg.GetSourceNodeId() == "" || req.Msg.GetSnapshotId() == "" || req.Msg.GetSha256() == "" {
+		return nil, ToConnect(errcode.E(errcode.INVALID, "source_node_id, snapshot_id and sha256 required"))
+	}
+	if err := requireAnyPerm(ctx, d.Auth, auth.PermBackupManage); err != nil {
+		return nil, err
+	}
+	if req.Msg.GetSourceNodeId() != d.localNodeID() {
+		client, route, err := d.recoveryOwnerClient(ctx, req.Msg.GetSourceNodeId())
+		if err != nil {
+			return nil, ToConnect(err)
+		}
+		stampHop(req.Header(), d.localNodeID(), route.NodeID)
+		stampIdentity(req.Header(), ctx)
+		hopCtx, cancel := context.WithTimeout(ctx, rpc.UnaryTimeout)
+		defer cancel()
+		response, err := client.PrepareRecoverableSnapshotRestore(hopCtx, req)
+		if err != nil {
+			return nil, mapForwardErr(err)
+		}
+		return response, nil
+	}
+	meta, snapshot, _, selectedStorage, fetchedFromPeer, err := d.loadRecoverableSnapshot(ctx, req.Msg.GetSnapshotId(), req.Msg.GetSha256(), req.Msg.GetStorageNodeId(), false)
+	if err != nil {
+		return nil, ToConnect(err)
+	}
+	candidates := make([]*procmeshv1.RecoverableRestoreCandidate, 0, len(snapshot.Processes))
+	for _, dump := range snapshot.Processes {
+		candidate := &procmeshv1.RecoverableRestoreCandidate{
+			ProcessId: dump.ProcessID, ProcessName: dump.Name, SnapshotRevision: dump.MaxRevision,
+		}
+		current, exists, authorizeErr := d.authorizeRecoverableRestoreGroup(ctx, dump, false)
+		if authorizeErr != nil {
+			return nil, authorizeErr
+		}
+		if exists {
+			candidate.CurrentExists = true
+			candidate.CurrentRevision = current.LatestRevision
+		}
+		candidates = append(candidates, candidate)
+	}
+	return connect.NewResponse(&procmeshv1.PrepareRecoverableSnapshotRestoreResponse{
+		Snapshot: replicaSnapshotFromMeta(meta, d.localNodeID(), selectedStorage), Candidates: candidates,
+		SelectedStorageNodeId: selectedStorage, OwnerCopy: !fetchedFromPeer,
+	}), nil
+}
+
+func (d *DisasterReplicationAPI) RestoreRecoverableSnapshot(ctx context.Context, req *connect.Request[procmeshv1.RestoreRecoverableSnapshotRequest]) (*connect.Response[procmeshv1.RestoreRecoverableSnapshotResponse], error) {
+	if req.Msg.GetSourceNodeId() == "" || req.Msg.GetSnapshotId() == "" || req.Msg.GetSha256() == "" {
+		return nil, ToConnect(errcode.E(errcode.INVALID, "source_node_id, snapshot_id and sha256 required"))
+	}
+	if err := requireAnyPerm(ctx, d.Auth, auth.PermBackupManage); err != nil {
+		return nil, err
+	}
+	opID, operator, err := metaOf(req.Msg.GetMeta())
+	if err != nil {
+		return nil, err
+	}
+	if len(req.Msg.GetTargets()) == 0 {
+		return nil, ToConnect(errcode.E(errcode.INVALID, "targets required"))
+	}
+	if req.Msg.GetSourceNodeId() != d.localNodeID() {
+		client, route, err := d.recoveryOwnerClient(ctx, req.Msg.GetSourceNodeId())
+		if err != nil {
+			return nil, ToConnect(err)
+		}
+		stampHop(req.Header(), d.localNodeID(), route.NodeID)
+		stampIdentity(req.Header(), ctx)
+		hopCtx, cancel := context.WithTimeout(ctx, rpc.MutationTimeout)
+		defer cancel()
+		response, err := client.RestoreRecoverableSnapshot(hopCtx, req)
+		if err != nil {
+			return nil, mapForwardErr(err)
+		}
+		return response, nil
+	}
+	rec := controlMutation{Action: "backup.restore", Resource: "replication_snapshot:" + req.Msg.GetSnapshotId(), OperationID: opID, SnapshotID: req.Msg.GetSnapshotId()}
+	_, snapshot, _, selectedStorage, fetchedFromPeer, err := d.loadRecoverableSnapshot(ctx, req.Msg.GetSnapshotId(), req.Msg.GetSha256(), req.Msg.GetStorageNodeId(), true)
+	if err != nil {
+		d.audit(ctx, rec, err)
+		return nil, ToConnect(err)
+	}
+	byID := make(map[string]backup.ProcessDump, len(snapshot.Processes))
+	for _, dump := range snapshot.Processes {
+		byID[dump.ProcessID] = dump
+	}
+	for _, target := range req.Msg.GetTargets() {
+		dump, ok := byID[target.GetProcessId()]
+		if !ok {
+			err := errcode.E(errcode.INVALID, "process not in snapshot")
+			d.audit(ctx, rec, err)
+			return nil, ToConnect(err)
+		}
+		if _, _, err := d.authorizeRecoverableRestoreGroup(ctx, dump, true); err != nil {
+			d.audit(ctx, rec, err)
+			return nil, err
+		}
+	}
+	operator = operatorOf(ctx, operator)
+	results, err := d.Backup.Restore(ctx, req.Msg.GetSnapshotId(), backup.ReplicaSinkName, opID, operator, protoRestoreTargets(req.Msg.GetTargets()))
+	if err != nil {
+		d.audit(ctx, rec, err)
+		return nil, ToConnect(err)
+	}
+	d.audit(ctx, rec, nil)
+	return connect.NewResponse(&procmeshv1.RestoreRecoverableSnapshotResponse{
+		Results: protoRestoreResults(results), RestoredFromNodeId: selectedStorage, FetchedFromPeer: fetchedFromPeer,
+	}), nil
+}
+
+func (d *DisasterReplicationAPI) authorizeRecoverableRestoreGroup(ctx context.Context, dump backup.ProcessDump, write bool) (process.ProcessSpec, bool, error) {
+	raw, err := backup.LatestSpec(dump)
+	if err != nil {
+		return process.ProcessSpec{}, false, ToConnect(err)
+	}
+	var snapshotSpec process.ProcessSpec
+	if err := json.Unmarshal(raw, &snapshotSpec); err != nil {
+		return process.ProcessSpec{}, false, ToConnect(errcode.E(errcode.INVALID, "invalid process spec in snapshot"))
+	}
+	current, getErr := d.Backup.Apply.GetSpec(ctx, dump.ProcessID)
+	exists := getErr == nil
+	if getErr != nil && !errcode.Is(getErr, errcode.NOT_FOUND) {
+		return process.ProcessSpec{}, false, ToConnect(getErr)
+	}
+	existingGroup := ""
+	if exists {
+		existingGroup = current.Group
+	}
+	if err := authorizeApplyGroups(ctx, d.Auth, auth.PermBackupManage, d.localNodeID(), existingGroup, snapshotSpec.Group, exists, write, true); err != nil {
+		return process.ProcessSpec{}, false, err
+	}
+	return current, exists, nil
+}
+
+func (d *DisasterReplicationAPI) recoveryOwnerClient(ctx context.Context, ownerNodeID string) (procmeshv1connect.DisasterReplicationServiceClient, Route, error) {
+	if d.LocalOnly {
+		return nil, Route{}, errcode.E(errcode.UNAVAILABLE, "owner unreachable")
+	}
+	forwarder, ok := d.Forward.(DisasterReplicationForwarder)
+	if !ok || forwarder == nil {
+		return nil, Route{}, errcode.E(errcode.UNAVAILABLE, "owner unreachable")
+	}
+	state := d.state()
+	if member, ok := state.Members[ownerNodeID]; !ok || member.Status != control.MemberAdmitted {
+		return nil, Route{}, errcode.E(errcode.UNAVAILABLE, "owner unreachable")
+	}
+	var route Route
+	var err error
+	if d.Router != nil {
+		route, err = d.Router.Resolve(ctx, "", "", ownerNodeID)
+	} else {
+		if d.Members == nil {
+			return nil, Route{}, errcode.E(errcode.UNAVAILABLE, "owner unreachable")
+		}
+		for _, member := range d.Members() {
+			if member.NodeID == ownerNodeID && member.State == cluster.StateAlive && member.RPCAddress != "" {
+				route = Route{NodeID: ownerNodeID, RPC: member.RPCAddress}
+				break
+			}
+		}
+		if route.RPC == "" {
+			return nil, Route{}, errcode.E(errcode.UNAVAILABLE, "owner unreachable")
+		}
+	}
+	if err != nil || route.Local || route.NodeID != ownerNodeID {
+		return nil, Route{}, errcode.E(errcode.UNAVAILABLE, "owner unreachable")
+	}
+	client, err := forwarder.DisasterReplication(ctx, route)
+	if err != nil {
+		return nil, Route{}, rpc.MapDialError(err)
+	}
+	return client, route, nil
+}
+
+func (d *DisasterReplicationAPI) loadRecoverableSnapshot(ctx context.Context, snapshotID, expectedSHA256, storageNodeID string, hydrate bool) (backup.Meta, backup.Snapshot, []byte, string, bool, error) {
+	if d.Backup == nil || d.Backup.Apply == nil {
+		return backup.Meta{}, backup.Snapshot{}, nil, "", false, errcode.E(errcode.UNAVAILABLE, "backup engine unavailable")
+	}
+	meta, payload, err := d.Backup.Get(ctx, snapshotID, backup.ReplicaSinkName)
+	if err == nil {
+		if meta.ClusterID != d.clusterID() || meta.NodeID != d.localNodeID() || meta.SnapshotID != snapshotID || !strings.EqualFold(meta.SHA256, expectedSHA256) {
+			return backup.Meta{}, backup.Snapshot{}, nil, "", false, errcode.E(errcode.CONFLICT, "snapshot identity or checksum mismatch")
+		}
+		snapshot, decodeErr := backup.Decode(payload)
+		if decodeErr != nil {
+			return backup.Meta{}, backup.Snapshot{}, nil, "", false, decodeErr
+		}
+		if snapshot.ClusterID != d.clusterID() || snapshot.NodeID != d.localNodeID() || snapshot.SnapshotID != snapshotID {
+			return backup.Meta{}, backup.Snapshot{}, nil, "", false, errcode.E(errcode.CONFLICT, "snapshot identity mismatch")
+		}
+		return meta, snapshot, payload, d.localNodeID(), false, nil
+	}
+	if !errcode.Is(err, errcode.NOT_FOUND) {
+		return backup.Meta{}, backup.Snapshot{}, nil, "", false, err
+	}
+	return d.fetchRecoverableSnapshot(ctx, snapshotID, expectedSHA256, storageNodeID, hydrate)
+}
+
+func (d *DisasterReplicationAPI) fetchRecoverableSnapshot(ctx context.Context, snapshotID, expectedSHA256, storageNodeID string, hydrate bool) (backup.Meta, backup.Snapshot, []byte, string, bool, error) {
+	forwarder, ok := d.Forward.(PeerReplicationForwarder)
+	if !ok || forwarder == nil || d.Members == nil {
+		return backup.Meta{}, backup.Snapshot{}, nil, "", false, errcode.E(errcode.UNAVAILABLE, "replica storage unavailable")
+	}
+	state := d.state()
+	allowed := make(map[string]struct{})
+	for _, task := range state.ReplicationTasks {
+		if task.Status == "SUCCEEDED" && task.SourceNodeID == d.localNodeID() && task.SnapshotID == snapshotID && strings.EqualFold(task.SHA256, expectedSHA256) && task.NodeID != "" && task.NodeID != d.localNodeID() {
+			allowed[task.NodeID] = struct{}{}
+		}
+	}
+	if len(allowed) == 0 {
+		return backup.Meta{}, backup.Snapshot{}, nil, "", false, errcode.E(errcode.UNAVAILABLE, "replica storage unavailable")
+	}
+	members := make(map[string]cluster.NodeSummary)
+	for _, member := range d.Members() {
+		members[member.NodeID] = member
+	}
+	nodeIDs := make([]string, 0, len(allowed))
+	if storageNodeID != "" && storageNodeID != d.localNodeID() {
+		if _, ok := allowed[storageNodeID]; !ok {
+			return backup.Meta{}, backup.Snapshot{}, nil, "", false, errcode.E(errcode.UNAVAILABLE, "selected replica storage unavailable")
+		}
+		nodeIDs = append(nodeIDs, storageNodeID)
+	} else {
+		for nodeID := range allowed {
+			nodeIDs = append(nodeIDs, nodeID)
+		}
+		sort.Strings(nodeIDs)
+	}
+	var lastErr error
+	for _, nodeID := range nodeIDs {
+		controlMember, admitted := state.Members[nodeID]
+		member := members[nodeID]
+		if !admitted || controlMember.Status != control.MemberAdmitted || member.State != cluster.StateAlive || member.RPCAddress == "" {
+			continue
+		}
+		client, dialErr := forwarder.PeerReplication(ctx, Route{NodeID: nodeID, RPC: member.RPCAddress})
+		if dialErr != nil {
+			lastErr = rpc.MapDialError(dialErr)
+			continue
+		}
+		hopCtx, cancel := context.WithTimeout(ctx, rpc.MutationTimeout)
+		response, fetchErr := client.FetchSnapshot(hopCtx, connect.NewRequest(&procmeshv1.FetchSnapshotRequest{
+			SourceNodeId: d.localNodeID(), ClusterId: d.clusterID(), SnapshotId: snapshotID, Sha256: expectedSHA256,
+		}))
+		cancel()
+		if fetchErr != nil {
+			lastErr = rpc.MapCallError(fetchErr)
+			continue
+		}
+		msg := response.Msg
+		if msg.GetSourceNodeId() != d.localNodeID() || msg.GetClusterId() != d.clusterID() || msg.GetSnapshotId() != snapshotID || !strings.EqualFold(msg.GetSha256(), expectedSHA256) {
+			return backup.Meta{}, backup.Snapshot{}, nil, "", false, errcode.E(errcode.CONFLICT, "fetched snapshot identity or checksum mismatch")
+		}
+		snapshot, decodeErr := backup.Decode(msg.GetPayload())
+		if decodeErr != nil || snapshot.NodeID != d.localNodeID() || snapshot.ClusterID != d.clusterID() || snapshot.SnapshotID != snapshotID {
+			return backup.Meta{}, backup.Snapshot{}, nil, "", false, errcode.E(errcode.CONFLICT, "fetched snapshot identity mismatch")
+		}
+		meta := backup.MetaFromSnapshot(snapshot)
+		meta.SHA256 = msg.GetSha256()
+		meta.Bytes = int64(len(msg.GetPayload()))
+		meta.Sink = backup.ReplicaSinkName
+		if hydrate {
+			meta, decodeErr = d.Backup.HydrateReplica(ctx, snapshotID, expectedSHA256, msg.GetPayload())
+			if decodeErr != nil {
+				return backup.Meta{}, backup.Snapshot{}, nil, "", false, decodeErr
+			}
+		}
+		return meta, snapshot, msg.GetPayload(), nodeID, true, nil
+	}
+	if lastErr != nil {
+		return backup.Meta{}, backup.Snapshot{}, nil, "", false, lastErr
+	}
+	return backup.Meta{}, backup.Snapshot{}, nil, "", false, errcode.E(errcode.UNAVAILABLE, "replica storage unavailable")
 }
 
 func (d *DisasterReplicationAPI) listLocalRecoverableSnapshots(ctx context.Context) ([]*procmeshv1.ReplicaSnapshot, error) {

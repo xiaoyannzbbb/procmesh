@@ -704,6 +704,43 @@ func TestPeerReplicationAPI_GetReplicaMetadata(t *testing.T) {
 	require.Len(t, resp.Msg.ProcessIds, 2)
 }
 
+func TestPeerReplicationAPI_FetchSnapshotReturnsValidatedPayloadToOwner(t *testing.T) {
+	peerStore := &backup.PeerStore{Root: t.TempDir()}
+	snapshot := backup.Snapshot{
+		FormatVersion: 1,
+		SnapshotID:    "snap-fetch",
+		ClusterID:     "cluster-1",
+		NodeID:        "owner-1",
+		Processes:     []backup.ProcessDump{{ProcessID: "p1", Name: "proc1", MaxRevision: 3}},
+	}
+	payload, checksum, err := backup.Encode(snapshot)
+	require.NoError(t, err)
+	_, err = peerStore.ReceiveWithMetadata(context.Background(), backup.ReceiveParams{
+		SourceNodeID: "owner-1", ClusterID: "cluster-1", SnapshotID: snapshot.SnapshotID, SHA256: checksum, Payload: payload,
+	})
+	require.NoError(t, err)
+
+	creds := genAgentCreds(t, "cluster-1", "owner-1")
+	client := newPeerReplicationClient(t, &PeerReplicationAPI{PeerStore: peerStore, ClusterID: "cluster-1", NodeID: "peer-1"}, &tls.ConnectionState{PeerCertificates: []*x509.Certificate{creds.Cert}})
+	resp, err := client.FetchSnapshot(context.Background(), connect.NewRequest(&procmeshv1.FetchSnapshotRequest{
+		SourceNodeId: "owner-1", ClusterId: "cluster-1", SnapshotId: snapshot.SnapshotID, Sha256: checksum,
+	}))
+	require.NoError(t, err)
+	require.Equal(t, payload, resp.Msg.GetPayload())
+	require.Equal(t, checksum, resp.Msg.GetSha256())
+	require.Equal(t, []string{"p1"}, resp.Msg.GetProcessIds())
+}
+
+func TestPeerReplicationAPI_FetchSnapshotRejectsNonOwnerCertificate(t *testing.T) {
+	creds := genAgentCreds(t, "cluster-1", "other-node")
+	client := newPeerReplicationClient(t, &PeerReplicationAPI{PeerStore: &backup.PeerStore{Root: t.TempDir()}, ClusterID: "cluster-1", NodeID: "peer-1"}, &tls.ConnectionState{PeerCertificates: []*x509.Certificate{creds.Cert}})
+	_, err := client.FetchSnapshot(context.Background(), connect.NewRequest(&procmeshv1.FetchSnapshotRequest{
+		SourceNodeId: "owner-1", ClusterId: "cluster-1", SnapshotId: "snap-fetch", Sha256: strings.Repeat("a", 64),
+	}))
+	require.Error(t, err)
+	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+}
+
 func TestPeerReplicationAPI_DeleteSnapshotIntentAuthorizationBeforeStore(t *testing.T) {
 	dir := t.TempDir()
 	creds := genAgentCreds(t, "cluster-1", "source")

@@ -1153,8 +1153,27 @@ declare module "i18next" {
         'replica.retryFailed': string
         'replica.verify': string
         'replica.restoreOwner': string
+        'replica.restore': string
+        'replica.restoreConfirm': string
+        'replica.restoreWarning': string
+        'replica.snapshot': string
         'replica.owner': string
         'replica.storageNodes': string
+        'replica.storageNode': string
+        'replica.automaticStorage': string
+        'replica.ownerCopy': string
+        'replica.peerCopy': string
+        'replica.process': string
+        'replica.snapshotRevision': string
+        'replica.expectedRevision': string
+        'replica.currentMissing': string
+        'replica.prepareRestoreFailed': string
+        'replica.ownerUnavailable': string
+        'replica.confirmRestore': string
+        'replica.restoreSuccess': string
+        'replica.restoreConflict': string
+        'replica.restoreFailed': string
+        'replica.restoredFrom': string
         'replica.snapshotId': string
         'replica.checksum': string
         'replica.noRoutes': string

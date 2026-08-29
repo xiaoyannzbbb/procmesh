@@ -80,8 +80,10 @@ func requireHopPerm(ctx context.Context, svc *auth.Service, procedure, localID s
 	if !ok {
 		return nil
 	}
-	// Process RPCs need spec.Group for CheckTarget; hop only proves the perm exists.
-	if strings.HasPrefix(perm, "process.") {
+	// These RPCs need the Owner's process spec group for CheckTarget; the hop
+	// interceptor only proves the principal owns the permission in some scope.
+	name := rpcName(procedure)
+	if strings.HasPrefix(perm, "process.") || (strings.Contains(procedure, "DisasterReplicationService") && (name == "PrepareRecoverableSnapshotRestore" || name == "RestoreRecoverableSnapshot")) {
 		return requireAnyPerm(ctx, svc, perm)
 	}
 	return requirePerm(ctx, svc, perm, localID, write, true)
@@ -132,6 +134,10 @@ func hopRPCPerm(procedure string) (perm string, write bool, ok bool) {
 		return auth.PermBackupManage, true, true
 	case "GetTopology", "ListPolicies", "GetPolicy", "ListRuns", "GetRun", "ListRecoverableSnapshots":
 		return auth.PermReplicationRead, false, true
+	case "PrepareRecoverableSnapshotRestore":
+		return auth.PermBackupManage, false, true
+	case "RestoreRecoverableSnapshot":
+		return auth.PermBackupManage, true, true
 	case "GeneratePolicyDraft":
 		return auth.PermReplicationManage, false, true
 	case "ApplyPolicyDraft", "UpdatePolicy", "DeletePolicy", "StartRun", "RetryFailedRoutes", "VerifyReplica":
@@ -166,6 +172,10 @@ func replicationHopPerm(name string) (string, bool, bool) {
 		return auth.PermReplicationRead, false, true
 	case "GeneratePolicyDraft":
 		return auth.PermReplicationManage, false, true
+	case "PrepareRecoverableSnapshotRestore":
+		return auth.PermBackupManage, false, true
+	case "RestoreRecoverableSnapshot":
+		return auth.PermBackupManage, true, true
 	case "ApplyPolicyDraft", "UpdatePolicy", "DeletePolicy", "StartRun", "RetryFailedRoutes", "VerifyReplica":
 		return auth.PermReplicationManage, true, true
 	default:

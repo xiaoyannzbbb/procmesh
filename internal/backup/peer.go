@@ -204,31 +204,40 @@ func (p *PeerStore) Receive(ctx context.Context, sourceNodeID string, payload []
 
 // GetReplicaMetadata reads and returns metadata for a stored peer replica.
 func (p *PeerStore) GetReplicaMetadata(ctx context.Context, sourceNodeID, clusterID, snapshotID string) (Meta, error) {
+	meta, _, err := p.GetSnapshot(ctx, sourceNodeID, clusterID, snapshotID)
+	return meta, err
+}
+
+// GetSnapshot reads a cluster-aware peer replica and revalidates its identity.
+func (p *PeerStore) GetSnapshot(ctx context.Context, sourceNodeID, clusterID, snapshotID string) (Meta, []byte, error) {
 	if err := ctx.Err(); err != nil {
-		return Meta{}, err
+		return Meta{}, nil, err
 	}
 	if err := p.validateSource(sourceNodeID); err != nil {
-		return Meta{}, err
+		return Meta{}, nil, err
 	}
 	if err := p.validateID(snapshotID); err != nil {
-		return Meta{}, err
+		return Meta{}, nil, err
 	}
 	if err := p.validateCluster(clusterID); err != nil {
-		return Meta{}, err
+		return Meta{}, nil, err
 	}
 
 	path := p.pathFor(sourceNodeID, clusterID, snapshotID)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return Meta{}, errcode.E(errcode.NOT_FOUND, "snapshot not found")
+			return Meta{}, nil, errcode.E(errcode.NOT_FOUND, "snapshot not found")
 		}
-		return Meta{}, fmt.Errorf("read backup peer: %w", err)
+		return Meta{}, nil, fmt.Errorf("read backup peer: %w", err)
 	}
 
 	snap, err := Decode(data)
 	if err != nil {
-		return Meta{}, err
+		return Meta{}, nil, err
+	}
+	if snap.ClusterID != clusterID || snap.SnapshotID != snapshotID {
+		return Meta{}, nil, errcode.E(errcode.INVALID, "snapshot identity mismatch")
 	}
 
 	meta := MetaFromSnapshot(snap)
@@ -238,7 +247,7 @@ func (p *PeerStore) GetReplicaMetadata(ctx context.Context, sourceNodeID, cluste
 	meta.Sink = "peer"
 	meta.Location = path
 	meta.SourceNodeID = sourceNodeID
-	return meta, nil
+	return meta, data, nil
 }
 
 // CheckSnapshot checks if a snapshot exists and whether its checksum matches.

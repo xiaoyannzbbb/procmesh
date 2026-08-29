@@ -98,6 +98,8 @@ export type ReplicationClient = Pick<
   | "retryFailedRoutes"
   | "verifyReplica"
   | "listRecoverableSnapshots"
+  | "prepareRecoverableSnapshotRestore"
+  | "restoreRecoverableSnapshot"
 >;
 
 export function useClusterClient(): ClusterClient {

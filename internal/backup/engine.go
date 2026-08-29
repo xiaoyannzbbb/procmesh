@@ -128,6 +128,7 @@ type Engine struct {
 	Schedule           string // 空 = 关；五字段 cron
 	activeMu           sync.Mutex
 	activeSnapshots    map[string]int
+	hydrationMu        sync.Mutex
 }
 
 // ReplicateSnapshot reloads a stored primary payload by immutable ID and
@@ -415,6 +416,67 @@ func (e *Engine) CaptureReplicationSnapshot(ctx context.Context, req Replication
 	}
 	e.applyReplicaRetention(ctx, req.PolicyID, meta.SnapshotID)
 	return meta, nil
+}
+
+// HydrateReplica imports an exact source-owned replica payload into the local
+// replica sink. It is idempotent for the same checksum and never overwrites a
+// snapshot ID with different content.
+func (e *Engine) HydrateReplica(ctx context.Context, snapshotID, expectedSHA256 string, payload []byte) (Meta, error) {
+	if e == nil || e.Store == nil {
+		return Meta{}, errcode.E(errcode.UNAVAILABLE, "backup engine unavailable")
+	}
+	if snapshotID == "" || expectedSHA256 == "" {
+		return Meta{}, errcode.E(errcode.INVALID, "snapshot_id and sha256 required")
+	}
+	actual := sha256.Sum256(payload)
+	actualSHA256 := hex.EncodeToString(actual[:])
+	if !strings.EqualFold(actualSHA256, expectedSHA256) {
+		return Meta{}, errcode.E(errcode.CONFLICT, "snapshot checksum mismatch")
+	}
+	snapshot, err := Decode(payload)
+	if err != nil {
+		return Meta{}, err
+	}
+	if snapshot.SnapshotID != snapshotID || snapshot.ClusterID != e.resolvedClusterID() || snapshot.NodeID != e.NodeID {
+		return Meta{}, errcode.E(errcode.CONFLICT, "snapshot identity mismatch")
+	}
+	sink, err := e.sink(ReplicaSinkName)
+	if err != nil {
+		return Meta{}, err
+	}
+
+	e.hydrationMu.Lock()
+	defer e.hydrationMu.Unlock()
+	indexed := false
+	if existing, getErr := e.Store.GetBackup(ctx, snapshotID); getErr == nil {
+		indexed = true
+		if existing.Sink != ReplicaSinkName || existing.ClusterID != snapshot.ClusterID || existing.NodeID != snapshot.NodeID || !strings.EqualFold(existing.SHA256, actualSHA256) {
+			return Meta{}, errcode.E(errcode.CONFLICT, "snapshot exists with different identity or checksum")
+		}
+		if meta, _, readErr := e.Get(ctx, snapshotID, ReplicaSinkName); readErr == nil {
+			return meta, nil
+		} else if !errcode.Is(readErr, errcode.NOT_FOUND) {
+			return Meta{}, readErr
+		}
+	} else if !errcode.Is(getErr, errcode.NOT_FOUND) {
+		return Meta{}, getErr
+	}
+	if !indexed {
+		if existingPayload, readErr := sink.Get(ctx, snapshotID); readErr == nil {
+			existingSum := sha256.Sum256(existingPayload)
+			if !strings.EqualFold(hex.EncodeToString(existingSum[:]), actualSHA256) {
+				return Meta{}, errcode.E(errcode.CONFLICT, "snapshot file exists with different checksum")
+			}
+		} else if !errcode.Is(readErr, errcode.NOT_FOUND) {
+			return Meta{}, readErr
+		}
+	}
+
+	location, err := sink.Put(ctx, snapshotID, payload)
+	if err != nil {
+		return Meta{}, err
+	}
+	return e.indexSnapshot(ctx, snapshot, actualSHA256, int64(len(payload)), ReplicaSinkName, location, "")
 }
 
 func (e *Engine) applyReplicaRetention(ctx context.Context, policyID, snapshotID string) {

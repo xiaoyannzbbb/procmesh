@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -777,6 +778,11 @@ func TestAuthorizePeerOperationPutFencing(t *testing.T) {
 	if err := runtime.authorizePeerOperation("source", liveOp); !errcode.Is(err, errcode.DENIED) && !errcode.Is(err, errcode.CONFLICT) {
 		t.Fatalf("terminal task still authorized: %v", err)
 	}
+	fetchOp := liveOp
+	fetchOp.Kind = "FETCH"
+	if err := runtime.authorizePeerOperation("source", fetchOp); !errcode.Is(err, errcode.DENIED) {
+		t.Fatalf("fetch from failed route authorized: %v", err)
+	}
 }
 
 func (a *recordingReplicationApplier) Apply(command control.Command, _ time.Duration) error {
@@ -807,6 +813,18 @@ func TestDispatchReplicationTask_CapturesThenCopies(t *testing.T) {
 	got := f.node.View().ReplicationTasks["run-1:task-1"]
 	if got.Status != "SUCCEEDED" || got.SnapshotID != wantID || got.SHA256 != rec.SHA256 {
 		t.Fatalf("succeeded task=%+v want snapshot %s sha %s", got, wantID, rec.SHA256)
+	}
+	targetRuntime := &rpcRuntime{nodeID: "target", clusterID: "cluster-replication-dispatch", node: f.node}
+	fetch := api.PeerOperation{
+		Kind: "FETCH", ClusterID: "cluster-replication-dispatch", SourceNodeID: "source", TargetNodeID: "target",
+		SnapshotID: wantID, SHA256: rec.SHA256,
+	}
+	if err := targetRuntime.authorizePeerOperation("source", fetch); err != nil {
+		t.Fatalf("fetch for succeeded frozen route rejected: %v", err)
+	}
+	fetch.SHA256 = strings.Repeat("f", 64)
+	if err := targetRuntime.authorizePeerOperation("source", fetch); !errcode.Is(err, errcode.DENIED) {
+		t.Fatalf("fetch with changed checksum authorized: %v", err)
 	}
 }
 

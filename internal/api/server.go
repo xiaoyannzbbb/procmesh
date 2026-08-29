@@ -475,6 +475,7 @@ func newDisasterReplicationAPI(opts Options) *DisasterReplicationAPI {
 		Forward:        opts.Forward,
 		Router:         opts.Router,
 		LocalOnly:      opts.LocalOnly,
+		Backup:         opts.Backup,
 		PeerStore:      peerStore,
 		Members:        members,
 		DispatchRun:    opts.ReplicationDispatch,

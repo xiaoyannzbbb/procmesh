@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"strings"
 
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/backup"
@@ -189,6 +190,34 @@ func (p *PeerReplicationAPI) GetReplicaMetadata(ctx context.Context, req *connec
 	}
 
 	return connect.NewResponse(resp), nil
+}
+
+// FetchSnapshot returns a verified replica only to the source Owner over mTLS.
+func (p *PeerReplicationAPI) FetchSnapshot(ctx context.Context, req *connect.Request[procmeshv1.FetchSnapshotRequest]) (*connect.Response[procmeshv1.FetchSnapshotResponse], error) {
+	if p.PeerStore == nil {
+		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "peer store unavailable"))
+	}
+	if _, err := p.authorizeOperation(ctx, req.Msg.GetClusterId(), PeerOperation{
+		Kind: "FETCH", ClusterID: req.Msg.GetClusterId(), SourceNodeID: req.Msg.GetSourceNodeId(), TargetNodeID: p.NodeID,
+		SnapshotID: req.Msg.GetSnapshotId(), SHA256: req.Msg.GetSha256(),
+	}); err != nil {
+		return nil, ToConnect(err)
+	}
+	meta, payload, err := p.PeerStore.GetSnapshot(ctx, req.Msg.GetSourceNodeId(), req.Msg.GetClusterId(), req.Msg.GetSnapshotId())
+	if err != nil {
+		return nil, ToConnect(err)
+	}
+	if req.Msg.GetSha256() == "" || !strings.EqualFold(meta.SHA256, req.Msg.GetSha256()) {
+		return nil, ToConnect(errcode.E(errcode.CONFLICT, "snapshot checksum mismatch"))
+	}
+	snapshot, err := backup.Decode(payload)
+	if err != nil || snapshot.NodeID != req.Msg.GetSourceNodeId() || snapshot.ClusterID != req.Msg.GetClusterId() || snapshot.SnapshotID != req.Msg.GetSnapshotId() {
+		return nil, ToConnect(errcode.E(errcode.CONFLICT, "snapshot identity mismatch"))
+	}
+	return connect.NewResponse(&procmeshv1.FetchSnapshotResponse{
+		SourceNodeId: meta.SourceNodeID, ClusterId: meta.ClusterID, SnapshotId: meta.SnapshotID,
+		Sha256: meta.SHA256, ProcessIds: meta.ProcessIDs, Payload: payload,
+	}), nil
 }
 
 func (p *PeerReplicationAPI) authorizeOperation(ctx context.Context, requestClusterID string, operation PeerOperation) (string, error) {
