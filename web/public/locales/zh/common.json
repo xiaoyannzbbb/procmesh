@@ -1305,6 +1305,7 @@
     "health": "健康",
     "lag": "延迟",
     "freshness": "新鲜度",
+    "backupTime": "备份时间",
     "retryFailed": "重试失败路由",
     "verify": "校验 checksum",
     "restoreOwner": "在 Owner 上恢复",

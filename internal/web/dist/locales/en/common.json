@@ -1305,6 +1305,7 @@
     "health": "Health",
     "lag": "Lag",
     "freshness": "Freshness",
+    "backupTime": "Backup time",
     "retryFailed": "Retry failed routes",
     "verify": "Verify checksum",
     "restoreOwner": "Restore on Owner",

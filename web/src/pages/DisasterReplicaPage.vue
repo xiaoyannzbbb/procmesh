@@ -1474,7 +1474,7 @@ async function onStartRun(): Promise<void> {
                 <th>{{ t("replica.owner") }}</th>
                 <th>{{ t("replica.storageNodes") }}</th>
                 <th>{{ t("replica.checksum") }}</th>
-                <th>{{ t("replica.freshness") }}</th>
+                <th>{{ t("replica.backupTime") }}</th>
                 <th></th>
               </tr>
             </thead>
@@ -1484,9 +1484,7 @@ async function onStartRun(): Promise<void> {
                 <td data-snapshot-owner>{{ nodeNameById(snap.sourceNodeId || "") }}</td>
                 <td data-snapshot-storage>{{ storageNodeNames(snap) }}</td>
                 <td class="mono">{{ shortSha(snap.sha256) }}</td>
-                <td data-snapshot-freshness>
-                  <FreshnessBadge :status="snapshotFreshness(snap)" />
-                </td>
+                <td data-snapshot-backup-time>{{ formatUnix(snap.createdAt) }}</td>
                 <td>
                   <div class="row-actions">
                     <button

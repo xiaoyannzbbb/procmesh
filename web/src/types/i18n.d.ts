@@ -1158,6 +1158,7 @@ declare module "i18next" {
         'replica.health': string
         'replica.lag': string
         'replica.freshness': string
+        'replica.backupTime': string
         'replica.retryFailed': string
         'replica.verify': string
         'replica.restoreOwner': string

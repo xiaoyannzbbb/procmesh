@@ -96,6 +96,7 @@ const replicaI18n = {
   health: "Health",
   lag: "Lag",
   freshness: "Freshness",
+  backupTime: "Backup time",
   retryFailed: "Retry failed routes",
   verify: "Verify checksum",
   restoreOwner: "Restore on Owner",
@@ -539,7 +540,7 @@ describe("DisasterReplicaPage", () => {
     expect(overview.get("[data-last-success]").text()).not.toBe("—");
   });
 
-  it("shows recovery Owner, storage nodes, and inventory freshness", async () => {
+  it("shows recovery Owner, storage nodes, backup time, and inventory freshness", async () => {
     const { wrapper } = await mountPage({
       inventoryStatuses: [
         { nodeId: "n1", freshness: "LIVE", lastUpdatedUnixMs: 1_700_000_000_000n },
@@ -552,7 +553,9 @@ describe("DisasterReplicaPage", () => {
     expect(recovery.get("[data-snapshot-owner]").text()).toBe("agent-one");
     expect(recovery.get("[data-snapshot-storage]").text()).toContain("agent-one");
     expect(recovery.get("[data-snapshot-storage]").text()).toContain("agent-two");
-    expect(recovery.get("[data-snapshot-freshness]").text()).toMatch(/stale/i);
+    expect(recovery.get("thead").text()).toContain("Backup time");
+    expect(recovery.get("[data-snapshot-backup-time]").text()).toBe("2023-11-14T22:13:20.000Z");
+    expect(recovery.find("[data-snapshot-freshness]").exists()).toBe(false);
     expect(recovery.get(".section-header .freshness-badge").text()).toMatch(/unknown/i);
     expect(wrapper.text()).toContain("Some replica sources are unreachable");
   });
