@@ -560,6 +560,23 @@ describe("DisasterReplicaPage", () => {
     expect(wrapper.text()).toContain("Some replica sources are unreachable");
   });
 
+  it("sorts recoverable snapshots by backup time with the newest first", async () => {
+    const { wrapper } = await mountPage({
+      snapshots: [
+        { ...recoverableSnapshot, snapshotId: "snap-old", createdAt: 1_700_000_000n },
+        { ...recoverableSnapshot, snapshotId: "snap-unknown", createdAt: 0n },
+        { ...recoverableSnapshot, snapshotId: "snap-new", createdAt: 1_700_000_200n },
+      ],
+    });
+
+    const rows = wrapper.get('[data-section="recovery"] tbody').findAll("tr");
+    expect(rows.map((row) => row.get("td").text())).toEqual([
+      "snap-new",
+      "snap-old",
+      "snap-unknown",
+    ]);
+  });
+
   it("keeps offline admitted nodes in topology as warnings, not exclusions", async () => {
     const { wrapper } = await mountPage();
     const config = wrapper.get('[data-section="config"]');
@@ -822,19 +839,19 @@ describe("DisasterReplicaPage", () => {
     expect(memoryRouter.currentRoute.value.path).toBe("/disaster-replica");
     expect(replicationClient.prepareRecoverableSnapshotRestore).toHaveBeenCalledWith({
       sourceNodeId: "n1",
-      snapshotId: "snap-n1",
-      sha256: "abc123def4567890",
+      snapshotId: "snap-n1-newer",
+      sha256: "9999999999999999",
       storageNodeId: "",
     });
     const dialog = wrapper.get("[data-restore-dialog]");
     expect(dialog.attributes("role")).toBe("dialog");
-    expect((dialog.get('[data-field="restore-snapshot"]').element as HTMLSelectElement).value).toBe("snap-n1");
+    expect((dialog.get('[data-field="restore-snapshot"]').element as HTMLSelectElement).value).toBe("snap-n1-newer");
     expect(dialog.get('[data-field="restore-snapshot"]').findAll("option").map((option) => option.attributes("value"))).toEqual([
       "snap-n1",
       "snap-n1-newer",
     ]);
     expect(dialog.text()).toContain("agent-one");
-    expect(dialog.text()).toContain("abc123def4567890");
+    expect(dialog.text()).toContain("9999999999999999");
     expect(dialog.text()).toContain("LIVE");
     expect(dialog.text()).toContain("agent-two");
     expect(dialog.text()).toContain("web");

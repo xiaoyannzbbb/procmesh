@@ -217,6 +217,9 @@ const topologyNodes = computed(() => (topologyQuery.data.value?.nodes ?? []) as 
 const policies = computed(() => (policyQuery.data.value?.policies ?? []) as ReplicaPolicy[]);
 const runs = computed(() => (runQuery.data.value?.runs ?? []) as ReplicaRun[]);
 const snapshots = computed(() => (snapshotQuery.data.value?.snapshots ?? []) as RecoverableSnapshot[]);
+const sortedSnapshots = computed(() =>
+  [...snapshots.value].sort((left, right) => unixNumber(right.createdAt) - unixNumber(left.createdAt)),
+);
 const inventoryStatuses = computed(
   () => (snapshotQuery.data.value?.inventoryStatuses ?? []) as ReplicaInventoryStatus[],
 );
@@ -1479,7 +1482,7 @@ async function onStartRun(): Promise<void> {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="snap in snapshots" :key="`${snap.sourceNodeId}:${snap.snapshotId}`">
+              <tr v-for="snap in sortedSnapshots" :key="`${snap.sourceNodeId}:${snap.snapshotId}`">
                 <td class="mono">{{ snap.snapshotId }}</td>
                 <td data-snapshot-owner>{{ nodeNameById(snap.sourceNodeId || "") }}</td>
                 <td data-snapshot-storage>{{ storageNodeNames(snap) }}</td>
