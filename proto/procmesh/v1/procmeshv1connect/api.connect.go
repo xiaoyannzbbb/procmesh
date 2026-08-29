@@ -160,6 +160,8 @@ const (
 	UserServiceCreateUserProcedure = "/procmesh.v1.UserService/CreateUser"
 	// UserServiceDisableUserProcedure is the fully-qualified name of the UserService's DisableUser RPC.
 	UserServiceDisableUserProcedure = "/procmesh.v1.UserService/DisableUser"
+	// UserServiceEnableUserProcedure is the fully-qualified name of the UserService's EnableUser RPC.
+	UserServiceEnableUserProcedure = "/procmesh.v1.UserService/EnableUser"
 	// RoleServiceListRolesProcedure is the fully-qualified name of the RoleService's ListRoles RPC.
 	RoleServiceListRolesProcedure = "/procmesh.v1.RoleService/ListRoles"
 	// RoleServiceCreateRoleProcedure is the fully-qualified name of the RoleService's CreateRole RPC.
@@ -1511,6 +1513,7 @@ type UserServiceClient interface {
 	ListUsers(context.Context, *connect.Request[v1.ListUsersRequest]) (*connect.Response[v1.ListUsersResponse], error)
 	CreateUser(context.Context, *connect.Request[v1.CreateUserRequest]) (*connect.Response[v1.CreateUserResponse], error)
 	DisableUser(context.Context, *connect.Request[v1.DisableUserRequest]) (*connect.Response[v1.DisableUserResponse], error)
+	EnableUser(context.Context, *connect.Request[v1.EnableUserRequest]) (*connect.Response[v1.EnableUserResponse], error)
 }
 
 // NewUserServiceClient constructs a client for the procmesh.v1.UserService service. By default, it
@@ -1542,6 +1545,12 @@ func NewUserServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 			connect.WithSchema(userServiceMethods.ByName("DisableUser")),
 			connect.WithClientOptions(opts...),
 		),
+		enableUser: connect.NewClient[v1.EnableUserRequest, v1.EnableUserResponse](
+			httpClient,
+			baseURL+UserServiceEnableUserProcedure,
+			connect.WithSchema(userServiceMethods.ByName("EnableUser")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -1550,6 +1559,7 @@ type userServiceClient struct {
 	listUsers   *connect.Client[v1.ListUsersRequest, v1.ListUsersResponse]
 	createUser  *connect.Client[v1.CreateUserRequest, v1.CreateUserResponse]
 	disableUser *connect.Client[v1.DisableUserRequest, v1.DisableUserResponse]
+	enableUser  *connect.Client[v1.EnableUserRequest, v1.EnableUserResponse]
 }
 
 // ListUsers calls procmesh.v1.UserService.ListUsers.
@@ -1567,11 +1577,17 @@ func (c *userServiceClient) DisableUser(ctx context.Context, req *connect.Reques
 	return c.disableUser.CallUnary(ctx, req)
 }
 
+// EnableUser calls procmesh.v1.UserService.EnableUser.
+func (c *userServiceClient) EnableUser(ctx context.Context, req *connect.Request[v1.EnableUserRequest]) (*connect.Response[v1.EnableUserResponse], error) {
+	return c.enableUser.CallUnary(ctx, req)
+}
+
 // UserServiceHandler is an implementation of the procmesh.v1.UserService service.
 type UserServiceHandler interface {
 	ListUsers(context.Context, *connect.Request[v1.ListUsersRequest]) (*connect.Response[v1.ListUsersResponse], error)
 	CreateUser(context.Context, *connect.Request[v1.CreateUserRequest]) (*connect.Response[v1.CreateUserResponse], error)
 	DisableUser(context.Context, *connect.Request[v1.DisableUserRequest]) (*connect.Response[v1.DisableUserResponse], error)
+	EnableUser(context.Context, *connect.Request[v1.EnableUserRequest]) (*connect.Response[v1.EnableUserResponse], error)
 }
 
 // NewUserServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -1599,6 +1615,12 @@ func NewUserServiceHandler(svc UserServiceHandler, opts ...connect.HandlerOption
 		connect.WithSchema(userServiceMethods.ByName("DisableUser")),
 		connect.WithHandlerOptions(opts...),
 	)
+	userServiceEnableUserHandler := connect.NewUnaryHandler(
+		UserServiceEnableUserProcedure,
+		svc.EnableUser,
+		connect.WithSchema(userServiceMethods.ByName("EnableUser")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/procmesh.v1.UserService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case UserServiceListUsersProcedure:
@@ -1607,6 +1629,8 @@ func NewUserServiceHandler(svc UserServiceHandler, opts ...connect.HandlerOption
 			userServiceCreateUserHandler.ServeHTTP(w, r)
 		case UserServiceDisableUserProcedure:
 			userServiceDisableUserHandler.ServeHTTP(w, r)
+		case UserServiceEnableUserProcedure:
+			userServiceEnableUserHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1626,6 +1650,10 @@ func (UnimplementedUserServiceHandler) CreateUser(context.Context, *connect.Requ
 
 func (UnimplementedUserServiceHandler) DisableUser(context.Context, *connect.Request[v1.DisableUserRequest]) (*connect.Response[v1.DisableUserResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.UserService.DisableUser is not implemented"))
+}
+
+func (UnimplementedUserServiceHandler) EnableUser(context.Context, *connect.Request[v1.EnableUserRequest]) (*connect.Response[v1.EnableUserResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.UserService.EnableUser is not implemented"))
 }
 
 // RoleServiceClient is a client for the procmesh.v1.RoleService service.

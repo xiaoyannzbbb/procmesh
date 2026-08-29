@@ -4,6 +4,7 @@ import i18next from "i18next";
 import I18NextVue from "i18next-vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { session } from "../lib/session";
+import ConfirmDialog from "../components/ConfirmDialog.vue";
 import Drawer from "../components/Drawer.vue";
 import UsersPage from "./UsersPage.vue";
 
@@ -44,6 +45,7 @@ async function mountUsers(
     listUsers: vi.fn().mockResolvedValue({ users }),
     createUser: vi.fn(),
     disableUser: vi.fn(),
+    enableUser: vi.fn().mockResolvedValue({}),
   };
   const roleClient = {
     listRoles: roleState === "pending"
@@ -118,6 +120,53 @@ describe("UsersPage", () => {
       }),
     );
     expect(bindDrawer.props("open")).toBe(false);
+  });
+
+  it("enables a disabled user", async () => {
+    const users = [{ userId: "u-alice", username: "alice", displayName: "Alice", status: "DISABLED", lastLoginUnix: 0 }];
+    const { wrapper, userClient } = await mountUsers(undefined, users);
+    const row = wrapper.get('tr[data-user-id="u-alice"]');
+
+    await row.get('[data-action="enable-user"]').trigger("click");
+    await flushPromises();
+
+    expect(userClient.enableUser).toHaveBeenCalledWith(expect.objectContaining({ userId: "u-alice" }));
+  });
+
+  it("disables the current user's disable action", async () => {
+    const users = [{ userId: "u1", username: "admin", status: "ACTIVE", lastLoginUnix: 0 }];
+    const { wrapper } = await mountUsers(undefined, users);
+    const button = wrapper.get('tr[data-user-id="u1"] [data-action="disable-user"]');
+
+    expect(button.attributes("disabled")).toBeDefined();
+    expect(button.attributes("title")).toContain("users.disableCurrentUser");
+  });
+
+  it("disables the last active super admin action", async () => {
+    const users = [
+      { userId: "u-admin", username: "admin", status: "ACTIVE", lastLoginUnix: 0 },
+      { userId: "u1", username: "delegate", status: "ACTIVE", lastLoginUnix: 0 },
+    ];
+    const roles = [{ roleId: "super_admin", name: "Super Admin", permissions: [] }];
+    const bindings = [{ userId: "u-admin", roleId: "super_admin", scopeType: "CLUSTER", scopeId: "" }];
+    const { wrapper } = await mountUsers(undefined, users, roles, bindings);
+    const button = wrapper.get('tr[data-user-id="u-admin"] [data-action="disable-user"]');
+
+    expect(button.attributes("disabled")).toBeDefined();
+    expect(button.attributes("title")).toContain("users.disableLastSuperAdmin");
+  });
+
+  it("confirms before disabling a user", async () => {
+    const users = [{ userId: "u-alice", username: "alice", status: "ACTIVE", lastLoginUnix: 0 }];
+    const { wrapper, userClient } = await mountUsers(undefined, users);
+    await wrapper.get('tr[data-user-id="u-alice"] [data-action="disable-user"]').trigger("click");
+
+    const confirm = wrapper.getComponent(ConfirmDialog);
+    expect(confirm.props("open")).toBe(true);
+    confirm.vm.$emit("confirm");
+    await flushPromises();
+
+    expect(userClient.disableUser).toHaveBeenCalledWith(expect.objectContaining({ userId: "u-alice" }));
   });
 
   it("shows role loading without exposing a bind action", async () => {

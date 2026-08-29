@@ -1018,6 +1018,14 @@
       "actions": "操作"
     },
     "disable": "禁用",
+    "enable": "启用",
+    "disableCurrentUser": "不能禁用当前登录账户",
+    "disableLastSuperAdmin": "不能禁用最后一个有效的超级管理员",
+    "disableConfirmTitle": "禁用用户？",
+    "disableConfirmMessage": "确定禁用 {{name}} 吗？该用户的会话和 API Token 将停止工作。",
+    "disableConfirm": "禁用用户",
+    "disableSuccess": "用户已禁用",
+    "enableSuccess": "用户已启用，之前的会话和 API Token 仍保持失效。",
     "roles": {
       "loading": "正在加载角色…",
       "unavailable": "角色数据不可用",

@@ -205,16 +205,25 @@ procmesh --break-glass=/run/procmesh-break-glass.sock \
   --operation-id 9e602ad6-408f-4c59-9558-1bfbd0df59b7 \
   --reason 'recover service after control quorum loss' \
   process restart demo-worker
+procmesh --break-glass=/run/procmesh-break-glass.sock \
+  --operation-id 65fd4a34-4a82-44f7-b4fa-6c8ca72aa458 \
+  --reason 'recover disabled administrator' \
+  user enable user-admin
 ```
 
-该模式只支持 `process list/get/logs/start/stop/restart/kill`。四个生命周期操作必须
-显式提供非空 `--operation-id` 和 `--reason`，重复 operation ID 复用本机幂等 journal，
-不会重复执行生命周期副作用。该通道不使用集群 Session，不接受 `--server`、`--node`
-或 `--auth-token`，失败时也不会自动切换到普通 TCP 模式。
+该模式只支持 `process list/get/logs/start/stop/restart/kill` 和 `user enable`。四个进程
+生命周期操作及用户恢复必须显式提供非空 `--operation-id` 和 `--reason`。用户恢复只在
+当前 Raft Leader 的本机 socket 上提交，不向其他节点转发；恢复会删除该用户的旧 Session
+并吊销旧 API Token。该通道不使用集群 Session，不接受 `--server`、`--node` 或
+`--auth-token`，失败时也不会自动切换到普通 TCP 模式。
+
+进程生命周期操作重复使用同一个 operation ID 时会复用本机幂等 journal，不会重复执行
+副作用；`user enable` 本身为幂等状态转换。
 
 break-glass 明确拒绝 process apply/delete/adopt、配置编辑、backup/restore、batch、
-远程节点选择和全部 Control Plane 操作，也不会签发 Session、API Token 或任何可通过
-TCP 使用的凭证。每次成功、失败或拒绝的请求都会写入本机 SQLite 审计；生命周期审计
+远程节点选择和除 `user enable` 外的 Control Plane 操作，也不会签发 Session、API Token
+或任何可通过 TCP 使用的凭证。每次成功、失败或拒绝的请求都会写入本机 SQLite 审计；
+生命周期审计
 包含 OS UID/用户、原因、operation ID、动作、本机节点、Process 身份、时间、结果和
 脱敏错误码。
 

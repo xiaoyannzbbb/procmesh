@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/paths"
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/rpc"
@@ -356,6 +357,119 @@ func TestServer_LifecycleRequiresRecoveryMetadataAndWritesCompleteAudit(t *testi
 	if metadata["process_id"] != "worker-id" || metadata["process_name"] != "worker" || metadata["error_code"] != "DENIED" {
 		t.Fatalf("remote target denial metadata=%v", metadata)
 	}
+}
+
+func TestServer_UserEnableRequiresRecoveryMetadataAndAuditsTarget(t *testing.T) {
+	root := shortTempDir(t)
+	layout := paths.New(root)
+	if err := layout.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(layout.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	now := time.Unix(1_700_000_000, 0)
+	recovery := newRecoveryStore(t, now)
+	if err := recovery.Apply(mustRecoveryCommand(t, control.CmdUserDisable, control.UserDisableBody{UserID: "user-admin"}), time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	socketPath := filepath.Join(root, "break-glass.sock")
+	srv, err := New(Config{
+		SocketPath: socketPath,
+		LocalID:    "agent-local",
+		Manager:    process.NewManager(process.Deps{Store: st, Layout: layout, Now: time.Now}),
+		Audit:      st,
+		Recovery:   func() RecoveryStore { return recovery },
+		PeerLookup: func(net.Conn) (Peer, error) {
+			return Peer{PID: 42, UID: os.Geteuid(), GID: os.Getegid(), Username: "trusted"}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.Serve() }()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+		<-serveErr
+	})
+	client := procmeshv1connect.NewUserServiceClient(unixHTTPClient(socketPath), "http://procmesh.local")
+
+	missingReason := connect.NewRequest(&procmeshv1.EnableUserRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-enable-missing-reason"}, UserId: "user-admin",
+	})
+	if _, err := client.EnableUser(context.Background(), missingReason); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("missing reason code=%v err=%v", connect.CodeOf(err), err)
+	}
+	deniedDisable := connect.NewRequest(&procmeshv1.DisableUserRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-disable"}, UserId: "user-admin",
+	})
+	deniedDisable.Header().Set(rpc.HeaderBreakGlassReason, "recover administrator")
+	if _, err := client.DisableUser(context.Background(), deniedDisable); connect.CodeOf(err) != connect.CodePermissionDenied {
+		t.Fatalf("disable code=%v err=%v", connect.CodeOf(err), err)
+	}
+	valid := connect.NewRequest(&procmeshv1.EnableUserRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-enable-admin", Operator: "spoofed"}, UserId: "user-admin",
+	})
+	valid.Header().Set(rpc.HeaderBreakGlassReason, "recover administrator")
+	response, err := client.EnableUser(context.Background(), valid)
+	if err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	if response.Msg.GetUser().GetStatus() != string(control.UserActive) || recovery.View().Users["admin"].Status != control.UserActive {
+		t.Fatalf("response=%+v state=%+v", response.Msg.GetUser(), recovery.View().Users["admin"])
+	}
+
+	events, err := st.ListAuditAll(context.Background(), "user-admin", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var enabled *store.AuditEvent
+	for i := range events {
+		if events[i].Action == "break_glass.user.enable" && events[i].OperationID == "op-enable-admin" {
+			enabled = &events[i]
+		}
+	}
+	if enabled == nil || enabled.Resource != "user-admin" || enabled.Result != "success" || enabled.Username == "spoofed" {
+		t.Fatalf("enable audit=%+v", events)
+	}
+}
+
+type recoveryStore struct {
+	state *control.State
+	now   time.Time
+}
+
+func newRecoveryStore(t *testing.T, now time.Time) *recoveryStore {
+	t.Helper()
+	state := control.NewState()
+	store := &recoveryStore{state: state, now: now}
+	if err := store.Apply(mustRecoveryCommand(t, control.CmdBootstrap, control.BootstrapBody{
+		ClusterID: "cluster-test", AdminUser: "admin", PasswordHash: "hash", AdminUserID: "user-admin", NowUnix: now.Unix(),
+	}), time.Second); err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+func (s *recoveryStore) View() control.State { return *s.state }
+
+func (s *recoveryStore) Apply(cmd control.Command, _ time.Duration) error {
+	return s.state.Apply(cmd, s.now)
+}
+
+func mustRecoveryCommand(t *testing.T, typ string, body any) control.Command {
+	t.Helper()
+	cmd, err := control.EncodeCommand(typ, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cmd
 }
 
 func TestDefaultSocketPath_ShortenLongDataDirectory(t *testing.T) {

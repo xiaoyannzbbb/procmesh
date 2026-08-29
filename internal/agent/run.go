@@ -852,6 +852,9 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 			LocalID:    clusterDeps.NodeID,
 			Manager:    mgr,
 			Audit:      st,
+			Recovery: func() breakglass.RecoveryStore {
+				return rt.control()
+			},
 		})
 		if err != nil {
 			_ = ln.Close()

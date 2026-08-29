@@ -88,6 +88,7 @@ func newBreakGlassClient(socketPath, opID, operator, reason string) *client {
 		http:     hc,
 		proc:     procmeshv1connect.NewProcessServiceClient(hc, base, opts...),
 		logs:     procmeshv1connect.NewLogServiceClient(hc, base, opts...),
+		user:     procmeshv1connect.NewUserServiceClient(hc, base, opts...),
 		opID:     opID,
 		operator: operator,
 	}

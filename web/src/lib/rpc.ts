@@ -41,7 +41,7 @@ export type ConfigClient = Pick<
   "getConfig" | "updateConfig" | "history" | "diff" | "rollback"
 >;
 export type LogClient = Pick<Client<typeof LogService>, "tailLogs" | "streamLogs" | "downloadLogs">;
-export type UserClient = Pick<Client<typeof UserService>, "listUsers" | "createUser" | "disableUser">;
+export type UserClient = Pick<Client<typeof UserService>, "listUsers" | "createUser" | "disableUser" | "enableUser">;
 export type RoleClient = Pick<
   Client<typeof RoleService>,
   "listRoles" | "createRole" | "updateRole" | "deleteRole" | "grantRole" | "revokeRole"

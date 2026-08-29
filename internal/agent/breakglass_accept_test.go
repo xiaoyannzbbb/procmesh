@@ -82,6 +82,67 @@ func TestAccept_BreakGlassLifecycleWithoutQuorumOrClusterCredentials(t *testing.
 	}
 }
 
+func TestAccept_BreakGlassEnablesDisabledUserWithoutClusterCredentials(t *testing.T) {
+	root, err := os.MkdirTemp("", "pm-bg-user-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	socketPath := filepath.Join(root, "break-glass.sock")
+	addr, _ := startClusterAgentAtOpts(t, root, Options{BreakGlassSocket: socketPath})
+	initAndLogin(t, addr)
+
+	const username = "recovery-user"
+	const password = "recovery-pass-ok"
+	code, out, errOut := runP1CLI("--server", addr, "user", "create", "--user", username, "--password", password)
+	if code != 0 {
+		t.Fatalf("create user exit=%d stdout=%q stderr=%q", code, out, errOut)
+	}
+	userID := parseKV(out, "user_id")
+	if userID == "" {
+		t.Fatalf("missing user_id in %q", out)
+	}
+	code, out, errOut = runP1CLI("--server", addr, "user", "disable", userID)
+	if code != 0 {
+		t.Fatalf("disable user exit=%d stdout=%q stderr=%q", code, out, errOut)
+	}
+	code, _, errOut = runP1CLI("--server", addr, "login", "--user", username, "--password", password)
+	if code == 0 || !strings.Contains(errOut, "user disabled") {
+		t.Fatalf("disabled login exit=%d stderr=%q", code, errOut)
+	}
+
+	t.Setenv("PROCMESH_SESSION", filepath.Join(root, "missing-session"))
+	code, out, errOut = runP1CLI(
+		"--break-glass", socketPath,
+		"--operation-id", "op-bg-enable-user",
+		"--reason", "recover disabled user",
+		"user", "enable", userID,
+	)
+	if code != 0 || !strings.Contains(out, "status=ACTIVE") {
+		t.Fatalf("break-glass enable exit=%d stdout=%q stderr=%q", code, out, errOut)
+	}
+	code, out, errOut = runP1CLI("--server", addr, "login", "--user", username, "--password", password)
+	if code != 0 {
+		t.Fatalf("recovered login exit=%d stdout=%q stderr=%q", code, out, errOut)
+	}
+
+	auditStore, err := store.Open(paths.New(root).Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = auditStore.Close() })
+	events, err := auditStore.ListAuditAll(context.Background(), userID, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event.Action == "break_glass.user.enable" && event.OperationID == "op-bg-enable-user" && event.Result == "success" {
+			return
+		}
+	}
+	t.Fatalf("missing break-glass user enable audit in %+v", events)
+}
+
 func runBreakGlassLifecycle(t *testing.T, socketPath, action, name, operationID string) {
 	t.Helper()
 	code, out, errOut := runP1CLI(

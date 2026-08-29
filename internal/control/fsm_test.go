@@ -89,6 +89,91 @@ func TestFSM_UserPutDuplicateUsername(t *testing.T) {
 	}
 }
 
+func TestFSM_GuardedUserDisableProtectsCurrentAndLastSuperAdmin(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := mustBootstrap(t, now)
+
+	err := s.Apply(mustEncode(t, "user_disable_guarded", map[string]string{
+		"user_id":       "user-admin",
+		"actor_user_id": "user-admin",
+	}), now)
+	if !errcode.Is(err, errcode.CONFLICT) || !strings.Contains(err.Error(), "current user") {
+		t.Fatalf("self disable err=%v", err)
+	}
+
+	if err := s.Apply(mustEncode(t, "user_put", control.UserPutBody{
+		ID: "user-operator", Username: "operator", PasswordHash: "hash",
+	}), now); err != nil {
+		t.Fatal(err)
+	}
+	err = s.Apply(mustEncode(t, "user_disable_guarded", map[string]string{
+		"user_id":       "user-admin",
+		"actor_user_id": "user-operator",
+	}), now)
+	if !errcode.Is(err, errcode.CONFLICT) || !strings.Contains(err.Error(), "last active super admin") {
+		t.Fatalf("last super admin disable err=%v", err)
+	}
+}
+
+func TestFSM_GuardedUserDisableAndEnableWithAnotherSuperAdmin(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := mustBootstrap(t, now)
+	if err := s.Apply(mustEncode(t, "user_put", control.UserPutBody{
+		ID: "user-admin-2", Username: "admin2", PasswordHash: "hash",
+	}), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Apply(mustEncode(t, "bind_put", control.BindPutBody{
+		UserID: "user-admin-2", RoleID: "super_admin", Scope: control.ScopeCluster,
+	}), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Apply(mustEncode(t, "session_put", control.SessionPutBody{
+		ID: "session-admin", UserID: "user-admin", CSRF: "csrf", ExpiresUnix: now.Add(time.Hour).Unix(),
+	}), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Apply(mustEncode(t, "token_put", control.TokenPutBody{
+		ID: "token-admin", UserID: "user-admin", Name: "old", Hash: "hash", ExpiresUnix: now.Add(time.Hour).Unix(),
+	}), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Apply(mustEncode(t, "user_disable_guarded", map[string]string{
+		"user_id":       "user-admin",
+		"actor_user_id": "user-admin-2",
+	}), now); err != nil {
+		t.Fatalf("disable with replacement admin: %v", err)
+	}
+	if got := s.Users["admin"].Status; got != control.UserDisabled {
+		t.Fatalf("disabled status=%s", got)
+	}
+
+	if err := s.Apply(mustEncode(t, "user_enable", map[string]string{"user_id": "user-admin"}), now); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	got := s.Users["admin"]
+	if got.Status != control.UserActive || got.FailCount != 0 || got.LockedUntilUnix != 0 {
+		t.Fatalf("enabled user=%+v", got)
+	}
+	if _, ok := s.Sessions["session-admin"]; ok {
+		t.Fatal("pre-disable session survived recovery")
+	}
+	if token := s.APITokens["token-admin"]; !token.Revoked {
+		t.Fatalf("pre-disable token not revoked: %+v", token)
+	}
+	if err := s.Apply(mustEncode(t, "session_put", control.SessionPutBody{
+		ID: "session-new", UserID: "user-admin", CSRF: "csrf", ExpiresUnix: now.Add(time.Hour).Unix(),
+	}), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Apply(mustEncode(t, "user_enable", map[string]string{"user_id": "user-admin"}), now); err != nil {
+		t.Fatalf("idempotent enable: %v", err)
+	}
+	if _, ok := s.Sessions["session-new"]; !ok {
+		t.Fatal("idempotent enable removed a new active session")
+	}
+}
+
 func TestFSM_LoginFailLocksAfter10(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	s := mustBootstrap(t, now)

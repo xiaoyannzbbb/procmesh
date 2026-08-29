@@ -2347,6 +2347,8 @@ procmesh user create admin2
 
 procmesh user disable user-a
 
+procmesh user enable user-a
+
 procmesh role list
 
 procmesh role create operator-finance

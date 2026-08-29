@@ -232,6 +232,36 @@ func TestCLI_BreakGlassLifecycleRequiresExplicitOperationIDAndReason(t *testing.
 	}
 }
 
+func TestCLI_BreakGlassUserEnableRequiresExplicitOperationIDAndReason(t *testing.T) {
+	code, _, errb := runCLI(
+		"--break-glass=/tmp/procmesh.sock",
+		"--reason", "recover administrator",
+		"user", "enable", "user-admin",
+	)
+	if code != 2 || !strings.Contains(errb, "requires --operation-id") {
+		t.Fatalf("missing operation ID exit=%d stderr=%q", code, errb)
+	}
+
+	code, _, errb = runCLI(
+		"--break-glass=/tmp/procmesh.sock",
+		"--operation-id", "op-enable-admin",
+		"user", "enable", "user-admin",
+	)
+	if code != 2 || !strings.Contains(errb, "requires --reason") {
+		t.Fatalf("missing reason exit=%d stderr=%q", code, errb)
+	}
+
+	code, _, errb = runCLI(
+		"--break-glass=/tmp/procmesh-missing.sock",
+		"--operation-id", "op-enable-admin",
+		"--reason", "recover administrator",
+		"user", "enable", "user-admin",
+	)
+	if code == 2 {
+		t.Fatalf("valid recovery command rejected as usage error: %q", errb)
+	}
+}
+
 func TestCLI_ReasonIsBreakGlassOnly(t *testing.T) {
 	code, _, errb := runCLI("--reason", "recover service", "process", "list")
 	if code != 2 || !strings.Contains(errb, "only valid with --break-glass") {

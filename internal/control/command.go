@@ -6,6 +6,8 @@ const (
 	CmdBootstrap                  = "bootstrap"
 	CmdUserPut                    = "user_put"
 	CmdUserDisable                = "user_disable"
+	CmdUserDisableGuarded         = "user_disable_guarded"
+	CmdUserEnable                 = "user_enable"
 	CmdUserPasswordSet            = "user_password_set"
 	CmdLoginOK                    = "login_ok"
 	CmdLoginFail                  = "login_fail"
@@ -68,6 +70,15 @@ type UserPutBody struct {
 }
 
 type UserDisableBody struct {
+	UserID string `json:"user_id"`
+}
+
+type UserDisableGuardedBody struct {
+	UserID      string `json:"user_id"`
+	ActorUserID string `json:"actor_user_id"`
+}
+
+type UserEnableBody struct {
 	UserID string `json:"user_id"`
 }
 

@@ -98,7 +98,13 @@ func (s *UserAPI) DisableUser(ctx context.Context, req *connect.Request[procmesh
 	if id == "" {
 		return nil, ToConnect(errcode.E(errcode.INVALID, "user_id required"))
 	}
-	if err := applyAuth(s.Auth, control.CmdUserDisable, control.UserDisableBody{UserID: id}); err != nil {
+	p, ok := PrincipalFrom(ctx)
+	if !ok || p.UserID == "" {
+		return nil, ToConnect(errcode.E(errcode.DENIED, "authentication required"))
+	}
+	if err := applyAuth(s.Auth, control.CmdUserDisableGuarded, control.UserDisableGuardedBody{
+		UserID: id, ActorUserID: p.UserID,
+	}); err != nil {
 		return nil, err
 	}
 	u, ok := userFromState(s.Auth.Store().View(), id)
@@ -106,6 +112,30 @@ func (s *UserAPI) DisableUser(ctx context.Context, req *connect.Request[procmesh
 		return nil, ToConnect(errcode.E(errcode.NOT_FOUND, "user not found"))
 	}
 	return connect.NewResponse(&procmeshv1.DisableUserResponse{User: userToProto(u)}), nil
+}
+
+func (s *UserAPI) EnableUser(ctx context.Context, req *connect.Request[procmeshv1.EnableUserRequest]) (*connect.Response[procmeshv1.EnableUserResponse], error) {
+	if err := requireAuthConfigured(s.Auth); err != nil {
+		return nil, err
+	}
+	if err := requirePerm(ctx, s.Auth, auth.PermUserUpdate, "", true, true); err != nil {
+		return nil, err
+	}
+	if _, _, err := metaOf(req.Msg.GetMeta()); err != nil {
+		return nil, err
+	}
+	id := req.Msg.GetUserId()
+	if id == "" {
+		return nil, ToConnect(errcode.E(errcode.INVALID, "user_id required"))
+	}
+	if err := applyAuth(s.Auth, control.CmdUserEnable, control.UserEnableBody{UserID: id}); err != nil {
+		return nil, err
+	}
+	u, ok := userFromState(s.Auth.Store().View(), id)
+	if !ok {
+		return nil, ToConnect(errcode.E(errcode.NOT_FOUND, "user not found"))
+	}
+	return connect.NewResponse(&procmeshv1.EnableUserResponse{User: userToProto(u)}), nil
 }
 
 func requireAuthConfigured(svc *auth.Service) error {

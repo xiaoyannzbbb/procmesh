@@ -27,6 +27,11 @@ func runUser(c *client, sub string, pos []string, opt options, stdout io.Writer)
 			return usageError("user disable requires USER_ID")
 		}
 		return userDisable(c, pos[0], stdout)
+	case "enable":
+		if len(pos) != 1 || pos[0] == "" {
+			return usageError("user enable requires USER_ID")
+		}
+		return userEnable(c, pos[0], stdout)
 	default:
 		return usageError("unknown user command")
 	}
@@ -67,6 +72,20 @@ func userCreate(c *client, opt options, stdout io.Writer) error {
 
 func userDisable(c *client, userID string, stdout io.Writer) error {
 	resp, err := c.user.DisableUser(context.Background(), connect.NewRequest(&procmeshv1.DisableUserRequest{
+		Meta:   c.meta(),
+		UserId: userID,
+	}))
+	if err != nil {
+		return err
+	}
+	u := resp.Msg.GetUser()
+	fmt.Fprintf(stdout, "user_id=%s\n", u.GetUserId())
+	fmt.Fprintf(stdout, "status=%s\n", u.GetStatus())
+	return nil
+}
+
+func userEnable(c *client, userID string, stdout io.Writer) error {
+	resp, err := c.user.EnableUser(context.Background(), connect.NewRequest(&procmeshv1.EnableUserRequest{
 		Meta:   c.meta(),
 		UserId: userID,
 	}))

@@ -306,6 +306,10 @@ func (s *State) Apply(cmd Command, now time.Time) error {
 		return applyJSON(cmd.Body, s.applyUserPut)
 	case CmdUserDisable:
 		return applyJSON(cmd.Body, s.applyUserDisable)
+	case CmdUserDisableGuarded:
+		return applyJSON(cmd.Body, s.applyUserDisableGuarded)
+	case CmdUserEnable:
+		return applyJSON(cmd.Body, s.applyUserEnable)
 	case CmdUserPasswordSet:
 		return applyJSON(cmd.Body, func(b UserPasswordSetBody) error { return s.applyUserPasswordSet(b, now) })
 	case CmdLoginOK:
@@ -471,6 +475,77 @@ func (s *State) applyUserDisable(b UserDisableBody) error {
 	u.Status = UserDisabled
 	s.Users[u.Username] = u
 	return nil
+}
+
+func (s *State) applyUserDisableGuarded(b UserDisableGuardedBody) error {
+	if b.UserID == "" || b.ActorUserID == "" {
+		return errcode.E(errcode.INVALID, "user_id and actor_user_id required")
+	}
+	u, ok := s.userByID(b.UserID)
+	if !ok {
+		return errcode.E(errcode.NOT_FOUND, "user not found")
+	}
+	if b.UserID == b.ActorUserID {
+		return errcode.E(errcode.CONFLICT, "cannot disable current user")
+	}
+	if u.Status == UserActive && s.hasClusterSuperAdminBinding(b.UserID) && s.activeClusterSuperAdminCount() == 1 {
+		return errcode.E(errcode.CONFLICT, "cannot disable last active super admin")
+	}
+	u.Status = UserDisabled
+	s.Users[u.Username] = u
+	return nil
+}
+
+func (s *State) applyUserEnable(b UserEnableBody) error {
+	if b.UserID == "" {
+		return errcode.E(errcode.INVALID, "user_id required")
+	}
+	u, ok := s.userByID(b.UserID)
+	if !ok {
+		return errcode.E(errcode.NOT_FOUND, "user not found")
+	}
+	if u.Status == UserActive {
+		return nil
+	}
+	for id, session := range s.Sessions {
+		if session.UserID == b.UserID {
+			delete(s.Sessions, id)
+		}
+	}
+	for id, token := range s.APITokens {
+		if token.UserID == b.UserID {
+			token.Revoked = true
+			s.APITokens[id] = token
+		}
+	}
+	u.Status = UserActive
+	u.FailCount = 0
+	u.LockedUntilUnix = 0
+	s.Users[u.Username] = u
+	return nil
+}
+
+func (s *State) hasClusterSuperAdminBinding(userID string) bool {
+	for _, binding := range s.Bindings {
+		if binding.UserID == userID && binding.RoleID == roleSuperAdmin && binding.Scope == ScopeCluster && binding.ScopeID == "" {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *State) activeClusterSuperAdminCount() int {
+	seen := make(map[string]struct{})
+	for _, binding := range s.Bindings {
+		if binding.RoleID != roleSuperAdmin || binding.Scope != ScopeCluster || binding.ScopeID != "" {
+			continue
+		}
+		u, ok := s.userByID(binding.UserID)
+		if ok && u.Status == UserActive {
+			seen[binding.UserID] = struct{}{}
+		}
+	}
+	return len(seen)
 }
 
 func (s *State) applyUserPasswordSet(b UserPasswordSetBody, now time.Time) error {

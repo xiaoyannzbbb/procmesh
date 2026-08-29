@@ -52,6 +52,7 @@ commands:
   user list
   user create --user NAME --password PASS [--display NAME] [--email E]
   user disable USER_ID
+  user enable USER_ID
   role list
   role create --name NAME --perm P [--perm P...]
   role grant --user-id ID --role-id ID [--scope CLUSTER|AGENT|AGENT_GROUP|PROCESS_GROUP] [--scope-id NODE]
@@ -581,8 +582,20 @@ func validateBreakGlassMode(opt options) error {
 	if opt.authToken != "" {
 		return usageError("--break-glass does not accept cluster credentials")
 	}
-	const supported = "--break-glass only supports process list, get, logs, start, stop, restart, and kill"
-	if len(opt.args) < 2 || opt.args[0] != "process" {
+	const supported = "--break-glass only supports process list, get, logs, start, stop, restart, and kill; and user enable"
+	if len(opt.args) < 2 {
+		return usageError(supported)
+	}
+	if opt.args[0] == "user" && opt.args[1] == "enable" {
+		if !opt.operationIDSet || strings.TrimSpace(opt.operationID) == "" {
+			return usageError("break-glass user enable requires --operation-id")
+		}
+		if strings.TrimSpace(opt.reason) == "" {
+			return usageError("break-glass user enable requires --reason")
+		}
+		return nil
+	}
+	if opt.args[0] != "process" {
 		return usageError(supported)
 	}
 	switch opt.args[1] {

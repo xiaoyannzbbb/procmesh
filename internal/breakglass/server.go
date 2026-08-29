@@ -17,6 +17,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/api"
+	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/rpc"
@@ -46,11 +47,17 @@ type Config struct {
 	LocalID    string
 	Manager    *process.Manager
 	Audit      AuditStore
+	Recovery   func() RecoveryStore
 	PeerLookup func(net.Conn) (Peer, error)
 }
 
 type AuditStore interface {
 	AppendAudit(context.Context, store.AuditEvent) error
+}
+
+type RecoveryStore interface {
+	View() control.State
+	Apply(control.Command, time.Duration) error
 }
 
 type Server struct {
@@ -123,9 +130,11 @@ func New(cfg Config) (*Server, error) {
 	intercept := connect.WithInterceptors(authorizer)
 	processPath, processHandler := procmeshv1connect.NewProcessServiceHandler(processAPI, intercept)
 	logPath, logHandler := procmeshv1connect.NewLogServiceHandler(logAPI, intercept)
+	userPath, userHandler := procmeshv1connect.NewUserServiceHandler(&recoveryUserAPI{store: cfg.Recovery}, intercept)
 	mux := http.NewServeMux()
 	mux.Handle(processPath, processHandler)
 	mux.Handle(logPath, logHandler)
+	mux.Handle(userPath, userHandler)
 	mux.HandleFunc("/", authorizer.rejectUnknown)
 	httpServer := &http.Server{
 		Handler: mux,
@@ -257,7 +266,15 @@ func (a *accessController) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 				}
 				return nil, api.ToConnect(errcode.E(errcode.INVALID, "break-glass reason required"))
 			}
-			if message, ok := req.Any().(*procmeshv1.ProcessRefRequest); ok {
+			switch message := req.Any().(type) {
+			case *procmeshv1.ProcessRefRequest:
+				message.Meta.OperationId = strings.TrimSpace(message.Meta.GetOperationId())
+				message.Meta.Operator = peerOperator(peer)
+				description.operationID = message.Meta.GetOperationId()
+			case *procmeshv1.EnableUserRequest:
+				if message.Meta == nil {
+					message.Meta = &procmeshv1.MutationMeta{}
+				}
 				message.Meta.OperationId = strings.TrimSpace(message.Meta.GetOperationId())
 				message.Meta.Operator = peerOperator(peer)
 				description.operationID = message.Meta.GetOperationId()
@@ -325,7 +342,7 @@ func (a *accessController) rejectUnknown(w http.ResponseWriter, r *http.Request)
 }
 
 func (a *accessController) describeProcess(ctx context.Context, description *requestDescription) {
-	if a.manager == nil || description.target == "" || description.target == "local-agent" {
+	if a.manager == nil || !strings.HasPrefix(description.action, "break_glass.process.") || description.target == "" || description.target == "local-agent" {
 		return
 	}
 	spec, err := a.manager.Resolve(ctx, description.target)
@@ -451,6 +468,15 @@ func describeRequest(procedure string, message any) requestDescription {
 			mutation:    true,
 			operationID: request.GetMeta().GetOperationId(),
 		}
+	case procmeshv1connect.UserServiceEnableUserProcedure:
+		request, _ := message.(*procmeshv1.EnableUserRequest)
+		return requestDescription{
+			action:      "break_glass.user.enable",
+			target:      request.GetUserId(),
+			allowed:     true,
+			mutation:    true,
+			operationID: request.GetMeta().GetOperationId(),
+		}
 	default:
 		if request, ok := message.(*procmeshv1.ProcessRefRequest); ok && request.GetIdOrName() != "" {
 			return requestDescription{action: "break_glass.reject", target: request.GetIdOrName()}
@@ -458,6 +484,45 @@ func describeRequest(procedure string, message any) requestDescription {
 		name := strings.TrimPrefix(procedure, "/")
 		return requestDescription{action: "break_glass.reject", target: name}
 	}
+}
+
+type recoveryUserAPI struct {
+	procmeshv1connect.UnimplementedUserServiceHandler
+	store func() RecoveryStore
+}
+
+func (s *recoveryUserAPI) EnableUser(_ context.Context, req *connect.Request[procmeshv1.EnableUserRequest]) (*connect.Response[procmeshv1.EnableUserResponse], error) {
+	if s.store == nil {
+		return nil, api.ToConnect(errcode.E(errcode.UNAVAILABLE, "control recovery unavailable"))
+	}
+	store := s.store()
+	if store == nil {
+		return nil, api.ToConnect(errcode.E(errcode.UNAVAILABLE, "control recovery unavailable"))
+	}
+	userID := strings.TrimSpace(req.Msg.GetUserId())
+	if userID == "" {
+		return nil, api.ToConnect(errcode.E(errcode.INVALID, "user_id required"))
+	}
+	cmd, err := control.EncodeCommand(control.CmdUserEnable, control.UserEnableBody{UserID: userID})
+	if err != nil {
+		return nil, api.ToConnect(err)
+	}
+	if err := store.Apply(cmd, 5*time.Second); err != nil {
+		return nil, api.ToConnect(err)
+	}
+	state := store.View()
+	username, ok := state.UsersByID[userID]
+	if !ok {
+		return nil, api.ToConnect(errcode.E(errcode.NOT_FOUND, "user not found"))
+	}
+	user, ok := state.Users[username]
+	if !ok {
+		return nil, api.ToConnect(errcode.E(errcode.NOT_FOUND, "user not found"))
+	}
+	return connect.NewResponse(&procmeshv1.EnableUserResponse{User: &procmeshv1.User{
+		UserId: user.ID, Username: user.Username, DisplayName: user.DisplayName, Email: user.Email,
+		Status: string(user.Status), CreatedUnix: user.CreatedUnix, LastLoginUnix: user.LastLoginUnix,
+	}}), nil
 }
 
 type localProcessAPI struct {

@@ -478,10 +478,17 @@ message DisableUserRequest {
 }
 message DisableUserResponse { User user = 1; }
 
+message EnableUserRequest {
+  MutationMeta meta = 1;
+  string user_id = 2;
+}
+message EnableUserResponse { User user = 1; }
+
 service UserService {
   rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
   rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
   rpc DisableUser(DisableUserRequest) returns (DisableUserResponse);
+  rpc EnableUser(EnableUserRequest) returns (EnableUserResponse);
 }
 
 message Role {

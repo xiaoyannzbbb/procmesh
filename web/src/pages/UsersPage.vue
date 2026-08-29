@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
 import { computed, ref } from "vue";
-import { Plus, ShieldPlus } from "lucide-vue-next";
+import { Plus, ShieldPlus, UserCheck, UserX } from "lucide-vue-next";
+import ConfirmDialog from "../components/ConfirmDialog.vue";
 import Drawer from "../components/Drawer.vue";
 import Toast from "../components/Toast.vue";
 import { newOperationId } from "../lib/opid";
@@ -22,6 +23,7 @@ const queryClient = useQueryClient();
 const actionError = ref("");
 const createDrawerOpen = ref(false);
 const bindDrawerOpen = ref(false);
+const pendingDisable = ref<{ userId: string; name: string } | null>(null);
 const toastMessage = ref("");
 const toastType = ref<"success" | "error">("success");
 const showToast = ref(false);
@@ -68,6 +70,13 @@ const scopeIdRequired = computed(() => grantScope.value !== "CLUSTER");
 const grantReady = computed(() => Boolean(
   selectedUserId.value && grantRoleId.value && (!scopeIdRequired.value || grantScopeId.value.trim()),
 ));
+const activeSuperAdminIds = computed(() => {
+  if (!roleDataReady.value) return new Set<string>();
+  const activeUserIds = new Set(users.value.filter((user) => user.status === "ACTIVE").map((user) => user.userId));
+  return new Set(bindings.value
+    .filter((binding) => binding.roleId === "super_admin" && binding.scopeType === "CLUSTER" && !binding.scopeId && activeUserIds.has(binding.userId))
+    .map((binding) => binding.userId));
+});
 
 function mutationMeta() {
   return { operationId: newOperationId(), operator: session.value?.username ?? "" };
@@ -95,6 +104,14 @@ function scopeLabel(scopeType: string, scopeId: string): string {
 
 function userBindings(userId: string) {
   return bindings.value.filter((binding) => binding.userId === userId);
+}
+
+function disableBlockReason(userId: string): string {
+  if (userId === session.value?.userId) return t("users.disableCurrentUser");
+  if (activeSuperAdminIds.value.size === 1 && activeSuperAdminIds.value.has(userId)) {
+    return t("users.disableLastSuperAdmin");
+  }
+  return "";
 }
 
 function notify(message: string, type: "success" | "error"): void {
@@ -151,7 +168,23 @@ const createMut = useMutation({
 
 const disableMut = useMutation({
   mutationFn: (userId: string) => userClient.disableUser({ meta: mutationMeta(), userId }),
-  onSuccess: () => queryClient.invalidateQueries({ queryKey: ["users"] }),
+  onSuccess: async () => {
+    pendingDisable.value = null;
+    await queryClient.invalidateQueries({ queryKey: ["users"] });
+    notify(t("users.disableSuccess"), "success");
+  },
+  onError: (error: unknown) => {
+    pendingDisable.value = null;
+    notify(formatRemoteError(error), "error");
+  },
+});
+
+const enableMut = useMutation({
+  mutationFn: (userId: string) => userClient.enableUser({ meta: mutationMeta(), userId }),
+  onSuccess: async () => {
+    await queryClient.invalidateQueries({ queryKey: ["users"] });
+    notify(t("users.enableSuccess"), "success");
+  },
   onError: (error: unknown) => { notify(formatRemoteError(error), "error"); },
 });
 
@@ -172,7 +205,7 @@ const grantMut = useMutation({
   onError: (error: unknown) => { actionError.value = formatRemoteError(error); },
 });
 
-const acting = computed(() => createMut.isPending.value || disableMut.isPending.value || grantMut.isPending.value);
+const acting = computed(() => createMut.isPending.value || disableMut.isPending.value || enableMut.isPending.value || grantMut.isPending.value);
 
 async function onCreate(): Promise<void> {
   if (!canCreate.value || !createReady.value || acting.value) return;
@@ -180,9 +213,24 @@ async function onCreate(): Promise<void> {
   try { await createMut.mutateAsync(); } catch { /* handled by mutation */ }
 }
 
-async function onDisable(userId: string): Promise<void> {
+function requestDisable(userId: string, name: string): void {
+  if (!canUpdate.value || !userId || acting.value || disableBlockReason(userId)) return;
+  pendingDisable.value = { userId, name };
+}
+
+async function confirmDisable(): Promise<void> {
+  const pending = pendingDisable.value;
+  if (!pending || acting.value) return;
+  try { await disableMut.mutateAsync(pending.userId); } catch { /* handled by mutation */ }
+}
+
+function cancelDisable(): void {
+  if (!acting.value) pendingDisable.value = null;
+}
+
+async function onEnable(userId: string): Promise<void> {
   if (!canUpdate.value || !userId || acting.value) return;
-  try { await disableMut.mutateAsync(userId); } catch { /* handled by mutation */ }
+  try { await enableMut.mutateAsync(userId); } catch { /* handled by mutation */ }
 }
 
 async function onGrant(): Promise<void> {
@@ -243,7 +291,22 @@ async function onGrant(): Promise<void> {
                     <ShieldPlus :size="16" aria-hidden="true" />
                     {{ t("users.bindRole.action") }}
                   </button>
-                  <button v-if="canUpdate && user.status !== 'DISABLED'" type="button" class="btn btn-xs btn-danger" :disabled="acting" @click="onDisable(user.userId)">{{ t("users.disable") }}</button>
+                  <button v-if="canUpdate && user.status === 'DISABLED'" type="button" class="btn btn-xs" data-action="enable-user" :disabled="acting" @click="onEnable(user.userId)">
+                    <UserCheck :size="16" aria-hidden="true" />
+                    {{ t("users.enable") }}
+                  </button>
+                  <button
+                    v-else-if="canUpdate"
+                    type="button"
+                    class="btn btn-xs btn-danger"
+                    data-action="disable-user"
+                    :disabled="acting || Boolean(disableBlockReason(user.userId))"
+                    :title="disableBlockReason(user.userId)"
+                    @click="requestDisable(user.userId, user.displayName || user.username)"
+                  >
+                    <UserX :size="16" aria-hidden="true" />
+                    {{ t("users.disable") }}
+                  </button>
                 </div>
               </td>
             </tr>
@@ -277,6 +340,17 @@ async function onGrant(): Promise<void> {
         <div class="drawer-actions"><button type="button" class="btn" :disabled="acting" @click="bindDrawerOpen = false">{{ t("actions.cancel") }}</button><button class="btn btn-primary" type="submit" :disabled="!grantReady || acting">{{ t("users.bindRole.submit") }}</button></div>
       </form>
     </Drawer>
+
+    <ConfirmDialog
+      :open="Boolean(pendingDisable)"
+      :title="t('users.disableConfirmTitle')"
+      :message="t('users.disableConfirmMessage', { name: pendingDisable?.name ?? '' })"
+      :confirm-label="t('users.disableConfirm')"
+      :cancel-label="t('actions.cancel')"
+      :pending="disableMut.isPending.value"
+      @cancel="cancelDisable"
+      @confirm="confirmDisable"
+    />
 
     <Toast :show="showToast" :message="toastMessage" :type="toastType" @close="showToast = false" />
   </div>

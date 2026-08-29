@@ -1018,6 +1018,14 @@
       "actions": "Actions"
     },
     "disable": "Disable",
+    "enable": "Enable",
+    "disableCurrentUser": "You cannot disable your current account",
+    "disableLastSuperAdmin": "You cannot disable the last active super admin",
+    "disableConfirmTitle": "Disable user?",
+    "disableConfirmMessage": "Disable {{name}}? Their sessions and API tokens will stop working.",
+    "disableConfirm": "Disable user",
+    "disableSuccess": "User disabled",
+    "enableSuccess": "User enabled. Previous sessions and API tokens remain revoked.",
     "roles": {
       "loading": "Loading roles…",
       "unavailable": "Role data unavailable",

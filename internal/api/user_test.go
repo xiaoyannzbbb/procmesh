@@ -4,8 +4,10 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
+	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/control"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 )
@@ -18,6 +20,7 @@ func TestUser_CreateListDisable(t *testing.T) {
 
 	_, svc := newBootstrappedAuth(t)
 	api := &UserAPI{Auth: svc}
+	ctx = WithPrincipal(ctx, auth.Principal{UserID: "user-admin", Username: "admin"})
 
 	created, err := api.CreateUser(ctx, connect.NewRequest(&procmeshv1.CreateUserRequest{
 		Meta:        &procmeshv1.MutationMeta{OperationId: "op-user-create", Operator: "t"},
@@ -78,6 +81,17 @@ func TestUser_CreateListDisable(t *testing.T) {
 		t.Fatalf("list after disable %+v", got)
 	}
 
+	enabled, err := api.EnableUser(ctx, connect.NewRequest(&procmeshv1.EnableUserRequest{
+		Meta:   &procmeshv1.MutationMeta{OperationId: "op-user-enable", Operator: "spoofed"},
+		UserId: u.GetUserId(),
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enabled.Msg.GetUser().GetStatus() != string(control.UserActive) {
+		t.Fatalf("enabled %+v", enabled.Msg.GetUser())
+	}
+
 	_, err = api.DisableUser(ctx, connect.NewRequest(&procmeshv1.DisableUserRequest{
 		Meta:   &procmeshv1.MutationMeta{OperationId: "op-user-missing", Operator: "t"},
 		UserId: "missing-user",
@@ -86,6 +100,56 @@ func TestUser_CreateListDisable(t *testing.T) {
 	if code != connect.CodeNotFound || detail != "NOT_FOUND" {
 		t.Fatalf("missing code=%v detail=%s err=%v", code, detail, err)
 	}
+}
+
+func TestUser_DisableRejectsCurrentUser(t *testing.T) {
+	_, svc := newBootstrappedAuth(t)
+	api := &UserAPI{Auth: svc}
+	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-admin", Username: "admin"})
+
+	_, err := api.DisableUser(ctx, connect.NewRequest(&procmeshv1.DisableUserRequest{
+		Meta:   &procmeshv1.MutationMeta{OperationId: "op-user-self-disable", Operator: "spoofed"},
+		UserId: "user-admin",
+	}))
+	code, detail := connectDetail(t, err)
+	if code != connect.CodeFailedPrecondition || detail != "CONFLICT" || !strings.Contains(err.Error(), "current user") {
+		t.Fatalf("code=%v detail=%s err=%v", code, detail, err)
+	}
+}
+
+func TestUser_DisableRejectsLastActiveSuperAdmin(t *testing.T) {
+	store, svc := newBootstrappedAuth(t)
+	for _, cmd := range []control.Command{
+		mustAPICommand(t, control.CmdUserPut, control.UserPutBody{ID: "user-delegate", Username: "delegate", PasswordHash: "hash"}),
+		mustAPICommand(t, control.CmdBindPut, control.BindPutBody{UserID: "user-delegate", RoleID: "cluster_admin", Scope: control.ScopeCluster}),
+	} {
+		if err := store.Apply(cmd, time.Second); err != nil {
+			t.Fatal(err)
+		}
+	}
+	api := &UserAPI{Auth: svc}
+	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-delegate", Username: "delegate"})
+
+	_, err := api.DisableUser(ctx, connect.NewRequest(&procmeshv1.DisableUserRequest{
+		Meta:   &procmeshv1.MutationMeta{OperationId: "op-user-last-admin", Operator: "spoofed"},
+		UserId: "user-admin",
+	}))
+	code, detail := connectDetail(t, err)
+	if code != connect.CodeFailedPrecondition || detail != "CONFLICT" || !strings.Contains(err.Error(), "last active super admin") {
+		t.Fatalf("code=%v detail=%s err=%v", code, detail, err)
+	}
+	if got := store.View().Users["admin"].Status; got != control.UserActive {
+		t.Fatalf("admin status=%s", got)
+	}
+}
+
+func mustAPICommand(t *testing.T, typ string, body any) control.Command {
+	t.Helper()
+	cmd, err := control.EncodeCommand(typ, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cmd
 }
 
 func TestUser_ShortPassword(t *testing.T) {

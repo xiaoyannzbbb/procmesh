@@ -353,6 +353,8 @@ async function mountPage(
     policiesError?: Error;
     runsError?: Error;
     snapshotsError?: Error;
+    verifyResult?: { valid: boolean };
+    verifyError?: Error;
     prepareRestore?: unknown;
     prepareRestoreError?: Error;
     restoreResults?: unknown[];
@@ -396,13 +398,16 @@ async function mountPage(
       : vi.fn().mockResolvedValue({ runs }),
     getRun: vi.fn().mockResolvedValue({ run }),
     retryFailedRoutes: vi.fn().mockResolvedValue({ retriedCount: 1 }),
-    verifyReplica: vi.fn().mockResolvedValue({
-      valid: true,
-      sha256: recoverableSnapshot.sha256,
-      processCount: 1,
-      processIds: ["web"],
-      errors: [],
-    }),
+    verifyReplica: opts.verifyError
+      ? vi.fn().mockRejectedValue(opts.verifyError)
+      : vi.fn().mockResolvedValue({
+          valid: true,
+          sha256: recoverableSnapshot.sha256,
+          processCount: 1,
+          processIds: ["web"],
+          errors: [],
+          ...opts.verifyResult,
+        }),
     listRecoverableSnapshots: opts.snapshotsError
       ? vi.fn().mockRejectedValue(opts.snapshotsError)
       : vi.fn().mockResolvedValue({ snapshots, inventoryStatuses }),
@@ -758,7 +763,7 @@ describe("DisasterReplicaPage", () => {
     expect(failedStyle).not.toMatch(/#d1fae5|#065f46/);
   });
 
-  it("verifies a replica checksum without applying peer files", async () => {
+  it("shows a success toast after verifying a matching replica checksum", async () => {
     const { wrapper, replicationClient } = await mountPage();
     const recovery = wrapper.get('[data-section="recovery"]');
     expect(recovery.text()).toContain("snap-n1");
@@ -768,7 +773,24 @@ describe("DisasterReplicaPage", () => {
     expect(replicationClient.verifyReplica).toHaveBeenCalledWith(
       expect.objectContaining({ sourceNodeId: "n1", snapshotId: "snap-n1" }),
     );
-    expect(wrapper.text()).toMatch(/checksum matches/i);
+    expect(wrapper.get(".toast-success").text()).toMatch(/checksum matches/i);
+    expect(wrapper.find("p.notice").exists()).toBe(false);
+  });
+
+  it("shows an error toast when the replica checksum does not match", async () => {
+    const { wrapper } = await mountPage({ verifyResult: { valid: false } });
+    await wrapper.get('[data-action="verify"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get(".toast-error").text()).toMatch(/checksum mismatch/i);
+    expect(wrapper.find("p.notice").exists()).toBe(false);
+  });
+
+  it("shows an error toast when checksum verification fails", async () => {
+    const { wrapper } = await mountPage({ verifyError: new Error("verify unavailable") });
+    await wrapper.get('[data-action="verify"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get(".toast-error").text()).toContain("verify unavailable");
+    expect(wrapper.find("p.error").exists()).toBe(false);
   });
 
   it("opens restore on the replica page with the clicked snapshot selected", async () => {

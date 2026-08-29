@@ -5,6 +5,7 @@ import { ArchiveRestore, ArrowRight, CopyPlus, ShieldCheck, TriangleAlert, X } f
 import { computed, ref, useId, watch } from "vue";
 import Drawer from "../components/Drawer.vue";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
+import Toast from "../components/Toast.vue";
 import { appMessage } from "../lib/connecterr";
 import { LIVE, STALE, UNKNOWN, formatAge, type Freshness } from "../lib/freshness";
 import { newOperationId } from "../lib/opid";
@@ -148,13 +149,15 @@ const client = useReplicationClient();
 const queryClient = useQueryClient();
 const actionError = ref("");
 const actionNotice = ref("");
+const toastMessage = ref("");
+const toastType = ref<"success" | "error">("success");
+const showToast = ref(false);
 const selectedRunId = ref("");
 const previewOpen = ref(false);
 const replaceCurrent = ref(false);
 const draft = ref<PolicyDraft | null>(null);
 const generatedDraftInputFingerprint = ref("");
 const appliedRevision = ref<bigint | number | "">("");
-const verifyNotice = ref("");
 const restoreOpen = ref(false);
 const restoreOwnerId = ref("");
 const restoreSnapshotId = ref("");
@@ -1056,10 +1059,14 @@ const verifyMut = useMutation({
       snapshotId: snap.snapshotId || "",
     }),
   onSuccess: (res) => {
-    verifyNotice.value = res.valid ? t("replica.verifyValid") : t("replica.verifyInvalid");
+    toastMessage.value = res.valid ? t("replica.verifyValid") : t("replica.verifyInvalid");
+    toastType.value = res.valid ? "success" : "error";
+    showToast.value = true;
   },
   onError: (err: unknown) => {
-    actionError.value = formatRemoteError(err);
+    toastMessage.value = formatRemoteError(err);
+    toastType.value = "error";
+    showToast.value = true;
   },
 });
 
@@ -1157,7 +1164,6 @@ async function onVerify(snap: RecoverableSnapshot): Promise<void> {
     return;
   }
   actionError.value = "";
-  verifyNotice.value = "";
   try {
     await verifyMut.mutateAsync(snap);
   } catch {
@@ -1185,7 +1191,6 @@ async function onStartRun(): Promise<void> {
       <div v-if="hasStale" class="banner" role="status">{{ t("replica.staleBanner") }}</div>
       <p v-if="errorText" class="error" role="alert">{{ errorText }}</p>
       <p v-else-if="actionNotice" class="notice" role="status">{{ actionNotice }}</p>
-      <p v-else-if="verifyNotice" class="notice" role="status">{{ verifyNotice }}</p>
 
       <section class="section" data-section="overview">
         <div class="section-header">
@@ -1487,7 +1492,7 @@ async function onStartRun(): Promise<void> {
                     <button
                       v-if="canManage"
                       type="button"
-                      class="btn"
+                      class="btn btn-xs"
                       data-action="verify"
                       :aria-label="t('replica.verify')"
                       :disabled="acting"
@@ -1499,7 +1504,7 @@ async function onStartRun(): Promise<void> {
                     <button
                       v-if="canRestore"
                       type="button"
-                      class="btn"
+                      class="btn btn-xs"
                       data-action="restore"
                       :disabled="restorePreparing"
                       @click="openRestore(snap)"
@@ -2000,6 +2005,7 @@ async function onStartRun(): Promise<void> {
       </div>
     </div>
   </Drawer>
+  <Toast :show="showToast" :message="toastMessage" :type="toastType" @close="showToast = false" />
   </div>
 </template>
 

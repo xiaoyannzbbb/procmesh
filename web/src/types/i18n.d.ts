@@ -883,6 +883,14 @@ declare module "i18next" {
         'users.table.lastLogin': string
         'users.table.actions': string
         'users.disable': string
+        'users.enable': string
+        'users.disableCurrentUser': string
+        'users.disableLastSuperAdmin': string
+        'users.disableConfirmTitle': string
+        'users.disableConfirmMessage': string
+        'users.disableConfirm': string
+        'users.disableSuccess': string
+        'users.enableSuccess': string
         'users.roles.loading': string
         'users.roles.unavailable': string
         'users.roles.loadError': string
