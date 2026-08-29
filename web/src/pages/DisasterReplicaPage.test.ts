@@ -1003,6 +1003,7 @@ describe("DisasterReplicaPage", () => {
       sha256: "abc123def4567890",
       storageNodeId: "n2",
     });
+    expect((wrapper.get('[data-field="restore-storage"]').element as HTMLSelectElement).value).toBe("n2");
     expect((wrapper.get('input[name="expectedRevision"]').element as HTMLInputElement).value).toBe("12");
   });
 

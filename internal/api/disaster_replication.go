@@ -1344,6 +1344,9 @@ func (d *DisasterReplicationAPI) loadRecoverableSnapshot(ctx context.Context, sn
 	if d.Backup == nil || d.Backup.Apply == nil {
 		return backup.Meta{}, backup.Snapshot{}, nil, "", false, errcode.E(errcode.UNAVAILABLE, "backup engine unavailable")
 	}
+	if storageNodeID != "" && storageNodeID != d.localNodeID() {
+		return d.fetchRecoverableSnapshot(ctx, snapshotID, expectedSHA256, storageNodeID, hydrate)
+	}
 	meta, payload, err := d.Backup.Get(ctx, snapshotID, backup.ReplicaSinkName)
 	if err == nil {
 		if meta.ClusterID != d.clusterID() || meta.NodeID != d.localNodeID() || meta.SnapshotID != snapshotID || !strings.EqualFold(meta.SHA256, expectedSHA256) {

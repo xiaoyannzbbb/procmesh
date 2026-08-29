@@ -2447,12 +2447,6 @@ func TestDisasterReplicationAPI_RestoreFetchesOnlyFromPeerThenAppliesOnOwner(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(meta.Location); err != nil {
-		t.Fatal(err)
-	}
-	if err := engine.Store.DeleteBackup(context.Background(), meta.SnapshotID); err != nil {
-		t.Fatal(err)
-	}
 	peerStore := &backup.PeerStore{Root: t.TempDir()}
 	if _, err := peerStore.ReceiveWithMetadata(context.Background(), backup.ReceiveParams{
 		SourceNodeID: "owner-1", ClusterID: "test-cluster", SnapshotID: meta.SnapshotID, SHA256: meta.SHA256, Payload: payload,
@@ -2482,6 +2476,12 @@ func TestDisasterReplicationAPI_RestoreFetchesOnlyFromPeerThenAppliesOnOwner(t *
 	}))
 	if err != nil || prepared.Msg.GetOwnerCopy() || prepared.Msg.GetSelectedStorageNodeId() != "peer-1" {
 		t.Fatalf("prepared=%+v err=%v", prepared, err)
+	}
+	if err := os.Remove(meta.Location); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Store.DeleteBackup(context.Background(), meta.SnapshotID); err != nil {
+		t.Fatal(err)
 	}
 	restored, err := client.RestoreRecoverableSnapshot(context.Background(), bearerReq(sid, &procmeshv1.RestoreRecoverableSnapshotRequest{
 		Meta: &procmeshv1.MutationMeta{OperationId: "op-peer-restore"}, SourceNodeId: "owner-1",
