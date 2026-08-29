@@ -439,6 +439,7 @@ func (f *agentForwarder) snapshot() (control.AgentCreds, string, func(string) bo
 const (
 	processHopTimeout             = rpc.MutationTimeout
 	loginHopTimeout               = rpc.MutationTimeout
+	userHopTimeout                = rpc.MutationTimeout
 	configHopTimeout              = rpc.MutationTimeout
 	logHopTimeout                 = time.Duration(0)
 	auditHopTimeout               = 2 * time.Second
@@ -475,6 +476,14 @@ func (f *agentForwarder) Process(_ context.Context, rt api.Route) (procmeshv1con
 		return nil, err
 	}
 	return rpc.NewProcessClient(hc, base), nil
+}
+
+func (f *agentForwarder) User(_ context.Context, rt api.Route) (procmeshv1connect.UserServiceClient, error) {
+	hc, base, err := f.dial(rt, userHopTimeout)
+	if err != nil {
+		return nil, err
+	}
+	return rpc.NewUserClient(hc, base), nil
 }
 
 func (f *agentForwarder) Config(_ context.Context, rt api.Route) (procmeshv1connect.ConfigServiceClient, error) {

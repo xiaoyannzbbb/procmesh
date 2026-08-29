@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"net/http"
 	"sort"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/rpc"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
@@ -19,8 +21,17 @@ var _ procmeshv1connect.UserServiceHandler = (*UserAPI)(nil)
 
 const authApplyTimeout = 5 * time.Second
 
+type UserForwarder interface {
+	User(context.Context, Route) (procmeshv1connect.UserServiceClient, error)
+}
+
 type UserAPI struct {
-	Auth *auth.Service
+	Auth        *auth.Service
+	LocalOnly   bool
+	LocalID     string
+	IsLeader    func() bool
+	LeaderRoute func() (Route, error)
+	Forward     UserForwarder
 }
 
 func (s *UserAPI) ListUsers(ctx context.Context, _ *connect.Request[procmeshv1.ListUsersRequest]) (*connect.Response[procmeshv1.ListUsersResponse], error) {
@@ -59,6 +70,16 @@ func (s *UserAPI) CreateUser(ctx context.Context, req *connect.Request[procmeshv
 	}
 	if err := auth.ValidPassword(req.Msg.GetPassword()); err != nil {
 		return nil, ToConnect(err)
+	}
+	if local, cli, err := s.forwardMutation(ctx, req.Header()); !local {
+		if err != nil {
+			return nil, err
+		}
+		resp, err := cli.CreateUser(ctx, req)
+		if err != nil {
+			return nil, mapUserForwardErr(err)
+		}
+		return resp, nil
 	}
 	hash, err := control.HashPassword(req.Msg.GetPassword())
 	if err != nil {
@@ -102,6 +123,16 @@ func (s *UserAPI) DisableUser(ctx context.Context, req *connect.Request[procmesh
 	if !ok || p.UserID == "" {
 		return nil, ToConnect(errcode.E(errcode.DENIED, "authentication required"))
 	}
+	if local, cli, err := s.forwardMutation(ctx, req.Header()); !local {
+		if err != nil {
+			return nil, err
+		}
+		resp, err := cli.DisableUser(ctx, req)
+		if err != nil {
+			return nil, mapUserForwardErr(err)
+		}
+		return resp, nil
+	}
 	if err := applyAuth(s.Auth, control.CmdUserDisableGuarded, control.UserDisableGuardedBody{
 		UserID: id, ActorUserID: p.UserID,
 	}); err != nil {
@@ -128,6 +159,16 @@ func (s *UserAPI) EnableUser(ctx context.Context, req *connect.Request[procmeshv
 	if id == "" {
 		return nil, ToConnect(errcode.E(errcode.INVALID, "user_id required"))
 	}
+	if local, cli, err := s.forwardMutation(ctx, req.Header()); !local {
+		if err != nil {
+			return nil, err
+		}
+		resp, err := cli.EnableUser(ctx, req)
+		if err != nil {
+			return nil, mapUserForwardErr(err)
+		}
+		return resp, nil
+	}
 	if err := applyAuth(s.Auth, control.CmdUserEnable, control.UserEnableBody{UserID: id}); err != nil {
 		return nil, err
 	}
@@ -136,6 +177,40 @@ func (s *UserAPI) EnableUser(ctx context.Context, req *connect.Request[procmeshv
 		return nil, ToConnect(errcode.E(errcode.NOT_FOUND, "user not found"))
 	}
 	return connect.NewResponse(&procmeshv1.EnableUserResponse{User: userToProto(u)}), nil
+}
+
+func (s *UserAPI) forwardMutation(ctx context.Context, header http.Header) (bool, procmeshv1connect.UserServiceClient, error) {
+	if s.LocalOnly || s.IsLeader == nil || s.IsLeader() {
+		return true, nil, nil
+	}
+	if s.Forward == nil || s.LeaderRoute == nil {
+		return false, nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "control leader unavailable"))
+	}
+	rt, err := s.LeaderRoute()
+	if err != nil || rt.NodeID == "" {
+		return false, nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "control leader unavailable"))
+	}
+	if rt.Local {
+		return true, nil, nil
+	}
+	if rt.RPC == "" {
+		return false, nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "control leader unavailable"))
+	}
+	stampHop(header, s.LocalID, rt.NodeID)
+	stampIdentity(header, ctx)
+	cli, err := s.Forward.User(ctx, rt)
+	if err != nil {
+		return false, nil, ToConnect(errcode.Wrap(errcode.UNAVAILABLE, "control leader unavailable", rpc.MapDialError(err)))
+	}
+	return false, cli, nil
+}
+
+func mapUserForwardErr(err error) error {
+	mapped := rpc.MapCallError(err)
+	if CodeOf(mapped) == errcode.UNAVAILABLE || connect.CodeOf(mapped) == connect.CodeUnavailable {
+		return ToConnect(errcode.Wrap(errcode.UNAVAILABLE, "control leader unavailable", mapped))
+	}
+	return ToConnect(mapped)
 }
 
 func requireAuthConfigured(svc *auth.Service) error {

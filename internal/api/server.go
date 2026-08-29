@@ -100,6 +100,10 @@ func NewServer(opts Options) (*Server, error) {
 		loginForward = candidate
 	}
 	opts.Forward = wrapForwarder(opts.Forward, rpcForwardTotal)
+	var userForward UserForwarder
+	if candidate, ok := opts.Forward.(UserForwarder); ok {
+		userForward = candidate
+	}
 
 	engine := gin.New()
 	engine.Use(accessLog(opts.Logger))
@@ -153,7 +157,14 @@ func NewServer(opts Options) (*Server, error) {
 		LeaderRoute: opts.LoginLeaderRoute, LoginForward: loginForward,
 	}, intercept)
 	mountConnect(engine, ap, ah)
-	up, uh := procmeshv1connect.NewUserServiceHandler(&UserAPI{Auth: opts.Auth}, intercept)
+	up, uh := procmeshv1connect.NewUserServiceHandler(&UserAPI{
+		Auth: opts.Auth, LocalOnly: opts.LocalOnly, LocalID: opts.LocalID,
+		IsLeader: func() bool {
+			n := opts.Cluster.controlNode()
+			return n == nil || n.IsLeader()
+		},
+		LeaderRoute: opts.LoginLeaderRoute, Forward: userForward,
+	}, intercept)
 	mountConnect(engine, up, uh)
 	rp, rh := procmeshv1connect.NewRoleServiceHandler(&RoleAPI{Auth: opts.Auth}, intercept)
 	mountConnect(engine, rp, rh)

@@ -274,6 +274,20 @@ func TestAgentForwarder_ProcessHopUsesMutationTimeout(t *testing.T) {
 	}
 }
 
+func TestAgentForwarder_UserHopUsesMutationTimeout(t *testing.T) {
+	if userHopTimeout != rpc.MutationTimeout {
+		t.Fatalf("userHopTimeout=%v want MutationTimeout=%v", userHopTimeout, rpc.MutationTimeout)
+	}
+	f := testForwarder(t)
+	hc, _, err := f.dial(api.Route{NodeID: "leader", RPC: "127.0.0.1:1"}, userHopTimeout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hc.Timeout != rpc.MutationTimeout {
+		t.Fatalf("user hop Timeout=%v want %v", hc.Timeout, rpc.MutationTimeout)
+	}
+}
+
 func TestAgentForwarder_AlertHopUsesMutationTimeout(t *testing.T) {
 	if alertHopTimeout != rpc.MutationTimeout {
 		t.Fatalf("alertHopTimeout=%v want MutationTimeout=%v", alertHopTimeout, rpc.MutationTimeout)

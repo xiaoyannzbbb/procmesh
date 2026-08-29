@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -9,7 +10,10 @@ import (
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/control"
+	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/rpc"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
+	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
 
 func TestUser_CreateListDisable(t *testing.T) {
@@ -100,6 +104,184 @@ func TestUser_CreateListDisable(t *testing.T) {
 	if code != connect.CodeNotFound || detail != "NOT_FOUND" {
 		t.Fatalf("missing code=%v detail=%s err=%v", code, detail, err)
 	}
+}
+
+func TestUser_CreateOnFollowerForwardsToLeader(t *testing.T) {
+	store, svc := newBootstrappedAuth(t)
+	store.applyErr = errcode.E(errcode.UNAVAILABLE, "not raft leader")
+	client := &recordingUserClient{}
+	forwarder := &recordingUserForwarder{client: client}
+	api := &UserAPI{
+		Auth: svc, LocalID: "node-follower", IsLeader: func() bool { return false },
+		LeaderRoute: func() (Route, error) {
+			return Route{NodeID: "node-leader", RPC: "127.0.0.1:18685"}, nil
+		},
+		Forward: forwarder,
+	}
+	ctx := WithPrincipal(context.Background(), auth.Principal{
+		UserID: "user-admin", Username: "admin", SessionID: "session-admin",
+	})
+
+	req := connect.NewRequest(&procmeshv1.CreateUserRequest{
+		Meta:     &procmeshv1.MutationMeta{OperationId: "op-user-create-forward", Operator: "admin"},
+		Username: "alice",
+		Password: "alice-pass-ok",
+	})
+	req.Header().Set("Authorization", "Bearer must-not-forward")
+	resp, err := api.CreateUser(ctx, req)
+	if err != nil {
+		t.Fatalf("CreateUser through follower: %v", err)
+	}
+	if resp.Msg.GetUser().GetUsername() != "alice" {
+		t.Fatalf("response user = %+v", resp.Msg.GetUser())
+	}
+	if forwarder.calls != 1 || forwarder.route.NodeID != "node-leader" {
+		t.Fatalf("forward calls=%d route=%+v", forwarder.calls, forwarder.route)
+	}
+	if client.createCalls != 1 || client.lastCreate.Msg.GetMeta().GetOperationId() != "op-user-create-forward" {
+		t.Fatalf("forwarded request calls=%d request=%+v", client.createCalls, client.lastCreate)
+	}
+	h := client.lastCreate.Header()
+	if rpc.SourceOf(h) != "node-follower" || rpc.TargetOf(h) != "node-leader" || rpc.UserIDOf(h) != "user-admin" || rpc.SessionIDOf(h) != "session-admin" {
+		t.Fatalf("forwarded headers=%v", h)
+	}
+	if h.Get("Authorization") != "" {
+		t.Fatal("forwarded browser authorization header")
+	}
+	if _, ok := store.View().Users["alice"]; ok {
+		t.Fatal("follower applied user locally")
+	}
+}
+
+func TestUser_CreateOnFollowerWithoutLeaderIsUnavailable(t *testing.T) {
+	store, svc := newBootstrappedAuth(t)
+	store.applyErr = errcode.E(errcode.UNAVAILABLE, "not raft leader")
+	api := &UserAPI{Auth: svc, IsLeader: func() bool { return false }}
+	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-admin", Username: "admin"})
+
+	_, err := api.CreateUser(ctx, connect.NewRequest(&procmeshv1.CreateUserRequest{
+		Meta:     &procmeshv1.MutationMeta{OperationId: "op-user-create-no-leader", Operator: "admin"},
+		Username: "alice",
+		Password: "alice-pass-ok",
+	}))
+	code, detail := connectDetail(t, err)
+	if code != connect.CodeUnavailable || detail != "UNAVAILABLE" {
+		t.Fatalf("code=%v detail=%q err=%v", code, detail, err)
+	}
+	if strings.Contains(err.Error(), "not raft leader") {
+		t.Fatalf("leaked local raft error: %v", err)
+	}
+}
+
+func TestUser_CreateOnFollowerDialFailureIsRedacted(t *testing.T) {
+	_, svc := newBootstrappedAuth(t)
+	client := &recordingUserClient{createErr: connect.NewError(
+		connect.CodeUnavailable, errors.New("dial tcp 10.0.0.9:18685: connection refused"),
+	)}
+	forwarder := &recordingUserForwarder{client: client}
+	api := &UserAPI{
+		Auth: svc, LocalID: "node-follower", IsLeader: func() bool { return false },
+		LeaderRoute: func() (Route, error) {
+			return Route{NodeID: "node-leader", RPC: "10.0.0.9:18685"}, nil
+		},
+		Forward: forwarder,
+	}
+	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-admin", Username: "admin"})
+
+	_, err := api.CreateUser(ctx, connect.NewRequest(&procmeshv1.CreateUserRequest{
+		Meta:     &procmeshv1.MutationMeta{OperationId: "op-user-create-dial-fail", Operator: "admin"},
+		Username: "alice",
+		Password: "alice-pass-ok",
+	}))
+	code, detail := connectDetail(t, err)
+	if code != connect.CodeUnavailable || detail != "UNAVAILABLE" {
+		t.Fatalf("code=%v detail=%q err=%v", code, detail, err)
+	}
+	if !strings.Contains(err.Error(), "control leader unavailable") || strings.Contains(err.Error(), "10.0.0.9") {
+		t.Fatalf("unredacted dial failure: %v", err)
+	}
+}
+
+func TestUser_UpdateOnFollowerForwardsToLeader(t *testing.T) {
+	store, svc := newBootstrappedAuth(t)
+	store.applyErr = errcode.E(errcode.UNAVAILABLE, "not raft leader")
+	client := &recordingUserClient{}
+	forwarder := &recordingUserForwarder{client: client}
+	api := &UserAPI{
+		Auth: svc, LocalID: "node-follower", IsLeader: func() bool { return false },
+		LeaderRoute: func() (Route, error) {
+			return Route{NodeID: "node-leader", RPC: "127.0.0.1:18685"}, nil
+		},
+		Forward: forwarder,
+	}
+	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-admin", Username: "admin"})
+
+	if _, err := api.DisableUser(ctx, connect.NewRequest(&procmeshv1.DisableUserRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-user-disable-forward", Operator: "admin"}, UserId: "user-alice",
+	})); err != nil {
+		t.Fatalf("DisableUser through follower: %v", err)
+	}
+	if _, err := api.EnableUser(ctx, connect.NewRequest(&procmeshv1.EnableUserRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-user-enable-forward", Operator: "admin"}, UserId: "user-alice",
+	})); err != nil {
+		t.Fatalf("EnableUser through follower: %v", err)
+	}
+	if forwarder.calls != 2 || client.disableCalls != 1 || client.enableCalls != 1 {
+		t.Fatalf("forward calls=%d disable=%d enable=%d", forwarder.calls, client.disableCalls, client.enableCalls)
+	}
+}
+
+type recordingUserForwarder struct {
+	client procmeshv1connect.UserServiceClient
+	calls  int
+	route  Route
+	err    error
+}
+
+func (f *recordingUserForwarder) User(_ context.Context, route Route) (procmeshv1connect.UserServiceClient, error) {
+	f.calls++
+	f.route = route
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.client, nil
+}
+
+type recordingUserClient struct {
+	createCalls  int
+	disableCalls int
+	enableCalls  int
+	lastCreate   *connect.Request[procmeshv1.CreateUserRequest]
+	createErr    error
+}
+
+func (c *recordingUserClient) ListUsers(context.Context, *connect.Request[procmeshv1.ListUsersRequest]) (*connect.Response[procmeshv1.ListUsersResponse], error) {
+	return connect.NewResponse(&procmeshv1.ListUsersResponse{}), nil
+}
+
+func (c *recordingUserClient) CreateUser(_ context.Context, req *connect.Request[procmeshv1.CreateUserRequest]) (*connect.Response[procmeshv1.CreateUserResponse], error) {
+	c.createCalls++
+	c.lastCreate = req
+	if c.createErr != nil {
+		return nil, c.createErr
+	}
+	return connect.NewResponse(&procmeshv1.CreateUserResponse{User: &procmeshv1.User{
+		UserId: "user-alice", Username: req.Msg.GetUsername(), Status: string(control.UserActive),
+	}}), nil
+}
+
+func (c *recordingUserClient) DisableUser(context.Context, *connect.Request[procmeshv1.DisableUserRequest]) (*connect.Response[procmeshv1.DisableUserResponse], error) {
+	c.disableCalls++
+	return connect.NewResponse(&procmeshv1.DisableUserResponse{User: &procmeshv1.User{
+		UserId: "user-alice", Username: "alice", Status: string(control.UserDisabled),
+	}}), nil
+}
+
+func (c *recordingUserClient) EnableUser(context.Context, *connect.Request[procmeshv1.EnableUserRequest]) (*connect.Response[procmeshv1.EnableUserResponse], error) {
+	c.enableCalls++
+	return connect.NewResponse(&procmeshv1.EnableUserResponse{User: &procmeshv1.User{
+		UserId: "user-alice", Username: "alice", Status: string(control.UserActive),
+	}}), nil
 }
 
 func TestUser_DisableRejectsCurrentUser(t *testing.T) {
