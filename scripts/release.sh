@@ -19,6 +19,9 @@ Options:
 
 Environment:
   GITHUB_REMOTE  Git remote name to publish to (default: github).
+  PROCMESH_RELEASE_SIGNING_KEY  Path to a 0600 Ed25519 PKCS#8 PEM or base64 key.
+  PROCMESH_RELEASE_KEY_ID       key_id already present in trusted_keys.json.
+  PROCMESH_ROLLBACK_SAFE_FROM   Comma-separated stable versions safe to roll back to.
 EOF
 }
 
@@ -40,7 +43,6 @@ github_repository() {
     git@github.com:*) printf '%s\n' "${remote_url#git@github.com:}" ;;
     ssh://git@github.com/*) printf '%s\n' "${remote_url#ssh://git@github.com/}" ;;
     https://github.com/*) printf '%s\n' "${remote_url#https://github.com/}" ;;
-    http://github.com/*) printf '%s\n' "${remote_url#http://github.com/}" ;;
     *) die "remote $1 is not a GitHub URL: $remote_url" ;;
   esac
 }
@@ -75,7 +77,7 @@ while (($#)); do
   shift
 done
 
-[[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]] || \
+[[ "$version" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || \
   die "version must use vMAJOR.MINOR.PATCH format, for example v1.2.3"
 
 require_command git
@@ -98,6 +100,7 @@ branch=$(git branch --show-current)
 
 remote=${GITHUB_REMOTE:-github}
 repository=$(github_repository "$remote")
+[[ "$repository" == "xiaoyannzbbb/procmesh" ]] || die "releases must publish to the fixed official repository"
 commit=$(git rev-parse HEAD)
 git rev-parse -q --verify "refs/tags/$version" >/dev/null && die "tag already exists locally: $version"
 
@@ -129,7 +132,7 @@ targets=(
   darwin/amd64
   darwin/arm64
 )
-binaries=(procmesh procmesh-agent procmesh-shim)
+binaries=(procmesh procmesh-agent procmesh-shim procmesh-updater)
 ldflags="-s -w -X github.com/qleelulu/procmesh/internal/version.Agent=$version"
 
 for target in "${targets[@]}"; do
@@ -155,6 +158,8 @@ for target in "${targets[@]}"; do
   cp README.md "$package_dir/README.md"
   if [[ "$os" == "linux" ]]; then
     cp deployments/systemd/procmesh-agent.service "$package_dir/procmesh-agent.service"
+    cp deployments/systemd/procmesh-agent-update@.service "$package_dir/procmesh-agent-update@.service"
+    cp deployments/systemd/procmesh-agent-update-recover.service "$package_dir/procmesh-agent-update-recover.service"
     cp docs/conf/agent.yaml "$package_dir/agent.yaml"
   fi
 
@@ -166,6 +171,20 @@ for target in "${targets[@]}"; do
     tar -C "$build_dir" -czf "$dist_dir/$archive_base.tar.gz" "$archive_base"
   fi
 done
+
+signing_key=${PROCMESH_RELEASE_SIGNING_KEY:-}
+key_id=${PROCMESH_RELEASE_KEY_ID:-}
+rollback_safe_from=${PROCMESH_ROLLBACK_SAFE_FROM:-}
+[[ -n "$signing_key" ]] || die "PROCMESH_RELEASE_SIGNING_KEY is required"
+[[ -n "$key_id" ]] || die "PROCMESH_RELEASE_KEY_ID is required"
+[[ -n "$rollback_safe_from" ]] || die "PROCMESH_ROLLBACK_SAFE_FROM is required"
+go run ./cmd/procmesh-release-metadata \
+  --version "$version" \
+  --artifact-dir "$dist_dir" \
+  --rollback-safe-from "$rollback_safe_from" \
+  --key-id "$key_id" \
+  --private-key "$signing_key" \
+  --trusted-keys internal/update/trust/trusted_keys.json
 
 checksums="$dist_dir/checksums.txt"
 : > "$checksums"
@@ -189,8 +208,10 @@ git push "$remote" HEAD:refs/heads/main
 git tag -a "$version" -m "Release $version" "$commit"
 git push "$remote" "refs/tags/$version"
 
-release_notes=$'Prebuilt archives include procmesh, procmesh-agent, and procmesh-shim. Linux archives also include the default agent.yaml and a systemd unit.\n\nPlatform support:\n- Linux amd64/arm64/armv7: production target.\n- macOS amd64/arm64: development and evaluation target.\n\nWindows is not released because the Agent and Shim currently depend on Unix process and filesystem APIs.'
+release_notes=$'Prebuilt archives include procmesh, procmesh-agent, procmesh-shim, and procmesh-updater. Linux archives also include the default agent.yaml, the Agent unit, and the restricted updater oneshot unit. Signed stable.json and manifest.json metadata are the trust source for managed installation; checksums.txt remains for manual inspection only.\n\nPlatform support:\n- Linux amd64/arm64/armv7: production target.\n- macOS amd64/arm64: development and evaluation target; managed automatic installation is unavailable.\n\nWindows is not released because the Agent and Shim currently depend on Unix process and filesystem APIs.'
 gh release create "$version" "$dist_dir"/*.tar.gz "$checksums" \
+  "$dist_dir/manifest.json" "$dist_dir/manifest.json.sig" \
+  "$dist_dir/stable.json" "$dist_dir/stable.json.sig" \
   --repo "$repository" \
   --target "$commit" \
   --title "$version" \

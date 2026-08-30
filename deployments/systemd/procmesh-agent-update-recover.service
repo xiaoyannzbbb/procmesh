@@ -1,0 +1,28 @@
+[Unit]
+Description=Recover interrupted ProcMesh Agent updates
+Documentation=https://github.com/xiaoyannzbbb/procmesh
+After=network-online.target procmesh-agent.service
+Wants=network-online.target procmesh-agent.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/local/lib/procmesh/current/procmesh-updater --recover
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectSystem=strict
+ReadWritePaths=/usr/local/lib/procmesh /var/lib/procmesh/update
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+
+[Install]
+WantedBy=multi-user.target

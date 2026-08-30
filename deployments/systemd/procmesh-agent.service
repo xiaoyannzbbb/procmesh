@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/procmesh-agent --data-dir /var/lib/procmesh --listen 127.0.0.1:18680
+ExecStart=/usr/local/lib/procmesh/current/procmesh-agent --data-dir /var/lib/procmesh --listen 127.0.0.1:18680 --shim-bin /usr/local/lib/procmesh/current/procmesh-shim
 Restart=on-failure
 KillMode=process
 LimitNOFILE=65536

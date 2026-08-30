@@ -144,18 +144,25 @@ go test ./...
 GOOS=linux GOARCH=amd64 go build -o bin/procmesh ./cmd/procmesh
 GOOS=linux GOARCH=amd64 go build -o bin/procmesh-agent ./cmd/procmesh-agent
 GOOS=linux GOARCH=amd64 go build -o bin/procmesh-shim ./cmd/procmesh-shim
+GOOS=linux GOARCH=amd64 go build -o bin/procmesh-updater ./cmd/procmesh-updater
 ```
 
 ARM64 节点把 `GOARCH=amd64` 改为 `GOARCH=arm64`。
 
 ### 4.2 在每个节点安装
 
-将三个文件分发到每个节点后执行：
+正式环境推荐使用 README 中的签名官方安装器创建托管布局。若分发自行构建的四个文件，以下手工布局不会因此自动成为“官方受信安装”；它只用于开发/评估，后续自动更新能力应保持 `MANUAL_REQUIRED`：
 
 ```bash
-sudo install -m 0755 bin/procmesh /usr/local/bin/procmesh
-sudo install -m 0755 bin/procmesh-agent /usr/local/bin/procmesh-agent
-sudo install -m 0755 bin/procmesh-shim /usr/local/bin/procmesh-shim
+sudo install -d -m 0755 /usr/local/lib/procmesh/versions/dev
+sudo install -m 0755 bin/procmesh /usr/local/lib/procmesh/versions/dev/procmesh
+sudo install -m 0755 bin/procmesh-agent /usr/local/lib/procmesh/versions/dev/procmesh-agent
+sudo install -m 0755 bin/procmesh-shim /usr/local/lib/procmesh/versions/dev/procmesh-shim
+sudo install -m 0755 bin/procmesh-updater /usr/local/lib/procmesh/versions/dev/procmesh-updater
+sudo ln -sfn versions/dev /usr/local/lib/procmesh/current
+sudo ln -sfn ../lib/procmesh/current/procmesh /usr/local/bin/procmesh
+sudo ln -sfn ../lib/procmesh/current/procmesh-agent /usr/local/bin/procmesh-agent
+sudo ln -sfn ../lib/procmesh/current/procmesh-shim /usr/local/bin/procmesh-shim
 ```
 
 验证文件和版本兼容性：
@@ -167,7 +174,7 @@ command -v procmesh-shim
 procmesh-agent --help
 ```
 
-三个节点应使用同一次构建产生的二进制，避免协议版本不一致导致节点拒绝加入。
+三个节点应使用同一次构建产生的二进制，避免协议版本不一致导致节点拒绝加入。生产托管节点的版本目录必须是稳定 SemVer（例如 `v1.2.3`）且来自已签名官方 Release；不要把上面的 `dev` 目录改名后伪装成受信版本。
 
 ## 5. 配置 systemd
 
@@ -240,14 +247,14 @@ After=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=/etc/procmesh/procmesh.env
-ExecStart=/usr/local/bin/procmesh-agent \
+ExecStart=/usr/local/lib/procmesh/current/procmesh-agent \
   --data-dir /var/lib/procmesh \
   --config /etc/procmesh/agent.yaml \
   --listen ${PROCMESH_NODE_IP}:18680 \
   --rpc ${PROCMESH_NODE_IP}:18683 \
   --control ${PROCMESH_NODE_IP}:18685 \
   --gossip ${PROCMESH_NODE_IP}:18689 \
-  --shim-bin /usr/local/bin/procmesh-shim \
+  --shim-bin /usr/local/lib/procmesh/current/procmesh-shim \
   --insecure-listen \
   --log-format json \
   --log-level info
@@ -715,10 +722,10 @@ procmesh --server 10.0.0.11:18680 process start <NAME>
 
 ### 11.6 启动进程时报 shim not found
 
-确认 `procmesh-shim` 位于 `PATH` 中或与 `procmesh-agent` 在同一目录。本文 systemd 单元还通过 `--shim-bin /usr/local/bin/procmesh-shim` 显式指定了路径：
+确认 `procmesh-shim` 位于 `PATH` 中或与 `procmesh-agent` 在同一版本目录。本文 systemd 单元还通过 `--shim-bin /usr/local/lib/procmesh/current/procmesh-shim` 显式指定了路径：
 
 ```bash
-ls -l /usr/local/bin/procmesh-shim
+ls -l /usr/local/lib/procmesh/current/procmesh-shim
 sudo journalctl -u procmesh-agent -n 100 --no-pager
 ```
 

@@ -2,9 +2,15 @@
 
 set -euo pipefail
 
-readonly repository="${PROCMESH_REPOSITORY:-xiaoyannzbbb/procmesh}"
+readonly repository="xiaoyannzbbb/procmesh"
 readonly tty=/dev/tty
 readonly unit_path=/etc/systemd/system/procmesh-agent.service
+readonly update_unit_path=/etc/systemd/system/procmesh-agent-update@.service
+readonly update_recover_unit_path=/etc/systemd/system/procmesh-agent-update-recover.service
+readonly managed_root=/usr/local/lib/procmesh
+readonly managed_bin_dir=/usr/local/bin
+readonly update_root=/var/lib/procmesh/update
+readonly trusted_key_registry='{"schema_version":1,"keys":[]}'
 
 usage() {
   cat <<'EOF'
@@ -12,10 +18,8 @@ Usage: scripts/install.sh
 
 Interactively installs the latest stable ProcMesh GitHub Release on Linux.
 The script supports amd64, arm64, and armv7l hosts. It verifies the selected
-archive with the release checksums before installing any binary.
-
-Environment:
-  PROCMESH_REPOSITORY  GitHub owner/repository (default: xiaoyannzbbb/procmesh)
+archive with the signed stable Channel Index and Release Manifest before
+installing any binary. The official release origin and trust keys are fixed.
 EOF
 }
 
@@ -92,26 +96,6 @@ run_privileged() {
   sudo "$@"
 }
 
-path_parent_is_writable() {
-  local path=$1
-
-  while [[ ! -e "$path" ]]; do
-    path=$(dirname "$path")
-  done
-  [[ -d "$path" && -w "$path" ]]
-}
-
-run_for_install_dir() {
-  local install_dir=$1
-  shift
-
-  if path_parent_is_writable "$install_dir"; then
-    "$@"
-  else
-    run_privileged "$@"
-  fi
-}
-
 detect_architecture() {
   case "$(uname -m)" in
     x86_64|amd64) printf 'amd64\n' ;;
@@ -119,18 +103,6 @@ detect_architecture() {
     armv7l) printf 'armv7\n' ;;
     *) die "unsupported Linux architecture: $(uname -m); supported: amd64, arm64, armv7l" ;;
   esac
-}
-
-release_tag() {
-  local api_url="https://api.github.com/repos/$repository/releases/latest"
-  local body tag
-
-  body=$(curl --fail --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 "$api_url") || \
-    die "unable to read the latest GitHub Release"
-  tag=$(printf '%s' "$body" | tr '\n' ' ' | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-  [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]] || \
-    die "latest GitHub Release has an unsupported tag: ${tag:-missing}"
-  printf '%s\n' "$tag"
 }
 
 download_file() {
@@ -141,23 +113,49 @@ download_file() {
     --output "$destination" "$url" || die "download failed: $url"
 }
 
-verify_checksum() {
-  local archive=$1
-  local checksums=$2
-  local filename expected actual
+trusted_public_key() {
+  local key_id=$1
+  local count
+  count=$(printf '%s' "$trusted_key_registry" | jq -er --arg key_id "$key_id" \
+    '[.keys[] | select(.key_id == $key_id and .algorithm == "ed25519")] | length') || \
+    die "embedded trusted key registry is invalid"
+  [[ "$count" == 1 ]] || die "release metadata was signed by an untrusted key_id"
+  printf '%s' "$trusted_key_registry" | jq -er --arg key_id "$key_id" \
+    '.keys[] | select(.key_id == $key_id and .algorithm == "ed25519") | .public_key'
+}
 
-  filename=$(basename "$archive")
-  expected=$(awk -v file="$filename" '$2 == file { print $1; exit }' "$checksums")
-  [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]] || die "no SHA-256 checksum found for $filename"
+verify_signature() {
+  local payload=$1
+  local envelope=$2
+  local work_dir=$3
+  local schema algorithm key_id signature public_key
 
+  [[ "$(jq -c . "$envelope")" == "$(<"$envelope")" ]] || die "signature envelope is not canonical JSON"
+  jq -e 'keys == ["algorithm", "key_id", "schema_version", "signature"]' "$envelope" >/dev/null || \
+    die "signature envelope has unknown or missing fields"
+  schema=$(jq -er '.schema_version' "$envelope") || die "signature envelope is invalid"
+  algorithm=$(jq -er '.algorithm' "$envelope") || die "signature envelope is invalid"
+  key_id=$(jq -er '.key_id' "$envelope") || die "signature envelope is invalid"
+  signature=$(jq -er '.signature' "$envelope") || die "signature envelope is invalid"
+  [[ "$schema" == 1 && "$algorithm" == ed25519 && "$key_id" =~ ^[a-z0-9][a-z0-9._-]{0,63}$ ]] || \
+    die "signature envelope is unsupported"
+  public_key=$(trusted_public_key "$key_id")
+
+  printf '%s' "$signature" | openssl base64 -d -A >"$work_dir/signature.bin" || die "signature encoding is invalid"
+  printf '\x30\x2a\x30\x05\x06\x03\x2b\x65\x70\x03\x21\x00' >"$work_dir/public.der"
+  printf '%s' "$public_key" | openssl base64 -d -A >>"$work_dir/public.der" || die "trusted public key is invalid"
+  openssl pkey -pubin -inform DER -in "$work_dir/public.der" -out "$work_dir/public.pem" >/dev/null 2>&1 || \
+    die "trusted public key is invalid"
+  openssl pkeyutl -verify -pubin -inkey "$work_dir/public.pem" -rawin \
+    -in "$payload" -sigfile "$work_dir/signature.bin" >/dev/null 2>&1 || die "release signature verification failed"
+}
+
+sha256_file() {
   if command -v sha256sum >/dev/null 2>&1; then
-    actual=$(sha256sum "$archive" | awk '{ print $1 }')
+    sha256sum "$1" | awk '{ print $1 }'
   else
-    actual=$(shasum -a 256 "$archive" | awk '{ print $1 }')
+    shasum -a 256 "$1" | awk '{ print $1 }'
   fi
-  expected=$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')
-  actual=$(printf '%s' "$actual" | tr '[:upper:]' '[:lower:]')
-  [[ "$actual" == "$expected" ]] || die "SHA-256 verification failed for $filename"
 }
 
 verify_archive_paths() {
@@ -239,50 +237,111 @@ fi
 }
 
 [[ "$(uname -s)" == "Linux" ]] || die "ProcMesh automatic installation supports Linux only"
-[[ "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "invalid PROCMESH_REPOSITORY"
+[[ "$repository" == "xiaoyannzbbb/procmesh" ]] || die "invalid official repository"
 
 require_tty
 require_command curl
 require_command tar
 require_command awk
+require_command jq
+require_command openssl
+require_command date
 require_command sed
-require_command tr
 require_command install
 require_command mktemp
 require_command dirname
+require_command stat
+require_command mv
+require_command ln
 if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
   die "required checksum command not found: sha256sum or shasum"
 fi
 
 architecture=$(detect_architecture)
-tag=$(release_tag)
-archive_base="procmesh_${tag#v}_linux_${architecture}"
-archive_name="$archive_base.tar.gz"
-download_base="https://github.com/$repository/releases/download/$tag"
-
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT
+channel_base="https://github.com/$repository/releases/latest/download"
+download_file "$channel_base/stable.json" "$tmp_dir/stable.json"
+download_file "$channel_base/stable.json.sig" "$tmp_dir/stable.json.sig"
+verify_signature "$tmp_dir/stable.json" "$tmp_dir/stable.json.sig" "$tmp_dir"
+[[ "$(jq -c . "$tmp_dir/stable.json")" == "$(<"$tmp_dir/stable.json")" ]] || die "Channel Index is not canonical JSON"
+jq -e 'keys == ["channel", "expires_at", "generated_at", "release", "schema_version"] and (.release | keys == ["manifest_sha256", "manifest_signature_url", "manifest_url", "version"])' \
+  "$tmp_dir/stable.json" >/dev/null || die "Channel Index has unknown or missing fields"
+[[ "$(jq -er '.schema_version' "$tmp_dir/stable.json")" == 1 ]] || die "unsupported Channel Index schema"
+[[ "$(jq -er '.channel' "$tmp_dir/stable.json")" == stable ]] || die "unsupported release channel"
+tag=$(jq -er '.release.version' "$tmp_dir/stable.json") || die "Channel Index has no release version"
+[[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || die "Channel Index release version is invalid"
+generated_at=$(jq -er '.generated_at' "$tmp_dir/stable.json") || die "Channel Index has no generation time"
+expires_at=$(jq -er '.expires_at' "$tmp_dir/stable.json") || die "Channel Index has no expiry"
+generated_epoch=$(date -u -d "$generated_at" +%s) || die "Channel Index generation time is invalid"
+expires_epoch=$(date -u -d "$expires_at" +%s) || die "Channel Index expiry is invalid"
+current_epoch=$(date -u +%s)
+((generated_epoch <= current_epoch && expires_epoch > current_epoch && expires_epoch > generated_epoch)) || \
+  die "Channel Index is outside its validity period"
+download_base="https://github.com/$repository/releases/download/$tag"
+manifest_url=$(jq -er '.release.manifest_url' "$tmp_dir/stable.json") || die "Channel Index manifest URL is missing"
+manifest_signature_url=$(jq -er '.release.manifest_signature_url' "$tmp_dir/stable.json") || die "Channel Index signature URL is missing"
+manifest_digest=$(jq -er '.release.manifest_sha256' "$tmp_dir/stable.json") || die "Channel Index manifest digest is missing"
+[[ "$manifest_url" == "$download_base/manifest.json" ]] || die "Channel Index contains a non-official manifest URL"
+[[ "$manifest_signature_url" == "$download_base/manifest.json.sig" ]] || die "Channel Index contains a non-official signature URL"
+[[ "$manifest_digest" =~ ^[0-9a-f]{64}$ ]] || die "Channel Index manifest digest is invalid"
+
+download_file "$download_base/manifest.json" "$tmp_dir/manifest.json"
+download_file "$download_base/manifest.json.sig" "$tmp_dir/manifest.json.sig"
+[[ "$(sha256_file "$tmp_dir/manifest.json")" == "$manifest_digest" ]] || die "Release Manifest digest verification failed"
+verify_signature "$tmp_dir/manifest.json" "$tmp_dir/manifest.json.sig" "$tmp_dir"
+[[ "$(jq -c . "$tmp_dir/manifest.json")" == "$(<"$tmp_dir/manifest.json")" ]] || die "Release Manifest is not canonical JSON"
+jq -e 'keys == ["artifacts", "channel", "compatible_from_protocols", "protocol_version", "published_at", "release_notes_url", "release_version", "rollback_safe_from", "schema_version", "shim_protocol_max", "shim_protocol_min"] and all(.artifacts[]; keys == ["arch", "os", "sha256", "size", "url"])' \
+  "$tmp_dir/manifest.json" >/dev/null || die "Release Manifest has unknown or missing fields"
+[[ "$(jq -er '.schema_version' "$tmp_dir/manifest.json")" == 1 ]] || die "unsupported Release Manifest schema"
+[[ "$(jq -er '.release_version' "$tmp_dir/manifest.json")" == "$tag" ]] || die "Release Manifest version mismatch"
+[[ "$(jq -er '.channel' "$tmp_dir/manifest.json")" == stable ]] || die "unsupported Release Manifest channel"
+
+artifact_count=$(jq -er --arg arch "$architecture" '[.artifacts[] | select(.os == "linux" and .arch == $arch)] | length' "$tmp_dir/manifest.json") || \
+  die "Release Manifest artifacts are invalid"
+[[ "$artifact_count" == 1 ]] || die "Release Manifest must contain exactly one artifact for this host"
+archive_name=$(jq -er --arg arch "$architecture" '.artifacts[] | select(.os == "linux" and .arch == $arch) | .url' "$tmp_dir/manifest.json") || \
+  die "Release Manifest artifact URL is missing"
+archive_size=$(jq -er --arg arch "$architecture" '.artifacts[] | select(.os == "linux" and .arch == $arch) | .size' "$tmp_dir/manifest.json") || \
+  die "Release Manifest artifact size is missing"
+archive_digest=$(jq -er --arg arch "$architecture" '.artifacts[] | select(.os == "linux" and .arch == $arch) | .sha256' "$tmp_dir/manifest.json") || \
+  die "Release Manifest artifact digest is missing"
+archive_base="procmesh_${tag#v}_linux_${architecture}"
+[[ "$archive_name" == "$archive_base.tar.gz" ]] || die "Release Manifest contains an unsafe artifact URL"
+[[ "$archive_size" =~ ^[1-9][0-9]*$ && "$archive_size" -le 536870912 ]] || die "Release Manifest artifact size is invalid"
+[[ "$archive_digest" =~ ^[0-9a-f]{64}$ ]] || die "Release Manifest artifact digest is invalid"
+
 download_file "$download_base/$archive_name" "$tmp_dir/$archive_name"
-download_file "$download_base/checksums.txt" "$tmp_dir/checksums.txt"
-verify_checksum "$tmp_dir/$archive_name" "$tmp_dir/checksums.txt"
+actual_size=$(stat -c %s "$tmp_dir/$archive_name") || die "unable to read release archive size"
+[[ "$actual_size" == "$archive_size" ]] || die "release archive size verification failed"
+[[ "$(sha256_file "$tmp_dir/$archive_name")" == "$archive_digest" ]] || die "release archive SHA-256 verification failed"
 verify_archive_paths "$tmp_dir/$archive_name"
-tar -xzf "$tmp_dir/$archive_name" -C "$tmp_dir"
 
 package_dir="$tmp_dir/$archive_base"
-for binary in procmesh procmesh-agent procmesh-shim; do
-  [[ -f "$package_dir/$binary" ]] || die "release archive is missing $binary"
+install -d -m 0700 "$package_dir"
+for binary in procmesh procmesh-agent procmesh-shim procmesh-updater; do
+  member="$archive_base/$binary"
+  [[ "$(tar -tzf "$tmp_dir/$archive_name" | awk -v file="$member" '$0 == file { count++ } END { print count + 0 }')" == 1 ]] || \
+    die "release archive must contain exactly one $binary"
+  tar -xOzf "$tmp_dir/$archive_name" "$member" >"$package_dir/$binary" || die "unable to extract $binary"
+  [[ -s "$package_dir/$binary" ]] || die "release archive contains an empty $binary"
+  chmod 0755 "$package_dir/$binary"
+done
+for ancillary in agent.yaml procmesh-agent.service procmesh-agent-update@.service procmesh-agent-update-recover.service; do
+  member="$archive_base/$ancillary"
+  if tar -tzf "$tmp_dir/$archive_name" | awk -v file="$member" '$0 == file { found = 1 } END { exit !found }'; then
+    tar -xOzf "$tmp_dir/$archive_name" "$member" >"$package_dir/$ancillary" || die "unable to extract $ancillary"
+    chmod 0644 "$package_dir/$ancillary"
+  fi
 done
 
-printf 'Verified ProcMesh %s for Linux %s.\n' "$tag" "$architecture"
-prompt_value 'Installation directory (absolute path or ~/...)' '/usr/local/bin'
-install_dir=$(expand_home "$REPLY")
-require_absolute_path "$install_dir"
+printf 'Verified signed ProcMesh %s for Linux %s.\n' "$tag" "$architecture"
 
 existing_binaries=()
 for binary in procmesh procmesh-agent procmesh-shim; do
-  [[ -e "$install_dir/$binary" ]] && existing_binaries+=("$binary")
+  [[ -e "$managed_bin_dir/$binary" || -L "$managed_bin_dir/$binary" ]] && existing_binaries+=("$binary")
 done
-if ((${#existing_binaries[@]})) && ! prompt_yes_no "Existing binaries found in $install_dir (${existing_binaries[*]}). Replace them" no; then
+if ((${#existing_binaries[@]})) && ! prompt_yes_no "Bootstrap the existing flat installation into the managed layout (${existing_binaries[*]})" no; then
   printf 'Installation cancelled; existing binaries were not changed.\n'
   exit 0
 fi
@@ -293,16 +352,26 @@ if [[ -d /run/systemd/system ]] && systemctl is-active --quiet procmesh-agent; t
   agent_was_running=true
 fi
 
-if [[ -e "$install_dir" && ! -d "$install_dir" ]]; then
-  die "installation path is not a directory: $install_dir"
-fi
-if [[ ! -d "$install_dir" ]]; then
-  run_for_install_dir "$install_dir" install -d -m 0755 "$install_dir"
-fi
-for binary in procmesh procmesh-agent procmesh-shim; do
-  run_for_install_dir "$install_dir" install -m 0755 "$package_dir/$binary" "$install_dir/$binary"
+version_dir="$managed_root/versions/$tag"
+[[ ! -e "$version_dir" ]] || die "managed version directory already exists: $version_dir"
+run_privileged install -d -m 0755 "$managed_root" "$managed_root/versions" "$managed_bin_dir"
+run_privileged install -d -m 0755 "$version_dir"
+for binary in procmesh procmesh-agent procmesh-shim procmesh-updater; do
+  run_privileged install -m 0755 "$package_dir/$binary" "$version_dir/$binary"
 done
-printf 'Installed ProcMesh binaries in %s.\n' "$install_dir"
+run_privileged install -d -m 0700 "$update_root" "$update_root/operations"
+
+for pointer in current previous; do
+  temporary_pointer="$managed_root/.${pointer}-install-$$"
+  run_privileged ln -s "versions/$tag" "$temporary_pointer"
+  run_privileged mv -Tf "$temporary_pointer" "$managed_root/$pointer"
+done
+for binary in procmesh procmesh-agent procmesh-shim; do
+  temporary_link="$managed_bin_dir/.${binary}-install-$$"
+  run_privileged ln -s "../lib/procmesh/current/$binary" "$temporary_link"
+  run_privileged mv -Tf "$temporary_link" "$managed_bin_dir/$binary"
+done
+printf 'Installed ProcMesh managed version in %s.\n' "$version_dir"
 
 if prompt_yes_no 'Install a systemd unit' no; then
   [[ -d /run/systemd/system ]] || die 'systemd is not available; binaries were installed but no service was created'
@@ -323,7 +392,7 @@ if prompt_yes_no 'Install a systemd unit' no; then
     listen_port=$REPLY
     [[ "$listen_port" =~ ^[0-9]+$ ]] && ((listen_port >= 1 && listen_port <= 65535)) || \
       die "invalid TCP port: $listen_port"
-    require_systemd_safe_value "$install_dir"
+    require_systemd_safe_value "$managed_root/current"
     require_systemd_safe_value "$data_dir"
     require_systemd_safe_value "$config_path"
     require_systemd_safe_value "$listen_host"
@@ -364,7 +433,7 @@ if prompt_yes_no 'Install a systemd unit' no; then
       printf 'Created default configuration: %s\n' "$config_path"
     fi
 
-    write_systemd_unit "$tmp_dir/procmesh-agent.service" "$install_dir" "$data_dir" "$config_path" "$listen_address" "$insecure_flag"
+    write_systemd_unit "$tmp_dir/procmesh-agent.service" "$managed_root/current" "$data_dir" "$config_path" "$listen_address" "$insecure_flag"
     run_privileged install -m 0644 "$tmp_dir/procmesh-agent.service" "$unit_path"
     run_privileged systemctl daemon-reload
     printf 'Installed systemd unit: %s\n' "$unit_path"
@@ -376,6 +445,14 @@ if prompt_yes_no 'Install a systemd unit' no; then
       printf 'Service was not enabled or started. Start it later with: sudo systemctl enable --now procmesh-agent\n'
     fi
   fi
+
+  [[ -f "$package_dir/procmesh-agent-update@.service" ]] || die 'release archive has no updater systemd unit'
+  [[ -f "$package_dir/procmesh-agent-update-recover.service" ]] || die 'release archive has no updater recovery unit'
+  run_privileged install -m 0644 "$package_dir/procmesh-agent-update@.service" "$update_unit_path"
+  run_privileged install -m 0644 "$package_dir/procmesh-agent-update-recover.service" "$update_recover_unit_path"
+  run_privileged systemctl daemon-reload
+  run_privileged systemctl enable procmesh-agent-update-recover.service
+  printf 'Installed updater unit: %s\n' "$update_unit_path"
 fi
 
 if [[ "$agent_was_running" == true ]]; then

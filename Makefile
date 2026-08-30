@@ -26,4 +26,4 @@ web-dev:
 web:
 	cd web && npm ci && npm run build
 bin:
-	go build -o bin/procmesh cmd/procmesh/main.go && go build -o bin/procmesh-agent cmd/procmesh-agent/main.go && go build -o bin/procmesh-shim cmd/procmesh-shim/main.go
+	go build -o bin/procmesh cmd/procmesh/main.go && go build -o bin/procmesh-agent cmd/procmesh-agent/main.go && go build -o bin/procmesh-shim cmd/procmesh-shim/main.go && go build -o bin/procmesh-updater cmd/procmesh-updater/main.go

@@ -235,20 +235,23 @@ break-glass 明确拒绝 process apply/delete/adopt、配置编辑、backup/rest
 
 ```bash
 gh auth login
+export PROCMESH_RELEASE_SIGNING_KEY=/secure/procmesh-release.pem
+export PROCMESH_RELEASE_KEY_ID=2026-release
+export PROCMESH_ROLLBACK_SAFE_FROM=v1.2.2
 scripts/release.sh v1.2.3
 ```
 
-脚本会构建 Web UI，并为 Linux 的 amd64、arm64、armv7 及 macOS 的 amd64、arm64 目标生成包含三个二进制程序的压缩包及 `checksums.txt`；Linux 包同时包含默认 `agent.yaml` 与 systemd 单元。随后推送 `main`、创建带注释的版本标签并发布 GitHub Release。可先用 `scripts/release.sh v1.2.3 --dry-run` 只生成和检查产物。Linux 是生产目标；macOS 仅用于开发和评估。Windows 暂不发布，因为 Agent 和 Shim 依赖 Unix 进程及文件系统 API。
+脚本会构建 Web UI，并为 Linux 的 amd64、arm64、armv7 及 macOS 的 amd64、arm64 目标生成包含四个二进制程序的压缩包、签名 `stable.json`/`manifest.json` 与 `checksums.txt`；Linux 包同时包含默认 `agent.yaml`、Agent unit 与 updater oneshot units。发布工具只读取权限为 `0600` 的 Ed25519 私钥，并要求对应公钥已编译进受信注册表。可先用 `scripts/release.sh v1.2.3 --dry-run` 只生成和验证产物。密钥初始化与轮换流程见 [Release Trust and Managed Installation](docs/RELEASE_TRUST.md)。
 
 ## 自动安装（Linux）
 
-以下命令会交互式安装最新正式 Release。安装器只支持 `amd64`、`arm64` 和 `armv7l`，下载后强制校验 Release 的 SHA-256 值：
+以下命令会交互式安装最新正式 Release。安装器只支持 `amd64`、`arm64` 和 `armv7l`，要求 `jq`、OpenSSL 和 systemd；安装前依次校验内置 Ed25519 公钥、Channel Index、Manifest、官方 URL、制品大小/SHA-256 与归档路径：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/xiaoyannzbbb/procmesh/main/scripts/install.sh | bash
 ```
 
-默认安装到 `/usr/local/bin`，可在提示时改为其他绝对路径或 `~/...`。安装器默认不创建 systemd 服务；选择创建后可配置数据目录、配置文件、监听地址和端口，默认监听 `127.0.0.1:18680`。非回环监听会自动加入 `--insecure-listen`，因此必须使用防火墙、HTTPS 反向代理、VPN 或堡垒机限制访问。已有配置、数据目录和 systemd 单元不会被覆盖。
+安装器使用固定托管布局 `/usr/local/lib/procmesh/versions/<version>`，原子维护 `current`/`previous`，并在 `/usr/local/bin` 建立兼容链接。旧扁平布局必须由管理员明确确认后人工 bootstrap；在完成首次 bootstrap 前不能自动更新。安装器默认不创建 systemd 服务；选择创建后会同时安装受限 updater 与启动恢复 oneshot。已有配置、数据目录和 Agent systemd 单元不会被覆盖。
 
 ## 端口与安全
 
@@ -280,6 +283,7 @@ curl -o goroutine.txt 'http://127.0.0.1:6060/debug/pprof/goroutine?debug=2'
 ## 文档
 
 - [部署与集群快速开始](docs/QUICKSTART_ZH.md)：systemd 安装、三节点集群初始化、扩容、进程配置与排障。
+- [Release Trust and Managed Installation](docs/RELEASE_TRUST.md)：签名发布、公钥轮换、托管布局与回滚恢复。
 - [UI 优化说明](docs/UI_OPTIMIZATION.md)：Web UI 设计与优化记录。
 - [变更日志](CHANGELOG.md)：已发布和开发中的功能变更。
 - [产品需求文档](docs/v2-prd/v2-prd.md)：产品范围、架构原则与非目标。
