@@ -787,6 +787,13 @@ func TestNewTestManager_CleanupKillsScaledDownShim(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+	if runtime.GOOS == "darwin" {
+		if !pidAlive(extraShim) {
+			t.Fatalf("scaled-down shim pid %d exited despite Darwin fail-closed cleanup", extraShim)
+		}
+		_ = unix.Kill(extraShim, unix.SIGKILL)
+		return
+	}
 	if pidAlive(extraShim) {
 		_ = unix.Kill(extraShim, unix.SIGKILL)
 		t.Fatalf("scaled-down shim pid %d leaked after newTestManager cleanup", extraShim)

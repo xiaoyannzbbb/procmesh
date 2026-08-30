@@ -33,6 +33,11 @@ func (s *fakeService) RestartAgent(context.Context) error {
 type healthFunc func(context.Context, updater.HealthExpectation) error
 
 func (f healthFunc) Check(ctx context.Context, expectation updater.HealthExpectation) error {
+	if expectation.FirstProbeIssued != nil {
+		if err := expectation.FirstProbeIssued(); err != nil {
+			return err
+		}
+	}
 	return f(ctx, expectation)
 }
 

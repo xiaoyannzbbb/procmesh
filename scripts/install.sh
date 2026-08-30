@@ -266,9 +266,9 @@ link_managed_binaries() {
 wait_for_update_health() {
   local address=$1 version=$2 agent_path=$3 attempt health ready body main_pid executable
   for attempt in $(seq 1 150); do
-    health=$(curl --fail --silent "http://$address/healthz" 2>/dev/null || true)
-    ready=$(curl --fail --silent "http://$address/readyz" 2>/dev/null || true)
-    body=$(curl --fail --silent "http://$address/updatez" 2>/dev/null || true)
+    health=$(curl --fail --silent --connect-timeout 0.2 --max-time 0.2 "http://$address/healthz" 2>/dev/null || true)
+    ready=$(curl --fail --silent --connect-timeout 0.2 --max-time 0.2 "http://$address/readyz" 2>/dev/null || true)
+    body=$(curl --fail --silent --connect-timeout 0.2 --max-time 0.2 "http://$address/updatez" 2>/dev/null || true)
     main_pid=$(systemctl show -p MainPID --value procmesh-agent.service 2>/dev/null || true)
     executable=''
     if [[ "$main_pid" =~ ^[1-9][0-9]*$ ]]; then
@@ -277,6 +277,24 @@ wait_for_update_health() {
     if [[ "$health" == ok && "$ready" == ok && -n "$body" ]] && jq -e --arg version "$version" \
       '.version == $version and .store_ready and .shim_recovery_complete' <<<"$body" >/dev/null 2>&1 && \
       [[ "$executable" == "$agent_path" ]]; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  return 1
+}
+
+wait_for_legacy_health() {
+  local address=$1 agent_path=$2 attempt health ready main_pid executable
+  for attempt in $(seq 1 150); do
+    health=$(curl --fail --silent --connect-timeout 0.2 --max-time 0.2 "http://$address/healthz" 2>/dev/null || true)
+    ready=$(curl --fail --silent --connect-timeout 0.2 --max-time 0.2 "http://$address/readyz" 2>/dev/null || true)
+    main_pid=$(systemctl show -p MainPID --value procmesh-agent.service 2>/dev/null || true)
+    executable=''
+    if [[ "$main_pid" =~ ^[1-9][0-9]*$ ]]; then
+      executable=$(readlink "/proc/$main_pid/exe" 2>/dev/null || true)
+    fi
+    if [[ "$health" == ok && "$ready" == ok && "$executable" == "$agent_path" ]]; then
       return 0
     fi
     sleep 0.2
@@ -309,7 +327,7 @@ rollback_flat_bootstrap() {
   run_privileged install -m 0644 "$legacy_unit" "$service_unit" || failed=1
   run_privileged systemctl daemon-reload || failed=1
   run_privileged systemctl restart procmesh-agent.service || failed=1
-  wait_for_update_health "$health_address" "$legacy_version" \
+  wait_for_legacy_health "$health_address" \
     "$install_root/versions/$legacy_version/procmesh-agent" || failed=1
   return "$failed"
 }

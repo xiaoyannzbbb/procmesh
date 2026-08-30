@@ -3,6 +3,7 @@ package updater_test
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -50,6 +51,35 @@ func TestHTTPHealthRequiresReadyEndpointsAndTargetExecutable(t *testing.T) {
 	}
 	if err := checker.Check(context.Background(), updater.HealthExpectation{Version: "v1.2.1", AgentPath: agentPath}); err != nil {
 		t.Fatalf("Check() error = %v", err)
+	}
+}
+
+func TestHTTPHealthSignalsCheckpointAfterFirstProbeIsIssued(t *testing.T) {
+	var events []string
+	checker := updater.HTTPHealth{
+		Address: "127.0.0.1:18680", Timeout: 10 * time.Second, PollInterval: time.Millisecond,
+		Client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			events = append(events, "probe")
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("ok")),
+			}, nil
+		})},
+		Agent: pathReader{},
+	}
+	wantErr := errors.New("checkpoint interrupted")
+	err := checker.Check(context.Background(), updater.HealthExpectation{
+		FirstProbeIssued: func() error {
+			events = append(events, "checkpoint")
+			return wantErr
+		},
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Check() error = %v, want %v", err, wantErr)
+	}
+	if got := strings.Join(events, ","); got != "probe,checkpoint" {
+		t.Fatalf("event order = %q, want probe,checkpoint", got)
 	}
 }
 

@@ -21,10 +21,11 @@ repo_root=$(git rev-parse --show-toplevel)
 output=$(mkdir -p "$(dirname "$output")" && cd "$(dirname "$output")" && pwd)/$(basename "$output")
 work_dir=$(mktemp -d)
 trap 'rm -rf "$work_dir"' EXIT
-mkdir -p "$output/old" "$output/releases" "$work_dir/keys" "$work_dir/packages"
+mkdir -p "$output/old" "$output/baseline" "$output/releases" "$work_dir/keys" "$work_dir/packages"
 
 readonly public_key='xyMahjmLYOPoCzVMu93x9cACvqkgEzBD7TIf5ErO+MA='
 readonly private_seed='T9m8DFo7vfR6WEtaLxtEr5WfFUEUvTnChww4CPjns2E='
+readonly legacy_ref=bed3d7e
 printf '%s\n' "$private_seed" >"$work_dir/keys/private"
 chmod 0600 "$work_dir/keys/private"
 printf '{"schema_version":1,"keys":[{"key_id":"u0-acceptance","algorithm":"ed25519","public_key":"%s"}]}' \
@@ -43,6 +44,26 @@ build_binary_set() {
   GOOS=linux GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -tags updateaccept \
     -ldflags "-X github.com/qleelulu/procmesh/internal/version.Agent=$reported_version" \
     -o "$directory/procmesh-updater" ./cmd/procmesh-updater
+}
+
+build_legacy_binary_set() {
+  local directory=$1 source_dir="$work_dir/legacy-source" binary commit
+  commit=$(git rev-parse "$legacy_ref^{commit}")
+  mkdir -p "$directory" "$source_dir"
+  git archive "$commit" | tar -x -C "$source_dir"
+  for binary in procmesh procmesh-agent procmesh-shim; do
+    (
+      cd "$source_dir"
+      GOOS=linux GOARCH="$arch" CGO_ENABLED=0 go build -trimpath \
+        -ldflags '-X github.com/qleelulu/procmesh/internal/version.Agent=v1.2.0' \
+        -o "$directory/$binary" "./cmd/$binary"
+    )
+  done
+  (
+    cd "$directory"
+    sha256sum procmesh procmesh-agent procmesh-shim >SHA256SUMS
+  )
+  printf '%s\n' "$commit" >"$directory/SOURCE_COMMIT"
 }
 
 build_release() {
@@ -69,8 +90,10 @@ build_release() {
 }
 
 cd "$repo_root"
-build_binary_set "$output/old" v1.2.0
+build_legacy_binary_set "$output/old"
+build_binary_set "$output/baseline" v1.2.0
 build_release v1.2.1 v1.2.1 v1.2.0
 build_release v1.2.2 v9.9.9 v1.2.1
 build_release v1.2.3 v1.2.3 v1.2.1
-printf 'Created Linux/%s U0 fixture at %s (test private key not retained).\n' "$arch" "$output"
+printf 'Created Linux/%s U0 fixture at %s with legacy commit %s (test private key not retained).\n' \
+  "$arch" "$output" "$(cat "$output/old/SOURCE_COMMIT")"

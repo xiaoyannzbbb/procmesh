@@ -61,7 +61,7 @@ const (
 	PhaseStaged    Phase = "STAGED"
 	PhaseSwitched  Phase = "SWITCHED"
 	PhaseRestarted Phase = "RESTARTED"
-	// PhaseHealthChecking is an acceptance checkpoint, not a durable journal phase.
+	// PhaseHealthChecking is an acceptance checkpoint after the first probe, not a durable journal phase.
 	PhaseHealthChecking Phase = "HEALTH_CHECKING"
 	PhaseHealthy        Phase = "HEALTHY"
 )
@@ -99,15 +99,21 @@ type AgentService interface {
 }
 
 type HealthExpectation struct {
-	Version   string
-	AgentPath string
-	Address   string
-	Timeout   time.Duration
+	Version          string
+	AgentPath        string
+	Address          string
+	Timeout          time.Duration
+	FirstProbeIssued func() error
 }
 
 type HealthChecker interface {
 	Check(context.Context, HealthExpectation) error
 }
+
+type healthCheckpointError struct{ err error }
+
+func (e healthCheckpointError) Error() string { return e.err.Error() }
+func (e healthCheckpointError) Unwrap() error { return e.err }
 
 type Options struct {
 	OperationID         string
@@ -201,11 +207,18 @@ func Execute(ctx context.Context, options Options) (Result, error) {
 	}
 
 	if phaseRank(journal.Phase) < phaseRank(PhaseHealthy) {
-		if err := checkpoint(options, PhaseHealthChecking); err != nil {
-			return Result{}, err
-		}
 		expectation := healthExpectation(options.InstallRoot, plan.TargetVersion, plan)
+		expectation.FirstProbeIssued = func() error {
+			if err := checkpoint(options, PhaseHealthChecking); err != nil {
+				return healthCheckpointError{err: err}
+			}
+			return nil
+		}
 		if err := options.Health.Check(ctx, expectation); err != nil {
+			var checkpointError healthCheckpointError
+			if errors.As(err, &checkpointError) {
+				return Result{}, checkpointError.err
+			}
 			return rollbackAfterFailure(ctx, options, operationDir, plan, journal, err)
 		}
 		journal.Phase = PhaseHealthy

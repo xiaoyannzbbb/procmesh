@@ -25,6 +25,11 @@ type HTTPHealth struct {
 	Agent        AgentPathReader
 }
 
+type firstProbeCallbackError struct{ err error }
+
+func (e firstProbeCallbackError) Error() string { return e.err.Error() }
+func (e firstProbeCallbackError) Unwrap() error { return e.err }
+
 func (h HTTPHealth) Check(ctx context.Context, expectation HealthExpectation) error {
 	address := h.Address
 	if expectation.Address != "" {
@@ -59,8 +64,13 @@ func (h HTTPHealth) Check(ctx context.Context, expectation HealthExpectation) er
 	checkContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	var lastError error
+	firstProbeIssued := false
 	for {
-		lastError = h.checkOnce(checkContext, client, address, expectation)
+		lastError = h.checkOnce(checkContext, client, address, expectation, &firstProbeIssued)
+		var callbackError firstProbeCallbackError
+		if errors.As(lastError, &callbackError) {
+			return callbackError.err
+		}
 		if lastError == nil {
 			return nil
 		}
@@ -74,13 +84,24 @@ func (h HTTPHealth) Check(ctx context.Context, expectation HealthExpectation) er
 	}
 }
 
-func (h HTTPHealth) checkOnce(ctx context.Context, client *http.Client, address string, expectation HealthExpectation) error {
+func (h HTTPHealth) checkOnce(ctx context.Context, client *http.Client, address string, expectation HealthExpectation, firstProbeIssued *bool) error {
 	for _, endpoint := range []string{"/healthz", "/readyz", "/updatez"} {
 		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+address+endpoint, nil)
 		if err != nil {
 			return err
 		}
 		response, err := client.Do(request)
+		if !*firstProbeIssued {
+			*firstProbeIssued = true
+			if expectation.FirstProbeIssued != nil {
+				if callbackErr := expectation.FirstProbeIssued(); callbackErr != nil {
+					if response != nil && response.Body != nil {
+						_ = response.Body.Close()
+					}
+					return firstProbeCallbackError{err: callbackErr}
+				}
+			}
+		}
 		if err != nil {
 			return err
 		}

@@ -166,6 +166,7 @@ run_privileged() {
 }
 systemctl() { printf '%s\n' "$*" >>"$SYSTEMCTL_LOG"; return 0; }
 wait_for_update_health() { [[ "$HEALTH_OK" == 1 ]]; }
+wait_for_legacy_health() { return 0; }
 bootstrap_flat_installation "$BIN_DIR" "$MANAGED_ROOT" "$UPDATE_ROOT" "$UNIT" "$PACKAGE_DIR" v1.2.0 v1.2.1 "$(id -u)" "$UPDATE_UNIT" "$RECOVER_UNIT"
 `
 			command := exec.Command("bash", "-c", script)
@@ -247,6 +248,7 @@ run_privileged() {
 }
 systemctl() { return 0; }
 wait_for_update_health() { return 0; }
+wait_for_legacy_health() { return 0; }
 bootstrap_flat_installation "$BIN_DIR" "$MANAGED_ROOT" "$UPDATE_ROOT" "$UNIT" "$PACKAGE_DIR" v1.2.0 v1.2.1 "$(id -u)" "$UPDATE_UNIT" "$RECOVER_UNIT"
 `
 			command := exec.Command("bash", "-c", script)
@@ -294,8 +296,11 @@ run_privileged() {
 }
 systemctl() { return 0; }
 wait_for_update_health() {
-  printf '%s %s\n' "$2" "$3" >>"$HEALTH_LOG"
-  [[ "$2" == v1.2.0 ]]
+  return 1
+}
+wait_for_legacy_health() {
+  printf '%s\n' "$2" >>"$HEALTH_LOG"
+  return 0
 }
 bootstrap_flat_installation "$BIN_DIR" "$MANAGED_ROOT" "$UPDATE_ROOT" "$UNIT" "$PACKAGE_DIR" v1.2.0 v1.2.1 "$(id -u)" "$UPDATE_UNIT" "$RECOVER_UNIT"
 `
@@ -315,9 +320,32 @@ bootstrap_flat_installation "$BIN_DIR" "$MANAGED_ROOT" "$UPDATE_ROOT" "$UNIT" "$
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
-	want := "v1.2.0 " + filepath.Join(managedRoot, "versions", "v1.2.0", "procmesh-agent")
+	want := filepath.Join(managedRoot, "versions", "v1.2.0", "procmesh-agent")
 	if !strings.Contains(string(log), want) {
 		t.Fatalf("rollback did not verify the legacy agent identity and health: %q", log)
+	}
+}
+
+func TestInstallerLegacyRollbackHealthDoesNotRequireUpdateEndpoint(t *testing.T) {
+	installer := installerPath(t)
+	script := `
+source "$INSTALLER"
+curl() {
+  case "${!#}" in
+    */healthz|*/readyz) printf 'ok' ;;
+    */updatez) return 22 ;;
+    *) return 22 ;;
+  esac
+}
+systemctl() { printf '4242\n'; }
+readlink() { printf '%s\n' "$LEGACY_AGENT"; }
+sleep() { return 0; }
+wait_for_legacy_health 127.0.0.1:18680 "$LEGACY_AGENT"
+`
+	command := exec.Command("bash", "-c", script)
+	command.Env = append(os.Environ(), "INSTALLER="+installer, "LEGACY_AGENT=/managed/versions/v1.2.0/procmesh-agent")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("legacy rollback health rejected a pre-U0 agent without /updatez: err=%v output=%s", err, output)
 	}
 }
 
