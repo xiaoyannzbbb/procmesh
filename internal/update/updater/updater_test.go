@@ -21,6 +21,7 @@ import (
 )
 
 const operationID = "018f47a2-9c4e-7b1a-8f3d-123456789abc"
+const retryOperationID = "118f47a2-9c4e-7b1a-8f3d-123456789abc"
 
 type fakeService struct{ restarts int }
 
@@ -185,6 +186,51 @@ func TestExecuteRollsBackWhenNewAgentIsNotHealthy(t *testing.T) {
 	}
 	if service.restarts != 2 {
 		t.Fatalf("restarts = %d", service.restarts)
+	}
+}
+
+func TestExecuteAllowsNewOperationToRetrySameReleaseAfterRollback(t *testing.T) {
+	fixture := newFixture(t, safeArchiveEntries())
+	service := &fakeService{}
+	failTarget := true
+	check := healthFunc(func(_ context.Context, expectation updater.HealthExpectation) error {
+		if expectation.Version == "v1.2.1" && failTarget {
+			return errors.New("new agent not ready")
+		}
+		return nil
+	})
+	if _, err := updater.Execute(context.Background(), fixture.options(service, check)); !errors.Is(err, updater.ErrRolledBack) {
+		t.Fatalf("first Execute() error = %v", err)
+	}
+
+	retryDir := filepath.Join(fixture.dataRoot, "operations", retryOperationID)
+	if err := os.Mkdir(retryDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{
+		updater.ChannelFilename, updater.ChannelSignatureFilename, updater.ManifestFilename,
+		updater.ManifestSignatureFilename, updater.ArtifactFilename,
+	} {
+		payload, err := os.ReadFile(filepath.Join(fixture.operationDir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(retryDir, name), payload, 0o600)
+	}
+	writePlan(t, retryDir, updater.Plan{
+		SchemaVersion: 1, OperationID: retryOperationID,
+		ExpectedCurrentVersion: "v1.2.0", TargetVersion: "v1.2.1",
+	})
+
+	failTarget = false
+	options := fixture.options(service, check)
+	options.OperationID = retryOperationID
+	result, err := updater.Execute(context.Background(), options)
+	if err != nil || result.Status != updater.StatusSucceeded {
+		t.Fatalf("retry Execute() result=%#v err=%v", result, err)
+	}
+	if got := readLink(t, filepath.Join(fixture.installRoot, "current")); got != "versions/v1.2.1" {
+		t.Fatalf("current = %q", got)
 	}
 }
 

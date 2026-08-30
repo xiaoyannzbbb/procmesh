@@ -2,8 +2,8 @@ package updater
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
-	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io"
@@ -21,15 +21,28 @@ var allowedAncillaryFiles = map[string]struct{}{
 	"README.md": {}, "agent.yaml": {}, "procmesh-agent.service": {}, "procmesh-agent-update@.service": {}, "procmesh-agent-update-recover.service": {},
 }
 
-func stageVersion(operationDir, installRoot string, plan Plan, artifact trust.Artifact) (string, error) {
+type releaseMarker struct {
+	SchemaVersion  int    `json:"schema_version"`
+	ReleaseVersion string `json:"release_version"`
+	ManifestSHA256 string `json:"manifest_sha256"`
+	ArtifactSHA256 string `json:"artifact_sha256"`
+}
+
+func stageVersion(operationDir, installRoot string, plan Plan, manifestDigest string, artifact trust.Artifact) (string, error) {
 	versionsDir := filepath.Join(installRoot, "versions")
 	if err := os.MkdirAll(versionsDir, 0o755); err != nil {
 		return "", fmt.Errorf("create versions directory: %w", err)
 	}
 	finalDir := filepath.Join(versionsDir, plan.TargetVersion)
-	marker := plan.OperationID + "\n" + artifact.SHA256 + "\n"
+	marker, err := trust.CanonicalJSON(releaseMarker{
+		SchemaVersion: 1, ReleaseVersion: plan.TargetVersion,
+		ManifestSHA256: manifestDigest, ArtifactSHA256: artifact.SHA256,
+	})
+	if err != nil {
+		return "", err
+	}
 	if existing, err := os.ReadFile(filepath.Join(finalDir, markerFilename)); err == nil {
-		if subtle.ConstantTimeCompare(existing, []byte(marker)) == 1 {
+		if bytes.Equal(existing, marker) {
 			return finalDir, nil
 		}
 		return "", invalid("target version directory belongs to another release", nil)
@@ -51,7 +64,7 @@ func stageVersion(operationDir, installRoot string, plan Plan, artifact trust.Ar
 	if err := extractArchive(filepath.Join(operationDir, ArtifactFilename), stagingDir, artifact); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(stagingDir, markerFilename), []byte(marker), 0o444); err != nil {
+	if err := os.WriteFile(filepath.Join(stagingDir, markerFilename), marker, 0o444); err != nil {
 		return "", err
 	}
 	if err := syncTree(stagingDir); err != nil {
@@ -108,7 +121,7 @@ func extractArchive(archiveName, destination string, artifact trust.Artifact) er
 		}
 		parts := strings.Split(clean, "/")
 		if len(parts) != 2 || parts[0] != prefix {
-			return invalid("archive entry is outside its release directory", nil)
+			return invalid(fmt.Sprintf("archive entry %q is outside its release directory", clean), nil)
 		}
 		name := parts[1]
 		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {

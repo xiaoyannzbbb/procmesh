@@ -11,6 +11,9 @@ readonly managed_root=/usr/local/lib/procmesh
 readonly managed_bin_dir=/usr/local/bin
 readonly update_root=/var/lib/procmesh/update
 readonly trusted_key_registry='{"schema_version":1,"keys":[]}'
+readonly max_download_redirects=5
+readonly metadata_download_limit=4194304
+readonly signature_download_limit=4096
 
 usage() {
   cat <<'EOF'
@@ -105,12 +108,78 @@ detect_architecture() {
   esac
 }
 
+validate_download_url() {
+  local url=$1
+  local host
+
+  [[ "$url" =~ ^https://([^/:]+)(/.*)?$ ]] || die "download URL must use HTTPS without credentials or a custom port: $url"
+  host=${BASH_REMATCH[1]}
+  case "$host" in
+    github.com|release-assets.githubusercontent.com) ;;
+    *) die "download redirect host is not allowed: $host" ;;
+  esac
+}
+
 download_file() {
   local url=$1
   local destination=$2
+  local max_bytes=$3
+  local current_url=$url
+  local redirects=0
+  local temporary headers status location actual_size
 
-  curl --fail --silent --show-error --location --retry 3 --proto '=https' --tlsv1.2 \
-    --output "$destination" "$url" || die "download failed: $url"
+  [[ "$max_bytes" =~ ^[1-9][0-9]*$ ]] || die "download size limit is invalid"
+  validate_download_url "$current_url"
+  temporary=$(mktemp "${destination}.download.XXXXXX") || die "unable to create download staging file"
+  headers="${temporary}.headers"
+
+  while true; do
+    : >"$headers"
+    : >"$temporary"
+    status=$(curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+      --connect-timeout 10 --max-time 120 --speed-limit 1024 --speed-time 30 \
+      --retry 2 --retry-all-errors --max-redirs 0 --max-filesize "$max_bytes" \
+      --dump-header "$headers" --output "$temporary" --write-out '%{http_code}' \
+      "$current_url") || die "download failed: $current_url"
+    actual_size=$(stat -c %s "$temporary") || die "unable to inspect download: $current_url"
+    ((actual_size <= max_bytes)) || die "download exceeded size limit: $current_url"
+
+    case "$status" in
+      200)
+        mv -f "$temporary" "$destination" || die "unable to publish download: $destination"
+        rm -f "$headers"
+        return
+        ;;
+      301|302|303|307|308)
+        ((redirects < max_download_redirects)) || die "download exceeded redirect limit: $url"
+        location=$(awk 'BEGIN { IGNORECASE=1 } /^location:/ { value=$0 } END { sub(/^[^:]*:[[:space:]]*/, "", value); sub(/\r$/, "", value); print value }' "$headers")
+        [[ -n "$location" ]] || die "download redirect has no Location header: $current_url"
+        validate_download_url "$location"
+        current_url=$location
+        ((redirects += 1))
+        ;;
+      *) die "download returned unexpected HTTP status $status: $current_url" ;;
+    esac
+  done
+}
+
+refuse_unsafe_existing_installation() {
+  local bin_dir=$1
+  local install_root=$2
+  local service_unit=$3
+  local existing=()
+  local binary
+
+  for binary in procmesh procmesh-agent procmesh-shim procmesh-updater; do
+    [[ -e "$bin_dir/$binary" || -L "$bin_dir/$binary" ]] && existing+=("$binary")
+  done
+  if ((${#existing[@]} == 0)) && [[ ! -e "$service_unit" && ! -L "$service_unit" && ! -e "$install_root/current" && ! -L "$install_root/current" ]]; then
+    return
+  fi
+  if [[ -L "$install_root/current" ]]; then
+    die "an existing managed ProcMesh installation was found; apply releases with procmesh-updater"
+  fi
+  die "automatic migration of an existing flat or custom ProcMesh installation is not supported; existing binaries and systemd units were preserved. Migrate them manually after recording the legacy version and rollback procedure"
 }
 
 trusted_public_key() {
@@ -227,6 +296,7 @@ WantedBy=multi-user.target
 EOF
 }
 
+main() {
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   usage
   exit 0
@@ -261,8 +331,8 @@ architecture=$(detect_architecture)
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT
 channel_base="https://github.com/$repository/releases/latest/download"
-download_file "$channel_base/stable.json" "$tmp_dir/stable.json"
-download_file "$channel_base/stable.json.sig" "$tmp_dir/stable.json.sig"
+download_file "$channel_base/stable.json" "$tmp_dir/stable.json" "$metadata_download_limit"
+download_file "$channel_base/stable.json.sig" "$tmp_dir/stable.json.sig" "$signature_download_limit"
 verify_signature "$tmp_dir/stable.json" "$tmp_dir/stable.json.sig" "$tmp_dir"
 [[ "$(jq -c . "$tmp_dir/stable.json")" == "$(<"$tmp_dir/stable.json")" ]] || die "Channel Index is not canonical JSON"
 jq -e 'keys == ["channel", "expires_at", "generated_at", "release", "schema_version"] and (.release | keys == ["manifest_sha256", "manifest_signature_url", "manifest_url", "version"])' \
@@ -286,8 +356,8 @@ manifest_digest=$(jq -er '.release.manifest_sha256' "$tmp_dir/stable.json") || d
 [[ "$manifest_signature_url" == "$download_base/manifest.json.sig" ]] || die "Channel Index contains a non-official signature URL"
 [[ "$manifest_digest" =~ ^[0-9a-f]{64}$ ]] || die "Channel Index manifest digest is invalid"
 
-download_file "$download_base/manifest.json" "$tmp_dir/manifest.json"
-download_file "$download_base/manifest.json.sig" "$tmp_dir/manifest.json.sig"
+download_file "$download_base/manifest.json" "$tmp_dir/manifest.json" "$metadata_download_limit"
+download_file "$download_base/manifest.json.sig" "$tmp_dir/manifest.json.sig" "$signature_download_limit"
 [[ "$(sha256_file "$tmp_dir/manifest.json")" == "$manifest_digest" ]] || die "Release Manifest digest verification failed"
 verify_signature "$tmp_dir/manifest.json" "$tmp_dir/manifest.json.sig" "$tmp_dir"
 [[ "$(jq -c . "$tmp_dir/manifest.json")" == "$(<"$tmp_dir/manifest.json")" ]] || die "Release Manifest is not canonical JSON"
@@ -311,7 +381,7 @@ archive_base="procmesh_${tag#v}_linux_${architecture}"
 [[ "$archive_size" =~ ^[1-9][0-9]*$ && "$archive_size" -le 536870912 ]] || die "Release Manifest artifact size is invalid"
 [[ "$archive_digest" =~ ^[0-9a-f]{64}$ ]] || die "Release Manifest artifact digest is invalid"
 
-download_file "$download_base/$archive_name" "$tmp_dir/$archive_name"
+download_file "$download_base/$archive_name" "$tmp_dir/$archive_name" "$archive_size"
 actual_size=$(stat -c %s "$tmp_dir/$archive_name") || die "unable to read release archive size"
 [[ "$actual_size" == "$archive_size" ]] || die "release archive size verification failed"
 [[ "$(sha256_file "$tmp_dir/$archive_name")" == "$archive_digest" ]] || die "release archive SHA-256 verification failed"
@@ -337,19 +407,9 @@ done
 
 printf 'Verified signed ProcMesh %s for Linux %s.\n' "$tag" "$architecture"
 
-existing_binaries=()
-for binary in procmesh procmesh-agent procmesh-shim; do
-  [[ -e "$managed_bin_dir/$binary" || -L "$managed_bin_dir/$binary" ]] && existing_binaries+=("$binary")
-done
-if ((${#existing_binaries[@]})) && ! prompt_yes_no "Bootstrap the existing flat installation into the managed layout (${existing_binaries[*]})" no; then
-  printf 'Installation cancelled; existing binaries were not changed.\n'
-  exit 0
-fi
-
-# Record the pre-install state so a newly started service is not treated as an upgrade.
-agent_was_running=false
-if [[ -d /run/systemd/system ]] && systemctl is-active --quiet procmesh-agent; then
-  agent_was_running=true
+refuse_unsafe_existing_installation "$managed_bin_dir" "$managed_root" "$unit_path"
+if [[ -d /run/systemd/system ]] && systemctl cat procmesh-agent.service >/dev/null 2>&1; then
+  die 'an existing procmesh-agent systemd unit was found outside the managed unit path; it was preserved and must be migrated manually'
 fi
 
 version_dir="$managed_root/versions/$tag"
@@ -375,9 +435,7 @@ printf 'Installed ProcMesh managed version in %s.\n' "$version_dir"
 
 if prompt_yes_no 'Install a systemd unit' no; then
   [[ -d /run/systemd/system ]] || die 'systemd is not available; binaries were installed but no service was created'
-  if [[ -e "$unit_path" ]]; then
-    warn "existing systemd unit preserved: $unit_path"
-  else
+  [[ ! -e "$unit_path" && ! -L "$unit_path" ]] || die "existing systemd unit appeared during installation and was preserved: $unit_path"
     prompt_value 'Data directory (absolute path or ~/...)' '/var/lib/procmesh'
     data_dir=$(expand_home "$REPLY")
     require_absolute_path "$data_dir"
@@ -444,8 +502,6 @@ if prompt_yes_no 'Install a systemd unit' no; then
     else
       printf 'Service was not enabled or started. Start it later with: sudo systemctl enable --now procmesh-agent\n'
     fi
-  fi
-
   [[ -f "$package_dir/procmesh-agent-update@.service" ]] || die 'release archive has no updater systemd unit'
   [[ -f "$package_dir/procmesh-agent-update-recover.service" ]] || die 'release archive has no updater recovery unit'
   run_privileged install -m 0644 "$package_dir/procmesh-agent-update@.service" "$update_unit_path"
@@ -455,13 +511,9 @@ if prompt_yes_no 'Install a systemd unit' no; then
   printf 'Installed updater unit: %s\n' "$update_unit_path"
 fi
 
-if [[ "$agent_was_running" == true ]]; then
-  if prompt_yes_no 'A ProcMesh Agent is running. Restart it to use the installed binaries now' no; then
-    run_privileged systemctl restart procmesh-agent
-    printf 'ProcMesh Agent restarted.\n'
-  else
-    printf 'Running ProcMesh Agent was not restarted.\n'
-  fi
-fi
-
 printf 'ProcMesh %s installation complete.\n' "$tag"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

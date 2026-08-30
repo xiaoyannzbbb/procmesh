@@ -145,12 +145,12 @@ func Execute(ctx context.Context, options Options) (Result, error) {
 		return rollback(ctx, options, operationDir, plan, journal)
 	}
 
-	manifest, artifact, err := verifyInputs(options, operationDir, plan)
+	manifest, artifact, manifestDigest, err := verifyInputs(options, operationDir, plan)
 	if err != nil {
 		return Result{}, err
 	}
 	_ = manifest
-	_, err = stageVersion(operationDir, options.InstallRoot, plan, artifact)
+	_, err = stageVersion(operationDir, options.InstallRoot, plan, manifestDigest, artifact)
 	if err != nil {
 		return Result{}, err
 	}
@@ -258,47 +258,47 @@ func readJournal(name string, plan Plan) (Journal, error) {
 	return journal, nil
 }
 
-func verifyInputs(options Options, operationDir string, plan Plan) (trust.Manifest, trust.Artifact, error) {
+func verifyInputs(options Options, operationDir string, plan Plan) (trust.Manifest, trust.Artifact, string, error) {
 	channelBytes, err := readPrivateFile(filepath.Join(operationDir, ChannelFilename), 1<<20)
 	if err != nil {
-		return trust.Manifest{}, trust.Artifact{}, invalid("read channel metadata", err)
+		return trust.Manifest{}, trust.Artifact{}, "", invalid("read channel metadata", err)
 	}
 	channelSignature, err := readPrivateFile(filepath.Join(operationDir, ChannelSignatureFilename), 4<<10)
 	if err != nil {
-		return trust.Manifest{}, trust.Artifact{}, invalid("read channel signature", err)
+		return trust.Manifest{}, trust.Artifact{}, "", invalid("read channel signature", err)
 	}
 	manifestBytes, err := readPrivateFile(filepath.Join(operationDir, ManifestFilename), 4<<20)
 	if err != nil {
-		return trust.Manifest{}, trust.Artifact{}, invalid("read release manifest", err)
+		return trust.Manifest{}, trust.Artifact{}, "", invalid("read release manifest", err)
 	}
 	manifestSignature, err := readPrivateFile(filepath.Join(operationDir, ManifestSignatureFilename), 4<<10)
 	if err != nil {
-		return trust.Manifest{}, trust.Artifact{}, invalid("read manifest signature", err)
+		return trust.Manifest{}, trust.Artifact{}, "", invalid("read manifest signature", err)
 	}
 	verifier := trust.Verifier{Keys: options.Keys, Now: options.Now}
 	index, err := verifier.VerifyChannel(channelBytes, channelSignature)
 	if err != nil {
-		return trust.Manifest{}, trust.Artifact{}, err
+		return trust.Manifest{}, trust.Artifact{}, "", err
 	}
 	if index.Release.Version != plan.TargetVersion {
-		return trust.Manifest{}, trust.Artifact{}, invalid("channel target does not match updater plan", nil)
+		return trust.Manifest{}, trust.Artifact{}, "", invalid("channel target does not match updater plan", nil)
 	}
 	manifest, err := verifier.VerifyManifest(index, manifestBytes, manifestSignature)
 	if err != nil {
-		return trust.Manifest{}, trust.Artifact{}, err
+		return trust.Manifest{}, trust.Artifact{}, "", err
 	}
 	if manifest.ProtocolVersion != options.ProtocolVersion || !containsInt(manifest.CompatibleFromProtocols, options.ProtocolVersion) || options.ShimProtocolVersion < manifest.ShimProtocolMin || options.ShimProtocolVersion > manifest.ShimProtocolMax || !containsString(manifest.RollbackSafeFrom, plan.ExpectedCurrentVersion) {
-		return trust.Manifest{}, trust.Artifact{}, fmt.Errorf("release is not compatible with the running agent: %w", errcode.E(errcode.INCOMPATIBLE_VERSION, "release compatibility check failed"))
+		return trust.Manifest{}, trust.Artifact{}, "", fmt.Errorf("release is not compatible with the running agent: %w", errcode.E(errcode.INCOMPATIBLE_VERSION, "release compatibility check failed"))
 	}
 	for _, artifact := range manifest.Artifacts {
 		if artifact.OS == options.OS && artifact.Arch == options.Arch {
 			if err := verifyArtifactFile(filepath.Join(operationDir, ArtifactFilename), artifact); err != nil {
-				return trust.Manifest{}, trust.Artifact{}, err
+				return trust.Manifest{}, trust.Artifact{}, "", err
 			}
-			return manifest, artifact, nil
+			return manifest, artifact, index.Release.ManifestSHA256, nil
 		}
 	}
-	return trust.Manifest{}, trust.Artifact{}, invalid("release has no artifact for this platform", nil)
+	return trust.Manifest{}, trust.Artifact{}, "", invalid("release has no artifact for this platform", nil)
 }
 
 func verifyArtifactFile(name string, artifact trust.Artifact) error {

@@ -29,11 +29,15 @@ func TestHTTPHealthRequiresReadyEndpointsAndTargetExecutable(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/healthz" && request.URL.Path != "/readyz" {
+		switch request.URL.Path {
+		case "/healthz", "/readyz":
+			writer.WriteHeader(http.StatusOK)
+		case "/updatez":
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{"version":"v1.2.1","store_ready":true,"shim_recovery_complete":true}`))
+		default:
 			http.NotFound(writer, request)
-			return
 		}
-		writer.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
 	parsed, err := url.Parse(server.URL)
@@ -46,6 +50,48 @@ func TestHTTPHealthRequiresReadyEndpointsAndTargetExecutable(t *testing.T) {
 	}
 	if err := checker.Check(context.Background(), updater.HealthExpectation{Version: "v1.2.1", AgentPath: agentPath}); err != nil {
 		t.Fatalf("Check() error = %v", err)
+	}
+}
+
+func TestHTTPHealthRejectsWrongVersionOrIncompleteShimRecovery(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "wrong version", body: `{"version":"v1.2.0","store_ready":true,"shim_recovery_complete":true}`},
+		{name: "store unavailable", body: `{"version":"v1.2.1","store_ready":false,"shim_recovery_complete":true}`},
+		{name: "shim recovery incomplete", body: `{"version":"v1.2.1","store_ready":true,"shim_recovery_complete":false}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			directory := t.TempDir()
+			agentPath := filepath.Join(directory, "procmesh-agent")
+			if err := os.WriteFile(agentPath, []byte("agent"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if request.URL.Path == "/updatez" {
+					writer.Header().Set("Content-Type", "application/json")
+					_, _ = writer.Write([]byte(tt.body))
+					return
+				}
+				writer.WriteHeader(http.StatusOK)
+			}))
+			defer server.Close()
+			parsed, err := url.Parse(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			checker := updater.HTTPHealth{
+				Address: parsed.Host, Timeout: 10 * time.Second, PollInterval: time.Millisecond,
+				Client: server.Client(), Agent: pathReader{path: agentPath},
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+			defer cancel()
+			if err := checker.Check(ctx, updater.HealthExpectation{Version: "v1.2.1", AgentPath: agentPath}); err == nil {
+				t.Fatal("Check() error = nil")
+			}
+		})
 	}
 }
 

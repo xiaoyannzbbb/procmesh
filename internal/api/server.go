@@ -51,6 +51,8 @@ type Options struct {
 	Auth                *auth.Service // nil = 不鉴权（单测）
 	Degraded            bool
 	Ready               func() error
+	AgentVersion        string
+	UpdateReady         func() error
 	Started             time.Time
 	LocalOnly           bool
 	LocalID             string
@@ -116,6 +118,7 @@ func NewServer(opts Options) (*Server, error) {
 
 	engine.GET("/healthz", s.healthz)
 	engine.GET("/readyz", s.readyz)
+	engine.GET("/updatez", s.updatez)
 	engine.GET("/metrics", s.metrics)
 
 	degraded := s.isDegraded
@@ -350,6 +353,20 @@ func (s *Server) readyz(c *gin.Context) {
 		return
 	}
 	c.String(http.StatusOK, "ok")
+}
+
+func (s *Server) updatez(c *gin.Context) {
+	storeReady := !s.isDegraded()
+	shimRecoveryComplete := s.opts.UpdateReady != nil && s.opts.UpdateReady() == nil
+	status := http.StatusOK
+	if !storeReady || !shimRecoveryComplete || s.opts.AgentVersion == "" {
+		status = http.StatusServiceUnavailable
+	}
+	c.JSON(status, gin.H{
+		"version":                s.opts.AgentVersion,
+		"store_ready":            storeReady,
+		"shim_recovery_complete": shimRecoveryComplete,
+	})
 }
 
 func (s *Server) metrics(c *gin.Context) {

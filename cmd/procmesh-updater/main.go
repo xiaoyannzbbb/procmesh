@@ -10,7 +10,6 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/qleelulu/procmesh/internal/update/trust"
 	"github.com/qleelulu/procmesh/internal/update/updater"
 	"github.com/qleelulu/procmesh/internal/version"
 )
@@ -41,7 +40,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "managed ProcMesh updates require Linux systemd")
 		return 1
 	}
-	keys, err := trust.DefaultKeyring()
+	keys, err := updaterKeyring()
 	if err != nil {
 		fmt.Fprintln(stderr, "trusted release keys are invalid")
 		return 1
@@ -62,6 +61,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Now:                 time.Now,
 		Service:             service,
 		Health:              updater.HTTPHealth{Agent: service},
+		Checkpoint:          updaterCheckpoint,
 	}
 	if *recoverOperations {
 		if err := updater.RecoverAll(ctx, options); err != nil {

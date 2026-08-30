@@ -22,6 +22,12 @@ extraction. Unknown schema fields, unknown key IDs, prereleases, arbitrary URLs,
 absolute or traversing archive paths, links, devices, duplicate files, and
 unexpected executable files are rejected before `current` changes.
 
+The installer follows redirects itself. Every hop must remain HTTPS on the
+fixed GitHub/release-assets host allowlist, with at most five redirects, fixed
+connect/total/stall timeouts, and a per-file byte ceiling. Downloads are written
+to a same-directory temporary file and published atomically only after curl and
+the size bound succeed.
+
 ## Initial key ceremony
 
 The repository deliberately does not contain a private release key. Before the
@@ -99,10 +105,13 @@ The official installer creates this fixed layout:
 /usr/local/bin/procmesh-shim  -> ../lib/procmesh/current/procmesh-shim
 ```
 
-The first U0 release is a manual bootstrap boundary. Existing flat binaries can
-be replaced only after the installer verifies the signed release and the
-administrator confirms the migration. Nodes without this layout and both
-updater units are not managed-update capable.
+The first U0 release is a manual bootstrap boundary. The installer refuses an
+existing flat installation, custom Agent unit, or managed installation before
+changing binaries or units. An administrator must first record the legacy
+version and a tested rollback procedure, then migrate that node manually.
+Existing managed installations apply releases only through `procmesh-updater`.
+Nodes without the managed layout and both updater units are not
+managed-update capable.
 
 `procmesh-agent-update@.service` accepts only a canonical operation UUID and
 reads root-private inputs below `/var/lib/procmesh/update/operations/<uuid>`.
@@ -114,9 +123,16 @@ oneshot runs at boot and resumes durable non-terminal journals.
 The updater verifies every input before staging. It writes and fsyncs a complete
 immutable version directory, atomically replaces the `previous` and `current`
 symlinks on the same filesystem, restarts only `procmesh-agent.service`, and
-requires `/healthz`, `/readyz`, plus the systemd MainPID executable to match the
-target version. A failed check restores `current` to `previous`, restarts the old
-Agent, and checks it again.
+requires `/healthz`, `/readyz`, and `/updatez`, plus the systemd MainPID
+executable to match the target version. `/updatez` reports the compiled Agent
+version, SQLite readiness, and completion of initial/current Shim recovery. A
+failed check restores `current` to `previous`, restarts the old Agent, and
+checks it again.
+
+Each immutable version directory carries a canonical marker containing the
+schema, release version, signed manifest digest, and artifact digest. Operation
+UUIDs are deliberately excluded, so a fresh operation may retry the identical
+release after a health rollback without weakening release identity.
 
 The durable phases are `STAGED`, `SWITCHED`, `RESTARTED`, and `HEALTHY`, followed
 by `SUCCEEDED`. A failed target enters `ROLLING_BACK`, then `ROLLED_BACK` or
@@ -129,3 +145,22 @@ Specs, runtime state, Shim processes, and business processes are never copied,
 recreated, stopped, or killed by the updater. `KillMode=process` remains required
 on the Agent unit so an Agent restart leaves existing Shims and business PIDs
 running.
+
+## Linux U0 acceptance
+
+The destructive U0 acceptance test must run as root on a disposable Linux host
+booted with systemd. It exercises the real Agent service and updater oneshots,
+a Shim-managed business process, health rollback, and updater termination after
+`STAGED`, `SWITCHED`, and `HEALTHY`, followed by recovery:
+
+```bash
+scripts/build-update-u0-fixture.sh ./u0-fixture amd64
+sudo PROCMESH_RUN_UPDATE_U0=1 \
+  PROCMESH_U0_ARTIFACTS="$PWD/u0-fixture" \
+  scripts/test-update-u0-linux.sh
+```
+
+Use `arm64` for an arm64 Linux host. The `updateaccept` build tag embeds only a
+public test key and enables a file-based process-exit checkpoint; neither is
+present in a production updater build. The fixture builder does not retain the
+test private key in its output.

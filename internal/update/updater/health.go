@@ -1,7 +1,9 @@
 package updater
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -73,7 +75,7 @@ func (h HTTPHealth) Check(ctx context.Context, expectation HealthExpectation) er
 }
 
 func (h HTTPHealth) checkOnce(ctx context.Context, client *http.Client, address string, expectation HealthExpectation) error {
-	for _, endpoint := range []string{"/healthz", "/readyz"} {
+	for _, endpoint := range []string{"/healthz", "/readyz", "/updatez"} {
 		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+address+endpoint, nil)
 		if err != nil {
 			return err
@@ -82,13 +84,38 @@ func (h HTTPHealth) checkOnce(ctx context.Context, client *http.Client, address 
 		if err != nil {
 			return err
 		}
-		_, copyErr := io.Copy(io.Discard, io.LimitReader(response.Body, 4<<10))
+		body, readErr := io.ReadAll(io.LimitReader(response.Body, (4<<10)+1))
 		closeErr := response.Body.Close()
-		if copyErr != nil || closeErr != nil {
-			return errors.Join(copyErr, closeErr)
+		if readErr != nil || closeErr != nil {
+			return errors.Join(readErr, closeErr)
 		}
 		if response.StatusCode != http.StatusOK {
 			return fmt.Errorf("%s returned status %d", endpoint, response.StatusCode)
+		}
+		if endpoint == "/updatez" {
+			if len(body) > 4<<10 {
+				return errors.New("update health response is too large")
+			}
+			var updateStatus struct {
+				Version              string `json:"version"`
+				StoreReady           bool   `json:"store_ready"`
+				ShimRecoveryComplete bool   `json:"shim_recovery_complete"`
+			}
+			decoder := json.NewDecoder(bytes.NewReader(body))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&updateStatus); err != nil {
+				return fmt.Errorf("decode update health response: %w", err)
+			}
+			var extra any
+			if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+				return errors.New("update health response contains multiple JSON values")
+			}
+			if updateStatus.Version != expectation.Version {
+				return fmt.Errorf("running agent version %q does not match target %q", updateStatus.Version, expectation.Version)
+			}
+			if !updateStatus.StoreReady || !updateStatus.ShimRecoveryComplete {
+				return errors.New("agent store or shim recovery is incomplete")
+			}
 		}
 	}
 	runningPath, err := h.Agent.RunningAgentPath(ctx)

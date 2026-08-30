@@ -238,6 +238,47 @@ func TestServer_ReadyDegraded(t *testing.T) {
 	}
 }
 
+func TestServer_UpdateHealthReportsVersionStoreAndShimRecovery(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	shimReady := false
+	srv, err := NewServer(Options{
+		Mgr: m, AgentVersion: "v1.2.1",
+		UpdateReady: func() error {
+			if !shimReady {
+				return errors.New("recovery incomplete")
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	srv.Engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/updatez", nil))
+	var status struct {
+		Version              string `json:"version"`
+		StoreReady           bool   `json:"store_ready"`
+		ShimRecoveryComplete bool   `json:"shim_recovery_complete"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusServiceUnavailable || status.Version != "v1.2.1" || !status.StoreReady || status.ShimRecoveryComplete {
+		t.Fatalf("updatez %d %q", rec.Code, rec.Body.String())
+	}
+
+	shimReady = true
+	rec = httptest.NewRecorder()
+	srv.Engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/updatez", nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK || status.Version != "v1.2.1" || !status.StoreReady || !status.ShimRecoveryComplete {
+		t.Fatalf("updatez %d %q", rec.Code, rec.Body.String())
+	}
+}
+
 func TestServer_ConnectAndLegacyJSON(t *testing.T) {
 	m, st, _ := newTestManager(t)
 	srv, err := NewServer(Options{Mgr: m, Store: st, Started: time.Now()})
