@@ -235,7 +235,7 @@ func TestExecuteAllowsNewOperationToRetrySameReleaseAfterRollback(t *testing.T) 
 }
 
 func TestExecuteRecoversAfterInterruptionAtEveryDurablePhase(t *testing.T) {
-	for _, phase := range []updater.Phase{updater.PhaseStaged, updater.PhaseSwitched, updater.PhaseRestarted, updater.PhaseHealthy} {
+	for _, phase := range []updater.Phase{updater.PhaseStaged, updater.PhaseSwitched, updater.PhaseRestarted, updater.PhaseHealthChecking, updater.PhaseHealthy} {
 		t.Run(string(phase), func(t *testing.T) {
 			fixture := newFixture(t, safeArchiveEntries())
 			service := &fakeService{}
@@ -283,6 +283,67 @@ func TestRecoverAllResumesInterruptedOperation(t *testing.T) {
 		t.Fatalf("RecoverAll() error = %v", err)
 	}
 	if got := readLink(t, filepath.Join(fixture.installRoot, "current")); got != "versions/v1.2.1" {
+		t.Fatalf("current = %q", got)
+	}
+}
+
+func TestRecoverAllResumesVerifiedOperationAfterChannelExpiry(t *testing.T) {
+	fixture := newFixture(t, safeArchiveEntries())
+	service := &fakeService{}
+	options := fixture.options(service, healthy)
+	options.Checkpoint = func(phase updater.Phase) error {
+		if phase == updater.PhaseSwitched {
+			return updater.ErrInterrupted
+		}
+		return nil
+	}
+	if _, err := updater.Execute(context.Background(), options); !errors.Is(err, updater.ErrInterrupted) {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	options.OperationID = ""
+	options.Checkpoint = nil
+	options.Now = func() time.Time { return time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC) }
+	if err := updater.RecoverAll(context.Background(), options); err != nil {
+		t.Fatalf("RecoverAll() after index expiry error = %v", err)
+	}
+	if got := readLink(t, filepath.Join(fixture.installRoot, "current")); got != "versions/v1.2.1" {
+		t.Fatalf("current = %q", got)
+	}
+}
+
+func TestRecoverAllRollsBackWhenVerifiedReleaseIdentityChanges(t *testing.T) {
+	fixture := newFixture(t, safeArchiveEntries())
+	service := &fakeService{}
+	options := fixture.options(service, healthy)
+	options.Checkpoint = func(phase updater.Phase) error {
+		if phase == updater.PhaseSwitched {
+			return updater.ErrInterrupted
+		}
+		return nil
+	}
+	if _, err := updater.Execute(context.Background(), options); !errors.Is(err, updater.ErrInterrupted) {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	archive := filepath.Join(fixture.operationDir, updater.ArtifactFilename)
+	file, err := os.OpenFile(archive, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString("tampered"); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	options.OperationID = ""
+	options.Checkpoint = nil
+	err = updater.RecoverAll(context.Background(), options)
+	if err != nil {
+		t.Fatalf("RecoverAll() rollback error = %v", err)
+	}
+	if got := readLink(t, filepath.Join(fixture.installRoot, "current")); got != "versions/v1.2.0" {
 		t.Fatalf("current = %q", got)
 	}
 }

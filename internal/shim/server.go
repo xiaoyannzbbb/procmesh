@@ -61,8 +61,10 @@ func Serve(ctx context.Context, socketPath string) error {
 			}
 			return fmt.Errorf("accept: %w", err)
 		}
-		handleConn(ctx, conn, srv)
-		_ = conn.Close()
+		go func() {
+			handleConn(ctx, conn, srv)
+			_ = conn.Close()
+		}()
 	}
 }
 

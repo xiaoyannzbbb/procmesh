@@ -92,7 +92,7 @@ func TestInstallerRefusesExistingFlatOrCustomInstallationWithoutChangingIt(t *te
 		t.Fatal(err)
 	}
 
-	command := exec.Command("bash", "-c", `source "$INSTALLER"; refuse_unsafe_existing_installation "$BIN_DIR" "$MANAGED_ROOT" "$UNIT"`)
+	command := exec.Command("bash", "-c", `source "$INSTALLER"; validate_flat_installation "$BIN_DIR" "$MANAGED_ROOT" "$UNIT" "$(id -u)"`)
 	command.Env = append(os.Environ(), "INSTALLER="+installer, "BIN_DIR="+binDir, "MANAGED_ROOT="+managedRoot, "UNIT="+unit)
 	output, err := command.CombinedOutput()
 	if err == nil || !strings.Contains(string(output), "automatic migration") {
@@ -107,6 +107,106 @@ func TestInstallerRefusesExistingFlatOrCustomInstallationWithoutChangingIt(t *te
 	contents, err := os.ReadFile(unit)
 	if err != nil || string(contents) != string(unitContents) {
 		t.Fatalf("unit changed: contents=%q err=%v", contents, err)
+	}
+}
+
+func TestInstallerBootstrapsRecognizedFlatLayoutAndRollsBackHealthFailure(t *testing.T) {
+	installer := installerPath(t)
+	for _, tt := range []struct {
+		name      string
+		healthOK  bool
+		wantError bool
+	}{
+		{name: "success", healthOK: true},
+		{name: "health rollback", wantError: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			binDir := filepath.Join(root, "bin")
+			managedRoot := filepath.Join(root, "lib", "procmesh")
+			updateRoot := filepath.Join(root, "data", "update")
+			unit := filepath.Join(root, "procmesh-agent.service")
+			packageDir := filepath.Join(root, "package")
+			if err := os.MkdirAll(binDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(packageDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"procmesh", "procmesh-agent", "procmesh-shim"} {
+				if err := os.WriteFile(filepath.Join(binDir, name), []byte("legacy "+name), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, name := range []string{"procmesh", "procmesh-agent", "procmesh-shim", "procmesh-updater"} {
+				if err := os.WriteFile(filepath.Join(packageDir, name), []byte("target "+name), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, name := range []string{"procmesh-agent-update@.service", "procmesh-agent-update-recover.service"} {
+				if err := os.WriteFile(filepath.Join(packageDir, name), []byte("[Service]\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			unitContents := []byte("[Service]\nExecStart=" + binDir + "/procmesh-agent \\\n  --data-dir " + root + "/data \\\n  --config " + root + "/etc/agent.yaml \\\n  --listen 127.0.0.1:18680 \\\n  --shim-bin " + binDir + "/procmesh-shim\nKillMode=process\n")
+			if err := os.WriteFile(unit, unitContents, 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			script := `
+source "$INSTALLER"
+run_privileged() {
+  if [[ "$1" == mv && "$2" == -Tf ]]; then
+    command rm -f "$4"
+    command mv -f "$3" "$4"
+    return
+  fi
+  "$@"
+}
+systemctl() { printf '%s\n' "$*" >>"$SYSTEMCTL_LOG"; return 0; }
+wait_for_update_health() { [[ "$HEALTH_OK" == 1 ]]; }
+bootstrap_flat_installation "$BIN_DIR" "$MANAGED_ROOT" "$UPDATE_ROOT" "$UNIT" "$PACKAGE_DIR" v1.2.0 v1.2.1 "$(id -u)" "$UPDATE_UNIT" "$RECOVER_UNIT"
+`
+			command := exec.Command("bash", "-c", script)
+			healthOK := "0"
+			if tt.healthOK {
+				healthOK = "1"
+			}
+			command.Env = append(os.Environ(),
+				"INSTALLER="+installer, "BIN_DIR="+binDir, "MANAGED_ROOT="+managedRoot,
+				"UPDATE_ROOT="+updateRoot, "UNIT="+unit, "PACKAGE_DIR="+packageDir,
+				"HEALTH_OK="+healthOK, "SYSTEMCTL_LOG="+filepath.Join(root, "systemctl.log"),
+				"UPDATE_UNIT="+filepath.Join(root, "procmesh-agent-update@.service"),
+				"RECOVER_UNIT="+filepath.Join(root, "procmesh-agent-update-recover.service"),
+			)
+			output, err := command.CombinedOutput()
+			if (err != nil) != tt.wantError {
+				t.Fatalf("bootstrap err=%v output=%s", err, output)
+			}
+			legacyAgent, readErr := os.ReadFile(filepath.Join(managedRoot, "versions", "v1.2.0", "procmesh-agent"))
+			if readErr != nil || string(legacyAgent) != "legacy procmesh-agent" {
+				t.Fatalf("legacy agent=%q err=%v", legacyAgent, readErr)
+			}
+			wantCurrent := "versions/v1.2.1"
+			if tt.wantError {
+				wantCurrent = "versions/v1.2.0"
+			}
+			current, readErr := os.Readlink(filepath.Join(managedRoot, "current"))
+			if readErr != nil || current != wantCurrent {
+				t.Fatalf("current=%q want=%q err=%v", current, wantCurrent, readErr)
+			}
+			gotUnit, readErr := os.ReadFile(unit)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if tt.wantError {
+				if string(gotUnit) != string(unitContents) {
+					t.Fatalf("legacy unit not restored: %q", gotUnit)
+				}
+			} else if !strings.Contains(string(gotUnit), managedRoot+"/current/procmesh-agent") || !strings.Contains(string(gotUnit), "KillMode=process") {
+				t.Fatalf("managed unit not installed: %q", gotUnit)
+			}
+		})
 	}
 }
 

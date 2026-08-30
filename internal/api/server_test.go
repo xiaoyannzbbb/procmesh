@@ -9,12 +9,14 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/cluster"
+	"github.com/qleelulu/procmesh/internal/process"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
@@ -239,16 +241,24 @@ func TestServer_ReadyDegraded(t *testing.T) {
 }
 
 func TestServer_UpdateHealthReportsVersionStoreAndShimRecovery(t *testing.T) {
-	m, _, _ := newTestManager(t)
-	shimReady := false
+	m, st, _ := newTestManager(t)
+	ctx := context.Background()
+	boot, err := st.GetBootID(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := process.ProcessSpec{ProcessID: "p1", Name: "orphan", Command: "/bin/true", Instances: 1}
+	if _, err := st.PutSpec(ctx, spec, 0, "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutInstance(ctx, process.Instance{
+		InstanceID: process.MakeInstanceID("p1", 0), ProcessID: "p1", PID: os.Getpid(),
+		Desired: process.DesiredRunning, Observed: process.ObservedUnknown, BootID: boot,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	srv, err := NewServer(Options{
 		Mgr: m, AgentVersion: "v1.2.1",
-		UpdateReady: func() error {
-			if !shimReady {
-				return errors.New("recovery incomplete")
-			}
-			return nil
-		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -268,7 +278,12 @@ func TestServer_UpdateHealthReportsVersionStoreAndShimRecovery(t *testing.T) {
 		t.Fatalf("updatez %d %q", rec.Code, rec.Body.String())
 	}
 
-	shimReady = true
+	if err := st.PutInstance(ctx, process.Instance{
+		InstanceID: process.MakeInstanceID("p1", 0), ProcessID: "p1",
+		Desired: process.DesiredStopped, Observed: process.ObservedStopped, BootID: boot,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	rec = httptest.NewRecorder()
 	srv.Engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/updatez", nil))
 	if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {

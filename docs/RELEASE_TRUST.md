@@ -106,12 +106,15 @@ The official installer creates this fixed layout:
 ```
 
 The first U0 release is a manual bootstrap boundary. The installer refuses an
-existing flat installation, custom Agent unit, or managed installation before
-changing binaries or units. An administrator must first record the legacy
-version and a tested rollback procedure, then migrate that node manually.
+existing managed installation and any custom or partial flat layout before
+changing binaries or units. For the recognized official flat layout, an
+administrator must explicitly confirm bootstrap and enter the legacy SemVer.
+The installer verifies root ownership, all three legacy binaries, the fixed
+binary and Shim paths, `KillMode=process`, and signed rollback compatibility.
+It preserves the old binaries and unit as a real previous version, keeps the
+existing config and data paths, then switches and runs strict update health.
+Failure restores the legacy pointer and unit before restarting the old Agent.
 Existing managed installations apply releases only through `procmesh-updater`.
-Nodes without the managed layout and both updater units are not
-managed-update capable.
 
 `procmesh-agent-update@.service` accepts only a canonical operation UUID and
 reads root-private inputs below `/var/lib/procmesh/update/operations/<uuid>`.
@@ -137,8 +140,11 @@ release after a health rollback without weakening release identity.
 The durable phases are `STAGED`, `SWITCHED`, `RESTARTED`, and `HEALTHY`, followed
 by `SUCCEEDED`. A failed target enters `ROLLING_BACK`, then `ROLLED_BACK` or
 `ROLLBACK_FAILED`. Replaying a terminal journal does not switch or restart
-again. Recovery after an interrupted durable phase reconciles the journal with
-the actual symlink state and continues deterministically.
+again. Before staging, journal schema 2 records the original verification time,
+signed manifest digest, and artifact digest. Recovery revalidates signatures at
+that original time and compares the immutable identity, so an expired Channel
+Index cannot strand a verified transaction while changed inputs force a
+deterministic rollback.
 
 Only ProcMesh binary pointers are rolled back. Configuration, SQLite, Process
 Specs, runtime state, Shim processes, and business processes are never copied,
@@ -149,15 +155,28 @@ running.
 ## Linux U0 acceptance
 
 The destructive U0 acceptance test must run as root on a disposable Linux host
-booted with systemd. It exercises the real Agent service and updater oneshots,
-a Shim-managed business process, health rollback, and updater termination after
-`STAGED`, `SWITCHED`, and `HEALTHY`, followed by recovery:
+booted with systemd. It starts from the recognized flat layout, bootstraps it,
+and proves the Shim and business PIDs survive the Agent switch. It then
+exercises health rollback and updater termination at `STAGED`, `SWITCHED`,
+`RESTARTED`, active health checking, and `HEALTHY`.
 
 ```bash
 scripts/build-update-u0-fixture.sh ./u0-fixture amd64
 sudo PROCMESH_RUN_UPDATE_U0=1 \
   PROCMESH_U0_ARTIFACTS="$PWD/u0-fixture" \
   scripts/test-update-u0-linux.sh
+```
+
+Cross-boot recovery uses two foreground invocations around a real reboot.
+`prepare` leaves a schema-2 `RUNNING/RESTARTED` journal after the new Agent has
+taken over without changing the pre-reboot Shim or business PID. After reboot,
+the enabled recovery unit completes it to `SUCCEEDED/HEALTHY`; `resume` verifies
+the changed boot ID and current Shim takeover before cleanup:
+
+```bash
+sudo PROCMESH_RUN_UPDATE_U0=1 PROCMESH_U0_CROSS_BOOT_STAGE=prepare scripts/test-update-u0-linux.sh
+sudo reboot
+sudo PROCMESH_RUN_UPDATE_U0=1 PROCMESH_U0_CROSS_BOOT_STAGE=resume scripts/test-update-u0-linux.sh
 ```
 
 Use `arm64` for an arm64 Linux host. The `updateaccept` build tag embeds only a

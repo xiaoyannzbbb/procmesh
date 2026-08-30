@@ -13,6 +13,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/logmgr"
 	"github.com/qleelulu/procmesh/internal/shim"
 	shimpb "github.com/qleelulu/procmesh/proto/shim/v1"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -59,7 +60,7 @@ func (m *Manager) reconcileLocked(ctx context.Context) error {
 					if err := m.deps.Store.DeleteInstance(ctx, inst.InstanceID); err != nil {
 						continue
 					}
-					m.forgetInstance(inst.InstanceID)
+					m.forgetInstance(ctx, inst)
 				}
 				continue
 			}
@@ -69,7 +70,6 @@ func (m *Manager) reconcileLocked(ctx context.Context) error {
 			}
 		}
 	}
-	m.closeAll()
 	return nil
 }
 
@@ -204,23 +204,14 @@ func (m *Manager) refresh(ctx context.Context, inst *Instance, boot string) erro
 		return nil
 	}
 	m.lastShimCheck[inst.InstanceID] = now
-	m.closeClient(inst.InstanceID)
 	sock := m.deps.Layout.ShimSocket(inst.InstanceID)
-	if !socketExists(sock) {
+	if !socketExists(sock) && m.clients[inst.InstanceID] == nil {
 		return m.refreshNoSocket(ctx, inst, boot)
 	}
-	client, st, err := shim.Reconnect(ctx, sock)
+	_, st, err := m.connectShim(ctx, inst.InstanceID, sock)
 	if err != nil {
-		if pidAlive(inst.PID) && sameBoot(inst.BootID, boot) {
-			if err := m.markOrphan(ctx, *inst, inst.PID); err != nil {
-				return err
-			}
-			inst.Observed = ObservedUnknown
-			return nil
-		}
-		return nil
+		return m.refreshNoSocket(ctx, inst, boot)
 	}
-	defer m.closeConn(client, inst.InstanceID)
 	if st != nil && st.GetAlive() {
 		if !sameBoot(inst.BootID, boot) {
 			// Previous-boot leftover: do not adopt the old PID as RUNNING.
@@ -325,23 +316,19 @@ func (m *Manager) startInstance(ctx context.Context, spec ProcessSpec, inst *Ins
 		}
 	}
 
-	m.closeClient(inst.InstanceID)
 	sock := m.deps.Layout.ShimSocket(inst.InstanceID)
 	var client *shim.Client
 	var st *shimpb.StatusResponse
-	if socketExists(sock) {
-		c, status, err := shim.Reconnect(ctx, sock)
+	if socketExists(sock) || m.clients[inst.InstanceID] != nil {
+		c, status, err := m.connectShim(ctx, inst.InstanceID, sock)
 		if err == nil {
 			client, st = c, status
 			if status != nil && status.GetAlive() {
 				if sameBoot(inst.BootID, boot) {
-					defer m.closeConn(c, inst.InstanceID)
 					return m.applyRunning(ctx, inst, int(status.GetPid()), boot)
 				}
 				// Previous-boot leftover: do not adopt the old PID.
-				if c != nil {
-					_ = c.Close()
-				}
+				m.closeClient(inst.InstanceID)
 				return nil
 			}
 		}
@@ -363,15 +350,13 @@ func (m *Manager) startInstance(ctx context.Context, spec ProcessSpec, inst *Ins
 			return fmt.Errorf("launch shim: %w", err)
 		}
 		inst.ShimPID = shimPID
-		c, status, err := shim.Reconnect(ctx, sock)
+		c, status, err := m.connectShim(ctx, inst.InstanceID, sock)
 		if err != nil {
 			m.noteStartError(ctx, spec, inst, err.Error())
 			return err
 		}
 		client, st = c, status
 	}
-	defer m.closeConn(client, inst.InstanceID)
-
 	if st != nil && st.GetAlive() {
 		return m.applyRunning(ctx, inst, int(st.GetPid()), boot)
 	}
@@ -487,9 +472,8 @@ func (m *Manager) signalStop(ctx context.Context, inst *Instance, signal, killSi
 	if inst.Observed == ObservedUnknown && pidAlive(inst.PID) && sameBoot(inst.BootID, m.bootID(ctx)) {
 		return errcode.E(errcode.INVALID, adoptRequiredMsg)
 	}
-	m.closeClient(inst.InstanceID)
 	sock := m.deps.Layout.ShimSocket(inst.InstanceID)
-	if !socketExists(sock) {
+	if !socketExists(sock) && m.clients[inst.InstanceID] == nil {
 		if !pidAlive(inst.PID) || !sameBoot(inst.BootID, m.bootID(ctx)) {
 			inst.PID = 0
 			inst.Observed = ObservedStopped
@@ -497,13 +481,12 @@ func (m *Manager) signalStop(ctx context.Context, inst *Instance, signal, killSi
 		}
 		return nil
 	}
-	client, st, err := shim.Reconnect(ctx, sock)
+	client, st, err := m.connectShim(ctx, inst.InstanceID, sock)
 	if err != nil {
 		inst.PID = 0
 		inst.Observed = ObservedStopped
 		return m.deps.Store.PutInstance(ctx, *inst)
 	}
-	defer m.closeConn(client, inst.InstanceID)
 	if st == nil || !st.GetAlive() {
 		inst.PID = 0
 		inst.Observed = ObservedStopped
@@ -547,11 +530,22 @@ func (m *Manager) closeClient(id string) {
 	}
 }
 
-func (m *Manager) closeConn(c *shim.Client, id string) {
-	if c != nil {
-		_ = c.Close()
+func (m *Manager) connectShim(ctx context.Context, id, socket string) (*shim.Client, *shimpb.StatusResponse, error) {
+	if client := m.clients[id]; client != nil {
+		checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		status, err := client.Status(checkCtx)
+		cancel()
+		if err == nil {
+			return client, status, nil
+		}
+		m.closeClient(id)
 	}
-	delete(m.clients, id)
+	client, status, err := shim.Reconnect(ctx, socket)
+	if err != nil {
+		return nil, nil, err
+	}
+	m.clients[id] = client
+	return client, status, nil
 }
 
 func (m *Manager) bootID(ctx context.Context) string {
@@ -569,12 +563,17 @@ func (m *Manager) resetHealth(id string) {
 	delete(m.lastHealthRestart, id)
 }
 
-func (m *Manager) forgetInstance(id string) {
-	m.closeClient(id)
-	delete(m.failures, id)
-	delete(m.nextTry, id)
-	delete(m.lastShimCheck, id)
-	m.resetHealth(id)
+func (m *Manager) forgetInstance(ctx context.Context, inst Instance) {
+	m.closeClient(inst.InstanceID)
+	if sameBoot(inst.BootID, m.bootID(ctx)) && inst.ShimPID > 1 && !pidAlive(inst.PID) {
+		_ = unix.Kill(inst.ShimPID, unix.SIGTERM)
+	}
+	_ = os.Remove(m.deps.Layout.ShimSocket(inst.InstanceID))
+	_ = os.Remove(runtimePath(m.deps.Layout, inst.InstanceID))
+	delete(m.failures, inst.InstanceID)
+	delete(m.nextTry, inst.InstanceID)
+	delete(m.lastShimCheck, inst.InstanceID)
+	m.resetHealth(inst.InstanceID)
 }
 
 func (m *Manager) resetAllHealth() {

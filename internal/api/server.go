@@ -52,7 +52,6 @@ type Options struct {
 	Degraded            bool
 	Ready               func() error
 	AgentVersion        string
-	UpdateReady         func() error
 	Started             time.Time
 	LocalOnly           bool
 	LocalID             string
@@ -357,7 +356,7 @@ func (s *Server) readyz(c *gin.Context) {
 
 func (s *Server) updatez(c *gin.Context) {
 	storeReady := !s.isDegraded()
-	shimRecoveryComplete := s.opts.UpdateReady != nil && s.opts.UpdateReady() == nil
+	shimRecoveryComplete := s.opts.Mgr != nil && s.opts.Mgr.ShimTakeoverReady(c.Request.Context()) == nil
 	status := http.StatusOK
 	if !storeReady || !shimRecoveryComplete || s.opts.AgentVersion == "" {
 		status = http.StatusServiceUnavailable

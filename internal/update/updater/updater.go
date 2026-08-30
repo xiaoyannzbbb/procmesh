@@ -31,12 +31,14 @@ const (
 	ArtifactFilename          = "artifact.tar.gz"
 	journalFilename           = "journal.json"
 	markerFilename            = ".procmesh-release"
+	journalSchemaVersion      = 2
 )
 
 var (
 	RequiredBinaries = []string{"procmesh", "procmesh-agent", "procmesh-shim", "procmesh-updater"}
 	operationPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	versionPattern   = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
+	digestPattern    = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 	ErrInterrupted    = errors.New("updater interrupted at durable checkpoint")
 	ErrRolledBack     = errors.New("agent health verification failed; update rolled back")
@@ -59,7 +61,9 @@ const (
 	PhaseStaged    Phase = "STAGED"
 	PhaseSwitched  Phase = "SWITCHED"
 	PhaseRestarted Phase = "RESTARTED"
-	PhaseHealthy   Phase = "HEALTHY"
+	// PhaseHealthChecking is an acceptance checkpoint, not a durable journal phase.
+	PhaseHealthChecking Phase = "HEALTH_CHECKING"
+	PhaseHealthy        Phase = "HEALTHY"
 )
 
 type Plan struct {
@@ -72,12 +76,15 @@ type Plan struct {
 }
 
 type Journal struct {
-	SchemaVersion int    `json:"schema_version"`
-	OperationID   string `json:"operation_id"`
-	Status        Status `json:"status"`
-	Phase         Phase  `json:"phase,omitempty"`
-	FromVersion   string `json:"from_version"`
-	TargetVersion string `json:"target_version"`
+	SchemaVersion  int    `json:"schema_version"`
+	OperationID    string `json:"operation_id"`
+	Status         Status `json:"status"`
+	Phase          Phase  `json:"phase,omitempty"`
+	FromVersion    string `json:"from_version"`
+	TargetVersion  string `json:"target_version"`
+	VerifiedAt     string `json:"verified_at,omitempty"`
+	ManifestSHA256 string `json:"manifest_sha256,omitempty"`
+	ArtifactSHA256 string `json:"artifact_sha256,omitempty"`
 }
 
 type Result struct {
@@ -145,8 +152,11 @@ func Execute(ctx context.Context, options Options) (Result, error) {
 		return rollback(ctx, options, operationDir, plan, journal)
 	}
 
-	manifest, artifact, manifestDigest, err := verifyInputs(options, operationDir, plan)
+	manifest, artifact, manifestDigest, err := verifyJournalIdentity(options, operationDir, plan, &journal)
 	if err != nil {
+		if journal.VerifiedAt != "" || journal.Phase != "" {
+			return rollbackAfterFailure(ctx, options, operationDir, plan, journal, err)
+		}
 		return Result{}, err
 	}
 	_ = manifest
@@ -191,6 +201,9 @@ func Execute(ctx context.Context, options Options) (Result, error) {
 	}
 
 	if phaseRank(journal.Phase) < phaseRank(PhaseHealthy) {
+		if err := checkpoint(options, PhaseHealthChecking); err != nil {
+			return Result{}, err
+		}
 		expectation := healthExpectation(options.InstallRoot, plan.TargetVersion, plan)
 		if err := options.Health.Check(ctx, expectation); err != nil {
 			return rollbackAfterFailure(ctx, options, operationDir, plan, journal, err)
@@ -245,20 +258,53 @@ func readJournal(name string, plan Plan) (Journal, error) {
 	err := readCanonicalPrivateJSON(name, &journal)
 	if errors.Is(err, os.ErrNotExist) {
 		return Journal{
-			SchemaVersion: 1, OperationID: plan.OperationID, Status: StatusRunning,
+			SchemaVersion: journalSchemaVersion, OperationID: plan.OperationID, Status: StatusRunning,
 			FromVersion: plan.ExpectedCurrentVersion, TargetVersion: plan.TargetVersion,
 		}, nil
 	}
 	if err != nil {
 		return Journal{}, invalid("invalid updater journal", err)
 	}
-	if journal.SchemaVersion != 1 || journal.OperationID != plan.OperationID || journal.FromVersion != plan.ExpectedCurrentVersion || journal.TargetVersion != plan.TargetVersion {
+	if journal.SchemaVersion != journalSchemaVersion || journal.OperationID != plan.OperationID || journal.FromVersion != plan.ExpectedCurrentVersion || journal.TargetVersion != plan.TargetVersion {
 		return Journal{}, invalid("updater journal does not match plan", nil)
 	}
 	return journal, nil
 }
 
-func verifyInputs(options Options, operationDir string, plan Plan) (trust.Manifest, trust.Artifact, string, error) {
+func verifyJournalIdentity(options Options, operationDir string, plan Plan, journal *Journal) (trust.Manifest, trust.Artifact, string, error) {
+	verifiedAt := optionNow(options)
+	if journal.VerifiedAt != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, journal.VerifiedAt)
+		if err != nil || parsed.UTC().Format(time.RFC3339Nano) != journal.VerifiedAt || !digestPattern.MatchString(journal.ManifestSHA256) || !digestPattern.MatchString(journal.ArtifactSHA256) {
+			return trust.Manifest{}, trust.Artifact{}, "", invalid("updater journal has invalid verified release identity", err)
+		}
+		verifiedAt = parsed
+	}
+	manifest, artifact, manifestDigest, err := verifyInputsAt(options, operationDir, plan, verifiedAt)
+	if err != nil {
+		return trust.Manifest{}, trust.Artifact{}, "", err
+	}
+	if journal.VerifiedAt == "" {
+		journal.VerifiedAt = verifiedAt.UTC().Format(time.RFC3339Nano)
+		journal.ManifestSHA256 = manifestDigest
+		journal.ArtifactSHA256 = artifact.SHA256
+		if err := writeJournal(operationDir, *journal); err != nil {
+			return trust.Manifest{}, trust.Artifact{}, "", err
+		}
+	} else if subtle.ConstantTimeCompare([]byte(journal.ManifestSHA256), []byte(manifestDigest)) != 1 || subtle.ConstantTimeCompare([]byte(journal.ArtifactSHA256), []byte(artifact.SHA256)) != 1 {
+		return trust.Manifest{}, trust.Artifact{}, "", invalid("verified release identity changed", nil)
+	}
+	return manifest, artifact, manifestDigest, nil
+}
+
+func optionNow(options Options) time.Time {
+	if options.Now != nil {
+		return options.Now().UTC()
+	}
+	return time.Now().UTC()
+}
+
+func verifyInputsAt(options Options, operationDir string, plan Plan, verifiedAt time.Time) (trust.Manifest, trust.Artifact, string, error) {
 	channelBytes, err := readPrivateFile(filepath.Join(operationDir, ChannelFilename), 1<<20)
 	if err != nil {
 		return trust.Manifest{}, trust.Artifact{}, "", invalid("read channel metadata", err)
@@ -275,7 +321,7 @@ func verifyInputs(options Options, operationDir string, plan Plan) (trust.Manife
 	if err != nil {
 		return trust.Manifest{}, trust.Artifact{}, "", invalid("read manifest signature", err)
 	}
-	verifier := trust.Verifier{Keys: options.Keys, Now: options.Now}
+	verifier := trust.Verifier{Keys: options.Keys, Now: func() time.Time { return verifiedAt }}
 	index, err := verifier.VerifyChannel(channelBytes, channelSignature)
 	if err != nil {
 		return trust.Manifest{}, trust.Artifact{}, "", err

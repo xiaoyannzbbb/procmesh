@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"connectrpc.com/connect"
@@ -198,7 +197,7 @@ func Run(ctx context.Context, opt Options) error {
 			logger.Warn("store reopen failed", "error", err)
 			return serveHTTP(ctx, opt, nil, nil, nil, true, func() error {
 				return errcode.E(errcode.DEGRADED, "store unavailable")
-			}, nil, nil, nil, api.ClusterDeps{}, nil, nil)
+			}, nil, nil, nil, api.ClusterDeps{}, nil)
 		}
 		degraded = true
 	}
@@ -235,7 +234,7 @@ func Run(ctx context.Context, opt Options) error {
 		Logs:     logs,
 		Logger:   logger,
 	})
-	var updateReady atomic.Bool
+	defer func() { _ = mgr.Close() }()
 	recoverErr := mgr.Recover(ctx)
 	if recoverErr != nil {
 		logger.Warn("process recovery failed", "error", recoverErr)
@@ -244,7 +243,6 @@ func Run(ctx context.Context, opt Options) error {
 	if reconcileErr != nil {
 		logger.Warn("process reconcile failed", "error", reconcileErr)
 	}
-	updateReady.Store(recoverErr == nil && reconcileErr == nil)
 
 	collector := metrics.New(layout.Root, 5*time.Second)
 	if err := collector.Start(ctx); err != nil {
@@ -394,7 +392,7 @@ func Run(ctx context.Context, opt Options) error {
 		NodeID:     nodeID,
 		Hostname:   hostname,
 		BootID:     hostBoot,
-	}, batchEng, &updateReady)
+	}, batchEng)
 }
 
 func listProcessRefs(mgr *process.Manager) []metrics.ProcessRef {
@@ -682,7 +680,7 @@ func newBatchID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
-func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *logmgr.Manager, st *store.Store, degraded bool, ready func() error, mesh *cluster.Mesh, src *liveSource, collector *metrics.Collector, clusterDeps api.ClusterDeps, batchEng *batch.Engine, updateReady *atomic.Bool) error {
+func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *logmgr.Manager, st *store.Store, degraded bool, ready func() error, mesh *cluster.Mesh, src *liveSource, collector *metrics.Collector, clusterDeps api.ClusterDeps, batchEng *batch.Engine) error {
 	ln, err := net.Listen("tcp", opt.Listen)
 	if err != nil {
 		shutdownMesh(mesh)
@@ -808,22 +806,16 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		revs = st
 	}
 	srv, err := api.NewServer(api.Options{
-		Addr:         opt.Listen,
-		Logger:       opt.Logger.With("component", "http"),
-		Mgr:          mgr,
-		Logs:         logs,
-		Store:        revs,
-		Cluster:      clusterDeps,
-		Auth:         authSvc,
-		Degraded:     degraded,
-		Ready:        ready,
-		AgentVersion: version.Agent,
-		UpdateReady: func() error {
-			if updateReady == nil || !updateReady.Load() {
-				return fmt.Errorf("process shim recovery is incomplete")
-			}
-			return nil
-		},
+		Addr:             opt.Listen,
+		Logger:           opt.Logger.With("component", "http"),
+		Mgr:              mgr,
+		Logs:             logs,
+		Store:            revs,
+		Cluster:          clusterDeps,
+		Auth:             authSvc,
+		Degraded:         degraded,
+		Ready:            ready,
+		AgentVersion:     version.Agent,
 		Started:          started,
 		LocalOnly:        false,
 		LocalID:          clusterDeps.NodeID,
@@ -925,12 +917,7 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 					work = agentLoopWork{diskProtect: true, logRotate: true, backupSchedule: true}
 				}
 				if err := mgr.Reconcile(ctx); err != nil {
-					if updateReady != nil {
-						updateReady.Store(false)
-					}
 					opt.Logger.Warn("process reconcile failed", "error", err)
-				} else if updateReady != nil {
-					updateReady.Store(true)
 				}
 				if logs != nil && work.diskProtect {
 					logs.ExtraLogDirs = mgr.CustomLogDirs(ctx)

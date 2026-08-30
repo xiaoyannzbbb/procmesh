@@ -184,7 +184,7 @@ func (m *Manager) DeleteSpec(ctx context.Context, processID string, expectedRevi
 			_ = m.finishOp(ctx, opID, opFailed, nil, err.Error())
 			return err
 		}
-		m.forgetInstance(inst.InstanceID)
+		m.forgetInstance(ctx, inst)
 	}
 	m.audit(ctx, processID, "process.delete", opID, operator, "SUCCESS")
 	return m.finishOp(ctx, opID, opSuccess, nil, "")
@@ -606,7 +606,7 @@ func (m *Manager) ensureInstances(ctx context.Context, spec ProcessSpec) error {
 			if err := m.deps.Store.DeleteInstance(ctx, inst.InstanceID); err != nil {
 				return err
 			}
-			m.forgetInstance(inst.InstanceID)
+			m.forgetInstance(ctx, inst)
 		}
 	}
 	return nil
@@ -696,6 +696,14 @@ func (m *Manager) closeAll() {
 	for id := range m.clients {
 		m.closeClient(id)
 	}
+}
+
+// Close releases the Manager's retained Shim ownership connections.
+func (m *Manager) Close() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.closeAll()
+	return nil
 }
 
 func (m *Manager) now() time.Time {

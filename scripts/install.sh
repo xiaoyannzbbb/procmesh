@@ -53,6 +53,19 @@ prompt_value() {
   REPLY=${answer:-$default_value}
 }
 
+prompt_required_value() {
+  local label=$1 answer
+  while true; do
+    printf '%s: ' "$label" >"$tty"
+    IFS= read -r answer <"$tty" || die "unable to read interactive input"
+    if [[ -n "$answer" ]]; then
+      REPLY=$answer
+      return
+    fi
+    printf 'A value is required.\n' >"$tty"
+  done
+}
+
 prompt_yes_no() {
   local label=$1
   local default_value=$2
@@ -180,6 +193,165 @@ refuse_unsafe_existing_installation() {
     die "an existing managed ProcMesh installation was found; apply releases with procmesh-updater"
   fi
   die "automatic migration of an existing flat or custom ProcMesh installation is not supported; existing binaries and systemd units were preserved. Migrate them manually after recording the legacy version and rollback procedure"
+}
+
+file_owner_id() {
+  stat -c %u "$1" 2>/dev/null || stat -f %u "$1"
+}
+
+validate_flat_installation() {
+  local bin_dir=$1
+  local install_root=$2
+  local service_unit=$3
+  local expected_owner=$4
+  local binary unit_text exec_count value
+
+  [[ ! -e "$install_root/current" && ! -L "$install_root/current" ]] || \
+    die "an existing managed ProcMesh installation was found; apply releases with procmesh-updater"
+  for binary in procmesh procmesh-agent procmesh-shim; do
+    [[ -f "$bin_dir/$binary" && ! -L "$bin_dir/$binary" && -x "$bin_dir/$binary" ]] || \
+      die "automatic migration requires the complete official flat binary layout; existing files were preserved"
+    [[ "$(file_owner_id "$bin_dir/$binary")" == "$expected_owner" ]] || \
+      die "automatic migration requires root-managed flat binaries; existing files were preserved"
+  done
+  [[ -f "$service_unit" && ! -L "$service_unit" ]] || \
+    die "automatic migration requires the official procmesh-agent systemd unit; existing files were preserved"
+  [[ "$(file_owner_id "$service_unit")" == "$expected_owner" ]] || \
+    die "automatic migration requires a root-managed procmesh-agent systemd unit; existing files were preserved"
+  exec_count=$(awk '/^ExecStart=/{count++} END{print count+0}' "$service_unit")
+  [[ "$exec_count" == 1 ]] || die "automatic migration requires exactly one procmesh-agent ExecStart"
+  grep -qx 'KillMode=process' "$service_unit" || die "automatic migration requires KillMode=process; existing unit was preserved"
+  unit_text=$(tr '\n' ' ' <"$service_unit")
+  [[ "$unit_text" == *"ExecStart=$bin_dir/procmesh-agent "* ]] || \
+    die "automatic migration does not recognize the existing agent binary path; existing unit was preserved"
+  [[ "$unit_text" == *"--shim-bin $bin_dir/procmesh-shim"* ]] || \
+    die "automatic migration does not recognize the existing shim binary path; existing unit was preserved"
+
+  value=$(printf '%s\n' "$unit_text" | sed -nE 's/.*--data-dir[[:space:]]+([^[:space:]\\]+).*/\1/p')
+  [[ "$value" == /* ]] || die "automatic migration requires an absolute --data-dir path"
+  bootstrap_data_dir=$value
+  value=$(printf '%s\n' "$unit_text" | sed -nE 's/.*--config[[:space:]]+([^[:space:]\\]+).*/\1/p')
+  [[ -z "$value" || "$value" == /* ]] || die "automatic migration requires an absolute --config path"
+  bootstrap_config_path=$value
+  value=$(printf '%s\n' "$unit_text" | sed -nE 's/.*--listen[[:space:]]+([^[:space:]\\]+).*/\1/p')
+  case "$value" in
+    127.*:*|localhost:*|'[::1]':*) ;;
+    *) die "automatic migration requires a loopback --listen address for update health verification" ;;
+  esac
+  bootstrap_health_address=$value
+}
+
+replace_install_pointer() {
+  local install_root=$1 pointer=$2 version=$3 temporary
+  temporary="$install_root/.${pointer}-bootstrap-$$"
+  run_privileged rm -f "$temporary" || return 1
+  run_privileged ln -s "versions/$version" "$temporary" || return 1
+  run_privileged mv -Tf "$temporary" "$install_root/$pointer"
+}
+
+link_managed_binaries() {
+  local bin_dir=$1 install_root=$2 binary temporary target
+  for binary in procmesh procmesh-agent procmesh-shim; do
+    temporary="$bin_dir/.${binary}-bootstrap-$$"
+    target="$install_root/current/$binary"
+    if [[ "$bin_dir" == /usr/local/bin && "$install_root" == /usr/local/lib/procmesh ]]; then
+      target="../lib/procmesh/current/$binary"
+    fi
+    run_privileged rm -f "$temporary" || return 1
+    run_privileged ln -s "$target" "$temporary" || return 1
+    run_privileged mv -Tf "$temporary" "$bin_dir/$binary" || return 1
+  done
+}
+
+wait_for_update_health() {
+  local address=$1 version=$2 agent_path=$3 attempt body main_pid executable
+  for attempt in $(seq 1 150); do
+    body=$(curl --fail --silent "http://$address/updatez" 2>/dev/null || true)
+    main_pid=$(systemctl show -p MainPID --value procmesh-agent.service 2>/dev/null || true)
+    executable=''
+    if [[ "$main_pid" =~ ^[1-9][0-9]*$ ]]; then
+      executable=$(readlink "/proc/$main_pid/exe" 2>/dev/null || true)
+    fi
+    if [[ -n "$body" ]] && jq -e --arg version "$version" \
+      '.version == $version and .store_ready and .shim_recovery_complete' <<<"$body" >/dev/null 2>&1 && \
+      [[ "$executable" == "$agent_path" ]]; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  return 1
+}
+
+activate_flat_bootstrap() {
+  local bin_dir=$1 install_root=$2 service_unit=$3 managed_unit=$4 legacy_version=$5 target_version=$6 package_dir=$7 health_address=$8
+  local update_unit_target=$9 recover_unit_target=${10}
+  replace_install_pointer "$install_root" previous "$legacy_version" || return 1
+  replace_install_pointer "$install_root" current "$legacy_version" || return 1
+  link_managed_binaries "$bin_dir" "$install_root" || return 1
+  run_privileged install -m 0644 "$managed_unit" "$service_unit" || return 1
+  run_privileged install -m 0644 "$package_dir/procmesh-agent-update@.service" "$update_unit_target" || return 1
+  run_privileged install -m 0644 "$package_dir/procmesh-agent-update-recover.service" "$recover_unit_target" || return 1
+  run_privileged systemctl daemon-reload || return 1
+  run_privileged systemctl enable procmesh-agent-update-recover.service || return 1
+  replace_install_pointer "$install_root" current "$target_version" || return 1
+  run_privileged systemctl restart procmesh-agent.service || return 1
+  wait_for_update_health "$health_address" "$target_version" "$install_root/versions/$target_version/procmesh-agent"
+}
+
+rollback_flat_bootstrap() {
+  local install_root=$1 service_unit=$2 legacy_unit=$3 legacy_version=$4
+  local failed=0
+  replace_install_pointer "$install_root" current "$legacy_version" || failed=1
+  replace_install_pointer "$install_root" previous "$legacy_version" || failed=1
+  run_privileged install -m 0644 "$legacy_unit" "$service_unit" || failed=1
+  run_privileged systemctl daemon-reload || failed=1
+  run_privileged systemctl restart procmesh-agent.service || failed=1
+  return "$failed"
+}
+
+bootstrap_flat_installation() {
+  local bin_dir=$1 install_root=$2 updater_root=$3 service_unit=$4 package_dir=$5
+  local legacy_version=$6 target_version=$7 expected_owner=${8:-0}
+  local update_unit_target=${9:-$update_unit_path} recover_unit_target=${10:-$update_recover_unit_path}
+  local legacy_dir target_dir managed_unit binary
+
+  [[ "$legacy_version" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ && \
+    "$target_version" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ && "$legacy_version" != "$target_version" ]] || \
+    die "legacy and target versions must be distinct SemVer values"
+  validate_flat_installation "$bin_dir" "$install_root" "$service_unit" "$expected_owner"
+  for binary in procmesh procmesh-agent procmesh-shim procmesh-updater; do
+    [[ -f "$package_dir/$binary" && -x "$package_dir/$binary" ]] || die "release package is missing $binary"
+  done
+  [[ -f "$package_dir/procmesh-agent-update@.service" && -f "$package_dir/procmesh-agent-update-recover.service" ]] || \
+    die "release package is missing updater systemd units"
+
+  legacy_dir="$install_root/versions/$legacy_version"
+  target_dir="$install_root/versions/$target_version"
+  [[ ! -e "$legacy_dir" && ! -e "$target_dir" ]] || die "bootstrap version directory already exists"
+  run_privileged install -d -m 0755 "$install_root" "$install_root/versions" "$legacy_dir" "$target_dir" "$bin_dir"
+  for binary in procmesh procmesh-agent procmesh-shim; do
+    run_privileged install -m 0755 "$bin_dir/$binary" "$legacy_dir/$binary"
+  done
+  run_privileged install -m 0755 "$package_dir/procmesh-updater" "$legacy_dir/procmesh-updater"
+  run_privileged install -m 0444 "$service_unit" "$legacy_dir/procmesh-agent.service"
+  for binary in procmesh procmesh-agent procmesh-shim procmesh-updater; do
+    run_privileged install -m 0755 "$package_dir/$binary" "$target_dir/$binary"
+  done
+  run_privileged install -d -m 0700 "$updater_root" "$updater_root/operations"
+
+  managed_unit="$package_dir/procmesh-agent.bootstrap.service"
+  sed \
+    -e "s|ExecStart=$bin_dir/procmesh-agent|ExecStart=$install_root/current/procmesh-agent|" \
+    -e "s|--shim-bin $bin_dir/procmesh-shim|--shim-bin $install_root/current/procmesh-shim|" \
+    "$service_unit" >"$managed_unit"
+  chmod 0644 "$managed_unit"
+
+  if ! activate_flat_bootstrap "$bin_dir" "$install_root" "$service_unit" "$managed_unit" \
+    "$legacy_version" "$target_version" "$package_dir" "$bootstrap_health_address" "$update_unit_target" "$recover_unit_target"; then
+    rollback_flat_bootstrap "$install_root" "$service_unit" "$legacy_dir/procmesh-agent.service" "$legacy_version" || \
+      die "bootstrap failed and the legacy service could not be restored; use $legacy_dir/procmesh-agent.service for manual recovery"
+    return 1
+  fi
 }
 
 trusted_public_key() {
@@ -407,12 +579,44 @@ done
 
 printf 'Verified signed ProcMesh %s for Linux %s.\n' "$tag" "$architecture"
 
-refuse_unsafe_existing_installation "$managed_bin_dir" "$managed_root" "$unit_path"
-if [[ -d /run/systemd/system ]] && systemctl cat procmesh-agent.service >/dev/null 2>&1; then
+install_mode=fresh
+existing_flat=false
+for binary in procmesh procmesh-agent procmesh-shim procmesh-updater; do
+  if [[ -e "$managed_bin_dir/$binary" || -L "$managed_bin_dir/$binary" ]]; then
+    existing_flat=true
+  fi
+done
+if [[ "$existing_flat" == true || -e "$unit_path" || -L "$unit_path" || -e "$managed_root/current" || -L "$managed_root/current" ]]; then
+  [[ ! -e "$managed_bin_dir/procmesh-updater" && ! -L "$managed_bin_dir/procmesh-updater" ]] || \
+    die "automatic migration of this custom ProcMesh installation is not supported; existing files were preserved"
+  validate_flat_installation "$managed_bin_dir" "$managed_root" "$unit_path" 0
+  if ! prompt_yes_no 'Bootstrap this recognized flat ProcMesh installation into the managed layout' no; then
+    printf 'Installation cancelled; existing binaries and unit were not changed.\n'
+    exit 0
+  fi
+  prompt_required_value 'Existing flat installation version (SemVer, for example v1.2.0)'
+  legacy_version=$REPLY
+  [[ "$legacy_version" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ && "$legacy_version" != "$tag" ]] || \
+    die "legacy version must be a SemVer different from the target release"
+  jq -e --arg version "$legacy_version" '.rollback_safe_from | index($version) != null' "$tmp_dir/manifest.json" >/dev/null || \
+    die "the signed target release does not declare rollback compatibility with $legacy_version"
+  install_mode=bootstrap
+fi
+if [[ "$install_mode" == fresh && -d /run/systemd/system ]] && systemctl cat procmesh-agent.service >/dev/null 2>&1; then
   die 'an existing procmesh-agent systemd unit was found outside the managed unit path; it was preserved and must be migrated manually'
 fi
 
 version_dir="$managed_root/versions/$tag"
+if [[ "$install_mode" == bootstrap ]]; then
+  if ! bootstrap_flat_installation "$managed_bin_dir" "$managed_root" "$update_root" "$unit_path" \
+    "$package_dir" "$legacy_version" "$tag" 0; then
+    die "bootstrap target health failed; the legacy version and systemd unit were restored"
+  fi
+  printf 'Bootstrapped ProcMesh %s to managed version %s; previous points to the preserved legacy release.\n' "$legacy_version" "$tag"
+  printf 'ProcMesh %s installation complete.\n' "$tag"
+  return
+fi
+
 [[ ! -e "$version_dir" ]] || die "managed version directory already exists: $version_dir"
 run_privileged install -d -m 0755 "$managed_root" "$managed_root/versions" "$managed_bin_dir"
 run_privileged install -d -m 0755 "$version_dir"

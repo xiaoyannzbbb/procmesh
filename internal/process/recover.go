@@ -3,6 +3,7 @@ package process
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"time"
 
@@ -17,6 +18,7 @@ func (m *Manager) Recover(ctx context.Context) error {
 }
 
 func (m *Manager) recoverLocked(ctx context.Context) error {
+	m.closeAll()
 	m.resetAllHealth()
 	m.lastShimCheck = make(map[string]time.Time)
 	boot, err := m.deps.Store.GetBootID(ctx)
@@ -46,7 +48,6 @@ func (m *Manager) recoverLocked(ctx context.Context) error {
 	if err := m.recoverLeftoverSockets(ctx, known); err != nil {
 		return err
 	}
-	m.closeAll()
 	return nil
 }
 
@@ -125,11 +126,55 @@ func (m *Manager) recoverInstance(ctx context.Context, spec ProcessSpec, inst In
 }
 
 func (m *Manager) takeOver(ctx context.Context, inst Instance, client *shim.Client, st *shimpb.StatusResponse, boot string) error {
-	if client != nil {
-		_ = client.Close()
-	}
 	m.closeClient(inst.InstanceID)
+	m.clients[inst.InstanceID] = client
 	return m.applyRunning(ctx, &inst, int(st.GetPid()), boot)
+}
+
+// ShimTakeoverReady verifies that every active managed instance on this boot
+// is owned through a live Shim connection and still refers to the stored PID.
+func (m *Manager) ShimTakeoverReady(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	boot, err := m.deps.Store.GetBootID(ctx)
+	if err != nil {
+		return fmt.Errorf("read boot id: %w", err)
+	}
+	specs, err := m.deps.Store.ListSpecs(ctx)
+	if err != nil {
+		return fmt.Errorf("list process specs: %w", err)
+	}
+	for _, spec := range specs {
+		instances, err := m.deps.Store.ListInstances(ctx, spec.ProcessID)
+		if err != nil {
+			return fmt.Errorf("list instances for %s: %w", spec.ProcessID, err)
+		}
+		for _, inst := range instances {
+			active := sameBoot(inst.BootID, boot) && pidAlive(inst.PID)
+			if !active && inst.Observed != ObservedRunning {
+				continue
+			}
+			if !active || inst.Observed != ObservedRunning {
+				return fmt.Errorf("instance %s is not a running process owned on this boot", inst.InstanceID)
+			}
+			if inst.ShimPID <= 0 || !pidAlive(inst.ShimPID) {
+				return fmt.Errorf("instance %s shim is not alive", inst.InstanceID)
+			}
+			socket := m.deps.Layout.ShimSocket(inst.InstanceID)
+			if !socketExists(socket) && m.clients[inst.InstanceID] == nil {
+				return fmt.Errorf("instance %s shim socket is missing", inst.InstanceID)
+			}
+			_, status, err := m.connectShim(ctx, inst.InstanceID, socket)
+			if err != nil {
+				return fmt.Errorf("instance %s shim takeover: %w", inst.InstanceID, err)
+			}
+			if status == nil || !status.GetAlive() || int(status.GetPid()) != inst.PID {
+				return fmt.Errorf("instance %s shim status does not match pid %d", inst.InstanceID, inst.PID)
+			}
+		}
+	}
+	return nil
 }
 
 func (m *Manager) markOrphan(ctx context.Context, inst Instance, pid int) error {

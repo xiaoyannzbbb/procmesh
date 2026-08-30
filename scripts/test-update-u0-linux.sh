@@ -12,6 +12,7 @@ set -euo pipefail
 }
 
 readonly install_root=/usr/local/lib/procmesh
+readonly bin_root=/usr/local/bin
 readonly data_root=/var/lib/procmesh
 readonly update_root=$data_root/update
 readonly agent_unit=/etc/systemd/system/procmesh-agent.service
@@ -21,21 +22,28 @@ readonly failpoint=/run/procmesh-update-accept-failpoint
 readonly server=127.0.0.1:18680
 readonly public_key='xyMahjmLYOPoCzVMu93x9cACvqkgEzBD7TIf5ErO+MA='
 readonly private_seed='T9m8DFo7vfR6WEtaLxtEr5WfFUEUvTnChww4CPjns2E='
+readonly cross_boot_state=$data_root/u0-cross-boot-state.json
+readonly cross_boot_stage=${PROCMESH_U0_CROSS_BOOT_STAGE:-}
 
-for path in "$install_root" "$data_root" "$agent_unit" "$update_unit" "$recover_unit"; do
-  [[ ! -e "$path" && ! -L "$path" ]] || {
-    printf 'Refusing to overwrite existing test target: %s\n' "$path" >&2
-    exit 2
-  }
-done
+if [[ "$cross_boot_stage" != resume ]]; then
+  for path in "$install_root" "$data_root" "$agent_unit" "$update_unit" "$recover_unit" \
+    "$bin_root/procmesh" "$bin_root/procmesh-agent" "$bin_root/procmesh-shim"; do
+    [[ ! -e "$path" && ! -L "$path" ]] || {
+      printf 'Refusing to overwrite existing test target: %s\n' "$path" >&2
+      exit 2
+    }
+  done
+fi
 
 repo_root=$(git rev-parse --show-toplevel)
 work_dir=$(mktemp -d)
 artifact_root=${PROCMESH_U0_ARTIFACTS:-}
 business_started=false
+preserve_for_reboot=false
 shim_pid=''
 business_pid=''
 cleanup() {
+  [[ "$preserve_for_reboot" == false ]] || return
   rm -f "$failpoint"
   if [[ "$business_started" == true && -x "$install_root/current/procmesh" ]]; then
     "$install_root/current/procmesh" --server "$server" process stop u0-worker >/dev/null 2>&1 || true
@@ -44,6 +52,7 @@ cleanup() {
   [[ -z "$shim_pid" ]] || kill "$shim_pid" >/dev/null 2>&1 || true
   [[ -z "$business_pid" ]] || kill "$business_pid" >/dev/null 2>&1 || true
   rm -f "$agent_unit" "$update_unit" "$recover_unit"
+  rm -f "$bin_root/procmesh" "$bin_root/procmesh-agent" "$bin_root/procmesh-shim"
   rm -rf "$install_root" "$data_root"
   systemctl daemon-reload >/dev/null 2>&1 || true
   rm -rf "$work_dir"
@@ -135,6 +144,43 @@ assert_processes_unchanged() {
   kill -0 "$current_shim" "$current_business"
 }
 
+if [[ "$cross_boot_stage" == resume ]]; then
+  [[ -f "$cross_boot_state" ]] || {
+    printf 'Cross-boot state is missing: %s\n' "$cross_boot_state" >&2
+    exit 2
+  }
+  old_boot=$(jq -er '.boot_id' "$cross_boot_state")
+  old_shim=$(jq -er '.shim_pid' "$cross_boot_state")
+  old_business=$(jq -er '.business_pid' "$cross_boot_state")
+  cross_op=$(jq -er '.operation_id' "$cross_boot_state")
+  new_boot=$(cat /proc/sys/kernel/random/boot_id)
+  [[ "$new_boot" != "$old_boot" ]] || {
+    printf 'Boot ID did not change: %s\n' "$new_boot" >&2
+    exit 1
+  }
+  wait_update_health v1.2.3
+  for attempt in $(seq 1 100); do
+    if jq -e '.status == "SUCCEEDED" and .phase == "HEALTHY"' \
+      "$update_root/operations/$cross_op/journal.json" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.1
+  done
+  jq -e '.schema_version == 2 and .status == "SUCCEEDED" and .phase == "HEALTHY" and
+    (.verified_at | type == "string") and (.manifest_sha256 | test("^[0-9a-f]{64}$")) and
+    (.artifact_sha256 | test("^[0-9a-f]{64}$"))' \
+    "$update_root/operations/$cross_op/journal.json" >/dev/null
+  shim_pid=$(pgrep -o -x procmesh-shim)
+  business_pid=$(pgrep -o -f '^/bin/sleep 600$')
+  business_started=true
+  kill -0 "$shim_pid" "$business_pid"
+  body=$(curl --fail --silent "http://$server/updatez")
+  jq -e '.version == "v1.2.3" and .store_ready and .shim_recovery_complete' <<<"$body" >/dev/null
+  printf 'U0 CROSS-BOOT PASS boot=%s->%s preboot_shim=%s preboot_business=%s recovered_shim=%s recovered_business=%s journal=SUCCEEDED/HEALTHY takeover=true\n' \
+    "$old_boot" "$new_boot" "$old_shim" "$old_business" "$shim_pid" "$business_pid"
+  exit 0
+fi
+
 cd "$repo_root"
 if [[ -n "$artifact_root" ]]; then
   [[ -x "$artifact_root/old/procmesh-agent" && -f "$artifact_root/releases/v1.2.3/manifest.json" ]] || {
@@ -154,15 +200,14 @@ else
   build_release v1.2.3 v1.2.3 v1.2.1
 fi
 
-install -d -m 0755 "$install_root/versions/v1.2.0"
-install -m 0755 "$work_dir/old"/* "$install_root/versions/v1.2.0/"
-ln -s versions/v1.2.0 "$install_root/current"
-ln -s versions/v1.2.0 "$install_root/previous"
-install -d -m 0700 "$update_root/operations"
-install -m 0644 deployments/systemd/procmesh-agent.service "$agent_unit"
-install -m 0644 deployments/systemd/procmesh-agent-update@.service "$update_unit"
-install -m 0644 deployments/systemd/procmesh-agent-update-recover.service "$recover_unit"
+install -m 0755 "$work_dir/old/procmesh" "$bin_root/procmesh"
+install -m 0755 "$work_dir/old/procmesh-agent" "$bin_root/procmesh-agent"
+install -m 0755 "$work_dir/old/procmesh-shim" "$bin_root/procmesh-shim"
+sed 's|/usr/local/lib/procmesh/current|/usr/local/bin|g' \
+  deployments/systemd/procmesh-agent.service >"$work_dir/procmesh-agent-flat.service"
+install -m 0644 "$work_dir/procmesh-agent-flat.service" "$agent_unit"
 systemctl daemon-reload
+systemctl enable procmesh-agent.service
 systemctl start procmesh-agent.service
 wait_update_health v1.2.0
 
@@ -178,22 +223,30 @@ restart:
 health:
   type: alive
 EOF
-"$install_root/current/procmesh" --server "$server" process apply \
+"$bin_root/procmesh" --server "$server" process apply \
   --file "$work_dir/worker.yaml" --expected-revision 0 --comment u0 >/dev/null
-"$install_root/current/procmesh" --server "$server" process start u0-worker
+"$bin_root/procmesh" --server "$server" process start u0-worker
 business_started=true
 sleep 1
 shim_pid=$(pgrep -o -x procmesh-shim)
 business_pid=$(pgrep -o -f '^/bin/sleep 600$')
 agent_pid_before=$(systemctl show -p MainPID --value procmesh-agent.service)
 
-success_op=018f47a2-9c4e-7b1a-8f3d-123456789abc
-stage_operation "$success_op" v1.2.0 v1.2.1
-systemctl start "procmesh-agent-update@$success_op.service"
+release_archives=("$work_dir/releases/v1.2.1"/*.tar.gz)
+[[ ${#release_archives[@]} -eq 1 ]]
+bootstrap_archive_base=$(tar -tzf "${release_archives[0]}" | awk -F/ 'NR == 1 { print $1 }')
+[[ "$bootstrap_archive_base" =~ ^procmesh_1\.2\.1_linux_(amd64|arm64)$ ]]
+tar -xzf "${release_archives[0]}" -C "$work_dir"
+bash -c 'source scripts/install.sh; bootstrap_flat_installation /usr/local/bin /usr/local/lib/procmesh /var/lib/procmesh/update /etc/systemd/system/procmesh-agent.service "$1" v1.2.0 v1.2.1 0' \
+  bootstrap "$work_dir/$bootstrap_archive_base"
 wait_update_health v1.2.1
-assert_processes_unchanged success
+assert_processes_unchanged bootstrap
 agent_pid_after=$(systemctl show -p MainPID --value procmesh-agent.service)
 [[ "$agent_pid_after" != "$agent_pid_before" ]]
+[[ "$(readlink "$install_root/current")" == versions/v1.2.1 ]]
+[[ "$(readlink "$install_root/previous")" == versions/v1.2.0 ]]
+cmp "$work_dir/old/procmesh-agent" "$install_root/versions/v1.2.0/procmesh-agent"
+cmp "$work_dir/procmesh-agent-flat.service" "$install_root/versions/v1.2.0/procmesh-agent.service"
 
 rollback_op=218f47a2-9c4e-7b1a-8f3d-123456789abc
 stage_operation "$rollback_op" v1.2.1 v1.2.2
@@ -205,8 +258,35 @@ wait_update_health v1.2.1
 jq -e '.status == "ROLLED_BACK"' "$update_root/operations/$rollback_op/journal.json" >/dev/null
 assert_processes_unchanged rollback
 
-phases=(STAGED SWITCHED HEALTHY)
-operations=(318f47a2-9c4e-7b1a-8f3d-123456789abc 418f47a2-9c4e-7b1a-8f3d-123456789abc 518f47a2-9c4e-7b1a-8f3d-123456789abc)
+if [[ "$cross_boot_stage" == prepare ]]; then
+  cross_op=618f47a2-9c4e-7b1a-8f3d-123456789abc
+  stage_operation "$cross_op" v1.2.1 v1.2.3
+  printf '%s\n' HEALTH_CHECKING >"$failpoint"
+  if systemctl start "procmesh-agent-update@$cross_op.service"; then
+    printf 'Active-health failpoint unexpectedly succeeded\n' >&2
+    exit 1
+  fi
+  wait_update_health v1.2.3
+  jq -e '.schema_version == 2 and .status == "RUNNING" and .phase == "RESTARTED" and
+    (.verified_at | type == "string") and (.manifest_sha256 | test("^[0-9a-f]{64}$")) and
+    (.artifact_sha256 | test("^[0-9a-f]{64}$"))' \
+    "$update_root/operations/$cross_op/journal.json" >/dev/null
+  assert_processes_unchanged 'active-health interruption'
+  boot_before=$(cat /proc/sys/kernel/random/boot_id)
+  jq -nc --arg boot_id "$boot_before" --arg operation_id "$cross_op" \
+    --argjson shim_pid "$shim_pid" --argjson business_pid "$business_pid" \
+    '{boot_id:$boot_id,operation_id:$operation_id,shim_pid:$shim_pid,business_pid:$business_pid}' \
+    >"$cross_boot_state"
+  chmod 0600 "$cross_boot_state"
+  rm -rf "$work_dir"
+  preserve_for_reboot=true
+  printf 'U0 CROSS-BOOT READY boot=%s operation=%s journal=RUNNING/RESTARTED shim_pid=%s business_pid=%s preboot_unchanged=true\n' \
+    "$boot_before" "$cross_op" "$shim_pid" "$business_pid"
+  exit 0
+fi
+
+phases=(STAGED SWITCHED RESTARTED HEALTH_CHECKING HEALTHY)
+operations=(318f47a2-9c4e-7b1a-8f3d-123456789abc 418f47a2-9c4e-7b1a-8f3d-123456789abc 718f47a2-9c4e-7b1a-8f3d-123456789abc 818f47a2-9c4e-7b1a-8f3d-123456789abc 518f47a2-9c4e-7b1a-8f3d-123456789abc)
 for index in "${!phases[@]}"; do
   phase=${phases[$index]}
   operation=${operations[$index]}

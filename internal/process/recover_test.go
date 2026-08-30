@@ -268,9 +268,15 @@ func TestRecover_DoesNotDoubleStartLiveShim(t *testing.T) {
 		t.Fatalf("%+v %v", insts, err)
 	}
 	pid1 := insts[0].PID
+	if err := m.Close(); err != nil {
+		t.Fatal(err)
+	}
 	m2 := process.NewManager(process.Deps{Store: st, Layout: layout, ShimBin: testShimBin, Now: time.Now})
 	if err := m2.Recover(ctx); err != nil {
 		t.Fatal(err)
+	}
+	if err := m2.ShimTakeoverReady(ctx); err != nil {
+		t.Fatalf("recovered shim must be owned: %v", err)
 	}
 	insts, err = st.ListInstances(ctx, "p1")
 	if err != nil || insts[0].PID != pid1 {
@@ -278,6 +284,36 @@ func TestRecover_DoesNotDoubleStartLiveShim(t *testing.T) {
 	}
 	if err := unix.Kill(pid1, 0); err != nil {
 		t.Fatalf("child died: %v", err)
+	}
+}
+
+func TestShimTakeoverReady_RejectsLiveOrphan(t *testing.T) {
+	ctx := context.Background()
+	root := shortRoot(t)
+	st := openStoreAt(t, filepath.Join(root, "store.db"))
+	layout := paths.New(root)
+	if err := layout.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	spec := process.ProcessSpec{ProcessID: "p1", Name: "orphan", Command: "/bin/true", Instances: 1}
+	if _, err := st.PutSpec(ctx, spec, 0, "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	inst := process.Instance{
+		InstanceID: process.MakeInstanceID("p1", 0),
+		ProcessID:  "p1",
+		Ordinal:    0,
+		PID:        os.Getpid(),
+		Desired:    process.DesiredRunning,
+		Observed:   process.ObservedUnknown,
+		BootID:     mustBoot(t, st),
+	}
+	if err := st.PutInstance(ctx, inst); err != nil {
+		t.Fatal(err)
+	}
+	m := process.NewManager(process.Deps{Store: st, Layout: layout, ShimBin: testShimBin, Now: time.Now})
+	if err := m.ShimTakeoverReady(ctx); err == nil {
+		t.Fatal("live UNKNOWN instance must block update readiness")
 	}
 }
 

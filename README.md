@@ -251,7 +251,7 @@ scripts/release.sh v1.2.3
 curl -fsSL https://raw.githubusercontent.com/xiaoyannzbbb/procmesh/main/scripts/install.sh | bash
 ```
 
-安装器使用固定托管布局 `/usr/local/lib/procmesh/versions/<version>`，原子维护 `current`/`previous`，并在 `/usr/local/bin` 建立兼容链接。旧扁平布局必须由管理员明确确认后人工 bootstrap；在完成首次 bootstrap 前不能自动更新。安装器默认不创建 systemd 服务；选择创建后会同时安装受限 updater 与启动恢复 oneshot。已有配置、数据目录和 Agent systemd 单元不会被覆盖。
+安装器使用固定托管布局 `/usr/local/lib/procmesh/versions/<version>`，原子维护 `current`/`previous`，并在 `/usr/local/bin` 建立兼容链接。旧扁平布局必须由管理员明确确认后人工 bootstrap；安装器只迁移 root 管理、路径可识别且使用 `KillMode=process` 的官方布局，保留旧二进制和 unit 作为可回滚版本，拒绝自定义或不完整布局。已有配置与数据目录保持原路径。全新安装默认不创建 systemd 服务；选择创建后会同时安装受限 updater 与启动恢复 oneshot。
 
 ## 端口与安全
 
