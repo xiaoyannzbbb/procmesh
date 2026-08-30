@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -2122,6 +2123,54 @@ func TestApplySpec_ScaleDownKeepsLiveExtra(t *testing.T) {
 	insts, err = st.ListInstances(ctx, "p1")
 	if err != nil || len(insts) != 2 {
 		t.Fatalf("live extra must remain insts=%d err=%v", len(insts), err)
+	}
+}
+
+func TestApplySpec_ScaleDownDoesNotSignalReusedShimPID(t *testing.T) {
+	ctx := context.Background()
+	m, st, _ := newTestManager(t)
+	spec := process.ProcessSpec{ProcessID: "p1", Name: "n", Command: "/bin/true", Instances: 2}
+	got, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	unrelated := exec.Command("/bin/sleep", "60")
+	if err := unrelated.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := make(chan struct{})
+	var waitErr error
+	go func() {
+		waitErr = unrelated.Wait()
+		close(waited)
+	}()
+	t.Cleanup(func() {
+		_ = unrelated.Process.Kill()
+		<-waited
+	})
+
+	extra, err := st.GetInstance(ctx, process.MakeInstanceID("p1", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	extra.Desired = process.DesiredStopped
+	extra.Observed = process.ObservedStopped
+	extra.PID = 0
+	extra.ShimPID = unrelated.Process.Pid
+	extra.BootID = mustBoot(t, st)
+	if err := st.PutInstance(ctx, extra); err != nil {
+		t.Fatal(err)
+	}
+
+	spec.Instances = 1
+	if _, err := m.ApplySpec(ctx, spec, got.LatestRevision, "op-scale", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-waited:
+		t.Fatalf("scale-down signaled an unrelated process through a reused shim pid: %v", waitErr)
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 

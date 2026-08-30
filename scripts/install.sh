@@ -264,15 +264,17 @@ link_managed_binaries() {
 }
 
 wait_for_update_health() {
-  local address=$1 version=$2 agent_path=$3 attempt body main_pid executable
+  local address=$1 version=$2 agent_path=$3 attempt health ready body main_pid executable
   for attempt in $(seq 1 150); do
+    health=$(curl --fail --silent "http://$address/healthz" 2>/dev/null || true)
+    ready=$(curl --fail --silent "http://$address/readyz" 2>/dev/null || true)
     body=$(curl --fail --silent "http://$address/updatez" 2>/dev/null || true)
     main_pid=$(systemctl show -p MainPID --value procmesh-agent.service 2>/dev/null || true)
     executable=''
     if [[ "$main_pid" =~ ^[1-9][0-9]*$ ]]; then
       executable=$(readlink "/proc/$main_pid/exe" 2>/dev/null || true)
     fi
-    if [[ -n "$body" ]] && jq -e --arg version "$version" \
+    if [[ "$health" == ok && "$ready" == ok && -n "$body" ]] && jq -e --arg version "$version" \
       '.version == $version and .store_ready and .shim_recovery_complete' <<<"$body" >/dev/null 2>&1 && \
       [[ "$executable" == "$agent_path" ]]; then
       return 0
@@ -299,26 +301,48 @@ activate_flat_bootstrap() {
 }
 
 rollback_flat_bootstrap() {
-  local install_root=$1 service_unit=$2 legacy_unit=$3 legacy_version=$4
+  local bin_dir=$1 install_root=$2 service_unit=$3 legacy_unit=$4 legacy_version=$5 health_address=$6
   local failed=0
   replace_install_pointer "$install_root" current "$legacy_version" || failed=1
   replace_install_pointer "$install_root" previous "$legacy_version" || failed=1
+  link_managed_binaries "$bin_dir" "$install_root" || failed=1
   run_privileged install -m 0644 "$legacy_unit" "$service_unit" || failed=1
   run_privileged systemctl daemon-reload || failed=1
   run_privileged systemctl restart procmesh-agent.service || failed=1
+  wait_for_update_health "$health_address" "$legacy_version" \
+    "$install_root/versions/$legacy_version/procmesh-agent" || failed=1
   return "$failed"
+}
+
+cleanup_flat_bootstrap_staging() {
+  local staging_root=$1 managed_unit=$2
+  [[ -z "$managed_unit" ]] || rm -f "$managed_unit"
+  [[ -z "$staging_root" ]] || run_privileged rm -rf "$staging_root"
+}
+
+sync_flat_bootstrap_staging() {
+  local staging_root=$1 path
+  [[ "$(uname -s)" == Linux ]] || return 0
+  while IFS= read -r path; do
+    run_privileged sync -f "$path" || return 1
+  done < <(find "$staging_root" -depth -print)
 }
 
 bootstrap_flat_installation() {
   local bin_dir=$1 install_root=$2 updater_root=$3 service_unit=$4 package_dir=$5
   local legacy_version=$6 target_version=$7 expected_owner=${8:-0}
   local update_unit_target=${9:-$update_unit_path} recover_unit_target=${10:-$update_recover_unit_path}
-  local legacy_dir target_dir managed_unit binary
+  local legacy_dir target_dir managed_unit='' binary install_parent staging_root staged_legacy staged_target
 
   [[ "$legacy_version" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ && \
     "$target_version" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ && "$legacy_version" != "$target_version" ]] || \
     die "legacy and target versions must be distinct SemVer values"
   validate_flat_installation "$bin_dir" "$install_root" "$service_unit" "$expected_owner"
+
+  [[ ! -e "$install_root" && ! -L "$install_root" ]] || \
+    die "automatic migration requires an absent managed installation root; existing files were preserved"
+  [[ ! -e "$updater_root" && ! -L "$updater_root" ]] || \
+    die "automatic migration requires an absent updater state root; existing files were preserved"
   for binary in procmesh procmesh-agent procmesh-shim procmesh-updater; do
     [[ -f "$package_dir/$binary" && -x "$package_dir/$binary" ]] || die "release package is missing $binary"
   done
@@ -327,31 +351,84 @@ bootstrap_flat_installation() {
 
   legacy_dir="$install_root/versions/$legacy_version"
   target_dir="$install_root/versions/$target_version"
-  [[ ! -e "$legacy_dir" && ! -e "$target_dir" ]] || die "bootstrap version directory already exists"
-  run_privileged install -d -m 0755 "$install_root" "$install_root/versions" "$legacy_dir" "$target_dir" "$bin_dir"
+  install_parent=$(dirname "$install_root")
+  staging_root="$install_parent/.procmesh-bootstrap-$$"
+  staged_legacy="$staging_root/versions/$legacy_version"
+  staged_target="$staging_root/versions/$target_version"
+  [[ ! -e "$staging_root" && ! -L "$staging_root" ]] || die "bootstrap staging directory already exists"
+  run_privileged install -d -m 0755 "$install_parent" "$staged_legacy" "$staged_target" "$bin_dir" || {
+    cleanup_flat_bootstrap_staging "$staging_root" "$managed_unit"
+    return 1
+  }
   for binary in procmesh procmesh-agent procmesh-shim; do
-    run_privileged install -m 0755 "$bin_dir/$binary" "$legacy_dir/$binary"
+    run_privileged install -m 0755 "$bin_dir/$binary" "$staged_legacy/$binary" || {
+      cleanup_flat_bootstrap_staging "$staging_root" "$managed_unit"
+      return 1
+    }
   done
-  run_privileged install -m 0755 "$package_dir/procmesh-updater" "$legacy_dir/procmesh-updater"
-  run_privileged install -m 0444 "$service_unit" "$legacy_dir/procmesh-agent.service"
+  run_privileged install -m 0755 "$package_dir/procmesh-updater" "$staged_legacy/procmesh-updater" || {
+    cleanup_flat_bootstrap_staging "$staging_root" "$managed_unit"
+    return 1
+  }
+  run_privileged install -m 0444 "$service_unit" "$staged_legacy/procmesh-agent.service" || {
+    cleanup_flat_bootstrap_staging "$staging_root" "$managed_unit"
+    return 1
+  }
   for binary in procmesh procmesh-agent procmesh-shim procmesh-updater; do
-    run_privileged install -m 0755 "$package_dir/$binary" "$target_dir/$binary"
+    run_privileged install -m 0755 "$package_dir/$binary" "$staged_target/$binary" || {
+      cleanup_flat_bootstrap_staging "$staging_root" "$managed_unit"
+      return 1
+    }
   done
-  run_privileged install -d -m 0700 "$updater_root" "$updater_root/operations"
 
-  managed_unit="$package_dir/procmesh-agent.bootstrap.service"
+  managed_unit=$(mktemp "${TMPDIR:-/tmp}/procmesh-agent.bootstrap.XXXXXX") || {
+    cleanup_flat_bootstrap_staging "$staging_root" "$managed_unit"
+    return 1
+  }
   sed \
     -e "s|ExecStart=$bin_dir/procmesh-agent|ExecStart=$install_root/current/procmesh-agent|" \
     -e "s|--shim-bin $bin_dir/procmesh-shim|--shim-bin $install_root/current/procmesh-shim|" \
-    "$service_unit" >"$managed_unit"
-  chmod 0644 "$managed_unit"
+    "$service_unit" >"$managed_unit" || {
+    cleanup_flat_bootstrap_staging "$staging_root" "$managed_unit"
+    return 1
+  }
+  chmod 0644 "$managed_unit" || {
+    cleanup_flat_bootstrap_staging "$staging_root" "$managed_unit"
+    return 1
+  }
+  run_privileged install -m 0444 "$managed_unit" "$staging_root/procmesh-agent.bootstrap.service" || {
+    cleanup_flat_bootstrap_staging "$staging_root" "$managed_unit"
+    return 1
+  }
+  if ! sync_flat_bootstrap_staging "$staging_root"; then
+    cleanup_flat_bootstrap_staging "$staging_root" "$managed_unit"
+    return 1
+  fi
+  run_privileged mv "$staging_root" "$install_root" || {
+    cleanup_flat_bootstrap_staging "$staging_root" "$managed_unit"
+    return 1
+  }
+  run_privileged sync -f "$install_parent" || {
+    run_privileged rm -rf "$install_root"
+    cleanup_flat_bootstrap_staging '' "$managed_unit"
+    return 1
+  }
+  run_privileged install -d -m 0700 "$updater_root" "$updater_root/operations" || {
+    run_privileged rm -rf "$install_root"
+    cleanup_flat_bootstrap_staging '' "$managed_unit"
+    return 1
+  }
 
-  if ! activate_flat_bootstrap "$bin_dir" "$install_root" "$service_unit" "$managed_unit" \
+  if ! activate_flat_bootstrap "$bin_dir" "$install_root" "$service_unit" \
+    "$install_root/procmesh-agent.bootstrap.service" \
     "$legacy_version" "$target_version" "$package_dir" "$bootstrap_health_address" "$update_unit_target" "$recover_unit_target"; then
-    rollback_flat_bootstrap "$install_root" "$service_unit" "$legacy_dir/procmesh-agent.service" "$legacy_version" || \
+    cleanup_flat_bootstrap_staging '' "$managed_unit"
+    rollback_flat_bootstrap "$bin_dir" "$install_root" "$service_unit" \
+      "$legacy_dir/procmesh-agent.service" "$legacy_version" "$bootstrap_health_address" || \
       die "bootstrap failed and the legacy service could not be restored; use $legacy_dir/procmesh-agent.service for manual recovery"
     return 1
   fi
+  cleanup_flat_bootstrap_staging '' "$managed_unit"
 }
 
 trusted_public_key() {

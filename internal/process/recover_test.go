@@ -317,6 +317,35 @@ func TestShimTakeoverReady_RejectsLiveOrphan(t *testing.T) {
 	}
 }
 
+func TestShimTakeoverReady_RequiresIndependentSocketReconnect(t *testing.T) {
+	ctx := context.Background()
+	m, st, layout := newTestManager(t)
+	spec := process.ProcessSpec{ProcessID: "p1", Name: "sleep", Command: "/bin/sleep", Args: []string{"60"}, Instances: 1}
+	inst := startSleep(t, m, st, spec)
+
+	if err := os.Remove(layout.ShimSocket(inst.InstanceID)); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ShimTakeoverReady(ctx); err == nil || !strings.Contains(err.Error(), "socket is missing") {
+		t.Fatalf("missing reconnect socket must block update readiness, got %v", err)
+	}
+}
+
+func TestShimTakeoverReady_RejectsReusedStoredShimPID(t *testing.T) {
+	ctx := context.Background()
+	m, st, _ := newTestManager(t)
+	spec := process.ProcessSpec{ProcessID: "p1", Name: "sleep", Command: "/bin/sleep", Args: []string{"60"}, Instances: 1}
+	inst := startSleep(t, m, st, spec)
+	inst.ShimPID = os.Getpid()
+	if err := st.PutInstance(ctx, inst); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.ShimTakeoverReady(ctx); err == nil {
+		t.Fatal("a live reused stored shim pid must not satisfy update readiness")
+	}
+}
+
 func TestRecover_DeadShimLivePIDBecomesUnknown(t *testing.T) {
 	ctx := context.Background()
 	root := shortRoot(t)

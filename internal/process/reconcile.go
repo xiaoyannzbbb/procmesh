@@ -564,9 +564,20 @@ func (m *Manager) resetHealth(id string) {
 }
 
 func (m *Manager) forgetInstance(ctx context.Context, inst Instance) {
-	m.closeClient(inst.InstanceID)
-	if sameBoot(inst.BootID, m.bootID(ctx)) && inst.ShimPID > 1 && !pidAlive(inst.PID) {
-		_ = unix.Kill(inst.ShimPID, unix.SIGTERM)
+	client := m.clients[inst.InstanceID]
+	retained := client != nil
+	if client == nil && socketExists(m.deps.Layout.ShimSocket(inst.InstanceID)) {
+		client, _, _ = shim.Reconnect(ctx, m.deps.Layout.ShimSocket(inst.InstanceID))
+	}
+	if sameBoot(inst.BootID, m.bootID(ctx)) && inst.ShimPID > 1 && !pidAlive(inst.PID) && client != nil {
+		retireCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		_ = client.SignalPeer(retireCtx, inst.ShimPID, unix.SIGTERM)
+		cancel()
+	}
+	if retained {
+		m.closeClient(inst.InstanceID)
+	} else if client != nil {
+		_ = client.Close()
 	}
 	_ = os.Remove(m.deps.Layout.ShimSocket(inst.InstanceID))
 	_ = os.Remove(runtimePath(m.deps.Layout, inst.InstanceID))

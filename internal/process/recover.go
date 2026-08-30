@@ -162,12 +162,20 @@ func (m *Manager) ShimTakeoverReady(ctx context.Context) error {
 				return fmt.Errorf("instance %s shim is not alive", inst.InstanceID)
 			}
 			socket := m.deps.Layout.ShimSocket(inst.InstanceID)
-			if !socketExists(socket) && m.clients[inst.InstanceID] == nil {
+			if !socketExists(socket) {
 				return fmt.Errorf("instance %s shim socket is missing", inst.InstanceID)
 			}
-			_, status, err := m.connectShim(ctx, inst.InstanceID, socket)
+			client, status, err := shim.Reconnect(ctx, socket)
 			if err != nil {
 				return fmt.Errorf("instance %s shim takeover: %w", inst.InstanceID, err)
+			}
+			peerPID, peerErr := client.PeerPID()
+			_ = client.Close()
+			if peerErr != nil {
+				return fmt.Errorf("instance %s shim peer identity: %w", inst.InstanceID, peerErr)
+			}
+			if peerPID != inst.ShimPID {
+				return fmt.Errorf("instance %s shim peer pid %d does not match stored pid %d", inst.InstanceID, peerPID, inst.ShimPID)
 			}
 			if status == nil || !status.GetAlive() || int(status.GetPid()) != inst.PID {
 				return fmt.Errorf("instance %s shim status does not match pid %d", inst.InstanceID, inst.PID)

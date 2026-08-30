@@ -167,16 +167,25 @@ sudo PROCMESH_RUN_UPDATE_U0=1 \
   scripts/test-update-u0-linux.sh
 ```
 
-Cross-boot recovery uses two foreground invocations around a real reboot.
-`prepare` leaves a schema-2 `RUNNING/RESTARTED` journal after the new Agent has
-taken over without changing the pre-reboot Shim or business PID. After reboot,
-the enabled recovery unit completes it to `SUCCEEDED/HEALTHY`; `resume` verifies
-the changed boot ID and current Shim takeover before cleanup:
+Cross-boot recovery must be run independently for the three specified power
+loss windows: completed staging, completed symlink switch, and active new-Agent
+health checking. `prepare` leaves the selected schema-2 `RUNNING` journal and
+records its pointer, boot ID, Shim PID, and business PID. Force-stop the
+disposable VM without an orderly guest shutdown, then start it again. The
+enabled recovery unit completes the operation to `SUCCEEDED/HEALTHY`; `resume`
+verifies the changed boot ID, target pointer, and current Shim takeover before
+cleanup:
 
 ```bash
-sudo PROCMESH_RUN_UPDATE_U0=1 PROCMESH_U0_CROSS_BOOT_STAGE=prepare scripts/test-update-u0-linux.sh
-sudo reboot
-sudo PROCMESH_RUN_UPDATE_U0=1 PROCMESH_U0_CROSS_BOOT_STAGE=resume scripts/test-update-u0-linux.sh
+for window in STAGED SWITCHED HEALTH_CHECKING; do
+  # Run each window on a fresh disposable VM.
+  sudo PROCMESH_RUN_UPDATE_U0=1 PROCMESH_U0_CROSS_BOOT_STAGE=prepare \
+    PROCMESH_U0_POWER_WINDOW="$window" scripts/test-update-u0-linux.sh
+  # Force-stop and restart the VM from the host/hypervisor here; do not reboot
+  # or shut down the guest cleanly.
+  sudo PROCMESH_RUN_UPDATE_U0=1 PROCMESH_U0_CROSS_BOOT_STAGE=resume \
+    scripts/test-update-u0-linux.sh
+done
 ```
 
 Use `arm64` for an arm64 Linux host. The `updateaccept` build tag embeds only a

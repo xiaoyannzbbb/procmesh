@@ -24,6 +24,17 @@ readonly public_key='xyMahjmLYOPoCzVMu93x9cACvqkgEzBD7TIf5ErO+MA='
 readonly private_seed='T9m8DFo7vfR6WEtaLxtEr5WfFUEUvTnChww4CPjns2E='
 readonly cross_boot_state=$data_root/u0-cross-boot-state.json
 readonly cross_boot_stage=${PROCMESH_U0_CROSS_BOOT_STAGE:-}
+readonly power_window=${PROCMESH_U0_POWER_WINDOW:-}
+
+if [[ "$cross_boot_stage" == prepare ]]; then
+  case "$power_window" in
+    STAGED|SWITCHED|HEALTH_CHECKING) ;;
+    *)
+      printf 'PROCMESH_U0_POWER_WINDOW must be STAGED, SWITCHED, or HEALTH_CHECKING for prepare.\n' >&2
+      exit 2
+      ;;
+  esac
+fi
 
 if [[ "$cross_boot_stage" != resume ]]; then
   for path in "$install_root" "$data_root" "$agent_unit" "$update_unit" "$recover_unit" \
@@ -153,6 +164,7 @@ if [[ "$cross_boot_stage" == resume ]]; then
   old_shim=$(jq -er '.shim_pid' "$cross_boot_state")
   old_business=$(jq -er '.business_pid' "$cross_boot_state")
   cross_op=$(jq -er '.operation_id' "$cross_boot_state")
+  resumed_window=$(jq -er '.power_window' "$cross_boot_state")
   new_boot=$(cat /proc/sys/kernel/random/boot_id)
   [[ "$new_boot" != "$old_boot" ]] || {
     printf 'Boot ID did not change: %s\n' "$new_boot" >&2
@@ -176,8 +188,8 @@ if [[ "$cross_boot_stage" == resume ]]; then
   kill -0 "$shim_pid" "$business_pid"
   body=$(curl --fail --silent "http://$server/updatez")
   jq -e '.version == "v1.2.3" and .store_ready and .shim_recovery_complete' <<<"$body" >/dev/null
-  printf 'U0 CROSS-BOOT PASS boot=%s->%s preboot_shim=%s preboot_business=%s recovered_shim=%s recovered_business=%s journal=SUCCEEDED/HEALTHY takeover=true\n' \
-    "$old_boot" "$new_boot" "$old_shim" "$old_business" "$shim_pid" "$business_pid"
+  printf 'U0 CROSS-BOOT PASS window=%s boot=%s->%s preboot_shim=%s preboot_business=%s recovered_shim=%s recovered_business=%s pointer=%s journal=SUCCEEDED/HEALTHY takeover=true\n' \
+    "$resumed_window" "$old_boot" "$new_boot" "$old_shim" "$old_business" "$shim_pid" "$business_pid" "$(readlink "$install_root/current")"
   exit 0
 fi
 
@@ -259,29 +271,53 @@ jq -e '.status == "ROLLED_BACK"' "$update_root/operations/$rollback_op/journal.j
 assert_processes_unchanged rollback
 
 if [[ "$cross_boot_stage" == prepare ]]; then
-  cross_op=618f47a2-9c4e-7b1a-8f3d-123456789abc
+  case "$power_window" in
+    STAGED)
+      cross_op=618f47a2-9c4e-7b1a-8f3d-123456789abc
+      expected_phase=STAGED
+      expected_pointer=versions/v1.2.1
+      running_version=v1.2.1
+      ;;
+    SWITCHED)
+      cross_op=628f47a2-9c4e-7b1a-8f3d-123456789abc
+      expected_phase=SWITCHED
+      expected_pointer=versions/v1.2.3
+      running_version=v1.2.1
+      ;;
+    HEALTH_CHECKING)
+      cross_op=638f47a2-9c4e-7b1a-8f3d-123456789abc
+      expected_phase=RESTARTED
+      expected_pointer=versions/v1.2.3
+      running_version=v1.2.3
+      ;;
+  esac
   stage_operation "$cross_op" v1.2.1 v1.2.3
-  printf '%s\n' HEALTH_CHECKING >"$failpoint"
+  printf '%s\n' "$power_window" >"$failpoint"
   if systemctl start "procmesh-agent-update@$cross_op.service"; then
-    printf 'Active-health failpoint unexpectedly succeeded\n' >&2
+    printf 'Power-window failpoint %s unexpectedly succeeded\n' "$power_window" >&2
     exit 1
   fi
-  wait_update_health v1.2.3
-  jq -e '.schema_version == 2 and .status == "RUNNING" and .phase == "RESTARTED" and
+  wait_update_health "$running_version"
+  jq -e --arg phase "$expected_phase" '.schema_version == 2 and .status == "RUNNING" and .phase == $phase and
     (.verified_at | type == "string") and (.manifest_sha256 | test("^[0-9a-f]{64}$")) and
     (.artifact_sha256 | test("^[0-9a-f]{64}$"))' \
     "$update_root/operations/$cross_op/journal.json" >/dev/null
-  assert_processes_unchanged 'active-health interruption'
+  [[ "$(readlink "$install_root/current")" == "$expected_pointer" ]]
+  assert_processes_unchanged "$power_window interruption"
   boot_before=$(cat /proc/sys/kernel/random/boot_id)
   jq -nc --arg boot_id "$boot_before" --arg operation_id "$cross_op" \
-    --argjson shim_pid "$shim_pid" --argjson business_pid "$business_pid" \
-    '{boot_id:$boot_id,operation_id:$operation_id,shim_pid:$shim_pid,business_pid:$business_pid}' \
+    --arg power_window "$power_window" --arg expected_phase "$expected_phase" \
+    --arg expected_pointer "$expected_pointer" --argjson shim_pid "$shim_pid" --argjson business_pid "$business_pid" \
+    '{boot_id:$boot_id,operation_id:$operation_id,power_window:$power_window,expected_phase:$expected_phase,
+      expected_pointer:$expected_pointer,shim_pid:$shim_pid,business_pid:$business_pid}' \
     >"$cross_boot_state"
   chmod 0600 "$cross_boot_state"
+  sync -f "$cross_boot_state"
+  sync -f "$data_root"
   rm -rf "$work_dir"
   preserve_for_reboot=true
-  printf 'U0 CROSS-BOOT READY boot=%s operation=%s journal=RUNNING/RESTARTED shim_pid=%s business_pid=%s preboot_unchanged=true\n' \
-    "$boot_before" "$cross_op" "$shim_pid" "$business_pid"
+  printf 'U0 CROSS-BOOT READY window=%s boot=%s operation=%s pointer=%s journal=RUNNING/%s shim_pid=%s business_pid=%s preboot_unchanged=true hard_stop_required=true\n' \
+    "$power_window" "$boot_before" "$cross_op" "$expected_pointer" "$expected_phase" "$shim_pid" "$business_pid"
   exit 0
 fi
 

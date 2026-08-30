@@ -19,6 +19,12 @@ func TestMain(m *testing.M) {
 }
 
 func runProcessTests(m *testing.M) int {
+	if bin := os.Getenv("PROCMESH_TEST_SHIM_BIN"); bin != "" {
+		testShimBin = bin
+		code := m.Run()
+		reapTestShims(testShimBin)
+		return code
+	}
 	dir, err := os.MkdirTemp("", "shim-bin")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

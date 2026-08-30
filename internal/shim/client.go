@@ -32,6 +32,11 @@ func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
+// PeerPID returns the process ID authenticated by the Unix socket transport.
+func (c *Client) PeerPID() (int, error) {
+	return c.peerPID()
+}
+
 // Start sends a StartRequest and returns the StartResponse.
 func (c *Client) Start(ctx context.Context, req *shimpb.StartRequest) (*shimpb.StartResponse, error) {
 	env, err := c.roundTrip(ctx, &shimpb.Envelope{Body: &shimpb.Envelope_Start{Start: req}})
