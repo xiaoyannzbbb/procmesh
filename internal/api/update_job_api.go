@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"sync"
 	"time"
@@ -53,7 +54,7 @@ func (s *UpdateAPI) CreateClusterUpdate(ctx context.Context, req *connect.Reques
 		return nil, ToConnect(err)
 	}
 	s.rememberPrincipal(ctx, job)
-	s.auditUpdate(ctx, "update.create", "update_job:"+job.JobID, opID, s.LocalID)
+	s.auditUpdate(ctx, "update.create", "update_job:"+job.JobID, opID, s.LocalID, nil)
 	return connect.NewResponse(&procmeshv1.CreateClusterUpdateResponse{Job: jobToProto(job, true)}), nil
 }
 
@@ -107,7 +108,7 @@ func (s *UpdateAPI) CancelRemaining(ctx context.Context, req *connect.Request[pr
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	s.auditUpdate(ctx, "update.cancel_remaining", "update_job:"+job.JobID, opID, s.LocalID)
+	s.auditUpdate(ctx, "update.cancel_remaining", "update_job:"+job.JobID, opID, s.LocalID, nil)
 	return connect.NewResponse(&procmeshv1.CancelRemainingResponse{Job: jobToProto(job, true)}), nil
 }
 
@@ -131,7 +132,7 @@ func (s *UpdateAPI) RetryUpdateJob(ctx context.Context, req *connect.Request[pro
 		return nil, ToConnect(err)
 	}
 	s.rememberPrincipal(ctx, job)
-	s.auditUpdate(ctx, "update.retry", "update_job:"+job.JobID, opID, s.LocalID)
+	s.auditUpdate(ctx, "update.retry", "update_job:"+job.JobID, opID, s.LocalID, nil)
 	return connect.NewResponse(&procmeshv1.RetryUpdateJobResponse{Job: jobToProto(job, true)}), nil
 }
 
@@ -159,13 +160,13 @@ func (s *UpdateAPI) ApplyNode(ctx context.Context, req *connect.Request[procmesh
 		if err := s.forwardApplyNode(ctx, nodeID, pin, opID); err != nil {
 			return nil, ToConnect(err)
 		}
-		s.auditUpdate(ctx, "update.apply", "node:"+nodeID, opID, nodeID)
+		s.auditUpdate(ctx, "update.apply", "node:"+nodeID, opID, nodeID, pinAuditMeta(pin))
 		return connect.NewResponse(&procmeshv1.ApplyNodeResponse{}), nil
 	}
 	if err := s.applyLocal(ctx, pin); err != nil {
 		return nil, ToConnect(err)
 	}
-	s.auditUpdate(ctx, "update.apply", "node:"+nodeID, opID, nodeID)
+	s.auditUpdate(ctx, "update.apply", "node:"+nodeID, opID, nodeID, pinAuditMeta(pin))
 	return connect.NewResponse(&procmeshv1.ApplyNodeResponse{}), nil
 }
 
@@ -183,7 +184,7 @@ func (s *UpdateAPI) Apply(ctx context.Context, nodeID string, pin update.Pin, op
 		if target == "" {
 			target = s.LocalID
 		}
-		s.auditUpdate(ctx, "update.apply", "node:"+target, operationID, target)
+		s.auditUpdate(ctx, "update.apply", "node:"+target, operationID, target, pinAuditMeta(pin))
 		return nil
 	}
 	return s.forwardApplyNode(ctx, nodeID, pin, operationID)
@@ -389,7 +390,21 @@ func (s *UpdateAPI) remoteMissingPrincipal(ctx context.Context, nodeID string) b
 	return true
 }
 
-func (s *UpdateAPI) auditUpdate(ctx context.Context, action, resource, opID, target string) {
+func pinAuditMeta(pin update.Pin) map[string]string {
+	meta := make(map[string]string)
+	if tag := strings.TrimSpace(pin.Tag); tag != "" {
+		meta["tag"] = tag
+	}
+	if repo := strings.TrimSpace(pin.Repository); repo != "" {
+		meta["repository"] = repo
+	}
+	if len(meta) == 0 {
+		return nil
+	}
+	return meta
+}
+
+func (s *UpdateAPI) auditUpdate(ctx context.Context, action, resource, opID, target string, metadata map[string]string) {
 	if s == nil || s.Store == nil {
 		return
 	}
@@ -404,6 +419,11 @@ func (s *UpdateAPI) auditUpdate(ctx context.Context, action, resource, opID, tar
 	if p, ok := PrincipalFrom(ctx); ok {
 		ev.UserID = p.UserID
 		ev.Username = p.Username
+	}
+	if len(metadata) > 0 {
+		if raw, err := json.Marshal(metadata); err == nil {
+			ev.Metadata = raw
+		}
 	}
 	_ = s.Store.AppendAudit(ctx, ev)
 }

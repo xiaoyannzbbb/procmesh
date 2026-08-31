@@ -1,11 +1,16 @@
 <script setup lang="ts">
 /* eslint-disable i18next/no-literal-string -- Template enums, data-* hooks, and comparison literals are not visible copy. */
-import { useQuery, useQueryClient } from "@tanstack/vue-query";
-import { ArrowUpCircle, LoaderCircle, RefreshCw } from "lucide-vue-next";
-import { computed, ref } from "vue";
+import { Code, ConnectError } from "@connectrpc/connect";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
+import { ArrowUpCircle, LoaderCircle, RefreshCw, TriangleAlert } from "lucide-vue-next";
+import { computed, onUnmounted, ref } from "vue";
+import ConfirmDialog from "../components/ConfirmDialog.vue";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
+import { stripV } from "../lib/agentVersion";
 import { LIVE, STALE, UNKNOWN, type Freshness } from "../lib/freshness";
+import { newOperationId } from "../lib/opid";
 import { useUpdateClient } from "../lib/rpc";
+import { selfUpdateHold, session } from "../lib/session";
 import { useI18n } from "../lib/useI18n";
 
 const SKIP_KEYS = {
@@ -25,12 +30,43 @@ const SKIP_KEYS = {
 
 type SkipReason = keyof typeof SKIP_KEYS;
 
+type StatusNode = {
+  nodeId: string;
+  hostname: string;
+  os: string;
+  arch: string;
+  version: string;
+  freshness: string;
+  lastUpdatedUnixMs?: bigint | number;
+  eligible: boolean;
+  skipReason: string;
+  busy: boolean;
+};
+
+type UpdatePin = {
+  repository: string;
+  tag: string;
+  checksums: { [key: string]: string };
+};
+
+const SELF_POLL_MS = 2000;
+const SELF_TIMEOUT_MS = 120_000;
+
 const { t } = useI18n();
 const queryClient = useQueryClient();
 const client = useUpdateClient();
 const refreshing = ref(false);
+const pendingNode = ref<StatusNode | null>(null);
+const applyError = ref("");
+const overlayOpen = ref(false);
+const overlayTimedOut = ref(false);
+const overlayPinTag = ref("");
+const overlayStartedAt = ref(0);
+let pollTimer: ReturnType<typeof setTimeout> | null = null;
 
 const CHECK_LATEST_STALE_MS = 15 * 60 * 1000;
+
+const canManage = computed(() => (session.value?.permissions ?? []).includes("node.manage"));
 
 const checkLatestQuery = useQuery({
   queryKey: ["updates", "checkLatest"],
@@ -43,8 +79,31 @@ const query = useQuery({
   queryFn: () => client.listNodeUpdateStatus({}),
 });
 
-const nodes = computed(() => query.data.value?.nodes ?? []);
+const localQuery = useQuery({
+  queryKey: ["updates", "localInfo"],
+  queryFn: () => client.getLocalUpdateInfo({}),
+  staleTime: 60_000,
+});
+
+const nodes = computed(() => (query.data.value?.nodes ?? []) as StatusNode[]);
 const loading = computed(() => query.isPending.value && !query.data.value);
+const localNodeId = computed(() => localQuery.data.value?.nodeId ?? "");
+const pin = computed<UpdatePin | null>(() => {
+  const latest = checkLatestQuery.data.value;
+  if (!latest || latest.checkError) {
+    return null;
+  }
+  const tag = latest.tag ?? "";
+  const repository = latest.repository ?? "";
+  if (!tag || !repository) {
+    return null;
+  }
+  return {
+    repository,
+    tag,
+    checksums: { ...(latest.checksums ?? {}) },
+  };
+});
 
 const errorText = computed(() => {
   if (query.data.value) {
@@ -77,6 +136,43 @@ const subtitle = computed(() => {
   }
   return t("updates.subtitle", { count: nodes.value.length });
 });
+
+const isSelfTarget = computed(() => {
+  const node = pendingNode.value;
+  return Boolean(node && localNodeId.value && node.nodeId === localNodeId.value);
+});
+
+const emptyColspan = computed(() => (canManage.value ? 6 : 5));
+
+const confirmMessage = computed(() => {
+  const node = pendingNode.value;
+  if (!node) {
+    return "";
+  }
+  const hostname = node.hostname || node.nodeId;
+  const tag = pin.value?.tag ?? "";
+  const parts = [
+    `${t("updates.confirmHostname")}: ${hostname}. ${t("updates.confirmPin")}: ${tag}. ${t("updates.confirmNoRestart")}`,
+  ];
+  if (isSelfTarget.value) {
+    parts.push(t("updates.confirmSelfWarning"));
+  }
+  if (applyError.value) {
+    parts.push(applyError.value);
+  }
+  return parts.join(" ");
+});
+
+const applyMut = useMutation({
+  mutationFn: (args: { nodeId: string; pin: UpdatePin }) =>
+    client.applyNode({
+      meta: { operationId: newOperationId() },
+      nodeId: args.nodeId,
+      pin: args.pin,
+    }),
+});
+
+const applying = computed(() => applyMut.isPending.value);
 
 function freshnessOf(value: string): Freshness {
   if (value === LIVE || value === STALE || value === UNKNOWN) {
@@ -155,6 +251,138 @@ function formatNodeAge(unixMs: number | bigint | undefined): string {
   return t("updates.updatedMinutes", { count: Math.floor(seconds / 60) });
 }
 
+function canApply(node: StatusNode): boolean {
+  return canManage.value && node.eligible && pin.value != null;
+}
+
+function isHardApplyFailure(err: unknown): boolean {
+  if (!(err instanceof ConnectError)) {
+    return false;
+  }
+  return (
+    err.code === Code.InvalidArgument ||
+    err.code === Code.PermissionDenied ||
+    err.code === Code.FailedPrecondition
+  );
+}
+
+function versionMatchesPin(version: string, tag: string): boolean {
+  const current = stripV(version.trim());
+  const target = stripV(tag.trim());
+  return current !== "" && target !== "" && current === target;
+}
+
+function clearPoll(): void {
+  if (pollTimer != null) {
+    clearTimeout(pollTimer);
+    pollTimer = null;
+  }
+}
+
+function stopOverlay(): void {
+  clearPoll();
+  overlayOpen.value = false;
+  overlayTimedOut.value = false;
+  overlayPinTag.value = "";
+  overlayStartedAt.value = 0;
+  selfUpdateHold.value = false;
+}
+
+async function refreshStatus(): Promise<void> {
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: ["updates", "checkLatest"] }),
+    queryClient.invalidateQueries({ queryKey: ["updates", "nodeStatus"] }),
+    queryClient.invalidateQueries({ queryKey: ["updates", "localInfo"] }),
+  ]);
+}
+
+function finishOverlaySuccess(): void {
+  reloadPage();
+}
+
+async function pollSelfUpdate(): Promise<void> {
+  if (!overlayOpen.value) {
+    return;
+  }
+  if (Date.now() - overlayStartedAt.value >= SELF_TIMEOUT_MS) {
+    overlayTimedOut.value = true;
+    clearPoll();
+    return;
+  }
+  let matched = false;
+  try {
+    const info = await client.getLocalUpdateInfo({});
+    matched = versionMatchesPin(info.version ?? "", overlayPinTag.value);
+  } catch {
+    // Agent may be restarting; keep the overlay and do not send the user to /login.
+  }
+  if (matched) {
+    finishOverlaySuccess();
+    return;
+  }
+  pollTimer = setTimeout(() => {
+    void pollSelfUpdate();
+  }, SELF_POLL_MS);
+}
+
+function startOverlay(tag: string): void {
+  clearPoll();
+  overlayPinTag.value = tag;
+  overlayTimedOut.value = false;
+  overlayOpen.value = true;
+  overlayStartedAt.value = Date.now();
+  selfUpdateHold.value = true;
+  pendingNode.value = null;
+  void pollSelfUpdate();
+}
+
+function openApply(node: StatusNode): void {
+  if (!canApply(node) || overlayOpen.value || applying.value) {
+    return;
+  }
+  applyError.value = "";
+  pendingNode.value = node;
+}
+
+function closeDialog(): void {
+  if (applying.value) {
+    return;
+  }
+  pendingNode.value = null;
+  applyError.value = "";
+}
+
+async function onConfirm(): Promise<void> {
+  const node = pendingNode.value;
+  const nextPin = pin.value;
+  if (!node || !nextPin || applying.value) {
+    return;
+  }
+  const self = Boolean(localNodeId.value && node.nodeId === localNodeId.value);
+  applyError.value = "";
+  if (self) {
+    startOverlay(nextPin.tag);
+  }
+  try {
+    await applyMut.mutateAsync({ nodeId: node.nodeId, pin: nextPin });
+    if (!self) {
+      pendingNode.value = null;
+      await refreshStatus();
+    }
+  } catch (err) {
+    if (self && !isHardApplyFailure(err)) {
+      return;
+    }
+    stopOverlay();
+    applyError.value = t("updates.applyFailed");
+    pendingNode.value = node;
+  }
+}
+
+function reloadPage(): void {
+  window.location.reload();
+}
+
 async function refresh(): Promise<void> {
   if (refreshing.value || loading.value) {
     return;
@@ -170,6 +398,10 @@ async function refresh(): Promise<void> {
     refreshing.value = false;
   }
 }
+
+onUnmounted(() => {
+  stopOverlay();
+});
 </script>
 
 <template>
@@ -183,7 +415,7 @@ async function refresh(): Promise<void> {
       <div class="header-actions">
         <button
           type="button"
-          class="btn"
+          class="btn cursor-pointer"
           :disabled="refreshing || loading"
           :aria-busy="refreshing ? true : undefined"
           @click="refresh"
@@ -215,6 +447,7 @@ async function refresh(): Promise<void> {
             <th>{{ t("updates.table.version") }}</th>
             <th>{{ t("updates.table.freshness") }}</th>
             <th>{{ t("updates.table.status") }}</th>
+            <th v-if="canManage">{{ t("updates.table.actions") }}</th>
           </tr>
         </thead>
         <tbody>
@@ -255,9 +488,21 @@ async function refresh(): Promise<void> {
                 {{ statusLabel(node.eligible, node.skipReason) }}
               </span>
             </td>
+            <td v-if="canManage" class="cell-actions">
+              <button
+                v-if="canApply(node)"
+                type="button"
+                class="btn btn-xs cursor-pointer"
+                data-action="update"
+                :disabled="applying || overlayOpen"
+                @click="openApply(node)"
+              >
+                {{ t("updates.apply") }}
+              </button>
+            </td>
           </tr>
           <tr v-if="!nodes.length" class="empty-row">
-            <td colspan="5" class="empty-cell">
+            <td :colspan="emptyColspan" class="empty-cell">
               <div class="empty">
                 <ArrowUpCircle :size="28" aria-hidden="true" />
                 <p>{{ t("updates.empty") }}</p>
@@ -306,6 +551,17 @@ async function refresh(): Promise<void> {
             <span class="muted">{{ platform(node.os, node.arch) }}</span>
             <span class="muted">{{ node.version || "—" }}</span>
           </div>
+          <div v-if="canApply(node)" class="node-card-actions">
+            <button
+              type="button"
+              class="btn btn-xs cursor-pointer"
+              data-action="update"
+              :disabled="applying || overlayOpen"
+              @click="openApply(node)"
+            >
+              {{ t("updates.apply") }}
+            </button>
+          </div>
         </li>
       </ul>
       <div v-if="!nodes.length" class="mobile-empty">
@@ -314,6 +570,41 @@ async function refresh(): Promise<void> {
           <p>{{ t("updates.empty") }}</p>
           <p class="muted">{{ t("updates.emptyHint") }}</p>
         </div>
+      </div>
+    </div>
+
+    <ConfirmDialog
+      :open="Boolean(pendingNode)"
+      :title="t('updates.confirmTitle')"
+      :message="confirmMessage"
+      :confirm-label="t('updates.confirm')"
+      :cancel-label="t('actions.cancel')"
+      :pending="applying"
+      @cancel="closeDialog"
+      @confirm="onConfirm"
+    />
+
+    <div
+      v-if="overlayOpen"
+      class="self-update-overlay"
+      data-self-update-overlay
+      role="status"
+      aria-live="polite"
+    >
+      <div class="self-update-panel">
+        <LoaderCircle v-if="!overlayTimedOut" class="spin overlay-icon" :size="28" aria-hidden="true" />
+        <TriangleAlert v-else class="overlay-icon" :size="28" aria-hidden="true" />
+        <h2>{{ overlayTimedOut ? t("updates.overlayTimeout", { tag: overlayPinTag }) : t("updates.overlayTitle") }}</h2>
+        <p v-if="!overlayTimedOut">{{ t("updates.overlayBody", { tag: overlayPinTag }) }}</p>
+        <button
+          v-if="overlayTimedOut"
+          type="button"
+          class="btn btn-primary cursor-pointer"
+          data-action="reload-after-update"
+          @click="reloadPage"
+        >
+          {{ t("updates.overlayRefresh") }}
+        </button>
       </div>
     </div>
   </div>
@@ -431,6 +722,10 @@ h1 {
   font-variant-numeric: tabular-nums;
 }
 
+.cell-actions {
+  white-space: nowrap;
+}
+
 .freshness-wrap {
   display: inline-flex;
   align-items: center;
@@ -533,6 +828,56 @@ a:hover {
   display: none;
 }
 
+.self-update-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.self-update-panel {
+  width: min(100%, 32rem);
+  padding: 1.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-card);
+  box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.3);
+  color: var(--color-text);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  text-align: center;
+}
+
+.self-update-panel h2 {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 650;
+}
+
+.self-update-panel p {
+  margin: 0;
+  color: var(--color-muted);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.self-update-panel .btn {
+  min-height: 2.75rem;
+}
+
+.overlay-icon {
+  color: var(--color-accent);
+}
+
+.node-card-actions {
+  display: flex;
+}
+
 @keyframes pulse {
   0%,
   100% {
@@ -598,6 +943,12 @@ a:hover {
 
   .node-card-head {
     justify-content: space-between;
+  }
+
+  .node-card-actions .btn,
+  .self-update-panel .btn {
+    width: 100%;
+    min-height: 2.75rem;
   }
 }
 

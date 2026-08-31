@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -278,7 +279,36 @@ func TestUpdateAPI_ApplyNodeRequiresNodeManageAndAudits(t *testing.T) {
 	if applier.n != 1 {
 		t.Fatalf("apply calls=%d", applier.n)
 	}
-	assertAudit(t, st, "node:local", "update.apply", "op-apply")
+	assertAuditMeta(t, st, "node:local", "update.apply", "op-apply", map[string]string{
+		"tag":        "v0.2.0",
+		"repository": "owner/procmesh",
+	})
+}
+
+func assertAuditMeta(t *testing.T, st *store.Store, resource, action, opID string, want map[string]string) {
+	t.Helper()
+	evs, err := st.ListAudit(context.Background(), resource, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ev := range evs {
+		if ev.Action != action || ev.OperationID != opID || ev.Resource != resource {
+			continue
+		}
+		meta := map[string]string{}
+		if len(ev.Metadata) > 0 {
+			if err := json.Unmarshal(ev.Metadata, &meta); err != nil {
+				t.Fatalf("metadata %s: %v", ev.Metadata, err)
+			}
+		}
+		for k, v := range want {
+			if meta[k] != v {
+				t.Fatalf("metadata %s=%q want %q in %s", k, meta[k], v, ev.Metadata)
+			}
+		}
+		return
+	}
+	t.Fatalf("missing audit action=%s op=%s resource=%s evs=%+v", action, opID, resource, evs)
 }
 
 func TestUpdateAPI_ApplyNodeDisabledIsDenied(t *testing.T) {

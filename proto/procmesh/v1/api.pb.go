@@ -16370,6 +16370,7 @@ type GetLocalUpdateInfoResponse struct {
 	Version       string                 `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty"`
 	Enabled       bool                   `protobuf:"varint,4,opt,name=enabled,proto3" json:"enabled,omitempty"`
 	Busy          bool                   `protobuf:"varint,5,opt,name=busy,proto3" json:"busy,omitempty"`
+	NodeId        string                 `protobuf:"bytes,6,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -16437,6 +16438,13 @@ func (x *GetLocalUpdateInfoResponse) GetBusy() bool {
 		return x.Busy
 	}
 	return false
+}
+
+func (x *GetLocalUpdateInfoResponse) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
 }
 
 type ListNodeUpdateStatusRequest struct {
@@ -18951,13 +18959,14 @@ const file_proto_procmesh_v1_api_proto_rawDesc = "" +
 	"\x0eChecksumsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x1b\n" +
-	"\x19GetLocalUpdateInfoRequest\"\x88\x01\n" +
+	"\x19GetLocalUpdateInfoRequest\"\xa1\x01\n" +
 	"\x1aGetLocalUpdateInfoResponse\x12\x0e\n" +
 	"\x02os\x18\x01 \x01(\tR\x02os\x12\x12\n" +
 	"\x04arch\x18\x02 \x01(\tR\x04arch\x12\x18\n" +
 	"\aversion\x18\x03 \x01(\tR\aversion\x12\x18\n" +
 	"\aenabled\x18\x04 \x01(\bR\aenabled\x12\x12\n" +
-	"\x04busy\x18\x05 \x01(\bR\x04busy\"\x1d\n" +
+	"\x04busy\x18\x05 \x01(\bR\x04busy\x12\x17\n" +
+	"\anode_id\x18\x06 \x01(\tR\x06nodeId\"\x1d\n" +
 	"\x1bListNodeUpdateStatusRequest\"\xa5\x02\n" +
 	"\x10NodeUpdateStatus\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x1a\n" +

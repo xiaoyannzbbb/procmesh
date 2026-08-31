@@ -102,7 +102,10 @@ export type ReplicationClient = Pick<
   | "prepareRecoverableSnapshotRestore"
   | "restoreRecoverableSnapshot"
 >;
-export type UpdateClient = Pick<Client<typeof UpdateService>, "checkLatest" | "listNodeUpdateStatus">;
+export type UpdateClient = Pick<
+  Client<typeof UpdateService>,
+  "checkLatest" | "listNodeUpdateStatus" | "applyNode" | "getLocalUpdateInfo"
+>;
 
 export function useClusterClient(): ClusterClient {
   return inject<ClusterClient | null>("clusterClient", null) ?? createClient(ClusterService, transport);

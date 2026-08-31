@@ -333,7 +333,7 @@ func TestUpdateAPI_GetLocalUpdateInfoReturnsLocalFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	msg := got.Msg
-	if msg.GetOs() != "linux" || msg.GetArch() != "arm64" || msg.GetVersion() != "0.1.0" || !msg.GetEnabled() || !msg.GetBusy() {
+	if msg.GetOs() != "linux" || msg.GetArch() != "arm64" || msg.GetVersion() != "0.1.0" || !msg.GetEnabled() || !msg.GetBusy() || msg.GetNodeId() != "local" {
 		t.Fatalf("%+v", msg)
 	}
 	fwd := api.Forward.(*fakeForwarder)

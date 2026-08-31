@@ -238,6 +238,19 @@ declare module "i18next" {
         'updates.table.freshness': string
         'updates.table.updated': string
         'updates.table.status': string
+        'updates.table.actions': string
+        'updates.apply': string
+        'updates.confirmTitle': string
+        'updates.confirmHostname': string
+        'updates.confirmPin': string
+        'updates.confirmNoRestart': string
+        'updates.confirmSelfWarning': string
+        'updates.confirm': string
+        'updates.applyFailed': string
+        'updates.overlayTitle': string
+        'updates.overlayBody': string
+        'updates.overlayTimeout': string
+        'updates.overlayRefresh': string
         'updates.updatedJustNow': string
         'updates.updatedSeconds': string
         'updates.updatedMinutes': string

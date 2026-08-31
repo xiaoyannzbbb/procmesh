@@ -15,6 +15,9 @@ export type AuthClient = Pick<Client<typeof AuthService>, "login" | "logout" | "
 
 export const session: Ref<Me | null> = ref(null);
 
+/** When true, a failed getMe must not clear the session or send the UI to /login. */
+export const selfUpdateHold = ref(false);
+
 export function saveCsrf(token: string): void {
   persistCsrf(token);
 }
@@ -43,6 +46,9 @@ export async function loadSession(): Promise<Me | null> {
     session.value = next;
     return next;
   } catch {
+    if (selfUpdateHold.value) {
+      return session.value;
+    }
     clearSession();
     return null;
   }

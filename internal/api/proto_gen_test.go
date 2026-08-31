@@ -174,5 +174,6 @@ func TestProto_UpdateJobRPCsGenerated(t *testing.T) {
 	_ = (&procmeshv1.UpdateJobTarget{}).GetSkipReason
 	_ = (&procmeshv1.CreateClusterUpdateRequest{}).GetMeta
 	_ = (&procmeshv1.ApplyNodeRequest{}).GetNodeId
+	_ = (&procmeshv1.GetLocalUpdateInfoResponse{}).GetNodeId
 	var _ procmeshv1connect.UpdateServiceHandler = (*UpdateAPI)(nil)
 }

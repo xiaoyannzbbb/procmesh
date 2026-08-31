@@ -86,6 +86,7 @@ func (s *UpdateAPI) GetLocalUpdateInfo(ctx context.Context, _ *connect.Request[p
 		Version: info.Version,
 		Enabled: info.Enabled,
 		Busy:    info.Busy,
+		NodeId:  s.LocalID,
 	}), nil
 }
 

@@ -1609,6 +1609,7 @@ message GetLocalUpdateInfoResponse {
   string version = 3;
   bool enabled = 4;
   bool busy = 5;
+  string node_id = 6;
 }
 
 message ListNodeUpdateStatusRequest {}
