@@ -107,6 +107,16 @@ type fakeApplier struct {
 	started chan string
 }
 
+type confirmationLostApplier struct {
+	clock *memClock
+	err   error
+}
+
+func (a confirmationLostApplier) Apply(_ context.Context, nodeID string, pin update.Pin, _ string) error {
+	a.clock.setVersion(nodeID, pin.Tag)
+	return a.err
+}
+
 func (f *fakeApplier) Apply(_ context.Context, nodeID string, pin update.Pin, operationID string) error {
 	f.mu.Lock()
 	f.order = append(f.order, nodeID)
@@ -141,7 +151,7 @@ func (f *fakeApplier) applied() []string {
 	return out
 }
 
-func newEngine(t *testing.T, clock *memClock, apply *fakeApplier, ids ...string) *update.Engine {
+func newEngine(t *testing.T, clock *memClock, apply update.NodeApplier, ids ...string) *update.Engine {
 	t.Helper()
 	st := openUpdateStore(t)
 	seq := ids
@@ -163,6 +173,33 @@ func newEngine(t *testing.T, clock *memClock, apply *fakeApplier, ids ...string)
 	}
 	e.Start(context.Background())
 	return e
+}
+
+func TestEngine_ApplyConfirmationLossWaitsForObservedVersion(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "timeout", err: errcode.E(errcode.TIMEOUT, "rpc timed out")},
+		{name: "unavailable", err: errcode.E(errcode.UNAVAILABLE, "owner unreachable")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			now := time.Unix(1_700_000_000, 0)
+			clock := &memClock{now: now, members: []cluster.NodeSummary{
+				liveNode("n1", "h1", "0.1.0", now),
+			}}
+			e := newEngine(t, clock, confirmationLostApplier{clock: clock, err: tc.err}, "j1", "op1")
+			job, err := e.Create(ctx, "admin", testPin(), []update.TargetSpec{{NodeID: "n1", Hostname: "h1"}}, "", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := waitJob(t, e, job.JobID, update.JobCompleted)
+			if got.Targets[0].Status != update.TargetSuccess || got.Targets[0].Error != "" {
+				t.Fatalf("target=%+v", got.Targets[0])
+			}
+		})
+	}
 }
 
 func TestEngine_CreateRejectsEmptyOperatorAndPin(t *testing.T) {

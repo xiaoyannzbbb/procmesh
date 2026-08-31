@@ -451,7 +451,7 @@ func (e *Engine) runTarget(ctx context.Context, jobID string, pin Pin, t Target)
 	if ctx.Err() != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return
 	}
-	if applyErr != nil {
+	if applyErr != nil && !applyConfirmationLost(applyErr) {
 		t.Status = mapApplyStatus(applyErr)
 		t.Error = applyErr.Error()
 		t.FinishedAt = time.Now().UTC()
@@ -464,8 +464,13 @@ func (e *Engine) runTarget(ctx context.Context, jobID string, pin Pin, t Target)
 		return
 	}
 	if waitErr != nil {
-		t.Status = TargetTimeout
-		t.Error = waitErr.Error()
+		if applyErr != nil {
+			t.Status = mapApplyStatus(applyErr)
+			t.Error = applyErr.Error()
+		} else {
+			t.Status = TargetTimeout
+			t.Error = waitErr.Error()
+		}
 		t.FinishedAt = time.Now().UTC()
 		_ = e.DB.UpdateUpdateJobTarget(ctx, jobID, t.OperationID, toStoreJobTarget(jobID, t))
 		return
@@ -474,6 +479,11 @@ func (e *Engine) runTarget(ctx context.Context, jobID string, pin Pin, t Target)
 	t.Error = ""
 	t.FinishedAt = time.Now().UTC()
 	_ = e.DB.UpdateUpdateJobTarget(ctx, jobID, t.OperationID, toStoreJobTarget(jobID, t))
+}
+
+func applyConfirmationLost(err error) bool {
+	return errcode.Is(err, errcode.TIMEOUT) || errcode.Is(err, errcode.UNAVAILABLE) ||
+		errors.Is(err, context.DeadlineExceeded)
 }
 
 func mapApplyStatus(err error) TargetStatus {

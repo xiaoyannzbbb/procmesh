@@ -20,6 +20,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/rpc"
 	"github.com/qleelulu/procmesh/internal/store"
+	"github.com/qleelulu/procmesh/internal/update"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
@@ -454,7 +455,7 @@ const (
 	logHopTimeout                 = time.Duration(0)
 	auditHopTimeout               = 2 * time.Second
 	metricsHopTimeout             = rpc.UnaryTimeout
-	updateHopTimeout              = rpc.UnaryTimeout
+	updateHopTimeout              = update.DownloadTimeout + rpc.MutationTimeout
 	alertHopTimeout               = rpc.MutationTimeout
 	backupHopTimeout              = rpc.MutationTimeout
 	clusterBackupHopTimeout       = rpc.MutationTimeout

@@ -39,6 +39,12 @@ func TestAgentForwarder_LogHopHasNoClientTimeout(t *testing.T) {
 	_ = rpc.NewUpdateClient(hc, "https://127.0.0.1:1")
 }
 
+func TestAgentForwarder_UpdateHopCoversDownloadTimeout(t *testing.T) {
+	if updateHopTimeout < update.DownloadTimeout {
+		t.Fatalf("updateHopTimeout=%v want >= DownloadTimeout=%v", updateHopTimeout, update.DownloadTimeout)
+	}
+}
+
 func TestRPCRuntime_StartRPCLockedWiresClusterIDIntoPeerReplicationHandler(t *testing.T) {
 	const clusterID, nodeID = "cluster-runtime", "node-runtime"
 	dir := t.TempDir()
