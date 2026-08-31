@@ -11,6 +11,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/freshness"
 	"github.com/qleelulu/procmesh/internal/rpc"
+	"github.com/qleelulu/procmesh/internal/store"
 	"github.com/qleelulu/procmesh/internal/update"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
@@ -28,16 +29,28 @@ type LocalInfoProvider interface {
 	LocalInfo() update.LocalInfo
 }
 
+// LocalApplier is satisfied by *update.Applier.
+type LocalApplier interface {
+	Apply(ctx context.Context, pin update.Pin) error
+}
+
 // UpdateAPI serves UpdateService RPCs.
 type UpdateAPI struct {
 	Auth      *auth.Service
 	Checker   LatestChecker
 	Local     LocalInfoProvider
+	Applier   LocalApplier
+	Engine    *update.Engine
+	Store     *store.Store
 	Cluster   ClusterDeps
 	LocalID   string
 	LocalOnly bool
 	Router    *Router
 	Forward   Forwarder
+	Degraded  func() bool
+
+	identMu sync.Mutex
+	idents  map[string]auth.Principal
 }
 
 func (s *UpdateAPI) CheckLatest(ctx context.Context, req *connect.Request[procmeshv1.CheckLatestRequest]) (*connect.Response[procmeshv1.CheckLatestResponse], error) {

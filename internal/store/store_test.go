@@ -312,6 +312,61 @@ func TestOpen_MigratesInstanceLastError(t *testing.T) {
 	}
 }
 
+func TestOpen_MigratesUpdateJobOperationID(t *testing.T) {
+	ctx := context.Background()
+	p := filepath.Join(t.TempDir(), "store.db")
+	db, err := sql.Open("sqlite", "file:"+p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`
+		CREATE TABLE update_jobs (
+			job_id TEXT PRIMARY KEY,
+			operator TEXT NOT NULL,
+			source_agent TEXT NOT NULL,
+			pin_json TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			started_at TEXT,
+			finished_at TEXT,
+			status TEXT NOT NULL,
+			summary_json TEXT NOT NULL,
+			cancel_remaining INTEGER NOT NULL DEFAULT 0
+		);
+		INSERT INTO update_jobs(job_id, operator, source_agent, pin_json, created_at, status, summary_json)
+		VALUES ('j-old', 'admin', 'n1', '{}', '2024-01-01T00:00:00Z', 'COMPLETED', '{}');
+	`)
+	if err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := store.Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	got, _, err := s.GetUpdateJob(ctx, "j-old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.OperationID != "" {
+		t.Fatalf("migrated operation_id=%q", got.OperationID)
+	}
+	if err := s.InsertUpdateJob(ctx, store.UpdateJobRecord{
+		JobID: "j-new", Operator: "admin", SourceAgent: "n1", PinJSON: `{}`,
+		CreatedAt: time.Now().UTC(), Status: "COMPLETED", SummaryJSON: `{}`,
+		OperationID: "op-mig",
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	again, _, err := s.GetUpdateJobByOperationID(ctx, "op-mig")
+	if err != nil || again.JobID != "j-new" {
+		t.Fatalf("%+v %v", again, err)
+	}
+}
+
 func TestOpen_ErrorWhenParentMissing(t *testing.T) {
 	_, err := store.Open(filepath.Join(t.TempDir(), "missing", "store.db"))
 	if err == nil {

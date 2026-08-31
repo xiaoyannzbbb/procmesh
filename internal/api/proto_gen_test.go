@@ -149,3 +149,30 @@ func TestProto_BackupServiceGenerated(t *testing.T) {
 	_ = (&procmeshv1.RestoreBackupRequest{}).GetTargets
 	_ = (&procmeshv1.CreateBackupRequest{}).GetTargetNodeIds
 }
+
+func TestProto_UpdateJobRPCsGenerated(t *testing.T) {
+	if procmeshv1connect.UpdateServiceCreateClusterUpdateProcedure == "" {
+		t.Fatal("missing CreateClusterUpdate")
+	}
+	if procmeshv1connect.UpdateServiceGetUpdateJobProcedure == "" {
+		t.Fatal("missing GetUpdateJob")
+	}
+	if procmeshv1connect.UpdateServiceListUpdateJobsProcedure == "" {
+		t.Fatal("missing ListUpdateJobs")
+	}
+	if procmeshv1connect.UpdateServiceCancelRemainingProcedure == "" {
+		t.Fatal("missing CancelRemaining")
+	}
+	if procmeshv1connect.UpdateServiceRetryUpdateJobProcedure == "" {
+		t.Fatal("missing RetryUpdateJob")
+	}
+	if procmeshv1connect.UpdateServiceApplyNodeProcedure == "" {
+		t.Fatal("missing ApplyNode")
+	}
+	_ = (&procmeshv1.UpdateJob{}).GetJobId
+	_ = (&procmeshv1.UpdatePin{}).GetTag
+	_ = (&procmeshv1.UpdateJobTarget{}).GetSkipReason
+	_ = (&procmeshv1.CreateClusterUpdateRequest{}).GetMeta
+	_ = (&procmeshv1.ApplyNodeRequest{}).GetNodeId
+	var _ procmeshv1connect.UpdateServiceHandler = (*UpdateAPI)(nil)
+}

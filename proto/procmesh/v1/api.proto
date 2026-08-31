@@ -1634,8 +1634,85 @@ message ListNodeUpdateStatusResponse {
   int64 checked_unix_ms = 5;
 }
 
+message UpdatePin {
+  string repository = 1;
+  string tag = 2;
+  map<string, string> checksums = 3; // "linux/amd64" -> sha256
+}
+
+message UpdateJobTarget {
+  string operation_id = 1;
+  string node_id = 2;
+  string hostname = 3;
+  string status = 4; // PENDING|RUNNING|SUCCESS|FAILED|TIMEOUT|CONFLICT|SKIPPED|CANCELLED
+  string skip_reason = 5;
+  string error = 6;
+  int32 order_index = 7;
+  int64 started_unix_ms = 8;
+  int64 finished_unix_ms = 9;
+}
+
+message UpdateJobSummary {
+  int32 success = 1;
+  int32 failed = 2;
+  int32 timeout = 3;
+  int32 conflict = 4;
+  int32 skipped = 5;
+  int32 cancelled = 6;
+}
+
+message UpdateJob {
+  string job_id = 1;
+  string operator = 2;
+  string source_agent = 3;
+  UpdatePin pin = 4;
+  string status = 5; // PENDING|RUNNING|COMPLETED|PARTIAL|FAILED
+  UpdateJobSummary summary = 6;
+  int64 created_unix_ms = 7;
+  int64 started_unix_ms = 8;
+  int64 finished_unix_ms = 9;
+  repeated UpdateJobTarget targets = 10; // List omits; Get includes
+}
+
+message CreateClusterUpdateRequest {
+  MutationMeta meta = 1;
+  UpdatePin pin = 2; // optional; empty tag uses CheckLatest refresh=false
+}
+message CreateClusterUpdateResponse { UpdateJob job = 1; }
+
+message GetUpdateJobRequest { string job_id = 1; }
+message GetUpdateJobResponse { UpdateJob job = 1; }
+
+message ListUpdateJobsRequest { int32 limit = 1; } // 0 = 50; cap 200
+message ListUpdateJobsResponse { repeated UpdateJob jobs = 1; }
+
+message CancelRemainingRequest {
+  MutationMeta meta = 1;
+  string job_id = 2;
+}
+message CancelRemainingResponse { UpdateJob job = 1; }
+
+message RetryUpdateJobRequest {
+  MutationMeta meta = 1;
+  string job_id = 2;
+}
+message RetryUpdateJobResponse { UpdateJob job = 1; }
+
+message ApplyNodeRequest {
+  MutationMeta meta = 1;
+  string node_id = 2;
+  UpdatePin pin = 3;
+}
+message ApplyNodeResponse {}
+
 service UpdateService {
   rpc CheckLatest(CheckLatestRequest) returns (CheckLatestResponse);
   rpc GetLocalUpdateInfo(GetLocalUpdateInfoRequest) returns (GetLocalUpdateInfoResponse);
   rpc ListNodeUpdateStatus(ListNodeUpdateStatusRequest) returns (ListNodeUpdateStatusResponse);
+  rpc CreateClusterUpdate(CreateClusterUpdateRequest) returns (CreateClusterUpdateResponse);
+  rpc GetUpdateJob(GetUpdateJobRequest) returns (GetUpdateJobResponse);
+  rpc ListUpdateJobs(ListUpdateJobsRequest) returns (ListUpdateJobsResponse);
+  rpc CancelRemaining(CancelRemainingRequest) returns (CancelRemainingResponse);
+  rpc RetryUpdateJob(RetryUpdateJobRequest) returns (RetryUpdateJobResponse);
+  rpc ApplyNode(ApplyNodeRequest) returns (ApplyNodeResponse);
 }

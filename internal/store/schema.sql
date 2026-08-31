@@ -98,6 +98,39 @@ CREATE TABLE IF NOT EXISTS batch_targets (
 CREATE INDEX IF NOT EXISTS batch_targets_batch ON batch_targets(batch_id);
 CREATE INDEX IF NOT EXISTS batch_targets_incomplete ON batch_targets(status);
 
+CREATE TABLE IF NOT EXISTS update_jobs (
+    job_id TEXT PRIMARY KEY,
+    operator TEXT NOT NULL,
+    source_agent TEXT NOT NULL,
+    pin_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    status TEXT NOT NULL,
+    summary_json TEXT NOT NULL,
+    cancel_remaining INTEGER NOT NULL DEFAULT 0,
+    operation_id TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS update_job_targets (
+    job_id TEXT NOT NULL,
+    operation_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    hostname TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL,
+    skip_reason TEXT NOT NULL DEFAULT '',
+    error TEXT NOT NULL DEFAULT '',
+    order_index INTEGER NOT NULL DEFAULT 0,
+    started_at TEXT,
+    finished_at TEXT,
+    PRIMARY KEY (job_id, operation_id)
+);
+
+CREATE INDEX IF NOT EXISTS update_job_targets_job ON update_job_targets(job_id, order_index);
+CREATE INDEX IF NOT EXISTS update_jobs_status ON update_jobs(status);
+CREATE UNIQUE INDEX IF NOT EXISTS update_jobs_one_running ON update_jobs(status) WHERE status = 'RUNNING';
+CREATE UNIQUE INDEX IF NOT EXISTS update_jobs_operation_id ON update_jobs(operation_id) WHERE operation_id != '';
+
 CREATE TABLE IF NOT EXISTS metric_samples (
     series TEXT NOT NULL,
     subject_id TEXT NOT NULL,

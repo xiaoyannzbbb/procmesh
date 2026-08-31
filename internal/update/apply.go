@@ -113,7 +113,8 @@ func linuxAssetName(tag, goarch string) (string, error) {
 	}
 }
 
-func versionsEqual(current, pinTag string) bool {
+// VersionsEqual reports whether current and pinTag name the same release.
+func VersionsEqual(current, pinTag string) bool {
 	cur := strings.TrimSpace(current)
 	lat := strings.TrimSpace(pinTag)
 	if cur == "" && lat == "" {
@@ -146,7 +147,7 @@ func (a *Applier) Apply(ctx context.Context, pin Pin) error {
 	if strings.TrimSpace(pin.Tag) == "" {
 		return errcode.E(errcode.INVALID, "release tag required")
 	}
-	if versionsEqual(a.version(), pin.Tag) {
+	if VersionsEqual(a.version(), pin.Tag) {
 		return nil
 	}
 

@@ -369,6 +369,23 @@ const (
 	// UpdateServiceListNodeUpdateStatusProcedure is the fully-qualified name of the UpdateService's
 	// ListNodeUpdateStatus RPC.
 	UpdateServiceListNodeUpdateStatusProcedure = "/procmesh.v1.UpdateService/ListNodeUpdateStatus"
+	// UpdateServiceCreateClusterUpdateProcedure is the fully-qualified name of the UpdateService's
+	// CreateClusterUpdate RPC.
+	UpdateServiceCreateClusterUpdateProcedure = "/procmesh.v1.UpdateService/CreateClusterUpdate"
+	// UpdateServiceGetUpdateJobProcedure is the fully-qualified name of the UpdateService's
+	// GetUpdateJob RPC.
+	UpdateServiceGetUpdateJobProcedure = "/procmesh.v1.UpdateService/GetUpdateJob"
+	// UpdateServiceListUpdateJobsProcedure is the fully-qualified name of the UpdateService's
+	// ListUpdateJobs RPC.
+	UpdateServiceListUpdateJobsProcedure = "/procmesh.v1.UpdateService/ListUpdateJobs"
+	// UpdateServiceCancelRemainingProcedure is the fully-qualified name of the UpdateService's
+	// CancelRemaining RPC.
+	UpdateServiceCancelRemainingProcedure = "/procmesh.v1.UpdateService/CancelRemaining"
+	// UpdateServiceRetryUpdateJobProcedure is the fully-qualified name of the UpdateService's
+	// RetryUpdateJob RPC.
+	UpdateServiceRetryUpdateJobProcedure = "/procmesh.v1.UpdateService/RetryUpdateJob"
+	// UpdateServiceApplyNodeProcedure is the fully-qualified name of the UpdateService's ApplyNode RPC.
+	UpdateServiceApplyNodeProcedure = "/procmesh.v1.UpdateService/ApplyNode"
 )
 
 // ProcessServiceClient is a client for the procmesh.v1.ProcessService service.
@@ -3957,6 +3974,12 @@ type UpdateServiceClient interface {
 	CheckLatest(context.Context, *connect.Request[v1.CheckLatestRequest]) (*connect.Response[v1.CheckLatestResponse], error)
 	GetLocalUpdateInfo(context.Context, *connect.Request[v1.GetLocalUpdateInfoRequest]) (*connect.Response[v1.GetLocalUpdateInfoResponse], error)
 	ListNodeUpdateStatus(context.Context, *connect.Request[v1.ListNodeUpdateStatusRequest]) (*connect.Response[v1.ListNodeUpdateStatusResponse], error)
+	CreateClusterUpdate(context.Context, *connect.Request[v1.CreateClusterUpdateRequest]) (*connect.Response[v1.CreateClusterUpdateResponse], error)
+	GetUpdateJob(context.Context, *connect.Request[v1.GetUpdateJobRequest]) (*connect.Response[v1.GetUpdateJobResponse], error)
+	ListUpdateJobs(context.Context, *connect.Request[v1.ListUpdateJobsRequest]) (*connect.Response[v1.ListUpdateJobsResponse], error)
+	CancelRemaining(context.Context, *connect.Request[v1.CancelRemainingRequest]) (*connect.Response[v1.CancelRemainingResponse], error)
+	RetryUpdateJob(context.Context, *connect.Request[v1.RetryUpdateJobRequest]) (*connect.Response[v1.RetryUpdateJobResponse], error)
+	ApplyNode(context.Context, *connect.Request[v1.ApplyNodeRequest]) (*connect.Response[v1.ApplyNodeResponse], error)
 }
 
 // NewUpdateServiceClient constructs a client for the procmesh.v1.UpdateService service. By default,
@@ -3988,6 +4011,42 @@ func NewUpdateServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(updateServiceMethods.ByName("ListNodeUpdateStatus")),
 			connect.WithClientOptions(opts...),
 		),
+		createClusterUpdate: connect.NewClient[v1.CreateClusterUpdateRequest, v1.CreateClusterUpdateResponse](
+			httpClient,
+			baseURL+UpdateServiceCreateClusterUpdateProcedure,
+			connect.WithSchema(updateServiceMethods.ByName("CreateClusterUpdate")),
+			connect.WithClientOptions(opts...),
+		),
+		getUpdateJob: connect.NewClient[v1.GetUpdateJobRequest, v1.GetUpdateJobResponse](
+			httpClient,
+			baseURL+UpdateServiceGetUpdateJobProcedure,
+			connect.WithSchema(updateServiceMethods.ByName("GetUpdateJob")),
+			connect.WithClientOptions(opts...),
+		),
+		listUpdateJobs: connect.NewClient[v1.ListUpdateJobsRequest, v1.ListUpdateJobsResponse](
+			httpClient,
+			baseURL+UpdateServiceListUpdateJobsProcedure,
+			connect.WithSchema(updateServiceMethods.ByName("ListUpdateJobs")),
+			connect.WithClientOptions(opts...),
+		),
+		cancelRemaining: connect.NewClient[v1.CancelRemainingRequest, v1.CancelRemainingResponse](
+			httpClient,
+			baseURL+UpdateServiceCancelRemainingProcedure,
+			connect.WithSchema(updateServiceMethods.ByName("CancelRemaining")),
+			connect.WithClientOptions(opts...),
+		),
+		retryUpdateJob: connect.NewClient[v1.RetryUpdateJobRequest, v1.RetryUpdateJobResponse](
+			httpClient,
+			baseURL+UpdateServiceRetryUpdateJobProcedure,
+			connect.WithSchema(updateServiceMethods.ByName("RetryUpdateJob")),
+			connect.WithClientOptions(opts...),
+		),
+		applyNode: connect.NewClient[v1.ApplyNodeRequest, v1.ApplyNodeResponse](
+			httpClient,
+			baseURL+UpdateServiceApplyNodeProcedure,
+			connect.WithSchema(updateServiceMethods.ByName("ApplyNode")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -3996,6 +4055,12 @@ type updateServiceClient struct {
 	checkLatest          *connect.Client[v1.CheckLatestRequest, v1.CheckLatestResponse]
 	getLocalUpdateInfo   *connect.Client[v1.GetLocalUpdateInfoRequest, v1.GetLocalUpdateInfoResponse]
 	listNodeUpdateStatus *connect.Client[v1.ListNodeUpdateStatusRequest, v1.ListNodeUpdateStatusResponse]
+	createClusterUpdate  *connect.Client[v1.CreateClusterUpdateRequest, v1.CreateClusterUpdateResponse]
+	getUpdateJob         *connect.Client[v1.GetUpdateJobRequest, v1.GetUpdateJobResponse]
+	listUpdateJobs       *connect.Client[v1.ListUpdateJobsRequest, v1.ListUpdateJobsResponse]
+	cancelRemaining      *connect.Client[v1.CancelRemainingRequest, v1.CancelRemainingResponse]
+	retryUpdateJob       *connect.Client[v1.RetryUpdateJobRequest, v1.RetryUpdateJobResponse]
+	applyNode            *connect.Client[v1.ApplyNodeRequest, v1.ApplyNodeResponse]
 }
 
 // CheckLatest calls procmesh.v1.UpdateService.CheckLatest.
@@ -4013,11 +4078,47 @@ func (c *updateServiceClient) ListNodeUpdateStatus(ctx context.Context, req *con
 	return c.listNodeUpdateStatus.CallUnary(ctx, req)
 }
 
+// CreateClusterUpdate calls procmesh.v1.UpdateService.CreateClusterUpdate.
+func (c *updateServiceClient) CreateClusterUpdate(ctx context.Context, req *connect.Request[v1.CreateClusterUpdateRequest]) (*connect.Response[v1.CreateClusterUpdateResponse], error) {
+	return c.createClusterUpdate.CallUnary(ctx, req)
+}
+
+// GetUpdateJob calls procmesh.v1.UpdateService.GetUpdateJob.
+func (c *updateServiceClient) GetUpdateJob(ctx context.Context, req *connect.Request[v1.GetUpdateJobRequest]) (*connect.Response[v1.GetUpdateJobResponse], error) {
+	return c.getUpdateJob.CallUnary(ctx, req)
+}
+
+// ListUpdateJobs calls procmesh.v1.UpdateService.ListUpdateJobs.
+func (c *updateServiceClient) ListUpdateJobs(ctx context.Context, req *connect.Request[v1.ListUpdateJobsRequest]) (*connect.Response[v1.ListUpdateJobsResponse], error) {
+	return c.listUpdateJobs.CallUnary(ctx, req)
+}
+
+// CancelRemaining calls procmesh.v1.UpdateService.CancelRemaining.
+func (c *updateServiceClient) CancelRemaining(ctx context.Context, req *connect.Request[v1.CancelRemainingRequest]) (*connect.Response[v1.CancelRemainingResponse], error) {
+	return c.cancelRemaining.CallUnary(ctx, req)
+}
+
+// RetryUpdateJob calls procmesh.v1.UpdateService.RetryUpdateJob.
+func (c *updateServiceClient) RetryUpdateJob(ctx context.Context, req *connect.Request[v1.RetryUpdateJobRequest]) (*connect.Response[v1.RetryUpdateJobResponse], error) {
+	return c.retryUpdateJob.CallUnary(ctx, req)
+}
+
+// ApplyNode calls procmesh.v1.UpdateService.ApplyNode.
+func (c *updateServiceClient) ApplyNode(ctx context.Context, req *connect.Request[v1.ApplyNodeRequest]) (*connect.Response[v1.ApplyNodeResponse], error) {
+	return c.applyNode.CallUnary(ctx, req)
+}
+
 // UpdateServiceHandler is an implementation of the procmesh.v1.UpdateService service.
 type UpdateServiceHandler interface {
 	CheckLatest(context.Context, *connect.Request[v1.CheckLatestRequest]) (*connect.Response[v1.CheckLatestResponse], error)
 	GetLocalUpdateInfo(context.Context, *connect.Request[v1.GetLocalUpdateInfoRequest]) (*connect.Response[v1.GetLocalUpdateInfoResponse], error)
 	ListNodeUpdateStatus(context.Context, *connect.Request[v1.ListNodeUpdateStatusRequest]) (*connect.Response[v1.ListNodeUpdateStatusResponse], error)
+	CreateClusterUpdate(context.Context, *connect.Request[v1.CreateClusterUpdateRequest]) (*connect.Response[v1.CreateClusterUpdateResponse], error)
+	GetUpdateJob(context.Context, *connect.Request[v1.GetUpdateJobRequest]) (*connect.Response[v1.GetUpdateJobResponse], error)
+	ListUpdateJobs(context.Context, *connect.Request[v1.ListUpdateJobsRequest]) (*connect.Response[v1.ListUpdateJobsResponse], error)
+	CancelRemaining(context.Context, *connect.Request[v1.CancelRemainingRequest]) (*connect.Response[v1.CancelRemainingResponse], error)
+	RetryUpdateJob(context.Context, *connect.Request[v1.RetryUpdateJobRequest]) (*connect.Response[v1.RetryUpdateJobResponse], error)
+	ApplyNode(context.Context, *connect.Request[v1.ApplyNodeRequest]) (*connect.Response[v1.ApplyNodeResponse], error)
 }
 
 // NewUpdateServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -4045,6 +4146,42 @@ func NewUpdateServiceHandler(svc UpdateServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(updateServiceMethods.ByName("ListNodeUpdateStatus")),
 		connect.WithHandlerOptions(opts...),
 	)
+	updateServiceCreateClusterUpdateHandler := connect.NewUnaryHandler(
+		UpdateServiceCreateClusterUpdateProcedure,
+		svc.CreateClusterUpdate,
+		connect.WithSchema(updateServiceMethods.ByName("CreateClusterUpdate")),
+		connect.WithHandlerOptions(opts...),
+	)
+	updateServiceGetUpdateJobHandler := connect.NewUnaryHandler(
+		UpdateServiceGetUpdateJobProcedure,
+		svc.GetUpdateJob,
+		connect.WithSchema(updateServiceMethods.ByName("GetUpdateJob")),
+		connect.WithHandlerOptions(opts...),
+	)
+	updateServiceListUpdateJobsHandler := connect.NewUnaryHandler(
+		UpdateServiceListUpdateJobsProcedure,
+		svc.ListUpdateJobs,
+		connect.WithSchema(updateServiceMethods.ByName("ListUpdateJobs")),
+		connect.WithHandlerOptions(opts...),
+	)
+	updateServiceCancelRemainingHandler := connect.NewUnaryHandler(
+		UpdateServiceCancelRemainingProcedure,
+		svc.CancelRemaining,
+		connect.WithSchema(updateServiceMethods.ByName("CancelRemaining")),
+		connect.WithHandlerOptions(opts...),
+	)
+	updateServiceRetryUpdateJobHandler := connect.NewUnaryHandler(
+		UpdateServiceRetryUpdateJobProcedure,
+		svc.RetryUpdateJob,
+		connect.WithSchema(updateServiceMethods.ByName("RetryUpdateJob")),
+		connect.WithHandlerOptions(opts...),
+	)
+	updateServiceApplyNodeHandler := connect.NewUnaryHandler(
+		UpdateServiceApplyNodeProcedure,
+		svc.ApplyNode,
+		connect.WithSchema(updateServiceMethods.ByName("ApplyNode")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/procmesh.v1.UpdateService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case UpdateServiceCheckLatestProcedure:
@@ -4053,6 +4190,18 @@ func NewUpdateServiceHandler(svc UpdateServiceHandler, opts ...connect.HandlerOp
 			updateServiceGetLocalUpdateInfoHandler.ServeHTTP(w, r)
 		case UpdateServiceListNodeUpdateStatusProcedure:
 			updateServiceListNodeUpdateStatusHandler.ServeHTTP(w, r)
+		case UpdateServiceCreateClusterUpdateProcedure:
+			updateServiceCreateClusterUpdateHandler.ServeHTTP(w, r)
+		case UpdateServiceGetUpdateJobProcedure:
+			updateServiceGetUpdateJobHandler.ServeHTTP(w, r)
+		case UpdateServiceListUpdateJobsProcedure:
+			updateServiceListUpdateJobsHandler.ServeHTTP(w, r)
+		case UpdateServiceCancelRemainingProcedure:
+			updateServiceCancelRemainingHandler.ServeHTTP(w, r)
+		case UpdateServiceRetryUpdateJobProcedure:
+			updateServiceRetryUpdateJobHandler.ServeHTTP(w, r)
+		case UpdateServiceApplyNodeProcedure:
+			updateServiceApplyNodeHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -4072,4 +4221,28 @@ func (UnimplementedUpdateServiceHandler) GetLocalUpdateInfo(context.Context, *co
 
 func (UnimplementedUpdateServiceHandler) ListNodeUpdateStatus(context.Context, *connect.Request[v1.ListNodeUpdateStatusRequest]) (*connect.Response[v1.ListNodeUpdateStatusResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.UpdateService.ListNodeUpdateStatus is not implemented"))
+}
+
+func (UnimplementedUpdateServiceHandler) CreateClusterUpdate(context.Context, *connect.Request[v1.CreateClusterUpdateRequest]) (*connect.Response[v1.CreateClusterUpdateResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.UpdateService.CreateClusterUpdate is not implemented"))
+}
+
+func (UnimplementedUpdateServiceHandler) GetUpdateJob(context.Context, *connect.Request[v1.GetUpdateJobRequest]) (*connect.Response[v1.GetUpdateJobResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.UpdateService.GetUpdateJob is not implemented"))
+}
+
+func (UnimplementedUpdateServiceHandler) ListUpdateJobs(context.Context, *connect.Request[v1.ListUpdateJobsRequest]) (*connect.Response[v1.ListUpdateJobsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.UpdateService.ListUpdateJobs is not implemented"))
+}
+
+func (UnimplementedUpdateServiceHandler) CancelRemaining(context.Context, *connect.Request[v1.CancelRemainingRequest]) (*connect.Response[v1.CancelRemainingResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.UpdateService.CancelRemaining is not implemented"))
+}
+
+func (UnimplementedUpdateServiceHandler) RetryUpdateJob(context.Context, *connect.Request[v1.RetryUpdateJobRequest]) (*connect.Response[v1.RetryUpdateJobResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.UpdateService.RetryUpdateJob is not implemented"))
+}
+
+func (UnimplementedUpdateServiceHandler) ApplyNode(context.Context, *connect.Request[v1.ApplyNodeRequest]) (*connect.Response[v1.ApplyNodeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.UpdateService.ApplyNode is not implemented"))
 }

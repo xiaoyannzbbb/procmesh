@@ -246,6 +246,37 @@ func TestShouldProbe_OnlyLiveNonDarwin(t *testing.T) {
 	}
 }
 
+func TestEvaluate_SkipNotLiveWithoutProbe(t *testing.T) {
+	t.Parallel()
+	now := time.UnixMilli(1_700_000_000_000)
+	stale := cluster.NodeSummary{
+		NodeID: "n1", State: cluster.StateAlive, OS: "linux",
+		AgentVersion: "0.1.0", LastUpdatedUnixMs: now.Add(-time.Minute).UnixMilli(),
+	}
+	got := update.Evaluate(now, stale, "v0.2.0", false, nil, nil)
+	if got.Eligible || got.SkipReason != update.SkipSTALE {
+		t.Fatalf("%+v", got)
+	}
+	darwin := cluster.NodeSummary{
+		NodeID: "mac", State: cluster.StateAlive, OS: "darwin",
+		AgentVersion: "0.1.0", LastUpdatedUnixMs: now.UnixMilli(),
+	}
+	got = update.Evaluate(now, darwin, "v0.2.0", false, nil, nil)
+	if got.Eligible || got.SkipReason != update.SkipMACOS {
+		t.Fatalf("darwin %+v", got)
+	}
+	live := cluster.NodeSummary{
+		NodeID: "lin", State: cluster.StateAlive, OS: "linux",
+		AgentVersion: "0.1.0", LastUpdatedUnixMs: now.UnixMilli(),
+	}
+	got = update.Evaluate(now, live, "v0.2.0", false, &update.LocalInfo{
+		OS: "linux", Arch: "amd64", Version: "0.1.0", Enabled: true,
+	}, nil)
+	if !got.Eligible {
+		t.Fatalf("eligible %+v", got)
+	}
+}
+
 func TestLocalInfo_ReadsEnabledAndBusy(t *testing.T) {
 	a := &update.Applier{Enabled: true, GOOS: "linux", GOARCH: "amd64", Version: "0.1.0"}
 	info := a.LocalInfo()

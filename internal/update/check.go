@@ -92,7 +92,7 @@ func (c *Checker) CheckLatest(ctx context.Context, refresh bool) (Result, error)
 
 	pin, err := c.Source.Latest(ctx)
 	if err == nil {
-		if err = validatePin(pin); err == nil {
+		if err = ValidatePin(pin); err == nil {
 			checkedAt := now
 			c.cached = &cachedPin{pin: clonePin(pin), checkedAt: checkedAt}
 			return Result{
@@ -139,7 +139,8 @@ func wrapSourceErr(err error) error {
 	return errcode.E(errcode.UNAVAILABLE, "update source failed")
 }
 
-func validatePin(pin Pin) error {
+// ValidatePin checks repository, stable tag, and required platform checksums.
+func ValidatePin(pin Pin) error {
 	if pin.Repository == "" {
 		return errcode.E(errcode.INVALID, "update repository required")
 	}

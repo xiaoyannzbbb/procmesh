@@ -675,6 +675,17 @@ func processRemotePolicy(src *liveSource) api.ProcessRemotePolicy {
 	}
 }
 
+func newUpdateEngine(st *store.Store, nodeID string) *update.Engine {
+	if st == nil {
+		return nil
+	}
+	return &update.Engine{
+		DB:          st,
+		SourceAgent: nodeID,
+		NewID:       newBatchID,
+	}
+}
+
 func newBatchEngine(st *store.Store, cfg agentcfg.Config, nodeID string) *batch.Engine {
 	if st == nil {
 		return nil
@@ -823,6 +834,7 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 	if st != nil {
 		revs = st
 	}
+	updateEng := newUpdateEngine(st, clusterDeps.NodeID)
 	srv, err := api.NewServer(api.Options{
 		Addr:             opt.Listen,
 		Logger:           opt.Logger.With("component", "http"),
@@ -857,9 +869,10 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		ReplicationDispatch: func(run backup.FrozenReplicationRun) {
 			go rt.replicationCoord.DispatchRun(ctx, run)
 		},
-		Process:     rt.process,
-		Update:      updateChecker,
-		UpdateLocal: updateLocal,
+		Process:      rt.process,
+		Update:       updateChecker,
+		UpdateLocal:  updateLocal,
+		UpdateEngine: updateEng,
 	})
 	if err != nil {
 		_ = ln.Close()
@@ -901,6 +914,12 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		batchEng.Start(ctx)
 		if err := batchEng.Resume(ctx); err != nil {
 			opt.Logger.Warn("batch resume failed", "error", err)
+		}
+	}
+	if updateEng != nil && !degraded {
+		updateEng.Start(ctx)
+		if err := updateEng.Resume(ctx); err != nil {
+			opt.Logger.Warn("update job resume failed", "error", err)
 		}
 	}
 

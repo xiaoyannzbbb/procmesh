@@ -12,6 +12,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/freshness"
+	"github.com/qleelulu/procmesh/internal/rpc"
 	"github.com/qleelulu/procmesh/internal/update"
 	"github.com/qleelulu/procmesh/internal/version"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
@@ -47,13 +48,17 @@ type stubLocalInfo struct {
 func (s stubLocalInfo) LocalInfo() update.LocalInfo { return s.info }
 
 type fakeUpdateClient struct {
-	mu    sync.Mutex
-	calls int
-	info  *procmeshv1.GetLocalUpdateInfoResponse
-	err   error
-	byID  map[string]*procmeshv1.GetLocalUpdateInfoResponse
-	errID map[string]error
-	last  Route
+	mu        sync.Mutex
+	calls     int
+	info      *procmeshv1.GetLocalUpdateInfoResponse
+	err       error
+	byID      map[string]*procmeshv1.GetLocalUpdateInfoResponse
+	errID     map[string]error
+	last      Route
+	mesh      *staticMesh
+	now       time.Time
+	applySaw  chan string
+	applyHold chan struct{}
 }
 
 func (f *fakeUpdateClient) CheckLatest(context.Context, *connect.Request[procmeshv1.CheckLatestRequest]) (*connect.Response[procmeshv1.CheckLatestResponse], error) {
@@ -88,6 +93,61 @@ func (f *fakeUpdateClient) GetLocalUpdateInfo(context.Context, *connect.Request[
 
 func (f *fakeUpdateClient) ListNodeUpdateStatus(context.Context, *connect.Request[procmeshv1.ListNodeUpdateStatusRequest]) (*connect.Response[procmeshv1.ListNodeUpdateStatusResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("unused"))
+}
+
+func (f *fakeUpdateClient) CreateClusterUpdate(context.Context, *connect.Request[procmeshv1.CreateClusterUpdateRequest]) (*connect.Response[procmeshv1.CreateClusterUpdateResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("unused"))
+}
+
+func (f *fakeUpdateClient) GetUpdateJob(context.Context, *connect.Request[procmeshv1.GetUpdateJobRequest]) (*connect.Response[procmeshv1.GetUpdateJobResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("unused"))
+}
+
+func (f *fakeUpdateClient) ListUpdateJobs(context.Context, *connect.Request[procmeshv1.ListUpdateJobsRequest]) (*connect.Response[procmeshv1.ListUpdateJobsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("unused"))
+}
+
+func (f *fakeUpdateClient) CancelRemaining(context.Context, *connect.Request[procmeshv1.CancelRemainingRequest]) (*connect.Response[procmeshv1.CancelRemainingResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("unused"))
+}
+
+func (f *fakeUpdateClient) RetryUpdateJob(context.Context, *connect.Request[procmeshv1.RetryUpdateJobRequest]) (*connect.Response[procmeshv1.RetryUpdateJobResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("unused"))
+}
+
+func (f *fakeUpdateClient) ApplyNode(_ context.Context, req *connect.Request[procmeshv1.ApplyNodeRequest]) (*connect.Response[procmeshv1.ApplyNodeResponse], error) {
+	f.mu.Lock()
+	f.calls++
+	if f.err != nil {
+		f.mu.Unlock()
+		return nil, f.err
+	}
+	if f.mesh != nil {
+		nodeID := req.Msg.GetNodeId()
+		tag := req.Msg.GetPin().GetTag()
+		f.mesh.mu.Lock()
+		for i := range f.mesh.members {
+			if f.mesh.members[i].NodeID == nodeID {
+				f.mesh.members[i].AgentVersion = tag
+				f.mesh.members[i].State = cluster.StateAlive
+				f.mesh.members[i].LastUpdatedUnixMs = f.now.UnixMilli()
+			}
+		}
+		f.mesh.mu.Unlock()
+	}
+	saw, hold := f.applySaw, f.applyHold
+	session := rpc.SessionIDOf(req.Header())
+	f.mu.Unlock()
+	if saw != nil {
+		select {
+		case saw <- session:
+		default:
+		}
+	}
+	if hold != nil {
+		<-hold
+	}
+	return connect.NewResponse(&procmeshv1.ApplyNodeResponse{}), nil
 }
 
 func (f *fakeUpdateClient) callCount() int {
@@ -136,6 +196,34 @@ func (c *boundUpdateClient) GetLocalUpdateInfo(context.Context, *connect.Request
 
 func (c *boundUpdateClient) ListNodeUpdateStatus(ctx context.Context, req *connect.Request[procmeshv1.ListNodeUpdateStatusRequest]) (*connect.Response[procmeshv1.ListNodeUpdateStatusResponse], error) {
 	return c.parent.ListNodeUpdateStatus(ctx, req)
+}
+
+func (c *boundUpdateClient) CreateClusterUpdate(ctx context.Context, req *connect.Request[procmeshv1.CreateClusterUpdateRequest]) (*connect.Response[procmeshv1.CreateClusterUpdateResponse], error) {
+	return c.parent.CreateClusterUpdate(ctx, req)
+}
+
+func (c *boundUpdateClient) GetUpdateJob(ctx context.Context, req *connect.Request[procmeshv1.GetUpdateJobRequest]) (*connect.Response[procmeshv1.GetUpdateJobResponse], error) {
+	return c.parent.GetUpdateJob(ctx, req)
+}
+
+func (c *boundUpdateClient) ListUpdateJobs(ctx context.Context, req *connect.Request[procmeshv1.ListUpdateJobsRequest]) (*connect.Response[procmeshv1.ListUpdateJobsResponse], error) {
+	return c.parent.ListUpdateJobs(ctx, req)
+}
+
+func (c *boundUpdateClient) CancelRemaining(ctx context.Context, req *connect.Request[procmeshv1.CancelRemainingRequest]) (*connect.Response[procmeshv1.CancelRemainingResponse], error) {
+	return c.parent.CancelRemaining(ctx, req)
+}
+
+func (c *boundUpdateClient) RetryUpdateJob(ctx context.Context, req *connect.Request[procmeshv1.RetryUpdateJobRequest]) (*connect.Response[procmeshv1.RetryUpdateJobResponse], error) {
+	return c.parent.RetryUpdateJob(ctx, req)
+}
+
+func (c *boundUpdateClient) ApplyNode(ctx context.Context, req *connect.Request[procmeshv1.ApplyNodeRequest]) (*connect.Response[procmeshv1.ApplyNodeResponse], error) {
+	f := c.parent
+	f.mu.Lock()
+	f.last = Route{NodeID: c.nodeID}
+	f.mu.Unlock()
+	return f.ApplyNode(ctx, req)
 }
 
 var _ procmeshv1connect.UpdateServiceClient = (*boundUpdateClient)(nil)

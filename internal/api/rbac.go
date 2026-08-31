@@ -142,6 +142,10 @@ func hopRPCPerm(procedure string) (perm string, write bool, ok bool) {
 		return auth.PermReplicationManage, false, true
 	case "ApplyPolicyDraft", "UpdatePolicy", "DeletePolicy", "StartRun", "RetryFailedRoutes", "VerifyReplica":
 		return auth.PermReplicationManage, true, true
+	case "GetLocalUpdateInfo":
+		return auth.PermClusterRead, false, true
+	case "ApplyNode":
+		return auth.PermNodeManage, true, true
 	default:
 		// ApplyProcess 的 create/update 由 handler 判定
 		return "", false, false

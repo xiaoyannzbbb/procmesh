@@ -25,6 +25,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/metrics"
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/store"
+	"github.com/qleelulu/procmesh/internal/update"
 	"github.com/qleelulu/procmesh/internal/web"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
@@ -71,6 +72,7 @@ type Options struct {
 	Process             ProcessRemotePolicy
 	Update              LatestChecker
 	UpdateLocal         LocalInfoProvider
+	UpdateEngine        *update.Engine
 }
 
 func NewServer(opts Options) (*Server, error) {
@@ -243,11 +245,31 @@ func NewServer(opts Options) (*Server, error) {
 		bp, bh := procmeshv1connect.NewBatchServiceHandler(bapi, intercept)
 		mountConnect(engine, bp, bh)
 	}
-	updp, updh := procmeshv1connect.NewUpdateServiceHandler(&UpdateAPI{
-		Auth: opts.Auth, Checker: opts.Update, Local: opts.UpdateLocal,
+	var updateApply LocalApplier
+	if a, ok := opts.UpdateLocal.(LocalApplier); ok {
+		updateApply = a
+	}
+	updateAPI := &UpdateAPI{
+		Auth: opts.Auth, Checker: opts.Update, Local: opts.UpdateLocal, Applier: updateApply,
+		Engine: opts.UpdateEngine, Store: batchAuditStore(opts),
 		Cluster: opts.Cluster, LocalID: opts.LocalID, LocalOnly: opts.LocalOnly,
-		Router: opts.Router, Forward: opts.Forward,
-	}, intercept)
+		Router: opts.Router, Forward: opts.Forward, Degraded: s.isDegraded,
+	}
+	if opts.UpdateEngine != nil {
+		if opts.UpdateEngine.SourceAgent == "" {
+			opts.UpdateEngine.SourceAgent = opts.LocalID
+		}
+		if opts.UpdateEngine.Members == nil {
+			opts.UpdateEngine.Members = clusterMembership{opts.Cluster}
+		}
+		if opts.UpdateEngine.Apply == nil {
+			opts.UpdateEngine.Apply = updateAPI
+		}
+		if opts.UpdateEngine.BindTargets == nil {
+			opts.UpdateEngine.BindTargets = updateAPI.bindTargets
+		}
+	}
+	updp, updh := procmeshv1connect.NewUpdateServiceHandler(updateAPI, intercept)
 	mountConnect(engine, updp, updh)
 
 	legacy, err := localhttp.NewServerOpts(opts.Mgr, opts.Logs, opts.Addr, opts.Degraded, opts.Ready)

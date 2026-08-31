@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -44,6 +45,10 @@ func Open(path string) (*Store, error) {
 	// One connection: concurrent writers queue instead of SQLITE_BUSY on
 	// deferred-tx upgrade (CAS PutSpec). Agent is local-first; this is fine.
 	db.SetMaxOpenConns(1)
+	if err := ensureUpdateJobOperationID(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	if err := applySchema(db); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -135,6 +140,50 @@ func ensureInstanceLastError(db *sql.DB) error {
 	}
 	if _, err := db.Exec(`ALTER TABLE process_instances ADD COLUMN last_error TEXT NOT NULL DEFAULT ''`); err != nil {
 		return fmt.Errorf("migrate process_instances last_error: %w", err)
+	}
+	return nil
+}
+
+func ensureUpdateJobOperationID(db *sql.DB) error {
+	var table string
+	err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name='update_jobs'`).Scan(&table)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("inspect update_jobs table: %w", err)
+	}
+	rows, err := db.Query(`PRAGMA table_info(update_jobs)`)
+	if err != nil {
+		return fmt.Errorf("inspect update_jobs: %w", err)
+	}
+	found := false
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, typ string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan update_jobs schema: %w", err)
+		}
+		if name == "operation_id" {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("inspect update_jobs rows: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close update_jobs schema: %w", err)
+	}
+	if !found {
+		if _, err := db.Exec(`ALTER TABLE update_jobs ADD COLUMN operation_id TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("migrate update_jobs operation_id: %w", err)
+		}
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS update_jobs_operation_id ON update_jobs(operation_id) WHERE operation_id != ''`); err != nil {
+		return fmt.Errorf("migrate update_jobs operation_id index: %w", err)
 	}
 	return nil
 }

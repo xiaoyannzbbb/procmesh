@@ -88,6 +88,28 @@ func SkipNotLive(state, classified string) string {
 	return SkipSTALE
 }
 
+// Evaluate classifies a member for cluster rolling update eligibility.
+// Non-LIVE members are skipped without probing; LIVE darwin is MACOS.
+func Evaluate(now time.Time, member cluster.NodeSummary, latestTag string, checkFailed bool, info *LocalInfo, probeErr error) NodeEval {
+	classified := freshness.Classify(now, member.LastUpdatedUnixMs, string(member.State))
+	if classified != freshness.LIVE {
+		return NodeEval{
+			OS: member.OS, Arch: member.Arch, Version: member.AgentVersion,
+			SkipReason: SkipNotLive(string(member.State), classified),
+		}
+	}
+	if !ShouldProbe(now, member) {
+		return NodeEval{
+			OS: member.OS, Arch: member.Arch, Version: member.AgentVersion,
+			SkipReason: SkipMACOS,
+		}
+	}
+	return EvaluateProbed(ProbedInput{
+		GossipOS: member.OS, GossipArch: member.Arch, GossipVersion: member.AgentVersion,
+		LatestTag: latestTag, CheckFailed: checkFailed, Info: info, ProbeErr: probeErr,
+	})
+}
+
 // ShouldProbe reports whether a LIVE non-darwin member should be probed.
 // Empty OS is not treated as macOS.
 func ShouldProbe(now time.Time, member cluster.NodeSummary) bool {
