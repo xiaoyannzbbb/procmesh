@@ -15,6 +15,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/rpc"
+	"github.com/qleelulu/procmesh/internal/update"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
@@ -73,6 +74,50 @@ func TestRPCRuntime_StartRPCLockedWiresClusterIDIntoPeerReplicationHandler(t *te
 	}))
 	if err == nil || connect.CodeOf(err) != connect.CodePermissionDenied || !strings.Contains(err.Error(), "control unavailable") {
 		t.Fatalf("valid mTLS cluster should reach control-state authorization, got %v", err)
+	}
+}
+
+func TestRPCRuntime_InternalUpdateServiceExposesLocalInfo(t *testing.T) {
+	const clusterID, nodeID = "cluster-update", "node-update"
+	dir := t.TempDir()
+	bundle, err := control.NewBundle(clusterID, nodeID, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := control.WriteBundle(dir, bundle); err != nil {
+		t.Fatal(err)
+	}
+	r := &rpcRuntime{
+		dir: dir, nodeID: nodeID, opt: Options{RPCListen: "127.0.0.1:0"},
+		logger: slog.New(slog.DiscardHandler), fwd: &agentForwarder{},
+		updateLocal: &update.Applier{
+			Enabled: true, GOOS: "linux", GOARCH: "amd64", Version: "v0.1.29",
+		},
+	}
+	if err := r.startRPC(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { r.shutdown(context.Background()) })
+
+	creds := control.AgentCreds{
+		CACertPEM: bundle.CACertPEM, AgentCertPEM: bundle.AgentCertPEM, AgentKeyPEM: bundle.AgentKeyPEM,
+	}
+	hc, base, err := rpc.Dial(rpc.DialConfig{
+		Creds: creds, ClusterID: clusterID, ExpectNodeID: nodeID,
+		Address: r.ln.Addr().String(), Timeout: time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := rpc.NewUpdateClient(hc, base).GetLocalUpdateInfo(
+		context.Background(), connect.NewRequest(&procmeshv1.GetLocalUpdateInfoRequest{}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Msg.GetNodeId() != nodeID || got.Msg.GetOs() != "linux" || got.Msg.GetArch() != "amd64" ||
+		got.Msg.GetVersion() != "v0.1.29" || !got.Msg.GetEnabled() {
+		t.Fatalf("local update info = %+v", got.Msg)
 	}
 }
 

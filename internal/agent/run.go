@@ -752,6 +752,7 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		logger:      opt.Logger,
 		metrics:     collector,
 		process:     processRemotePolicy(src),
+		updateLocal: updateLocal,
 	}
 	rt.backup = newBackupEngine(opt, mgr, st, collector, rt, fwd)
 	rt.backupCoord = backup.NewCoordinator(backup.CoordinatorConfig{

@@ -54,6 +54,7 @@ type rpcRuntime struct {
 	backupCoord      *backup.Coordinator
 	replicationCoord *backup.ReplicationCoordinator
 	process          api.ProcessRemotePolicy
+	updateLocal      api.LocalInfoProvider
 }
 
 func (r *rpcRuntime) startRPC() error {
@@ -244,6 +245,15 @@ func (r *rpcRuntime) localHandler() http.Handler {
 		Store:   r.st,
 	}, opts...)
 	mux.Handle(mp, mh)
+	var updateApply api.LocalApplier
+	if a, ok := r.updateLocal.(api.LocalApplier); ok {
+		updateApply = a
+	}
+	updp, updh := procmeshv1connect.NewUpdateServiceHandler(&api.UpdateAPI{
+		Auth: r.auth, Local: r.updateLocal, Applier: updateApply, Store: r.st,
+		LocalOnly: true, LocalID: r.nodeID, Degraded: r.degradedFn(),
+	}, opts...)
+	mux.Handle(updp, updh)
 	alp, alh := procmeshv1connect.NewAlertServiceHandler(&api.AlertAPI{
 		Store: r.st, Auth: r.auth,
 		LocalOnly: true, LocalID: r.nodeID,
