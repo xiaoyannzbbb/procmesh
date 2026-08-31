@@ -25,3 +25,5 @@ web/playwright/.cache/
 web/playwright/.auth/
 web/src/types/i18n.d.ts
 *.exe
+web/pnpm-lock.yaml
+web/pnpm-workspace.yaml
