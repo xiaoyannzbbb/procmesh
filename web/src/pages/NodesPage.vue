@@ -486,7 +486,6 @@ onUnmounted(() => {
             <th>{{ t("nodes.table.resources") }}</th>
             <th>{{ t("nodes.table.processes") }}</th>
             <th>{{ t("nodes.table.freshness") }}</th>
-            <th>{{ t("nodes.table.updated") }}</th>
           </tr>
         </thead>
         <tbody>
@@ -576,13 +575,17 @@ onUnmounted(() => {
               </div>
               <span v-else class="muted">—</span>
             </td>
-            <td>
-              <FreshnessBadge :status="node.freshness" />
+            <td class="freshness-cell">
+              <div class="freshness-wrap">
+                <FreshnessBadge :status="node.freshness" />
+                <span class="muted cell-updated" :title="t('nodes.table.updated')">{{
+                  formatNodeAge(node.lastUpdatedUnixMs)
+                }}</span>
+              </div>
             </td>
-            <td class="cell-updated">{{ formatNodeAge(node.lastUpdatedUnixMs) }}</td>
           </tr>
           <tr v-if="!nodes.length" class="empty-row">
-            <td colspan="8" class="empty-cell">
+            <td colspan="7" class="empty-cell">
               <div class="empty">
                 <Server :size="28" aria-hidden="true" />
                 <p>{{ t("nodes.noNodes") }}</p>
@@ -637,8 +640,14 @@ onUnmounted(() => {
             >
               {{ raftRoleLabel(node.raftRole) }}
             </span>
-            <FreshnessBadge :status="node.freshness" />
-            <span class="muted">{{ formatNodeAge(node.lastUpdatedUnixMs) }}</span>
+            <span class="freshness-cell">
+              <span class="freshness-wrap">
+                <FreshnessBadge :status="node.freshness" />
+                <span class="muted cell-updated" :title="t('nodes.table.updated')">{{
+                  formatNodeAge(node.lastUpdatedUnixMs)
+                }}</span>
+              </span>
+            </span>
           </div>
           <div class="resource-stack">
             <div
@@ -933,6 +942,17 @@ h1 {
 .cell-updated {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+.freshness-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.125rem;
+}
+
+.freshness-cell .cell-updated {
+  font-size: 0.75rem;
 }
 
 .raft-role-cell {

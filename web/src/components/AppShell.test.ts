@@ -257,15 +257,22 @@ describe("AppShell", () => {
     expect(wrapper.text()).not.toContain("Updates");
   });
 
-  it("places Updates after Disaster replica and before Users", async () => {
+  it("places Updates after Audit at the bottom of the nav", async () => {
     const wrapper = await mountShell(
       me({
-        permissions: ["node.read", "node.manage", "replication.read", "user.read"],
+        permissions: [
+          "node.read",
+          "node.manage",
+          "replication.read",
+          "user.read",
+          "role.read",
+          "audit.read",
+        ],
       }),
     );
     const labels = wrapper.findAll(".nav-label").map((n) => n.text());
-    expect(labels.indexOf("Updates")).toBeGreaterThan(labels.indexOf("Disaster replica"));
-    expect(labels.indexOf("Users")).toBeGreaterThan(labels.indexOf("Updates"));
+    expect(labels.indexOf("Updates")).toBeGreaterThan(labels.indexOf("Audit"));
+    expect(labels.indexOf("Updates")).toBe(labels.length - 1);
   });
 
   it("highlights Updates when the route is /updates", async () => {

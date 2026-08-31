@@ -192,7 +192,8 @@ describe("NodesPage i18n", () => {
     expect(text).toContain("Raft role");
     expect(wrapper.findAll("thead th").map((th) => th.text())).not.toContain("Node ID");
     expect(text).toContain("No nodes");
-    expect(wrapper.get("tbody td").attributes("colspan")).toBe("8");
+    expect(wrapper.findAll("thead th").map((th) => th.text())).not.toContain("Updated");
+    expect(wrapper.get("tbody td").attributes("colspan")).toBe("7");
   });
 
   it("should render in Chinese", async () => {
@@ -204,6 +205,7 @@ describe("NodesPage i18n", () => {
     expect(text).toContain("主机名");
     expect(text).toContain("Raft 角色");
     expect(wrapper.findAll("thead th").map((th) => th.text())).not.toContain("节点ID");
+    expect(wrapper.findAll("thead th").map((th) => th.text())).not.toContain("更新时间");
     expect(text).toContain("无节点");
   });
 });
@@ -225,12 +227,29 @@ describe("NodesPage identity column", () => {
     const headers = wrapper.findAll("thead th").map((th) => th.text());
     expect(headers).toContain("Hostname");
     expect(headers).not.toContain("Node ID");
-    expect(headers).toHaveLength(8);
+    expect(headers).toContain("Freshness");
+    expect(headers).not.toContain("Updated");
+    expect(headers).toHaveLength(7);
 
     const identity = wrapper.get("tbody tr.data-row td");
     expect(identity.get("a").text()).toBe("agent-a");
     expect(identity.get("a").attributes("href")).toBe("/nodes/n-a");
     expect(identity.get(".node-id").text()).toBe("n-a");
+  });
+
+  it("shows freshness and update age stacked in the same column", async () => {
+    await addNodesTranslations("en");
+
+    const { wrapper } = await mountNodesPage(sampleNodes(Date.now()));
+    const rows = wrapper.findAll("tbody tr.data-row");
+    const live = rows[0]?.get(".freshness-cell");
+    const stale = rows[1]?.get(".freshness-cell");
+
+    expect(live?.get(".freshness-badge").text()).toBe("LIVE");
+    expect(live?.get(".cell-updated").text()).toBe("just now");
+    expect(stale?.get(".freshness-badge").text()).toBe("STALE");
+    expect(stale?.get(".cell-updated").text()).toBe("30s ago");
+    expect(wrapper.find("td.cell-updated").exists()).toBe(false);
   });
 
   it("shows localized accessible Raft badges and stale freshness independently", async () => {

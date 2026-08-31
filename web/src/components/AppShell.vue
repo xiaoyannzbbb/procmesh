@@ -160,9 +160,6 @@ const navItems = computed(() => {
   if (perms.value.has("replication.read")) {
     items.push({ to: "/disaster-replica", label: t("nav.disasterReplica"), icon: Copy });
   }
-  if (perms.value.has("node.manage") || perms.value.has("cluster.manage")) {
-    items.push({ to: "/updates", label: t("nav.updates"), icon: ArrowUpCircle });
-  }
   if (perms.value.has("user.read")) {
     items.push({ to: "/users", label: t("nav.users"), icon: Users });
   }
@@ -171,6 +168,9 @@ const navItems = computed(() => {
   }
   if (perms.value.has("audit.read")) {
     items.push({ to: "/audit", label: t("nav.audit"), icon: FileSearch });
+  }
+  if (perms.value.has("node.manage") || perms.value.has("cluster.manage")) {
+    items.push({ to: "/updates", label: t("nav.updates"), icon: ArrowUpCircle });
   }
   return items;
 });
@@ -762,18 +762,18 @@ async function onLogout(): Promise<void> {
 .content-inner {
   max-width: var(--content-max);
   margin: 0 auto;
-  padding: 1.5rem;
+  padding: 1rem 1.5rem;
 }
 
 @media (min-width: 1024px) {
   .content-inner {
-    padding: 2rem 3rem;
+    padding: 1rem 2rem;
   }
 }
 
 @media (min-width: 1280px) {
   .content-inner {
-    padding: 2rem 4rem;
+    padding: 1rem 2.5rem;
   }
 }
 
