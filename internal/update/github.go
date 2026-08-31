@@ -3,6 +3,7 @@ package update
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/qleelulu/procmesh/internal/errcode"
 )
+
+const maxReleaseAssetBytes = 256 << 20
 
 const defaultHTTPTimeout = 15 * time.Second
 
@@ -79,6 +82,69 @@ func (s GitHubSource) Latest(ctx context.Context) (Pin, error) {
 		return Pin{}, err
 	}
 	return Pin{Repository: repo, Tag: rel.TagName, Checksums: sums}, nil
+}
+
+// DownloadAsset fetches a pinned release tarball. It never calls /releases/latest.
+func (s GitHubSource) DownloadAsset(ctx context.Context, tag, asset string) ([]byte, error) {
+	repo := strings.TrimSpace(s.Repository)
+	tag = strings.TrimSpace(tag)
+	asset = strings.TrimSpace(asset)
+	if repo == "" || !strings.Contains(repo, "/") {
+		return nil, errcode.E(errcode.INVALID, "update repository must be owner/repo")
+	}
+	if tag == "" {
+		return nil, errcode.E(errcode.INVALID, "release tag required")
+	}
+	if asset == "" || strings.Contains(asset, "/") || strings.Contains(asset, "..") {
+		return nil, errcode.E(errcode.INVALID, "invalid release asset")
+	}
+	url := fmt.Sprintf("%s/%s/releases/download/%s/%s", s.downloadBase(), repo, tag, asset)
+	return s.getAssetBytes(ctx, url)
+}
+
+func (s GitHubSource) assetClient() *http.Client {
+	if s.HTTPClient != nil {
+		return s.HTTPClient
+	}
+	return &http.Client{Timeout: DownloadTimeout}
+}
+
+func (s GitHubSource) getAssetBytes(ctx context.Context, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, errcode.E(errcode.UNAVAILABLE, "github request failed")
+	}
+	req.Header.Set("Accept", "application/octet-stream")
+	req.Header.Set("User-Agent", "procmesh-agent")
+
+	res, err := s.assetClient().Do(req)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, context.DeadlineExceeded
+		}
+		if errors.Is(err, context.Canceled) {
+			return nil, context.Canceled
+		}
+		return nil, errcode.E(errcode.UNAVAILABLE, "github request failed")
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(res.Body, maxReleaseAssetBytes+1))
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, context.DeadlineExceeded
+		}
+		if errors.Is(err, context.Canceled) {
+			return nil, context.Canceled
+		}
+		return nil, errcode.E(errcode.UNAVAILABLE, "github response read failed")
+	}
+	if len(body) > maxReleaseAssetBytes {
+		return nil, errcode.E(errcode.INVALID, "release asset too large")
+	}
+	if res.StatusCode != http.StatusOK {
+		return nil, errcode.E(errcode.UNAVAILABLE, fmt.Sprintf("github http %d", res.StatusCode))
+	}
+	return body, nil
 }
 
 func (s GitHubSource) getJSON(ctx context.Context, url string, dst any) error {

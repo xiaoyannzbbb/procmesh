@@ -166,6 +166,64 @@ func TestGitHubSource_Non200HasNoURL(t *testing.T) {
 	}
 }
 
+func TestGitHubSource_DownloadAssetPinnedNotLatest(t *testing.T) {
+	var latestHits, assetHits int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/owner/procmesh/releases/latest", func(http.ResponseWriter, *http.Request) {
+		latestHits++
+	})
+	mux.HandleFunc("/owner/procmesh/releases/download/v0.2.0/procmesh_0.2.0_linux_amd64.tar.gz", func(w http.ResponseWriter, r *http.Request) {
+		assetHits++
+		if _, err := w.Write([]byte("tarball-bytes")); err != nil {
+			t.Errorf("write asset: %v", err)
+		}
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	got, err := update.GitHubSource{
+		Repository:   "owner/procmesh",
+		APIBase:      srv.URL,
+		DownloadBase: srv.URL,
+		HTTPClient:   srv.Client(),
+	}.DownloadAsset(context.Background(), "v0.2.0", "procmesh_0.2.0_linux_amd64.tar.gz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "tarball-bytes" {
+		t.Fatalf("body=%q", got)
+	}
+	if latestHits != 0 {
+		t.Fatalf("releases/latest hits=%d", latestHits)
+	}
+	if assetHits != 1 {
+		t.Fatalf("asset hits=%d", assetHits)
+	}
+}
+
+func TestGitHubSource_DownloadAssetDoErrorNoURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	base := srv.URL
+	srv.Close()
+
+	_, err := update.GitHubSource{
+		Repository:   "owner/procmesh",
+		DownloadBase: base,
+	}.DownloadAsset(context.Background(), "v0.2.0", "procmesh_0.2.0_linux_amd64.tar.gz")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errcode.Is(err, errcode.UNAVAILABLE) {
+		t.Fatalf("err=%v", err)
+	}
+	if errorChainHasURL(err) {
+		t.Fatalf("url leaked: %v", err)
+	}
+	if strings.Contains(err.Error(), base) {
+		t.Fatalf("url leaked: %v", err)
+	}
+}
+
 func TestGitHubSource_InvalidRepo(t *testing.T) {
 	for _, repo := range []string{"", "noslash", "  "} {
 		_, err := update.GitHubSource{Repository: repo}.Latest(context.Background())
