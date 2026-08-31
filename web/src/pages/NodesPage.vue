@@ -943,7 +943,7 @@ h1 {
   display: flex;
   align-items: center;
   gap: 0.375rem;
-  min-width: 7rem;
+  min-width: 4.2rem;
 }
 
 .raft-role-badge,
@@ -1024,7 +1024,7 @@ h1 {
 
 .resource-meter {
   display: grid;
-  grid-template-columns: 3.4rem minmax(3.5rem, 1fr) auto;
+  grid-template-columns: 1.8rem minmax(3.5rem, 1fr) auto;
   align-items: center;
   gap: 0.4rem;
 }
