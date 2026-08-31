@@ -196,7 +196,8 @@
       "controlLeader": "控制领导者",
       "healthy": "健康",
       "unhealthy": "不健康",
-      "versions": "版本"
+      "versions": "版本",
+      "updateAvailable": "可更新"
     },
     "workload": {
       "title": "工作负载",
@@ -215,6 +216,9 @@
     "recentBatches": "最近批次",
     "recentBatchesHint": "只显示本入口创建的任务。",
     "recentAlerts": "最近告警"
+  },
+  "updates": {
+    "title": "更新"
   },
   "alert": {
     "title": "告警",

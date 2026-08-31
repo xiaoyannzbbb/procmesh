@@ -15,6 +15,7 @@ import {
   NodeService,
   ProcessService,
   RoleService,
+  UpdateService,
   UserService,
 } from "../gen/procmesh/v1/api_pb";
 import { transport } from "./connect";
@@ -101,6 +102,7 @@ export type ReplicationClient = Pick<
   | "prepareRecoverableSnapshotRestore"
   | "restoreRecoverableSnapshot"
 >;
+export type UpdateClient = Pick<Client<typeof UpdateService>, "checkLatest">;
 
 export function useClusterClient(): ClusterClient {
   return inject<ClusterClient | null>("clusterClient", null) ?? createClient(ClusterService, transport);
@@ -166,4 +168,8 @@ export function useReplicationClient(): ReplicationClient {
     inject<ReplicationClient | null>("replicationClient", null) ??
     createClient(DisasterReplicationService, transport)
   );
+}
+
+export function useUpdateClient(): UpdateClient {
+  return inject<UpdateClient | null>("updateClient", null) ?? createClient(UpdateService, transport);
 }

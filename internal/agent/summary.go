@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"math"
+	"runtime"
 	"sync"
 	"time"
 
@@ -82,6 +83,8 @@ func (s *liveSource) Snapshot() cluster.NodeSummary {
 		State:               cluster.StateAlive,
 		AgentVersion:        version.Agent,
 		ProtocolVersion:     version.Protocol,
+		OS:                  runtime.GOOS,
+		Arch:                runtime.GOARCH,
 		APIAddress:          s.apiAddr,
 		RPCAddress:          s.rpcAddr,
 		GossipAddress:       s.gossip,

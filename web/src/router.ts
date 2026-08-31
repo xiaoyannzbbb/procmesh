@@ -18,6 +18,7 @@ import GroupsPage from "./pages/GroupsPage.vue";
 import RolesPage from "./pages/RolesPage.vue";
 import UsersPage from "./pages/UsersPage.vue";
 import ProfilePage from "./pages/ProfilePage.vue";
+import UpdatesPage from "./pages/UpdatesPage.vue";
 
 const routes: RouteRecordRaw[] = [
   { path: "/login", component: LoginPage, meta: { public: true } },
@@ -37,6 +38,7 @@ const routes: RouteRecordRaw[] = [
       { path: "alerts", component: AlertsPage },
       { path: "backup", component: BackupPage },
       { path: "disaster-replica", component: DisasterReplicaPage },
+      { path: "updates", component: UpdatesPage },
       { path: "users", component: UsersPage },
       { path: "roles", component: RolesPage },
       { path: "audit", component: AuditPage, meta: { i18nNamespaces: ['audit'] } },

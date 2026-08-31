@@ -265,6 +265,8 @@ func nodeToProto(n cluster.NodeSummary, svc *auth.Service) *procmeshv1.Node {
 		DisableRemoteCreate: n.DisableRemoteCreate,
 		DisableRemoteUpdate: n.DisableRemoteUpdate,
 		DisableRemoteDelete: n.DisableRemoteDelete,
+		Os:                  n.OS,
+		Arch:                n.Arch,
 	}
 }
 

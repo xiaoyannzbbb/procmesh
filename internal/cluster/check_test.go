@@ -34,6 +34,15 @@ func TestCheckJoin_LeftAllowsNewBoot(t *testing.T) {
 	}
 }
 
+func TestCheckJoin_MissingOSArchStillAllowed(t *testing.T) {
+	err := cluster.CheckJoin([]cluster.NodeSummary{{
+		NodeID: "old", BootID: "b1", State: cluster.StateAlive, ProtocolVersion: 1,
+	}}, cluster.JoinIdentity{NodeID: "new", BootID: "b2", ProtocolVersion: 1})
+	if err != nil {
+		t.Fatalf("members without os/arch must still join: %v", err)
+	}
+}
+
 func TestCheckJoin_IncompatibleVersion(t *testing.T) {
 	err := cluster.CheckJoin(nil, cluster.JoinIdentity{NodeID: "n", BootID: "b", ProtocolVersion: 2})
 	if !errcode.Is(err, errcode.INCOMPATIBLE_VERSION) {

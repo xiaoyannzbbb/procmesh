@@ -59,6 +59,8 @@ const (
 	// DisasterReplicationServiceName is the fully-qualified name of the DisasterReplicationService
 	// service.
 	DisasterReplicationServiceName = "procmesh.v1.DisasterReplicationService"
+	// UpdateServiceName is the fully-qualified name of the UpdateService service.
+	UpdateServiceName = "procmesh.v1.UpdateService"
 )
 
 // These constants are the fully-qualified names of the RPCs defined in this package. They're
@@ -358,6 +360,9 @@ const (
 	// DisasterReplicationServiceRestoreRecoverableSnapshotProcedure is the fully-qualified name of the
 	// DisasterReplicationService's RestoreRecoverableSnapshot RPC.
 	DisasterReplicationServiceRestoreRecoverableSnapshotProcedure = "/procmesh.v1.DisasterReplicationService/RestoreRecoverableSnapshot"
+	// UpdateServiceCheckLatestProcedure is the fully-qualified name of the UpdateService's CheckLatest
+	// RPC.
+	UpdateServiceCheckLatestProcedure = "/procmesh.v1.UpdateService/CheckLatest"
 )
 
 // ProcessServiceClient is a client for the procmesh.v1.ProcessService service.
@@ -3939,4 +3944,74 @@ func (UnimplementedDisasterReplicationServiceHandler) PrepareRecoverableSnapshot
 
 func (UnimplementedDisasterReplicationServiceHandler) RestoreRecoverableSnapshot(context.Context, *connect.Request[v1.RestoreRecoverableSnapshotRequest]) (*connect.Response[v1.RestoreRecoverableSnapshotResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.DisasterReplicationService.RestoreRecoverableSnapshot is not implemented"))
+}
+
+// UpdateServiceClient is a client for the procmesh.v1.UpdateService service.
+type UpdateServiceClient interface {
+	CheckLatest(context.Context, *connect.Request[v1.CheckLatestRequest]) (*connect.Response[v1.CheckLatestResponse], error)
+}
+
+// NewUpdateServiceClient constructs a client for the procmesh.v1.UpdateService service. By default,
+// it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses, and
+// sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the connect.WithGRPC()
+// or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewUpdateServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) UpdateServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	updateServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("UpdateService").Methods()
+	return &updateServiceClient{
+		checkLatest: connect.NewClient[v1.CheckLatestRequest, v1.CheckLatestResponse](
+			httpClient,
+			baseURL+UpdateServiceCheckLatestProcedure,
+			connect.WithSchema(updateServiceMethods.ByName("CheckLatest")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// updateServiceClient implements UpdateServiceClient.
+type updateServiceClient struct {
+	checkLatest *connect.Client[v1.CheckLatestRequest, v1.CheckLatestResponse]
+}
+
+// CheckLatest calls procmesh.v1.UpdateService.CheckLatest.
+func (c *updateServiceClient) CheckLatest(ctx context.Context, req *connect.Request[v1.CheckLatestRequest]) (*connect.Response[v1.CheckLatestResponse], error) {
+	return c.checkLatest.CallUnary(ctx, req)
+}
+
+// UpdateServiceHandler is an implementation of the procmesh.v1.UpdateService service.
+type UpdateServiceHandler interface {
+	CheckLatest(context.Context, *connect.Request[v1.CheckLatestRequest]) (*connect.Response[v1.CheckLatestResponse], error)
+}
+
+// NewUpdateServiceHandler builds an HTTP handler from the service implementation. It returns the
+// path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewUpdateServiceHandler(svc UpdateServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	updateServiceMethods := v1.File_proto_procmesh_v1_api_proto.Services().ByName("UpdateService").Methods()
+	updateServiceCheckLatestHandler := connect.NewUnaryHandler(
+		UpdateServiceCheckLatestProcedure,
+		svc.CheckLatest,
+		connect.WithSchema(updateServiceMethods.ByName("CheckLatest")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/procmesh.v1.UpdateService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case UpdateServiceCheckLatestProcedure:
+			updateServiceCheckLatestHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedUpdateServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedUpdateServiceHandler struct{}
+
+func (UnimplementedUpdateServiceHandler) CheckLatest(context.Context, *connect.Request[v1.CheckLatestRequest]) (*connect.Response[v1.CheckLatestResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.UpdateService.CheckLatest is not implemented"))
 }

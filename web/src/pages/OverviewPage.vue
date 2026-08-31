@@ -2,18 +2,27 @@
 import { useQuery } from "@tanstack/vue-query";
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
+import { anyLiveLinuxBehind } from "../lib/agentVersion";
 import { LIVE, STALE, UNKNOWN, formatAge, type Freshness } from "../lib/freshness";
-import { useAlertClient, useBatchClient, useClusterClient, useNodeClient } from "../lib/rpc";
+import {
+  useAlertClient,
+  useBatchClient,
+  useClusterClient,
+  useNodeClient,
+  useUpdateClient,
+} from "../lib/rpc";
 import { useI18n } from "../lib/useI18n";
 import { formatPercent, mapOverview } from "./clusterView";
 
 const { t } = useI18n();
 
 const POLL_MS = 5000;
+const CHECK_LATEST_STALE_MS = 15 * 60 * 1000;
 const client = useClusterClient();
 const nodeClient = useNodeClient();
 const batchClient = useBatchClient();
 const alertClient = useAlertClient();
+const updateClient = useUpdateClient();
 const nowMs = ref(Date.now());
 
 const query = useQuery({
@@ -38,6 +47,26 @@ const nodesQuery = useQuery({
 const nodeHostnames = computed(
   () => new Map((nodesQuery.data.value?.nodes ?? []).map((node) => [node.nodeId, node.hostname])),
 );
+
+const checkLatestQuery = useQuery({
+  queryKey: ["updates", "checkLatest"],
+  queryFn: () => updateClient.checkLatest({ refresh: false }),
+  staleTime: CHECK_LATEST_STALE_MS,
+});
+
+const updateAvailable = computed(() => {
+  const latest = checkLatestQuery.data.value;
+  if (checkLatestQuery.isError.value || !latest || latest.checkError || !latest.tag) {
+    return false;
+  }
+  const nodes = (nodesQuery.data.value?.nodes ?? []).map((n) => ({
+    state: n.state,
+    os: n.os,
+    agentVersion: n.agentVersion,
+    lastUpdatedUnixMs: Number(n.lastUpdatedUnixMs ?? 0),
+  }));
+  return anyLiveLinuxBehind(nodes, latest.tag, nowMs.value);
+});
 
 const recentAlertsQuery = useQuery({
   queryKey: ["alerts", "recent"],
@@ -211,6 +240,12 @@ const errorText = computed(() => {
             </li>
           </ul>
         </div>
+        <RouterLink
+          v-if="updateAvailable"
+          data-testid="update-available"
+          class="update-available"
+          to="/updates"
+        >{{ t("overview.procMesh.updateAvailable") }}</RouterLink>
       </section>
 
       <section class="card">
@@ -460,6 +495,17 @@ h3 {
   flex-wrap: wrap;
   gap: 0.5rem 1rem;
   font-size: 0.875rem;
+}
+.update-available {
+  display: inline-block;
+  margin-top: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 550;
+  color: var(--color-accent, #2563eb);
+  text-decoration: none;
+}
+.update-available:hover {
+  text-decoration: underline;
 }
 .stats {
   display: grid;

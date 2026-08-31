@@ -6,6 +6,7 @@ import (
 	"log"
 	"log/slog"
 	"net"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -460,6 +461,12 @@ func (m *Mesh) localSummary() NodeSummary {
 	}
 	if s.AgentVersion == "" {
 		s.AgentVersion = version.Agent
+	}
+	if s.OS == "" {
+		s.OS = runtime.GOOS
+	}
+	if s.Arch == "" {
+		s.Arch = runtime.GOARCH
 	}
 	if s.ProtocolVersion == 0 {
 		s.ProtocolVersion = m.cfg.Protocol

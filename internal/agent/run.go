@@ -34,6 +34,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/rpc"
 	"github.com/qleelulu/procmesh/internal/store"
+	"github.com/qleelulu/procmesh/internal/update"
 	"github.com/qleelulu/procmesh/internal/version"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 )
@@ -141,6 +142,7 @@ func Run(ctx context.Context, opt Options) error {
 	if err != nil {
 		return err
 	}
+	updateChecker := newUpdateChecker(cfg.Update)
 	if opt.DataDir == "" {
 		opt.DataDir = cfg.DataDir
 	}
@@ -197,7 +199,7 @@ func Run(ctx context.Context, opt Options) error {
 			logger.Warn("store reopen failed", "error", err)
 			return serveHTTP(ctx, opt, nil, nil, nil, true, func() error {
 				return errcode.E(errcode.DEGRADED, "store unavailable")
-			}, nil, nil, nil, api.ClusterDeps{}, nil)
+			}, nil, nil, nil, api.ClusterDeps{}, nil, updateChecker)
 		}
 		degraded = true
 	}
@@ -389,7 +391,18 @@ func Run(ctx context.Context, opt Options) error {
 		NodeID:     nodeID,
 		Hostname:   hostname,
 		BootID:     hostBoot,
-	}, batchEng)
+	}, batchEng, updateChecker)
+}
+
+func newUpdateChecker(cfg agentcfg.Update) *update.Checker {
+	repo := cfg.Repository
+	if repo == "" {
+		repo = agentcfg.DefaultUpdateRepository
+	}
+	return update.NewChecker(update.GitHubSource{
+		Repository: repo,
+		HTTPClient: &http.Client{Timeout: 15 * time.Second},
+	}, time.Now)
 }
 
 func listProcessRefs(mgr *process.Manager) []metrics.ProcessRef {
@@ -677,7 +690,7 @@ func newBatchID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
-func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *logmgr.Manager, st *store.Store, degraded bool, ready func() error, mesh *cluster.Mesh, src *liveSource, collector *metrics.Collector, clusterDeps api.ClusterDeps, batchEng *batch.Engine) error {
+func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *logmgr.Manager, st *store.Store, degraded bool, ready func() error, mesh *cluster.Mesh, src *liveSource, collector *metrics.Collector, clusterDeps api.ClusterDeps, batchEng *batch.Engine, updateChecker api.LatestChecker) error {
 	ln, err := net.Listen("tcp", opt.Listen)
 	if err != nil {
 		shutdownMesh(mesh)
@@ -837,6 +850,7 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 			go rt.replicationCoord.DispatchRun(ctx, run)
 		},
 		Process: rt.process,
+		Update:  updateChecker,
 	})
 	if err != nil {
 		_ = ln.Close()

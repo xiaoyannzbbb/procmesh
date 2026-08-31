@@ -196,7 +196,8 @@
       "controlLeader": "Control leader",
       "healthy": "healthy",
       "unhealthy": "unhealthy",
-      "versions": "Versions"
+      "versions": "Versions",
+      "updateAvailable": "Update available"
     },
     "workload": {
       "title": "Workload",
@@ -215,6 +216,9 @@
     "recentBatches": "Recent batches",
     "recentBatchesHint": "Only batches created on this entry agent.",
     "recentAlerts": "Recent alerts"
+  },
+  "updates": {
+    "title": "Updates"
   },
   "alert": {
     "title": "Alerts",

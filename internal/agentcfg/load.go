@@ -3,6 +3,7 @@ package agentcfg
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"time"
 
@@ -23,6 +24,31 @@ type Config struct {
 	Batch      Batch
 	Backup     Backup
 	Process    Process
+	Update     Update
+}
+
+// DefaultUpdateRepository is the GitHub owner/repo used by scripts/install.sh.
+const DefaultUpdateRepository = "xiaoyannzbbb/procmesh"
+
+type Update struct {
+	Repository string
+	Enabled    bool
+}
+
+func DefaultUpdate() Update {
+	return Update{Repository: DefaultUpdateRepository, Enabled: true}
+}
+
+var updateRepositoryRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+
+func (u Update) Validate() error {
+	if u.Repository == "" {
+		return errcode.E(errcode.INVALID, "update repository required")
+	}
+	if !updateRepositoryRe.MatchString(u.Repository) {
+		return errcode.E(errcode.INVALID, "update repository must be owner/repo")
+	}
+	return nil
 }
 
 type Process struct {
@@ -90,6 +116,7 @@ type file struct {
 	Batch      *batchFile      `yaml:"batch"`
 	Backup     *backupFile     `yaml:"backup"`
 	Process    *processFile    `yaml:"process"`
+	Update     *updateFile     `yaml:"update"`
 }
 
 type pprofFile struct {
@@ -134,6 +161,11 @@ type processFile struct {
 	DisableRemoteCreate bool `yaml:"disable_remote_create"`
 	DisableRemoteUpdate bool `yaml:"disable_remote_update"`
 	DisableRemoteDelete bool `yaml:"disable_remote_delete"`
+}
+
+type updateFile struct {
+	Repository string `yaml:"repository"`
+	Enabled    *bool  `yaml:"enabled"`
 }
 
 type backupFile struct {
@@ -195,7 +227,7 @@ func LoadAll(path string, required bool) (Config, error) {
 		if required {
 			return Config{}, errcode.E(errcode.INVALID, "config file not found")
 		}
-		return applyS3Env(Config{Disk: logmgr.DefaultPolicy(), Batch: DefaultBatch()}), nil
+		return applyS3Env(Config{Disk: logmgr.DefaultPolicy(), Batch: DefaultBatch(), Update: DefaultUpdate()}), nil
 	}
 
 	b, err := os.ReadFile(path)
@@ -204,7 +236,7 @@ func LoadAll(path string, required bool) (Config, error) {
 			if required {
 				return Config{}, errcode.E(errcode.INVALID, "config file not found")
 			}
-			return applyS3Env(Config{Disk: logmgr.DefaultPolicy(), Batch: DefaultBatch()}), nil
+			return applyS3Env(Config{Disk: logmgr.DefaultPolicy(), Batch: DefaultBatch(), Update: DefaultUpdate()}), nil
 		}
 		return Config{}, err
 	}
@@ -251,7 +283,19 @@ func LoadAll(path string, required bool) (Config, error) {
 	if err := batch.Validate(); err != nil {
 		return Config{}, err
 	}
-	cfg := Config{DataDir: f.DataDir, Listen: f.Listen, Disk: p, Batch: batch}
+	upd := DefaultUpdate()
+	if uf := f.Update; uf != nil {
+		if uf.Repository != "" {
+			upd.Repository = uf.Repository
+		}
+		if uf.Enabled != nil {
+			upd.Enabled = *uf.Enabled
+		}
+	}
+	if err := upd.Validate(); err != nil {
+		return Config{}, err
+	}
+	cfg := Config{DataDir: f.DataDir, Listen: f.Listen, Disk: p, Batch: batch, Update: upd}
 	if pprof := f.Pprof; pprof != nil {
 		cfg.Pprof.Listen = pprof.Listen
 	}

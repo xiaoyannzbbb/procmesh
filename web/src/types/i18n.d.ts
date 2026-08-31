@@ -203,6 +203,7 @@ declare module "i18next" {
         'overview.procMesh.healthy': string
         'overview.procMesh.unhealthy': string
         'overview.procMesh.versions': string
+        'overview.procMesh.updateAvailable': string
         'overview.workload.title': string
         'overview.workload.agentTotal': string
         'overview.workload.alive': string
@@ -218,6 +219,7 @@ declare module "i18next" {
         'overview.recentBatches': string
         'overview.recentBatchesHint': string
         'overview.recentAlerts': string
+        'updates.title': string
         'alert.title': string
         'alert.eyebrow': string
         'alert.staleBanner': string

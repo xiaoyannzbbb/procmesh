@@ -40,6 +40,8 @@ type NodeSummary struct {
 	State               State             `json:"state"`
 	AgentVersion        string            `json:"agent_version"`
 	ProtocolVersion     int               `json:"protocol_version"`
+	OS                  string            `json:"os,omitempty"`
+	Arch                string            `json:"arch,omitempty"`
 	APIAddress          string            `json:"api_address"`
 	RPCAddress          string            `json:"rpc_address"`
 	GossipAddress       string            `json:"gossip_address"`

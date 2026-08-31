@@ -308,6 +308,67 @@ func TestLoadAll_ProcessRemoteDefaultsAllow(t *testing.T) {
 	}
 }
 
+func TestLoadAll_UpdateDefaults(t *testing.T) {
+	cfg, err := agentcfg.LoadAll(filepath.Join(t.TempDir(), "nope.yaml"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Update.Repository != agentcfg.DefaultUpdateRepository || !cfg.Update.Enabled {
+		t.Fatalf("missing file defaults %+v", cfg.Update)
+	}
+
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	if err := os.WriteFile(path, []byte("listen: 127.0.0.1:18680\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = agentcfg.LoadAll(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Update.Repository != agentcfg.DefaultUpdateRepository || !cfg.Update.Enabled {
+		t.Fatalf("omitted update section %+v", cfg.Update)
+	}
+}
+
+func TestLoadAll_UpdateOverrides(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	body := "update:\n  repository: fork/procmesh\n  enabled: false\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := agentcfg.LoadAll(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Update.Repository != "fork/procmesh" || cfg.Update.Enabled {
+		t.Fatalf("override %+v", cfg.Update)
+	}
+}
+
+func TestLoadAll_UpdatePartialKeepsDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	if err := os.WriteFile(path, []byte("update:\n  enabled: false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := agentcfg.LoadAll(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Update.Repository != agentcfg.DefaultUpdateRepository || cfg.Update.Enabled {
+		t.Fatalf("partial %+v", cfg.Update)
+	}
+}
+
+func TestLoadAll_UpdateRejectsInvalidRepository(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	if err := os.WriteFile(path, []byte("update:\n  repository: not a repo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentcfg.LoadAll(path, true); err == nil {
+		t.Fatal("expected INVALID repository")
+	}
+}
+
 func TestLoadAll_ProcessRemoteDisableFlags(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "agent.yaml")
 	body := "process:\n  disable_remote_create: true\n  disable_remote_update: true\n  disable_remote_delete: true\n"

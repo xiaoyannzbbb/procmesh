@@ -68,6 +68,13 @@ process:
   # 禁止远程删除进程。默认：false。
   disable_remote_delete: false
 
+# 在线 Agent 更新。改完需重启 Agent。
+update:
+  # GitHub owner/repo，用于解析 latest stable。默认与 scripts/install.sh 相同。
+  repository: "xiaoyannzbbb/procmesh"
+  # false 时本节点拒绝被在线升级。默认：true。
+  enabled: true
+
 # 批量操作执行策略。
 batch:
   # 同时执行的目标数，允许范围 1-64。默认：16。

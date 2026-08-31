@@ -31,6 +31,7 @@ beforeEach(async () => {
               healthy: "healthy",
               unhealthy: "unhealthy",
               versions: "Versions",
+              updateAvailable: "Update available",
             },
             workload: {
               title: "Workload",
@@ -95,6 +96,16 @@ const overview = {
   versionCounts: { "1.0.0": 3 },
 };
 
+const defaultCheckLatest = {
+  repository: "procmesh/procmesh",
+  tag: "v0.2.0",
+  checksums: {},
+  checkedUnixMs: BigInt(1_700_000_000_000),
+  fromCache: true,
+  checkError: false,
+  errorMessage: "",
+};
+
 const mounted: Array<{ unmount: () => void }> = [];
 
 async function mountOverview(
@@ -103,6 +114,7 @@ async function mountOverview(
   alerts: unknown[] = [],
   nodes: unknown[] = [],
   alertsError?: Error,
+  checkLatest: unknown | Error = defaultCheckLatest,
 ) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -115,13 +127,19 @@ async function mountOverview(
       ? vi.fn().mockRejectedValue(alertsError)
       : vi.fn().mockResolvedValue({ entries: alerts }),
   };
+  const updateClient = {
+    checkLatest:
+      checkLatest instanceof Error
+        ? vi.fn().mockRejectedValue(checkLatest)
+        : vi.fn().mockResolvedValue(checkLatest),
+  };
   const wrapper = mount(OverviewPage, {
     global: {
       plugins: [
         [VueQueryPlugin, { queryClient }],
         [I18NextVue, { i18next: i18n }],
       ],
-      provide: { clusterClient, nodeClient, batchClient, alertClient },
+      provide: { clusterClient, nodeClient, batchClient, alertClient, updateClient },
       stubs: {
         RouterLink: { props: ["to"], template: '<a :href="to"><slot /></a>' },
       },
@@ -130,7 +148,7 @@ async function mountOverview(
   mounted.push(wrapper);
   await flushPromises();
   await wrapper.vm.$nextTick();
-  return { wrapper, nodeClient, batchClient, alertClient };
+  return { wrapper, nodeClient, batchClient, alertClient, updateClient };
 }
 
 afterEach(() => {
@@ -326,6 +344,137 @@ describe("OverviewPage", () => {
     expect(wrapper.text()).toContain("alerts unavailable");
     expect(wrapper.text()).not.toContain("No alerts");
   });
+
+  it("shows update available hint linking to /updates when a LIVE linux node is behind", async () => {
+    const now = Date.now();
+    const nodes = [
+      {
+        nodeId: "n1",
+        state: "ALIVE",
+        os: "linux",
+        agentVersion: "0.1.0",
+        hostname: "a",
+        lastUpdatedUnixMs: now,
+      },
+    ];
+    const { wrapper, updateClient } = await mountOverview({}, [], [], nodes);
+    expect(updateClient.checkLatest).toHaveBeenCalledWith({ refresh: false });
+    const link = wrapper.get('[data-testid="update-available"]');
+    expect(link.text()).toContain("Update available");
+    expect(link.attributes("href")).toBe("/updates");
+  });
+
+  it("shows update hint when updateAvailable even if version counts are empty", async () => {
+    const now = Date.now();
+    const nodes = [
+      {
+        nodeId: "n1",
+        state: "ALIVE",
+        os: "linux",
+        agentVersion: "0.1.0",
+        hostname: "a",
+        lastUpdatedUnixMs: now,
+      },
+    ];
+    const { wrapper } = await mountOverview({ versionCounts: {} }, [], [], nodes);
+    expect(wrapper.find('[data-testid="update-available"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain("Update available");
+  });
+
+  it("does not show update hint for STALE or UNKNOWN linux nodes that are behind", async () => {
+    const now = Date.now();
+    const nodes = [
+      {
+        nodeId: "stale",
+        state: "ALIVE",
+        os: "linux",
+        agentVersion: "0.1.0",
+        hostname: "s",
+        lastUpdatedUnixMs: now - 60_000,
+      },
+      {
+        nodeId: "unknown",
+        state: "ALIVE",
+        os: "linux",
+        agentVersion: "0.1.0",
+        hostname: "u",
+        lastUpdatedUnixMs: 0,
+      },
+    ];
+    const { wrapper } = await mountOverview({}, [], [], nodes);
+    expect(wrapper.find('[data-testid="update-available"]').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("Update available");
+  });
+
+  it("does not show update hint when checkError is true", async () => {
+    const nodes = [
+      {
+        nodeId: "n1",
+        state: "ALIVE",
+        os: "linux",
+        agentVersion: "0.1.0",
+        hostname: "a",
+        lastUpdatedUnixMs: Date.now(),
+      },
+    ];
+    const { wrapper } = await mountOverview({}, [], [], nodes, undefined, {
+      ...defaultCheckLatest,
+      checkError: true,
+      errorMessage: "rate limited",
+    });
+    expect(wrapper.find('[data-testid="update-available"]').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("Update available");
+    expect(wrapper.text().toLowerCase()).not.toMatch(/up to date|up-to-date/);
+  });
+
+  it("does not show update hint when checkLatest rejects", async () => {
+    const nodes = [
+      {
+        nodeId: "n1",
+        state: "ALIVE",
+        os: "linux",
+        agentVersion: "0.1.0",
+        hostname: "a",
+        lastUpdatedUnixMs: Date.now(),
+      },
+    ];
+    const { wrapper } = await mountOverview(
+      {},
+      [],
+      [],
+      nodes,
+      undefined,
+      new Error("check failed"),
+    );
+    expect(wrapper.find('[data-testid="update-available"]').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("Update available");
+    expect(wrapper.text().toLowerCase()).not.toMatch(/up to date|up-to-date/);
+  });
+
+  it("does not show update hint for darwin or empty-os ALIVE nodes that are behind", async () => {
+    const now = Date.now();
+    const nodes = [
+      {
+        nodeId: "mac",
+        state: "ALIVE",
+        os: "darwin",
+        agentVersion: "0.1.0",
+        hostname: "mac",
+        lastUpdatedUnixMs: now,
+      },
+      {
+        nodeId: "unknown",
+        state: "ALIVE",
+        os: "",
+        agentVersion: "0.1.0",
+        hostname: "u",
+        lastUpdatedUnixMs: now,
+      },
+    ];
+    const { wrapper } = await mountOverview({}, [], [], nodes);
+    expect(wrapper.find('[data-testid="update-available"]').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("Update available");
+  });
 });
 
 describe("OverviewPage i18n", () => {
@@ -347,6 +496,7 @@ describe("OverviewPage i18n", () => {
           healthy: "healthy",
           unhealthy: "unhealthy",
           versions: "Versions",
+          updateAvailable: "Update available",
         },
         workload: {
           title: "Workload",
@@ -395,6 +545,7 @@ describe("OverviewPage i18n", () => {
           healthy: "健康",
           unhealthy: "不健康",
           versions: "版本",
+          updateAvailable: "可更新",
         },
         workload: {
           title: "工作负载",

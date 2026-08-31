@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/qleelulu/procmesh/internal/agentcfg"
@@ -54,6 +55,13 @@ func TestLiveSource_ReportsHistoryPauseFromExactDiskUsage(t *testing.T) {
 	}
 	if !resources.HistoryWritesPaused || resources.HistoryPausePercent != 93 {
 		t.Fatalf("history pause resources = %+v", resources)
+	}
+}
+
+func TestLiveSource_SnapshotOSArch(t *testing.T) {
+	sum := (&liveSource{nodeID: "n1"}).Snapshot()
+	if sum.OS != runtime.GOOS || sum.Arch != runtime.GOARCH {
+		t.Fatalf("os/arch = %q/%q want %s/%s", sum.OS, sum.Arch, runtime.GOOS, runtime.GOARCH)
 	}
 }
 

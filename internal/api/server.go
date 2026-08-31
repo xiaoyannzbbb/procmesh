@@ -69,6 +69,7 @@ type Options struct {
 	BackupDispatch      func(backup.FrozenRun)
 	ReplicationDispatch func(backup.FrozenReplicationRun)
 	Process             ProcessRemotePolicy
+	Update              LatestChecker
 }
 
 func NewServer(opts Options) (*Server, error) {
@@ -241,6 +242,10 @@ func NewServer(opts Options) (*Server, error) {
 		bp, bh := procmeshv1connect.NewBatchServiceHandler(bapi, intercept)
 		mountConnect(engine, bp, bh)
 	}
+	updp, updh := procmeshv1connect.NewUpdateServiceHandler(&UpdateAPI{
+		Auth: opts.Auth, Checker: opts.Update,
+	}, intercept)
+	mountConnect(engine, updp, updh)
 
 	legacy, err := localhttp.NewServerOpts(opts.Mgr, opts.Logs, opts.Addr, opts.Degraded, opts.Ready)
 	if err != nil {

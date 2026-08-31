@@ -43,6 +43,17 @@ func TestNodeToProto_ProcessRemoteFlags(t *testing.T) {
 	}
 }
 
+func TestNodeToProto_OSArch(t *testing.T) {
+	got := nodeToProto(cluster.NodeSummary{NodeID: "n1", OS: "linux", Arch: "amd64"}, nil)
+	if got.GetOs() != "linux" || got.GetArch() != "amd64" {
+		t.Fatalf("os/arch %q %q", got.GetOs(), got.GetArch())
+	}
+	empty := nodeToProto(cluster.NodeSummary{NodeID: "old"}, nil)
+	if empty.GetOs() != "" || empty.GetArch() != "" {
+		t.Fatalf("missing os/arch must stay empty, got %q %q", empty.GetOs(), empty.GetArch())
+	}
+}
+
 func TestListNodes_StandaloneLocal(t *testing.T) {
 	e := newClusterEnvOpts(t, false, false)
 	listed, err := e.node.ListNodes(context.Background(), connect.NewRequest(&procmeshv1.ListNodesRequest{}))
