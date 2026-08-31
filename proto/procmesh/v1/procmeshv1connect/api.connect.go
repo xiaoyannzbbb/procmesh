@@ -363,6 +363,12 @@ const (
 	// UpdateServiceCheckLatestProcedure is the fully-qualified name of the UpdateService's CheckLatest
 	// RPC.
 	UpdateServiceCheckLatestProcedure = "/procmesh.v1.UpdateService/CheckLatest"
+	// UpdateServiceGetLocalUpdateInfoProcedure is the fully-qualified name of the UpdateService's
+	// GetLocalUpdateInfo RPC.
+	UpdateServiceGetLocalUpdateInfoProcedure = "/procmesh.v1.UpdateService/GetLocalUpdateInfo"
+	// UpdateServiceListNodeUpdateStatusProcedure is the fully-qualified name of the UpdateService's
+	// ListNodeUpdateStatus RPC.
+	UpdateServiceListNodeUpdateStatusProcedure = "/procmesh.v1.UpdateService/ListNodeUpdateStatus"
 )
 
 // ProcessServiceClient is a client for the procmesh.v1.ProcessService service.
@@ -3949,6 +3955,8 @@ func (UnimplementedDisasterReplicationServiceHandler) RestoreRecoverableSnapshot
 // UpdateServiceClient is a client for the procmesh.v1.UpdateService service.
 type UpdateServiceClient interface {
 	CheckLatest(context.Context, *connect.Request[v1.CheckLatestRequest]) (*connect.Response[v1.CheckLatestResponse], error)
+	GetLocalUpdateInfo(context.Context, *connect.Request[v1.GetLocalUpdateInfoRequest]) (*connect.Response[v1.GetLocalUpdateInfoResponse], error)
+	ListNodeUpdateStatus(context.Context, *connect.Request[v1.ListNodeUpdateStatusRequest]) (*connect.Response[v1.ListNodeUpdateStatusResponse], error)
 }
 
 // NewUpdateServiceClient constructs a client for the procmesh.v1.UpdateService service. By default,
@@ -3968,12 +3976,26 @@ func NewUpdateServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(updateServiceMethods.ByName("CheckLatest")),
 			connect.WithClientOptions(opts...),
 		),
+		getLocalUpdateInfo: connect.NewClient[v1.GetLocalUpdateInfoRequest, v1.GetLocalUpdateInfoResponse](
+			httpClient,
+			baseURL+UpdateServiceGetLocalUpdateInfoProcedure,
+			connect.WithSchema(updateServiceMethods.ByName("GetLocalUpdateInfo")),
+			connect.WithClientOptions(opts...),
+		),
+		listNodeUpdateStatus: connect.NewClient[v1.ListNodeUpdateStatusRequest, v1.ListNodeUpdateStatusResponse](
+			httpClient,
+			baseURL+UpdateServiceListNodeUpdateStatusProcedure,
+			connect.WithSchema(updateServiceMethods.ByName("ListNodeUpdateStatus")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // updateServiceClient implements UpdateServiceClient.
 type updateServiceClient struct {
-	checkLatest *connect.Client[v1.CheckLatestRequest, v1.CheckLatestResponse]
+	checkLatest          *connect.Client[v1.CheckLatestRequest, v1.CheckLatestResponse]
+	getLocalUpdateInfo   *connect.Client[v1.GetLocalUpdateInfoRequest, v1.GetLocalUpdateInfoResponse]
+	listNodeUpdateStatus *connect.Client[v1.ListNodeUpdateStatusRequest, v1.ListNodeUpdateStatusResponse]
 }
 
 // CheckLatest calls procmesh.v1.UpdateService.CheckLatest.
@@ -3981,9 +4003,21 @@ func (c *updateServiceClient) CheckLatest(ctx context.Context, req *connect.Requ
 	return c.checkLatest.CallUnary(ctx, req)
 }
 
+// GetLocalUpdateInfo calls procmesh.v1.UpdateService.GetLocalUpdateInfo.
+func (c *updateServiceClient) GetLocalUpdateInfo(ctx context.Context, req *connect.Request[v1.GetLocalUpdateInfoRequest]) (*connect.Response[v1.GetLocalUpdateInfoResponse], error) {
+	return c.getLocalUpdateInfo.CallUnary(ctx, req)
+}
+
+// ListNodeUpdateStatus calls procmesh.v1.UpdateService.ListNodeUpdateStatus.
+func (c *updateServiceClient) ListNodeUpdateStatus(ctx context.Context, req *connect.Request[v1.ListNodeUpdateStatusRequest]) (*connect.Response[v1.ListNodeUpdateStatusResponse], error) {
+	return c.listNodeUpdateStatus.CallUnary(ctx, req)
+}
+
 // UpdateServiceHandler is an implementation of the procmesh.v1.UpdateService service.
 type UpdateServiceHandler interface {
 	CheckLatest(context.Context, *connect.Request[v1.CheckLatestRequest]) (*connect.Response[v1.CheckLatestResponse], error)
+	GetLocalUpdateInfo(context.Context, *connect.Request[v1.GetLocalUpdateInfoRequest]) (*connect.Response[v1.GetLocalUpdateInfoResponse], error)
+	ListNodeUpdateStatus(context.Context, *connect.Request[v1.ListNodeUpdateStatusRequest]) (*connect.Response[v1.ListNodeUpdateStatusResponse], error)
 }
 
 // NewUpdateServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -3999,10 +4033,26 @@ func NewUpdateServiceHandler(svc UpdateServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(updateServiceMethods.ByName("CheckLatest")),
 		connect.WithHandlerOptions(opts...),
 	)
+	updateServiceGetLocalUpdateInfoHandler := connect.NewUnaryHandler(
+		UpdateServiceGetLocalUpdateInfoProcedure,
+		svc.GetLocalUpdateInfo,
+		connect.WithSchema(updateServiceMethods.ByName("GetLocalUpdateInfo")),
+		connect.WithHandlerOptions(opts...),
+	)
+	updateServiceListNodeUpdateStatusHandler := connect.NewUnaryHandler(
+		UpdateServiceListNodeUpdateStatusProcedure,
+		svc.ListNodeUpdateStatus,
+		connect.WithSchema(updateServiceMethods.ByName("ListNodeUpdateStatus")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/procmesh.v1.UpdateService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case UpdateServiceCheckLatestProcedure:
 			updateServiceCheckLatestHandler.ServeHTTP(w, r)
+		case UpdateServiceGetLocalUpdateInfoProcedure:
+			updateServiceGetLocalUpdateInfoHandler.ServeHTTP(w, r)
+		case UpdateServiceListNodeUpdateStatusProcedure:
+			updateServiceListNodeUpdateStatusHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -4014,4 +4064,12 @@ type UnimplementedUpdateServiceHandler struct{}
 
 func (UnimplementedUpdateServiceHandler) CheckLatest(context.Context, *connect.Request[v1.CheckLatestRequest]) (*connect.Response[v1.CheckLatestResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.UpdateService.CheckLatest is not implemented"))
+}
+
+func (UnimplementedUpdateServiceHandler) GetLocalUpdateInfo(context.Context, *connect.Request[v1.GetLocalUpdateInfoRequest]) (*connect.Response[v1.GetLocalUpdateInfoResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.UpdateService.GetLocalUpdateInfo is not implemented"))
+}
+
+func (UnimplementedUpdateServiceHandler) ListNodeUpdateStatus(context.Context, *connect.Request[v1.ListNodeUpdateStatusRequest]) (*connect.Response[v1.ListNodeUpdateStatusResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.UpdateService.ListNodeUpdateStatus is not implemented"))
 }

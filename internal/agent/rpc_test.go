@@ -35,6 +35,7 @@ func TestAgentForwarder_LogHopHasNoClientTimeout(t *testing.T) {
 	_ = rpc.NewAuditClient(hc, "https://127.0.0.1:1")
 	_ = rpc.NewMetricsClient(hc, "https://127.0.0.1:1")
 	_ = rpc.NewAlertClient(hc, "https://127.0.0.1:1")
+	_ = rpc.NewUpdateClient(hc, "https://127.0.0.1:1")
 }
 
 func TestRPCRuntime_StartRPCLockedWiresClusterIDIntoPeerReplicationHandler(t *testing.T) {

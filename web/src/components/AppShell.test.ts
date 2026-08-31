@@ -31,6 +31,7 @@ testI18n.init({
           alerts: 'Alerts',
           backup: 'Backup',
           disasterReplica: 'Disaster replica',
+          updates: 'Updates',
         },
         actions: {
           logout: 'Logout',
@@ -57,6 +58,7 @@ testI18n.init({
           alerts: '告警',
           backup: '备份',
           disasterReplica: '灾备副本',
+          updates: '更新',
         },
         actions: {
           logout: '退出登录',
@@ -102,6 +104,7 @@ async function mountShell(current: Me, provide: Record<string, unknown> = {}) {
           { path: "alerts", component: Blank },
           { path: "backup", component: Blank },
           { path: "disaster-replica", component: Blank },
+          { path: "updates", component: Blank },
           { path: "users", component: Blank },
           { path: "roles", component: Blank },
           { path: "audit", component: Blank },
@@ -235,6 +238,42 @@ describe("AppShell", () => {
     const labels = wrapper.findAll(".nav-label").map((n) => n.text());
     expect(labels.indexOf("Disaster replica")).toBeGreaterThan(labels.indexOf("Backup"));
     expect(labels.indexOf("Users")).toBeGreaterThan(labels.indexOf("Disaster replica"));
+  });
+
+  it("shows Updates nav when node.manage", async () => {
+    const wrapper = await mountShell(me({ permissions: ["node.manage"] }));
+    expect(wrapper.text()).toContain("Updates");
+    const updates = wrapper.findAll(".nav-link").find((n) => n.text().includes("Updates"));
+    expect(updates?.find(".nav-badge").exists()).toBe(false);
+  });
+
+  it("shows Updates nav when cluster.manage", async () => {
+    const wrapper = await mountShell(me({ permissions: ["cluster.manage"] }));
+    expect(wrapper.text()).toContain("Updates");
+  });
+
+  it("hides Updates nav with only cluster.read", async () => {
+    const wrapper = await mountShell(me({ permissions: ["cluster.read", "node.read"] }));
+    expect(wrapper.text()).not.toContain("Updates");
+  });
+
+  it("places Updates after Disaster replica and before Users", async () => {
+    const wrapper = await mountShell(
+      me({
+        permissions: ["node.read", "node.manage", "replication.read", "user.read"],
+      }),
+    );
+    const labels = wrapper.findAll(".nav-label").map((n) => n.text());
+    expect(labels.indexOf("Updates")).toBeGreaterThan(labels.indexOf("Disaster replica"));
+    expect(labels.indexOf("Users")).toBeGreaterThan(labels.indexOf("Updates"));
+  });
+
+  it("highlights Updates when the route is /updates", async () => {
+    const wrapper = await mountShell(me({ permissions: ["node.manage"] }));
+    await wrapper.vm.$router.push("/updates");
+    await flushPromises();
+    const updates = wrapper.findAll(".nav-link").find((n) => n.text().includes("Updates"));
+    expect(updates?.classes()).toContain("active");
   });
 
   it("shows Users, Roles, and Audit when permitted", async () => {

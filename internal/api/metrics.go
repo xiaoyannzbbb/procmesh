@@ -73,6 +73,11 @@ func (f *countingForwarder) Backup(ctx context.Context, rt Route) (procmeshv1con
 	return f.inner.Backup(ctx, rt)
 }
 
+func (f *countingForwarder) Update(ctx context.Context, rt Route) (procmeshv1connect.UpdateServiceClient, error) {
+	f.n.Add(1)
+	return f.inner.Update(ctx, rt)
+}
+
 func (f *countingForwarder) User(ctx context.Context, rt Route) (procmeshv1connect.UserServiceClient, error) {
 	f.n.Add(1)
 	forwarder, ok := f.inner.(UserForwarder)

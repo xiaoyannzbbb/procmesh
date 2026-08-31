@@ -46,6 +46,7 @@ declare module "i18next" {
         'nav.alerts': string
         'nav.backup': string
         'nav.disasterReplica': string
+        'nav.updates': string
         'nav.users': string
         'nav.roles': string
         'nav.audit': string
@@ -220,6 +221,42 @@ declare module "i18next" {
         'overview.recentBatchesHint': string
         'overview.recentAlerts': string
         'updates.title': string
+        'updates.eyebrow': string
+        'updates.subtitle': string
+        'updates.latest': string
+        'updates.latestUnknown': string
+        'updates.loading': string
+        'updates.empty': string
+        'updates.emptyHint': string
+        'updates.loadFailed': string
+        'updates.retry': string
+        'updates.refresh': string
+        'updates.platformUnknown': string
+        'updates.table.hostname': string
+        'updates.table.platform': string
+        'updates.table.version': string
+        'updates.table.freshness': string
+        'updates.table.updated': string
+        'updates.table.status': string
+        'updates.updatedJustNow': string
+        'updates.updatedSeconds': string
+        'updates.updatedMinutes': string
+        'updates.updatedUnknown': string
+        'updates.status.eligible': string
+        'updates.status.badgeLabel': string
+        'updates.skip.STALE': string
+        'updates.skip.UNKNOWN': string
+        'updates.skip.FAILED': string
+        'updates.skip.SUSPECT': string
+        'updates.skip.UNSUPPORTED': string
+        'updates.skip.MACOS': string
+        'updates.skip.DISABLED': string
+        'updates.skip.BUSY': string
+        'updates.skip.CURRENT': string
+        'updates.skip.UNAVAILABLE': string
+        'updates.skip.TIMEOUT': string
+        'updates.skip.CHECK_FAILED': string
+        'updates.skip.unknown': string
         'alert.title': string
         'alert.eyebrow': string
         'alert.staleBanner': string

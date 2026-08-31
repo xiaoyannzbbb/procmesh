@@ -13,6 +13,7 @@
     "alerts": "Alerts",
     "backup": "Backup",
     "disasterReplica": "Disaster replica",
+    "updates": "Updates",
     "users": "Users",
     "roles": "Roles",
     "audit": "Audit"
@@ -218,7 +219,49 @@
     "recentAlerts": "Recent alerts"
   },
   "updates": {
-    "title": "Updates"
+    "title": "Updates",
+    "eyebrow": "Agent updates",
+    "subtitle": "{{count}} nodes",
+    "latest": "Latest pin: {{tag}}",
+    "latestUnknown": "Latest pin unavailable",
+    "loading": "Loading node update status…",
+    "empty": "No nodes",
+    "emptyHint": "Join agents to this cluster to see update eligibility.",
+    "loadFailed": "Could not load update status",
+    "retry": "Retry",
+    "refresh": "Refresh",
+    "platformUnknown": "Unknown platform",
+    "table": {
+      "hostname": "Hostname",
+      "platform": "OS / Arch",
+      "version": "Version",
+      "freshness": "Freshness",
+      "updated": "Updated",
+      "status": "Status"
+    },
+    "updatedJustNow": "just now",
+    "updatedSeconds": "{{count}}s ago",
+    "updatedMinutes": "{{count}}m ago",
+    "updatedUnknown": "unknown",
+    "status": {
+      "eligible": "Eligible",
+      "badgeLabel": "Update status: {{status}}"
+    },
+    "skip": {
+      "STALE": "Stale — not probed",
+      "UNKNOWN": "Unknown freshness — not probed",
+      "FAILED": "Node failed — skipped",
+      "SUSPECT": "Node suspect — skipped",
+      "UNSUPPORTED": "Agent does not support in-app update",
+      "MACOS": "macOS is not supported",
+      "DISABLED": "Updates disabled on this node",
+      "BUSY": "Update already in progress",
+      "CURRENT": "Already at latest",
+      "UNAVAILABLE": "Peer unreachable",
+      "TIMEOUT": "Probe timed out",
+      "CHECK_FAILED": "Latest version check failed",
+      "unknown": "Not eligible"
+    }
   },
   "alert": {
     "title": "Alerts",

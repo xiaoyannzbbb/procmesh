@@ -193,6 +193,7 @@ type fakeForwarder struct {
 	metricsN int
 	alertN   int
 	backupN  int
+	updateN  int
 	routes   []Route
 	proc     procmeshv1connect.ProcessServiceClient
 	cfg      procmeshv1connect.ConfigServiceClient
@@ -201,6 +202,7 @@ type fakeForwarder struct {
 	metrics  procmeshv1connect.MetricsServiceClient
 	alert    procmeshv1connect.AlertServiceClient
 	backup   procmeshv1connect.BackupServiceClient
+	update   procmeshv1connect.UpdateServiceClient
 	err      error
 }
 
@@ -281,6 +283,20 @@ func (f *fakeForwarder) Backup(_ context.Context, rt Route) (procmeshv1connect.B
 	return f.backup, nil
 }
 
+func (f *fakeForwarder) Update(_ context.Context, rt Route) (procmeshv1connect.UpdateServiceClient, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.updateN++
+	f.routes = append(f.routes, rt)
+	if f.err != nil {
+		return nil, f.err
+	}
+	if u, ok := f.update.(*fakeUpdateClient); ok {
+		return &boundUpdateClient{parent: u, nodeID: rt.NodeID}, nil
+	}
+	return f.update, nil
+}
+
 func (f *fakeForwarder) processCalls() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -309,6 +325,20 @@ func (f *fakeForwarder) backupCalls() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.backupN
+}
+
+func (f *fakeForwarder) updateCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.updateN
+}
+
+func (f *fakeForwarder) updateRoutes() []Route {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]Route, len(f.routes))
+	copy(out, f.routes)
+	return out
 }
 
 type fakeProcessClient struct {

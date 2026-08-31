@@ -444,6 +444,7 @@ const (
 	logHopTimeout                 = time.Duration(0)
 	auditHopTimeout               = 2 * time.Second
 	metricsHopTimeout             = rpc.UnaryTimeout
+	updateHopTimeout              = rpc.UnaryTimeout
 	alertHopTimeout               = rpc.MutationTimeout
 	backupHopTimeout              = rpc.MutationTimeout
 	clusterBackupHopTimeout       = rpc.MutationTimeout
@@ -516,6 +517,14 @@ func (f *agentForwarder) Metrics(_ context.Context, rt api.Route) (procmeshv1con
 		return nil, err
 	}
 	return rpc.NewMetricsClient(hc, base), nil
+}
+
+func (f *agentForwarder) Update(_ context.Context, rt api.Route) (procmeshv1connect.UpdateServiceClient, error) {
+	hc, base, err := f.dial(rt, updateHopTimeout)
+	if err != nil {
+		return nil, err
+	}
+	return rpc.NewUpdateClient(hc, base), nil
 }
 
 func (f *agentForwarder) Alert(_ context.Context, rt api.Route) (procmeshv1connect.AlertServiceClient, error) {

@@ -199,7 +199,7 @@ func Run(ctx context.Context, opt Options) error {
 			logger.Warn("store reopen failed", "error", err)
 			return serveHTTP(ctx, opt, nil, nil, nil, true, func() error {
 				return errcode.E(errcode.DEGRADED, "store unavailable")
-			}, nil, nil, nil, api.ClusterDeps{}, nil, updateChecker)
+			}, nil, nil, nil, api.ClusterDeps{}, nil, updateChecker, newUpdateLocal(cfg.Update, opt.DataDir))
 		}
 		degraded = true
 	}
@@ -391,7 +391,7 @@ func Run(ctx context.Context, opt Options) error {
 		NodeID:     nodeID,
 		Hostname:   hostname,
 		BootID:     hostBoot,
-	}, batchEng, updateChecker)
+	}, batchEng, updateChecker, newUpdateLocal(cfg.Update, opt.DataDir))
 }
 
 func newUpdateChecker(cfg agentcfg.Update) *update.Checker {
@@ -403,6 +403,14 @@ func newUpdateChecker(cfg agentcfg.Update) *update.Checker {
 		Repository: repo,
 		HTTPClient: &http.Client{Timeout: 15 * time.Second},
 	}, time.Now)
+}
+
+func newUpdateLocal(cfg agentcfg.Update, dataDir string) *update.Applier {
+	return &update.Applier{
+		Enabled: cfg.Enabled,
+		DataDir: dataDir,
+		Version: version.Agent,
+	}
 }
 
 func listProcessRefs(mgr *process.Manager) []metrics.ProcessRef {
@@ -690,7 +698,7 @@ func newBatchID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
-func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *logmgr.Manager, st *store.Store, degraded bool, ready func() error, mesh *cluster.Mesh, src *liveSource, collector *metrics.Collector, clusterDeps api.ClusterDeps, batchEng *batch.Engine, updateChecker api.LatestChecker) error {
+func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *logmgr.Manager, st *store.Store, degraded bool, ready func() error, mesh *cluster.Mesh, src *liveSource, collector *metrics.Collector, clusterDeps api.ClusterDeps, batchEng *batch.Engine, updateChecker api.LatestChecker, updateLocal api.LocalInfoProvider) error {
 	ln, err := net.Listen("tcp", opt.Listen)
 	if err != nil {
 		shutdownMesh(mesh)
@@ -849,8 +857,9 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		ReplicationDispatch: func(run backup.FrozenReplicationRun) {
 			go rt.replicationCoord.DispatchRun(ctx, run)
 		},
-		Process: rt.process,
-		Update:  updateChecker,
+		Process:     rt.process,
+		Update:      updateChecker,
+		UpdateLocal: updateLocal,
 	})
 	if err != nil {
 		_ = ln.Close()

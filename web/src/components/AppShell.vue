@@ -14,6 +14,7 @@ import {
   Users,
   ShieldCheck,
   FileSearch,
+  ArrowUpCircle,
   LogOut,
   ChevronLeft,
   ChevronRight,
@@ -158,6 +159,9 @@ const navItems = computed(() => {
   }
   if (perms.value.has("replication.read")) {
     items.push({ to: "/disaster-replica", label: t("nav.disasterReplica"), icon: Copy });
+  }
+  if (perms.value.has("node.manage") || perms.value.has("cluster.manage")) {
+    items.push({ to: "/updates", label: t("nav.updates"), icon: ArrowUpCircle });
   }
   if (perms.value.has("user.read")) {
     items.push({ to: "/users", label: t("nav.users"), icon: Users });

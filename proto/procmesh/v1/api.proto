@@ -1601,6 +1601,41 @@ message CheckLatestResponse {
   string error_message = 7;
 }
 
+message GetLocalUpdateInfoRequest {}
+
+message GetLocalUpdateInfoResponse {
+  string os = 1;
+  string arch = 2;
+  string version = 3;
+  bool enabled = 4;
+  bool busy = 5;
+}
+
+message ListNodeUpdateStatusRequest {}
+
+message NodeUpdateStatus {
+  string node_id = 1;
+  string hostname = 2;
+  string os = 3;
+  string arch = 4;
+  string version = 5;
+  string freshness = 6; // LIVE | STALE | UNKNOWN
+  int64 last_updated_unix_ms = 7;
+  bool eligible = 8;
+  string skip_reason = 9; // STALE, UNKNOWN, FAILED, SUSPECT, UNSUPPORTED, MACOS, DISABLED, BUSY, CURRENT
+  bool busy = 10;
+}
+
+message ListNodeUpdateStatusResponse {
+  repeated NodeUpdateStatus nodes = 1;
+  string latest_tag = 2;
+  bool check_error = 3;
+  string error_message = 4;
+  int64 checked_unix_ms = 5;
+}
+
 service UpdateService {
   rpc CheckLatest(CheckLatestRequest) returns (CheckLatestResponse);
+  rpc GetLocalUpdateInfo(GetLocalUpdateInfoRequest) returns (GetLocalUpdateInfoResponse);
+  rpc ListNodeUpdateStatus(ListNodeUpdateStatusRequest) returns (ListNodeUpdateStatusResponse);
 }

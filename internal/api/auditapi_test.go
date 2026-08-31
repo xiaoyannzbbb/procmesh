@@ -449,6 +449,14 @@ func (f *blockingAuditForwarder) Backup(ctx context.Context, rt Route) (procmesh
 	return nil, errors.New("unavailable")
 }
 
+func (f *blockingAuditForwarder) Update(ctx context.Context, rt Route) (procmeshv1connect.UpdateServiceClient, error) {
+	_, err := f.Audit(ctx, rt)
+	if err != nil {
+		return nil, err
+	}
+	return nil, errors.New("unavailable")
+}
+
 func (f *blockingAuditForwarder) Audit(ctx context.Context, _ Route) (procmeshv1connect.AuditServiceClient, error) {
 	if f.started != nil {
 		select {

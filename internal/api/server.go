@@ -70,6 +70,7 @@ type Options struct {
 	ReplicationDispatch func(backup.FrozenReplicationRun)
 	Process             ProcessRemotePolicy
 	Update              LatestChecker
+	UpdateLocal         LocalInfoProvider
 }
 
 func NewServer(opts Options) (*Server, error) {
@@ -243,7 +244,9 @@ func NewServer(opts Options) (*Server, error) {
 		mountConnect(engine, bp, bh)
 	}
 	updp, updh := procmeshv1connect.NewUpdateServiceHandler(&UpdateAPI{
-		Auth: opts.Auth, Checker: opts.Update,
+		Auth: opts.Auth, Checker: opts.Update, Local: opts.UpdateLocal,
+		Cluster: opts.Cluster, LocalID: opts.LocalID, LocalOnly: opts.LocalOnly,
+		Router: opts.Router, Forward: opts.Forward,
 	}, intercept)
 	mountConnect(engine, updp, updh)
 
