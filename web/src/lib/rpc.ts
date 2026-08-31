@@ -104,7 +104,15 @@ export type ReplicationClient = Pick<
 >;
 export type UpdateClient = Pick<
   Client<typeof UpdateService>,
-  "checkLatest" | "listNodeUpdateStatus" | "applyNode" | "getLocalUpdateInfo"
+  | "checkLatest"
+  | "listNodeUpdateStatus"
+  | "applyNode"
+  | "getLocalUpdateInfo"
+  | "createClusterUpdate"
+  | "listUpdateJobs"
+  | "getUpdateJob"
+  | "cancelRemaining"
+  | "retryUpdateJob"
 >;
 
 export function useClusterClient(): ClusterClient {

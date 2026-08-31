@@ -118,6 +118,7 @@ async function mountNodeDetailPage(
       { path: "/nodes/:id", component: NodeDetailPage },
       { path: "/processes/new", component: Blank },
       { path: "/processes/:idOrName", component: Blank },
+      { path: "/updates", component: Blank },
       { path: "/", component: Blank },
     ],
   });
@@ -303,6 +304,26 @@ describe("NodeDetailPage process list", () => {
 
     const link = wrapper.get('a[href="/processes/web-api?node=a0ba0978-70ed-4664-8d80-133c6c862f86"]');
     expect(link.text()).toBe("web-api");
+  });
+
+  it("links the agent version to /updates?node= and does not offer apply", async () => {
+    await i18n.changeLanguage("en");
+    await i18n.addResourceBundle("en", "common", {
+      nodeDetail: nodeDetailEn,
+      status: { live: "LIVE", stale: "STALE", unknown: "UNKNOWN" },
+    });
+
+    const wrapper = await mountNodeDetailPage(
+      sampleNode({
+        agentVersion: "0.1.27",
+      }),
+    );
+
+    const link = wrapper.get('a[href="/updates?node=a0ba0978-70ed-4664-8d80-133c6c862f86"]');
+    expect(link.text()).toBe("0.1.27");
+    expect(wrapper.find('[data-action="update"]').exists()).toBe(false);
+    expect(wrapper.find('[data-action="update-cluster"]').exists()).toBe(false);
+    expect(wrapper.findAll("button").filter((b) => /update|apply/i.test(b.text()))).toHaveLength(0);
   });
 });
 

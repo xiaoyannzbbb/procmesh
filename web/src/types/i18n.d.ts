@@ -270,6 +270,52 @@ declare module "i18next" {
         'updates.skip.TIMEOUT': string
         'updates.skip.CHECK_FAILED': string
         'updates.skip.unknown': string
+        'updates.clusterUpdate': string
+        'updates.clusterUpdateDisabledNoEligible': string
+        'updates.clusterUpdateDisabledNoPin': string
+        'updates.clusterConfirmTitle': string
+        'updates.clusterConfirmPin': string
+        'updates.clusterConfirmWillUpdate': string
+        'updates.clusterConfirmSkipped': string
+        'updates.clusterConfirmSkipItem': string
+        'updates.clusterConfirmRaftWarning': string
+        'updates.clusterCreateFailed': string
+        'updates.jobs.title': string
+        'updates.jobs.localOnly': string
+        'updates.jobs.empty': string
+        'updates.jobs.emptyHint': string
+        'updates.jobs.loading': string
+        'updates.jobs.loadFailed': string
+        'updates.jobs.status': string
+        'updates.jobs.pin': string
+        'updates.jobs.counts': string
+        'updates.jobs.created': string
+        'updates.jobs.expand': string
+        'updates.jobs.collapse': string
+        'updates.jobs.cancelRemaining': string
+        'updates.jobs.retry': string
+        'updates.jobs.cancelFailed': string
+        'updates.jobs.retryFailed': string
+        'updates.jobs.targets': string
+        'updates.jobs.hostname': string
+        'updates.jobs.skipReason': string
+        'updates.jobs.error': string
+        'updates.jobs.countsSummary': string
+        'updates.jobs.statusLabel': string
+        'updates.jobs.targetStatusLabel': string
+        'updates.jobs.job.PENDING': string
+        'updates.jobs.job.RUNNING': string
+        'updates.jobs.job.COMPLETED': string
+        'updates.jobs.job.PARTIAL': string
+        'updates.jobs.job.FAILED': string
+        'updates.jobs.target.PENDING': string
+        'updates.jobs.target.RUNNING': string
+        'updates.jobs.target.SUCCESS': string
+        'updates.jobs.target.FAILED': string
+        'updates.jobs.target.TIMEOUT': string
+        'updates.jobs.target.CONFLICT': string
+        'updates.jobs.target.SKIPPED': string
+        'updates.jobs.target.CANCELLED': string
         'alert.title': string
         'alert.eyebrow': string
         'alert.staleBanner': string

@@ -261,7 +261,16 @@ function toneForHealth(state: string): string {
           </div>
           <div>
             <dt>{{ t("nodeDetail.node.version") }}</dt>
-            <dd>{{ node.agentVersion || "—" }}</dd>
+            <dd>
+              <RouterLink
+                v-if="node.agentVersion"
+                class="name-link"
+                :to="{ path: '/updates', query: { node: node.nodeId } }"
+              >
+                {{ node.agentVersion }}
+              </RouterLink>
+              <span v-else>—</span>
+            </dd>
           </div>
           <div>
             <dt>{{ t("nodeDetail.node.status") }}</dt>

@@ -43,4 +43,22 @@ describe("ConfirmDialog", () => {
     expect(wrapper.emitted("confirm")).toBeUndefined();
     wrapper.unmount();
   });
+
+  it("renders an optional extra slot inside the accessible dialog", async () => {
+    const wrapper = mount(ConfirmDialog, {
+      attachTo: document.body,
+      props: { open: true, ...labels },
+      slots: { extra: '<ul data-extra-list><li>agent-a</li></ul>' },
+    });
+    await flushPromises();
+
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog?.getAttribute("aria-modal")).toBe("true");
+    expect(dialog?.textContent).toContain("agent-a");
+    expect(dialog?.querySelector("[data-extra-list]")?.textContent).toContain("agent-a");
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(wrapper.emitted("cancel")).toHaveLength(1);
+    wrapper.unmount();
+  });
 });

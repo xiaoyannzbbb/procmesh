@@ -149,7 +149,12 @@ watch(
             </span>
             <h2 :id="titleId">{{ title }}</h2>
           </div>
-          <p :id="messageId">{{ message }}</p>
+          <div :id="messageId" class="confirm-copy">
+            <p>{{ message }}</p>
+            <div v-if="$slots.extra" class="confirm-extra">
+              <slot name="extra" />
+            </div>
+          </div>
           <div class="confirm-actions">
             <button
               :ref="setCancelButtonRef"
@@ -183,7 +188,9 @@ watch(
 }
 
 .confirm-panel {
-  width: min(100%, 28rem);
+  width: min(100%, 36rem);
+  max-height: min(90vh, 40rem);
+  overflow: auto;
   padding: 1.5rem;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
@@ -220,11 +227,42 @@ watch(
   color: var(--color-danger);
 }
 
-.confirm-panel p {
+.confirm-copy {
   margin: 1rem 0 1.5rem;
   color: var(--color-muted);
   line-height: 1.5;
   overflow-wrap: anywhere;
+}
+
+.confirm-copy p {
+  margin: 0;
+}
+
+.confirm-extra {
+  margin-top: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.confirm-extra :deep(h3) {
+  margin: 0 0 0.35rem;
+  color: var(--color-text);
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.confirm-extra :deep(ul) {
+  margin: 0;
+  padding-left: 1.1rem;
+  max-height: 8rem;
+  overflow: auto;
+}
+
+.confirm-extra :deep(li) {
+  color: var(--color-text);
+  font-size: 0.875rem;
+  line-height: 1.45;
 }
 
 .confirm-actions {

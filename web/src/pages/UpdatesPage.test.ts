@@ -73,6 +73,60 @@ const updatesI18n = {
     CHECK_FAILED: "Latest version check failed",
     unknown: "Not eligible",
   },
+  clusterUpdate: "Update cluster",
+  clusterUpdateDisabledNoEligible: "No eligible nodes to update.",
+  clusterUpdateDisabledNoPin: "Latest pin is unavailable.",
+  clusterConfirmTitle: "Update the cluster?",
+  clusterConfirmPin: "Pinned release: {{repository}} {{tag}}",
+  clusterConfirmWillUpdate: "Nodes that will update",
+  clusterConfirmSkipped: "Nodes that will be skipped",
+  clusterConfirmSkipItem: "{{hostname}}: {{reason}}",
+  clusterConfirmRaftWarning:
+    "Fewer than 3 Raft voters. Control-plane writes may be unavailable while voters restart.",
+  clusterCreateFailed: "Could not start the cluster update",
+  jobs: {
+    title: "Update jobs",
+    localOnly: "Only jobs created on this entry agent are listed.",
+    empty: "No update jobs",
+    emptyHint: "Start a cluster update to roll out a pinned Agent release.",
+    loading: "Loading update jobs…",
+    loadFailed: "Could not load update jobs",
+    status: "Status",
+    pin: "Pin",
+    counts: "Counts",
+    created: "Created",
+    expand: "Show targets",
+    collapse: "Hide targets",
+    cancelRemaining: "Cancel remaining",
+    retry: "Retry job",
+    cancelFailed: "Could not cancel remaining targets",
+    retryFailed: "Could not retry the update job",
+    targets: "Targets",
+    hostname: "Hostname",
+    skipReason: "Skip reason",
+    error: "Error",
+    countsSummary:
+      "{{success}} succeeded, {{failed}} failed, {{timeout}} timed out, {{conflict}} conflicted, {{skipped}} skipped, {{cancelled}} cancelled",
+    statusLabel: "Job status: {{status}}",
+    targetStatusLabel: "Target status: {{status}}",
+    job: {
+      PENDING: "Pending",
+      RUNNING: "Running",
+      COMPLETED: "Completed",
+      PARTIAL: "Partial",
+      FAILED: "Failed",
+    },
+    target: {
+      PENDING: "Pending",
+      RUNNING: "Running",
+      SUCCESS: "Succeeded",
+      FAILED: "Failed",
+      TIMEOUT: "Timed out",
+      CONFLICT: "Conflict",
+      SKIPPED: "Skipped",
+      CANCELLED: "Cancelled",
+    },
+  },
 };
 
 beforeEach(async () => {
@@ -80,12 +134,19 @@ beforeEach(async () => {
   await i18n.init({
     lng: "en",
     fallbackLng: "en",
+    interpolation: { escapeValue: false },
     resources: {
       en: {
         common: {
           updates: updatesI18n,
           status: { live: "LIVE", stale: "STALE", unknown: "UNKNOWN" },
-          actions: { retry: "Retry", cancel: "Cancel", confirm: "Confirm" },
+          actions: {
+            retry: "Retry",
+            cancel: "Cancel",
+            confirm: "Confirm",
+            expand: "Expand",
+            collapse: "Collapse",
+          },
         },
       },
     },
@@ -249,6 +310,36 @@ const defaultPin = {
   },
 };
 
+function sampleVoters(count = 3, freshness = "LIVE") {
+  return Array.from({ length: count }, (_, i) => ({
+    nodeId: `raft-${i + 1}`,
+    hostname: `raft-host-${i + 1}`,
+    raftRole: i === 0 ? "LEADER" : "VOTER",
+    raftRoleFreshness: freshness,
+  }));
+}
+
+function sampleJob(overrides: Record<string, unknown> = {}) {
+  return {
+    jobId: "job-1",
+    operator: "admin",
+    sourceAgent: "n-entry",
+    pin: defaultPin,
+    status: "RUNNING",
+    summary: {
+      success: 0,
+      failed: 0,
+      timeout: 0,
+      conflict: 0,
+      skipped: 1,
+      cancelled: 0,
+    },
+    createdUnixMs: BigInt(Date.now()),
+    targets: [],
+    ...overrides,
+  };
+}
+
 async function mountUpdates(opts: {
   nodes?: unknown[];
   latestTag?: string;
@@ -257,10 +348,18 @@ async function mountUpdates(opts: {
   checkLatest?: ReturnType<typeof vi.fn>;
   getLocalUpdateInfo?: ReturnType<typeof vi.fn>;
   applyNode?: ReturnType<typeof vi.fn>;
+  createClusterUpdate?: ReturnType<typeof vi.fn>;
+  listUpdateJobs?: ReturnType<typeof vi.fn>;
+  getUpdateJob?: ReturnType<typeof vi.fn>;
+  cancelRemaining?: ReturnType<typeof vi.fn>;
+  retryUpdateJob?: ReturnType<typeof vi.fn>;
+  listNodes?: ReturnType<typeof vi.fn> | unknown[];
+  jobs?: unknown[];
   pending?: boolean;
   error?: Error;
   permissions?: string[];
   localNodeId?: string;
+  query?: Record<string, string>;
 } = {}) {
   if (opts.permissions) {
     session.value = {
@@ -302,6 +401,25 @@ async function mountUpdates(opts: {
       busy: false,
     });
   const applyNode = opts.applyNode ?? vi.fn().mockResolvedValue({});
+  const createClusterUpdate = opts.createClusterUpdate ?? vi.fn().mockResolvedValue({ job: sampleJob({ status: "RUNNING" }) });
+  const listUpdateJobs =
+    opts.listUpdateJobs ??
+    vi.fn().mockResolvedValue({
+      jobs: opts.jobs ?? [],
+    });
+  const getUpdateJob =
+    opts.getUpdateJob ??
+    vi.fn().mockImplementation((req: { jobId: string }) => {
+      const listed = (opts.jobs ?? []) as Array<{ jobId: string }>;
+      const found = listed.find((job) => job.jobId === req.jobId) ?? sampleJob({ jobId: req.jobId });
+      return Promise.resolve({ job: found });
+    });
+  const cancelRemaining = opts.cancelRemaining ?? vi.fn().mockResolvedValue({ job: sampleJob({ status: "PARTIAL" }) });
+  const retryUpdateJob = opts.retryUpdateJob ?? vi.fn().mockResolvedValue({ job: sampleJob({ status: "RUNNING" }) });
+  const listNodes =
+    typeof opts.listNodes === "function"
+      ? opts.listNodes
+      : vi.fn().mockResolvedValue({ nodes: opts.listNodes ?? sampleVoters() });
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -310,7 +428,7 @@ async function mountUpdates(opts: {
       { path: "/login", component: Blank },
     ],
   });
-  await router.push("/updates");
+  await router.push({ path: "/updates", query: opts.query });
   await router.isReady();
   const wrapper = mount(UpdatesPage, {
     global: {
@@ -325,6 +443,16 @@ async function mountUpdates(opts: {
           checkLatest,
           getLocalUpdateInfo,
           applyNode,
+          createClusterUpdate,
+          listUpdateJobs,
+          getUpdateJob,
+          cancelRemaining,
+          retryUpdateJob,
+        },
+        nodeClient: {
+          listNodes,
+          getNode: vi.fn(),
+          removeNode: vi.fn(),
         },
       },
     },
@@ -332,7 +460,20 @@ async function mountUpdates(opts: {
   mounted.push(wrapper);
   await flushPromises();
   await wrapper.vm.$nextTick();
-  return { wrapper, listNodeUpdateStatus, checkLatest, getLocalUpdateInfo, applyNode, queryClient };
+  return {
+    wrapper,
+    listNodeUpdateStatus,
+    checkLatest,
+    getLocalUpdateInfo,
+    applyNode,
+    createClusterUpdate,
+    listUpdateJobs,
+    getUpdateJob,
+    cancelRemaining,
+    retryUpdateJob,
+    listNodes,
+    queryClient,
+  };
 }
 
 describe("UpdatesPage", () => {
@@ -667,5 +808,187 @@ describe("UpdatesPage", () => {
     const overlay = wrapper.get("[data-self-update-overlay]");
     expect(overlay.text()).toContain("Timed out waiting for this Agent to reach v0.2.0.");
     expect(wrapper.get('[data-action="reload-after-update"]').text()).toContain("Refresh now");
+  });
+
+  it("hides Update cluster without cluster.manage", async () => {
+    const { wrapper } = await mountUpdates({ permissions: ["node.manage"] });
+    expect(wrapper.find('[data-action="update-cluster"]').exists()).toBe(false);
+  });
+
+  it("disables Update cluster without eligible nodes and explains why", async () => {
+    const { wrapper } = await mountUpdates({
+      permissions: ["cluster.manage"],
+      nodes: sampleNodes().filter((node) => !node.eligible),
+    });
+    const button = wrapper.get('[data-action="update-cluster"]');
+    expect(button.attributes("disabled")).toBeDefined();
+    expect(wrapper.text()).toContain("No eligible nodes to update.");
+  });
+
+  it("shows an enabled primary Update cluster button when cluster.manage and a node is eligible", async () => {
+    const { wrapper } = await mountUpdates({ permissions: ["cluster.manage", "node.manage"] });
+    const cluster = wrapper.get('[data-action="update-cluster"]');
+    expect(cluster.attributes("disabled")).toBeUndefined();
+    expect(cluster.classes().join(" ")).toContain("btn-primary");
+    const rowUpdate = wrapper.get('[data-node="n-eligible"] [data-action="update"]');
+    expect(rowUpdate.classes().join(" ")).not.toContain("btn-primary");
+  });
+
+  it("lists pin, hostnames, skip reasons, no-restart, and raft warning in cluster confirm", async () => {
+    const { wrapper, createClusterUpdate } = await mountUpdates({
+      permissions: ["cluster.manage"],
+      listNodes: sampleVoters(2),
+    });
+    await wrapper.get('[data-action="update-cluster"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    const dialog = wrapper.getComponent(ConfirmDialog);
+    expect(dialog.props("open")).toBe(true);
+    expect(dialog.props("title")).toBe("Update the cluster?");
+    const body = document.body.textContent ?? "";
+    expect(body).toContain("ghcr.io/example/procmesh");
+    expect(body).toContain("v0.2.0");
+    expect(body).toContain("agent-a");
+    expect(body).toContain("macbook");
+    expect(body).toContain("macOS is not supported");
+    expect(body).toContain("This update will not restart business processes.");
+    expect(body).toContain("Fewer than 3 Raft voters");
+    expect(createClusterUpdate).not.toHaveBeenCalled();
+  });
+
+  it("warns when three Raft voters are STALE rather than LIVE", async () => {
+    const { wrapper } = await mountUpdates({
+      permissions: ["cluster.manage"],
+      listNodes: sampleVoters(3, "STALE"),
+    });
+    await wrapper.get('[data-action="update-cluster"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    expect(document.body.textContent ?? "").toContain("Fewer than 3 Raft voters");
+  });
+
+  it("creates a cluster update with the CheckLatest pin after confirm", async () => {
+    const { wrapper, createClusterUpdate } = await mountUpdates({
+      permissions: ["cluster.manage"],
+    });
+    await wrapper.get('[data-action="update-cluster"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    await wrapper.getComponent(ConfirmDialog).vm.$emit("confirm");
+    await flushPromises();
+    expect(createClusterUpdate).toHaveBeenCalledTimes(1);
+    expect(createClusterUpdate).toHaveBeenCalledWith({
+      meta: { operationId: expect.any(String) },
+      pin: {
+        repository: defaultPin.repository,
+        tag: defaultPin.tag,
+        checksums: defaultPin.checksums,
+      },
+    });
+  });
+
+  it("shows cancel remaining on RUNNING jobs and retry on PARTIAL/FAILED/cancelled", async () => {
+    const jobs = [
+      sampleJob({ jobId: "job-running", status: "RUNNING" }),
+      sampleJob({ jobId: "job-partial", status: "PARTIAL", summary: { success: 1, failed: 1, timeout: 0, conflict: 0, skipped: 0, cancelled: 0 } }),
+      sampleJob({ jobId: "job-failed", status: "FAILED", summary: { success: 0, failed: 2, timeout: 0, conflict: 0, skipped: 0, cancelled: 0 } }),
+      sampleJob({
+        jobId: "job-cancelled",
+        status: "COMPLETED",
+        summary: { success: 1, failed: 0, timeout: 0, conflict: 0, skipped: 0, cancelled: 2 },
+      }),
+    ];
+    const { wrapper, cancelRemaining, retryUpdateJob } = await mountUpdates({
+      permissions: ["cluster.manage"],
+      jobs,
+    });
+    expect(wrapper.get('[data-job="job-running"] [data-action="cancel-remaining"]').exists()).toBe(true);
+    expect(wrapper.find('[data-job="job-running"] [data-action="retry-job"]').exists()).toBe(false);
+    expect(wrapper.get('[data-job="job-partial"] [data-action="retry-job"]').exists()).toBe(true);
+    expect(wrapper.get('[data-job="job-failed"] [data-action="retry-job"]').exists()).toBe(true);
+    expect(wrapper.get('[data-job="job-cancelled"] [data-action="retry-job"]').exists()).toBe(true);
+
+    await wrapper.get('[data-job="job-running"] [data-action="cancel-remaining"]').trigger("click");
+    await flushPromises();
+    expect(cancelRemaining).toHaveBeenCalledWith({
+      meta: { operationId: expect.any(String) },
+      jobId: "job-running",
+    });
+
+    await wrapper.get('[data-job="job-partial"] [data-action="retry-job"]').trigger("click");
+    await flushPromises();
+    expect(retryUpdateJob).toHaveBeenCalledWith({
+      meta: { operationId: expect.any(String) },
+      jobId: "job-partial",
+    });
+  });
+
+  it("expands a job to load targets and polls Get/List while RUNNING, not CheckLatest", async () => {
+    vi.useFakeTimers();
+    const running = sampleJob({
+      jobId: "job-run",
+      status: "RUNNING",
+      pin: defaultPin,
+      targets: [
+        {
+          operationId: "op-1",
+          nodeId: "n-eligible",
+          hostname: "agent-a",
+          status: "RUNNING",
+          skipReason: "",
+          error: "",
+          orderIndex: 0,
+        },
+      ],
+    });
+    const listUpdateJobs = vi.fn().mockResolvedValue({ jobs: [{ ...running, targets: [] }] });
+    const getUpdateJob = vi.fn().mockResolvedValue({ job: running });
+    const { wrapper, checkLatest } = await mountUpdates({
+      permissions: ["cluster.manage"],
+      listUpdateJobs,
+      getUpdateJob,
+    });
+    expect(listUpdateJobs).toHaveBeenCalledTimes(1);
+    expect(wrapper.get('[data-job="job-run"]').text()).toContain("Running");
+    expect(wrapper.get('[data-job="job-run"]').text()).toContain("v0.2.0");
+
+    await wrapper.get('[data-job="job-run"] [data-action="expand-job"]').trigger("click");
+    await flushPromises();
+    expect(getUpdateJob).toHaveBeenCalledWith({ jobId: "job-run" });
+    expect(wrapper.text()).toContain("agent-a");
+
+    const listCalls = listUpdateJobs.mock.calls.length;
+    const getCalls = getUpdateJob.mock.calls.length;
+    const checkCalls = checkLatest.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(5_000);
+    await flushPromises();
+    expect(listUpdateJobs.mock.calls.length).toBeGreaterThan(listCalls);
+    expect(getUpdateJob.mock.calls.length).toBeGreaterThan(getCalls);
+    expect(checkLatest.mock.calls.length).toBe(checkCalls);
+    expect(checkLatest).not.toHaveBeenCalledWith({ refresh: true });
+  });
+
+  it("highlights the node from the node query", async () => {
+    const { wrapper } = await mountUpdates({ query: { node: "n-eligible" } });
+    expect(wrapper.get('[data-node="n-eligible"]').attributes("data-highlight")).toBe("true");
+    expect(wrapper.get('[data-node="n-current"]').attributes("data-highlight")).toBeUndefined();
+  });
+
+  it("shows an empty jobs state for this entry and job errors as alerts", async () => {
+    const retryUpdateJob = vi.fn().mockRejectedValue(new ConnectError("unavailable", Code.Unavailable));
+    const { wrapper } = await mountUpdates({
+      permissions: ["cluster.manage"],
+      jobs: [],
+    });
+    expect(wrapper.text()).toContain("No update jobs");
+    expect(wrapper.text()).toContain("Only jobs created on this entry agent are listed.");
+
+    const { wrapper: retryWrapper } = await mountUpdates({
+      permissions: ["cluster.manage"],
+      jobs: [sampleJob({ jobId: "job-failed", status: "FAILED" })],
+      retryUpdateJob,
+    });
+    await retryWrapper.get('[data-action="retry-job"]').trigger("click");
+    await flushPromises();
+    await retryWrapper.vm.$nextTick();
+    const alert = retryWrapper.get('[role="alert"]');
+    expect(alert.text()).toContain("Could not retry the update job");
   });
 });
