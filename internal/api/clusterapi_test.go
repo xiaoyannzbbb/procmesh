@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/hashicorp/raft"
 	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
@@ -182,11 +183,8 @@ func newClusterEnvFull(t *testing.T, cfg clusterEnvCfg) *clusterEnv {
 
 func startTestRaft(t *testing.T, nodeID string) *control.Node {
 	t.Helper()
-	n, err := control.Start(control.RaftConfig{
-		Dir:    t.TempDir(),
-		Bind:   "127.0.0.1:0",
-		NodeID: nodeID,
-	})
+	_, trans := raft.NewInmemTransport(raft.ServerAddress(nodeID))
+	n, err := control.StartInmem(nodeID, control.NewFSM(), trans)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -226,15 +226,13 @@ func collectProcess(pid int) (*ProcessMetrics, error) {
 func (c *Collector) Start(ctx context.Context) error {
     ctx, cancel := context.WithCancel(ctx)
     c.cancel = cancel
-    
-    // 立即采集一次（避免启动时返回空数据）
-    c.collect()
-    
-    // 启动后台协程
+
+    // 首次采样也在后台执行，避免 CPU 采样窗口阻塞 Agent 启动。
     go func() {
         ticker := time.NewTicker(c.interval)
         defer ticker.Stop()
-        
+
+        c.collect()
         for {
             select {
             case <-ticker.C:
@@ -280,7 +278,8 @@ func (c *Collector) NodeMetrics() (*NodeMetrics, error) {
 ```
 
 **要点：**
-- 启动时立即采集一次（避免前 5 秒返回空数据）
+- 启动后异步执行首次采样，`Start` 不等待约 1 秒的 CPU 采样窗口
+- 首次采样完成前，`NodeMetrics` 返回 `no metrics available`；Agent 摘要将该短暂启动状态映射为 `UNKNOWN`，不会把未知数据展示为实时健康
 - 使用读写锁（`sync.RWMutex`）保护缓存
 - 返回副本防止数据竞争
 

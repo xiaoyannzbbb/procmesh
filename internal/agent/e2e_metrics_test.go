@@ -23,31 +23,41 @@ func TestE2E_MetricsFlow(t *testing.T) {
 	// 1. Start a live agent with full metrics collection
 	addr := startLiveAgent(t)
 
-	// 2. Wait for collector to start and collect initial data
-	time.Sleep(300 * time.Millisecond)
-
-	// 3. Verify agent is healthy and metrics endpoint is available
+	// 2. Verify agent is healthy while the initial sample runs asynchronously.
 	res, err := http.Get("http://" + addr + "/healthz")
 	require.NoError(t, err, "should reach healthz endpoint")
 	require.Equal(t, http.StatusOK, res.StatusCode, "healthz should return 200")
 	_ = res.Body.Close()
 
-	// 4. Call GetAgentMetrics API to verify node-level metrics
+	// 3. Wait for GetAgentMetrics to publish the first real node sample.
 	client := procmeshv1connect.NewMetricsServiceClient(
 		http.DefaultClient,
 		"http://"+addr,
 	)
 
-	resp, err := client.GetAgentMetrics(
-		context.Background(),
-		connect.NewRequest(&procmeshv1.GetAgentMetricsRequest{}),
-	)
+	deadline := time.Now().Add(5 * time.Second)
+	var resp *connect.Response[procmeshv1.GetAgentMetricsResponse]
+	for time.Now().Before(deadline) {
+		resp, err = client.GetAgentMetrics(
+			context.Background(),
+			connect.NewRequest(&procmeshv1.GetAgentMetricsRequest{}),
+		)
+		if err == nil && resp != nil && resp.Msg.GetMetrics().GetResources().GetCpuPercent() >= 0 &&
+			resp.Msg.GetMetrics().GetResources().GetMemoryPercent() >= 0 &&
+			resp.Msg.GetMetrics().GetResources().GetDiskPercent() >= 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	require.NoError(t, err, "GetAgentMetrics should succeed")
 	require.NotNil(t, resp.Msg, "response should not be nil")
 	require.NotNil(t, resp.Msg.Metrics, "metrics should not be nil")
 
 	m := resp.Msg.Metrics
 	require.NotNil(t, m.Resources, "resources should not be nil")
+	require.GreaterOrEqual(t, m.Resources.CpuPercent, int32(0), "initial node sample should complete before timeout")
+	require.GreaterOrEqual(t, m.Resources.MemoryPercent, int32(0), "initial node sample should complete before timeout")
+	require.GreaterOrEqual(t, m.Resources.DiskPercent, int32(0), "initial node sample should complete before timeout")
 
 	// Validate CPU metrics
 	assert.GreaterOrEqual(t, m.Resources.CpuPercent, int32(0), "CPU percent should be >= 0")

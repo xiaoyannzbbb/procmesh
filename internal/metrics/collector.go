@@ -7,31 +7,49 @@ import (
 	"time"
 )
 
+type nodeSampler func(string) (*NodeMetrics, error)
+
+type collectorTicker interface {
+	Chan() <-chan time.Time
+	Stop()
+}
+
+type tickerFactory func(time.Duration) collectorTicker
+
+type realTicker struct {
+	*time.Ticker
+}
+
+func (t realTicker) Chan() <-chan time.Time { return t.C }
+
 // New 创建新的 Collector 实例（未启动）
 func New(dataDir string, interval time.Duration) *Collector {
 	return &Collector{
-		interval: interval,
-		dataDir:  dataDir,
+		interval:   interval,
+		dataDir:    dataDir,
+		sampleNode: collectNode,
+		newTicker: func(interval time.Duration) collectorTicker {
+			return realTicker{Ticker: time.NewTicker(interval)}
+		},
 	}
 }
 
 // Start 启动后台采集协程
 func (c *Collector) Start(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
+	c.lifecycleMu.Lock()
 	c.cancel = cancel
+	c.lifecycleMu.Unlock()
+	ticker := c.newTicker(c.interval)
 
-	// 立即采集一次（避免启动时返回空数据）
-	c.collect()
-
-	// 启动后台协程
 	go func() {
-		ticker := time.NewTicker(c.interval)
 		defer ticker.Stop()
 
+		c.collect(ctx)
 		for {
 			select {
-			case <-ticker.C:
-				c.collect()
+			case <-ticker.Chan():
+				c.collect(ctx)
 			case <-ctx.Done():
 				return
 			}
@@ -43,14 +61,19 @@ func (c *Collector) Start(ctx context.Context) error {
 
 // Stop 停止后台采集
 func (c *Collector) Stop() {
+	c.lifecycleMu.Lock()
+	defer c.lifecycleMu.Unlock()
 	if c.cancel != nil {
 		c.cancel()
 	}
 }
 
 // collect 执行一次采集（内部方法）
-func (c *Collector) collect() {
-	node, err := collectNode(c.dataDir)
+func (c *Collector) collect(ctx context.Context) {
+	node, err := c.sampleNode(c.dataDir)
+	if ctx.Err() != nil {
+		return
+	}
 
 	c.mu.Lock()
 	c.node = node

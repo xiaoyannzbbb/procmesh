@@ -168,8 +168,12 @@ func TestRecover_LeftoverUnknownSocketLeftAlone(t *testing.T) {
 	if err := os.WriteFile(dead, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	started := time.Now()
 	if err := m.Recover(ctx); err != nil {
 		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("Recover probed an unknown socket: elapsed %v", elapsed)
 	}
 	if err := unix.Kill(pid, 0); err != nil {
 		t.Fatalf("leftover shim must stay: %v", err)

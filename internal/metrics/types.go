@@ -28,11 +28,16 @@ type ProcessMetrics struct {
 
 // Collector 资源采集器
 type Collector struct {
-	interval   time.Duration      // 采集间隔
-	dataDir    string             // 数据目录路径（用于磁盘监控）
-	cancel     context.CancelFunc // 停止信号
-	mu         sync.RWMutex       // 保护缓存
-	node       *NodeMetrics       // 缓存的节点指标
-	nodeErr    error              // 最近一次采集错误
-	lastUpdate time.Time          // 最后更新时间
+	interval   time.Duration // 采集间隔
+	dataDir    string        // 数据目录路径（用于磁盘监控）
+	sampleNode nodeSampler
+	newTicker  tickerFactory
+
+	lifecycleMu sync.Mutex
+	cancel      context.CancelFunc
+
+	mu         sync.RWMutex // 保护缓存
+	node       *NodeMetrics // 缓存的节点指标
+	nodeErr    error        // 最近一次采集错误
+	lastUpdate time.Time    // 最后更新时间
 }

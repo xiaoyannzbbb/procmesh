@@ -1,9 +1,18 @@
 .PHONY: test test-go test-acceptance test-e2e test-e2e-web proto proto-ts web web-dev bin
 test: test-go
 test-go:
-	go test ./...
+	@set -eu; \
+	log="$$(mktemp "$${TMPDIR:-/tmp}/procmesh-go-tests.XXXXXX")"; \
+	trap 'rm -f "$$log"' EXIT INT TERM; \
+	packages="$$(go list -f '{{if ne .ImportPath "github.com/qleelulu/procmesh/internal/agent"}}{{.ImportPath}}{{end}}' ./...)"; \
+	go test $$packages >"$$log" 2>&1 & non_agent_pid=$$!; \
+	status=0; \
+	./scripts/test-agent-shards.sh || status=$$?; \
+	if ! wait $$non_agent_pid; then status=1; fi; \
+	cat "$$log"; \
+	exit $$status
 test-acceptance:
-	go test -tags=acceptance ./internal/agent -count=1 -timeout 300s
+	./scripts/test-agent-shards.sh -tags=acceptance -count=1 -timeout 300s
 test-e2e-web:
 	go test -tags='acceptance web_e2e' ./internal/agent -run '^TestP5_Playwright_' -count=1 -timeout 180s
 test-e2e: test-acceptance test-e2e-web

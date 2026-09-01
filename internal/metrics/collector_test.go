@@ -2,10 +2,64 @@ package metrics
 
 import (
 	"context"
+	"errors"
 	"os"
+	"runtime"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+type manualTicker struct {
+	c       chan time.Time
+	stopped chan struct{}
+	once    sync.Once
+}
+
+func newManualTicker() *manualTicker {
+	return &manualTicker{c: make(chan time.Time), stopped: make(chan struct{})}
+}
+
+func (t *manualTicker) Chan() <-chan time.Time { return t.c }
+func (t *manualTicker) Stop() {
+	t.once.Do(func() { close(t.stopped) })
+}
+
+func newTestCollector(sampler nodeSampler, ticker *manualTicker) *Collector {
+	c := New("/tmp", time.Hour)
+	c.sampleNode = sampler
+	c.newTicker = func(time.Duration) collectorTicker { return ticker }
+	return c
+}
+
+func receiveSample(t *testing.T, samples <-chan int) int {
+	t.Helper()
+	select {
+	case sample := <-samples:
+		return sample
+	case <-time.After(time.Second):
+		t.Fatal("collector did not sample")
+		return 0
+	}
+}
+
+func waitNodeCPU(t *testing.T, c *Collector, want float64) {
+	t.Helper()
+	deadline := time.After(time.Second)
+	for {
+		node, err := c.NodeMetrics()
+		if err == nil && node.CPUPercent == want {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("NodeMetrics never published CPU %.0f; last node=%+v err=%v", want, node, err)
+		default:
+			runtime.Gosched()
+		}
+	}
+}
 
 func TestCollector_New(t *testing.T) {
 	c := New("/tmp", 5*time.Second)
@@ -20,163 +74,177 @@ func TestCollector_New(t *testing.T) {
 	}
 }
 
-func TestCollector_StartStop(t *testing.T) {
-	tmpDir := t.TempDir()
-	c := New(tmpDir, 100*time.Millisecond)
+func TestCollector_StartDoesNotWaitForInitialSample(t *testing.T) {
+	ticker := newManualTicker()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	c := newTestCollector(func(string) (*NodeMetrics, error) {
+		close(started)
+		<-release
+		return &NodeMetrics{CPUPercent: 1}, nil
+	}, ticker)
+	released := false
+	t.Cleanup(func() {
+		if !released {
+			close(release)
+		}
+		c.Stop()
+	})
 
-	ctx := context.Background()
-	if err := c.Start(ctx); err != nil {
-		t.Fatalf("Start failed: %v", err)
+	returned := make(chan error, 1)
+	go func() { returned <- c.Start(context.Background()) }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("initial sample did not start")
 	}
-
-	// 等待至少一次采集
-	time.Sleep(50 * time.Millisecond)
-
-	// 验证已采集数据
-	node, err := c.NodeMetrics()
-	if err != nil {
-		t.Fatalf("NodeMetrics failed: %v", err)
+	select {
+	case err := <-returned:
+		if err != nil {
+			t.Fatalf("Start failed: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Start blocked on initial sample")
 	}
-	if node == nil {
-		t.Fatal("node metrics is nil")
+	if _, err := c.NodeMetrics(); err == nil || !strings.Contains(err.Error(), "no metrics available") {
+		t.Fatalf("NodeMetrics before initial sample err=%v, want no metrics available", err)
 	}
-
-	// 停止
-	c.Stop()
-
-	// 再次读取应该仍然返回缓存数据
-	node2, err := c.NodeMetrics()
-	if err != nil {
-		t.Errorf("NodeMetrics after Stop failed: %v", err)
-	}
-	if node2 == nil {
-		t.Error("node metrics is nil after Stop")
-	}
+	close(release)
+	released = true
 }
 
-func TestCollector_BackgroundUpdate(t *testing.T) {
-	tmpDir := t.TempDir()
-	// 使用较长的 interval 来避免采集重叠（collectNode 阻塞 1 秒）
-	c := New(tmpDir, 1500*time.Millisecond)
-
-	ctx := context.Background()
-
-	if err := c.Start(ctx); err != nil {
+func TestCollector_PublishesInitialSampleAndTickUpdates(t *testing.T) {
+	ticker := newManualTicker()
+	samples := make(chan int, 2)
+	next := 0
+	c := newTestCollector(func(string) (*NodeMetrics, error) {
+		next++
+		samples <- next
+		return &NodeMetrics{CPUPercent: float64(next)}, nil
+	}, ticker)
+	if err := c.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 	defer c.Stop()
 
-	// 等待第一次采集完成（Start 立即调用一次）
-	time.Sleep(1100 * time.Millisecond)
-
-	c.mu.RLock()
-	firstUpdate := c.lastUpdate
-	c.mu.RUnlock()
-
-	if firstUpdate.IsZero() {
-		t.Fatal("first update timestamp is zero")
+	if got := receiveSample(t, samples); got != 1 {
+		t.Fatalf("initial sample=%d, want 1", got)
 	}
-
-	// 等待第二次采集（ticker 触发 + 采集完成）
-	time.Sleep(1700 * time.Millisecond)
-
-	c.mu.RLock()
-	secondUpdate := c.lastUpdate
-	c.mu.RUnlock()
-
-	if !secondUpdate.After(firstUpdate) {
-		t.Error("metrics not updating in background")
+	waitNodeCPU(t, c, 1)
+	ticker.c <- time.Now()
+	if got := receiveSample(t, samples); got != 2 {
+		t.Fatalf("tick sample=%d, want 2", got)
 	}
+	waitNodeCPU(t, c, 2)
+}
 
-	t.Logf("updates: first=%v, second=%v, diff=%v",
-		firstUpdate, secondUpdate, secondUpdate.Sub(firstUpdate))
+func TestCollector_StopPreventsFurtherSamples(t *testing.T) {
+	ticker := newManualTicker()
+	samples := make(chan int, 2)
+	calls := 0
+	c := newTestCollector(func(string) (*NodeMetrics, error) {
+		calls++
+		samples <- calls
+		return &NodeMetrics{CPUPercent: float64(calls)}, nil
+	}, ticker)
+	if err := c.Start(context.Background()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	if got := receiveSample(t, samples); got != 1 {
+		t.Fatalf("initial sample=%d, want 1", got)
+	}
+	waitNodeCPU(t, c, 1)
+	c.Stop()
+	select {
+	case <-ticker.stopped:
+	case <-time.After(time.Second):
+		t.Fatal("ticker was not stopped")
+	}
+	select {
+	case ticker.c <- time.Now():
+		t.Fatal("collector accepted a tick after Stop")
+	default:
+	}
+	node, err := c.NodeMetrics()
+	if err != nil || node.CPUPercent != 1 {
+		t.Fatalf("NodeMetrics after Stop node=%+v err=%v", node, err)
+	}
+}
+
+func TestCollector_SampleErrorIsVisible(t *testing.T) {
+	ticker := newManualTicker()
+	want := errors.New("sample failed")
+	sampled := make(chan int, 1)
+	c := newTestCollector(func(string) (*NodeMetrics, error) {
+		sampled <- 1
+		return nil, want
+	}, ticker)
+	if err := c.Start(context.Background()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer c.Stop()
+	receiveSample(t, sampled)
+
+	deadline := time.After(time.Second)
+	for {
+		_, err := c.NodeMetrics()
+		if errors.Is(err, want) {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("NodeMetrics err=%v, want %v", err, want)
+		default:
+			runtime.Gosched()
+		}
+	}
 }
 
 func TestCollector_ConcurrentRead(t *testing.T) {
-	tmpDir := t.TempDir()
-	c := New(tmpDir, 50*time.Millisecond)
-
-	ctx := context.Background()
-	if err := c.Start(ctx); err != nil {
+	ticker := newManualTicker()
+	sampled := make(chan int, 1)
+	c := newTestCollector(func(string) (*NodeMetrics, error) {
+		sampled <- 1
+		return &NodeMetrics{CPUPercent: 42}, nil
+	}, ticker)
+	if err := c.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 	defer c.Stop()
+	receiveSample(t, sampled)
+	waitNodeCPU(t, c, 42)
 
-	// 等待初始采集
-	time.Sleep(100 * time.Millisecond)
-
-	// 并发读取
-	done := make(chan bool)
+	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
-		go func(id int) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			for j := 0; j < 20; j++ {
 				node, err := c.NodeMetrics()
-				if err != nil {
-					t.Errorf("goroutine %d: NodeMetrics failed: %v", id, err)
-					break
+				if err != nil || node.CPUPercent != 42 {
+					t.Errorf("NodeMetrics node=%+v err=%v", node, err)
+					return
 				}
-				if node == nil {
-					t.Errorf("goroutine %d: node is nil", id)
-					break
-				}
-				time.Sleep(10 * time.Millisecond)
 			}
-			done <- true
-		}(i)
+		}()
 	}
-
-	// 等待所有 goroutine 完成
-	for i := 0; i < 10; i++ {
-		<-done
-	}
+	wg.Wait()
 }
 
 func TestCollector_ProcessMetrics(t *testing.T) {
-	tmpDir := t.TempDir()
-	c := New(tmpDir, 5*time.Second)
-
-	// ProcessMetrics 不需要 Start
+	c := New(t.TempDir(), 5*time.Second)
 	pm, err := c.ProcessMetrics(os.Getpid())
 	if err != nil {
 		t.Fatalf("ProcessMetrics failed: %v", err)
 	}
-	if pm == nil {
-		t.Fatal("process metrics is nil")
-	}
-	if pm.PID != os.Getpid() {
-		t.Errorf("wrong PID: got %d, want %d", pm.PID, os.Getpid())
+	if pm == nil || pm.PID != os.Getpid() {
+		t.Fatalf("ProcessMetrics=%+v, want PID %d", pm, os.Getpid())
 	}
 }
 
 func TestCollector_NodeMetrics_BeforeStart(t *testing.T) {
-	tmpDir := t.TempDir()
-	c := New(tmpDir, 5*time.Second)
-
-	// 未启动前读取应该返回 error
-	_, err := c.NodeMetrics()
-	if err == nil {
-		t.Fatal("expected error before Start")
+	c := New(t.TempDir(), 5*time.Second)
+	if _, err := c.NodeMetrics(); err == nil || !strings.Contains(err.Error(), "no metrics available") {
+		t.Fatalf("NodeMetrics err=%v, want no metrics available", err)
 	}
-	t.Logf("got expected error: %v", err)
-}
-
-func TestCollector_InvalidDataDir(t *testing.T) {
-	c := New("/nonexistent/impossible/path/12345", 5*time.Second)
-
-	ctx := context.Background()
-	if err := c.Start(ctx); err != nil {
-		// Start 不应该失败，只是采集会失败
-		t.Fatalf("Start should not fail: %v", err)
-	}
-	defer c.Stop()
-
-	// 等待采集尝试
-	time.Sleep(100 * time.Millisecond)
-
-	// 读取应该返回错误
-	_, err := c.NodeMetrics()
-	if err == nil {
-		t.Fatal("expected error for invalid dataDir")
-	}
-	t.Logf("got expected error: %v", err)
 }

@@ -58,21 +58,11 @@ func (m *Manager) recoverLeftoverSockets(ctx context.Context, known map[string]s
 		}
 		return err
 	}
-	for id, sock := range found {
+	for id := range found {
 		if _, ok := known[id]; ok {
 			continue
 		}
-		// Leftover socket: reconnect and leave it. Never start a second child.
-		client, st, recErr := shim.Reconnect(ctx, sock)
-		if recErr == nil && st != nil && st.GetAlive() {
-			if client != nil {
-				_ = client.Close()
-			}
-			continue
-		}
-		if client != nil {
-			_ = client.Close()
-		}
+		// Unknown shims are not owned by this manager. Leave them untouched.
 	}
 	return nil
 }

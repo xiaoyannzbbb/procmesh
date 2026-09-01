@@ -146,8 +146,8 @@ log:
 
 ```bash
 # 测试与构建
-make test             # 默认快速 Go 测试
-make test-acceptance  # Agent 验收测试（真实进程/集群，耗时较长）
+make test             # 全量 Go 测试；非 Agent 包与 Agent 测试分片并行执行
+make test-acceptance  # 无缓存 Agent 验收测试；真实进程/集群，耗时较长
 make test-e2e-web     # 启动测试 Agent 并运行完整 Playwright 门禁
 make test-e2e         # 依次运行 Agent 验收与 Web E2E
 make web
@@ -163,6 +163,8 @@ cd web && npm run i18n:check
 make proto
 make proto-ts
 ```
+
+Agent 测试默认分为 4 个独立进程，可通过 `PROCMESH_AGENT_TEST_SHARDS=1..16` 调整并行数。每个分片使用独立的 Shim 二进制和 CLI session 路径；分片只改变执行方式，不减少 `make test` 的测试集合。
 
 常用 CLI 操作：
 

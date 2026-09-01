@@ -19,6 +19,23 @@ func TestMain(m *testing.M) {
 }
 
 func run(m *testing.M) int {
+	for _, arg := range os.Args[1:] {
+		if strings.HasPrefix(arg, "-test.list") {
+			return m.Run()
+		}
+	}
+
+	if bin := os.Getenv("PROCMESH_TEST_SHIM_BIN"); bin != "" {
+		if _, err := os.Stat(bin); err != nil {
+			fmt.Fprintf(os.Stderr, "test shim %s: %v\n", bin, err)
+			return 1
+		}
+		testShimBin = bin
+		code := m.Run()
+		reapTestShims(testShimBin)
+		return code
+	}
+
 	dir, err := os.MkdirTemp("", "shim-bin")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
