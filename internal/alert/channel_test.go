@@ -326,6 +326,51 @@ func TestChannel_DingTalkDiskHighMarkdown(t *testing.T) {
 	}
 }
 
+func TestChannel_DingTalkProcessExitShowsNameAndID(t *testing.T) {
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"errcode":0,"errmsg":"ok"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	rec := sampleAlert()
+	rec.NodeID = "efcff992-0ebf-49f8-b632-2892d82f1a62"
+	rec.ProcessID = "2dfae72b-eddb-4b07-b29d-d7e749de0241"
+	rec.Fingerprint = "PROCESS_EXIT:2dfae72b-eddb-4b07-b29d-d7e749de0241"
+	rec.PayloadJSON = `{"hostname":"hdz-wdc-4c6g-01","process_name":"api"}`
+
+	s := &ChannelSender{HTTP: srv.Client(), Sleep: func(time.Duration) {}}
+	if err := s.Send(context.Background(), control.AlertChannel{
+		Type: "DINGTALK", Enabled: true, ConfigJSON: `{"webhook_url":"` + srv.URL + `"}`,
+	}, rec); err != nil {
+		t.Fatal(err)
+	}
+
+	var body struct {
+		MsgType  string `json:"msgtype"`
+		Markdown struct {
+			Title string `json:"title"`
+			Text  string `json:"text"`
+		} `json:"markdown"`
+	}
+	if err := json.Unmarshal(gotBody, &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.MsgType != "markdown" {
+		t.Fatalf("msgtype=%q want markdown; body=%s", body.MsgType, gotBody)
+	}
+	for _, want := range []string{
+		"节点: **hdz-wdc-4c6g-01** (`efcff992-0ebf-49f8-b632-2892d82f1a62`)",
+		"进程: **api** (`2dfae72b-eddb-4b07-b29d-d7e749de0241`)",
+	} {
+		if !strings.Contains(body.Markdown.Text, want) {
+			t.Fatalf("markdown missing %q:\n%s", want, body.Markdown.Text)
+		}
+	}
+}
+
 func TestChannel_DingTalkHTTP200BusinessError(t *testing.T) {
 	hits := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

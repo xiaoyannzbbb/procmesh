@@ -162,6 +162,30 @@ func TestScanner_ProcessExitAndRecover(t *testing.T) {
 	e.requireResolved(t, "PROCESS_EXIT:p1")
 }
 
+func TestScanner_ProcessExitIncludesProcessName(t *testing.T) {
+	e := newScanEnv(t)
+	e.sc.Hostname = "hdz-wdc-4c6g-01"
+	e.procs = []alert.ProcessSnap{{
+		ProcessID: "p1",
+		Name:      "api",
+		Desired:   "RUNNING",
+		Observed:  "EXITED",
+		Health:    "UNKNOWN",
+	}}
+	e.scan(t)
+	rec := e.requireFiring(t, "PROCESS_EXIT:p1")
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(rec.PayloadJSON), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if got := payload["process_name"]; got != "api" {
+		t.Fatalf("process_name=%v want api", got)
+	}
+	if got := payload["hostname"]; got != "hdz-wdc-4c6g-01" {
+		t.Fatalf("hostname=%v want hdz-wdc-4c6g-01", got)
+	}
+}
+
 func TestScanner_CrashLoopBackoffAndFatal(t *testing.T) {
 	e := newScanEnv(t)
 	e.procs = []alert.ProcessSnap{

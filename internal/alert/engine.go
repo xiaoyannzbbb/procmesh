@@ -11,11 +11,15 @@ import (
 )
 
 type Event struct {
-	Type                                   Type
-	NodeID, Hostname, ProcessID, ClusterID string
-	Payload                                map[string]any
-	At                                     time.Time
-	Firing                                 bool
+	Type        Type
+	NodeID      string
+	Hostname    string
+	ProcessID   string
+	ProcessName string
+	ClusterID   string
+	Payload     map[string]any
+	At          time.Time
+	Firing      bool
 }
 
 type Sender interface {
@@ -60,7 +64,7 @@ func (e *Engine) Observe(ctx context.Context, ev Event) (store.AlertRecord, erro
 	rec.Severity = string(DefaultSeverity(ev.Type))
 	rec.NodeID = ev.NodeID
 	rec.ProcessID = ev.ProcessID
-	rec.PayloadJSON = marshalPayload(payloadWithHostname(ev.Payload, ev.Hostname))
+	rec.PayloadJSON = marshalPayload(payloadWithDisplayNames(ev.Payload, ev.Hostname, ev.ProcessName))
 
 	notify := false
 	if ev.Firing {
@@ -157,14 +161,19 @@ func marshalPayload(p map[string]any) string {
 	return string(b)
 }
 
-func payloadWithHostname(payload map[string]any, hostname string) map[string]any {
-	if hostname == "" {
+func payloadWithDisplayNames(payload map[string]any, hostname, processName string) map[string]any {
+	if hostname == "" && processName == "" {
 		return payload
 	}
-	out := make(map[string]any, len(payload)+1)
+	out := make(map[string]any, len(payload)+2)
 	for key, value := range payload {
 		out[key] = value
 	}
-	out["hostname"] = hostname
+	if hostname != "" {
+		out["hostname"] = hostname
+	}
+	if processName != "" {
+		out["process_name"] = processName
+	}
 	return out
 }

@@ -30,6 +30,7 @@ type ClusterView struct {
 
 type ProcessSnap struct {
 	ProcessID string
+	Name      string
 	Desired   string // RUNNING|STOPPED
 	Observed  string
 	Health    string
@@ -215,7 +216,7 @@ func (s *Scanner) scanProcessStates(ctx context.Context, p ProcessSnap, now time
 	for _, c := range conds {
 		if c.fire {
 			if err := s.observe(ctx, Event{
-				Type: c.typ, NodeID: s.NodeID, ProcessID: p.ProcessID, At: now, Firing: true,
+				Type: c.typ, NodeID: s.NodeID, ProcessID: p.ProcessID, ProcessName: p.Name, At: now, Firing: true,
 			}); err != nil {
 				return fmt.Errorf("scan process %s %s: %w", p.ProcessID, c.typ, err)
 			}
@@ -223,7 +224,7 @@ func (s *Scanner) scanProcessStates(ctx context.Context, p ProcessSnap, now time
 		}
 		if recovered {
 			if err := s.observe(ctx, Event{
-				Type: c.typ, NodeID: s.NodeID, ProcessID: p.ProcessID, At: now, Firing: false,
+				Type: c.typ, NodeID: s.NodeID, ProcessID: p.ProcessID, ProcessName: p.Name, At: now, Firing: false,
 			}); err != nil {
 				return fmt.Errorf("resolve process %s %s: %w", p.ProcessID, c.typ, err)
 			}
@@ -238,7 +239,7 @@ func (s *Scanner) scanProcessThresholds(ctx context.Context, p ProcessSnap, now 
 		cpuSnap = s.ProcCPU(p.ProcessID)
 	}
 	if err := s.evalThreshold(ctx, threshEval{
-		typ: TypeCPUHigh, processID: p.ProcessID, series: metrics.SeriesProcCPU, subject: p.ProcessID,
+		typ: TypeCPUHigh, processID: p.ProcessID, processName: p.Name, series: metrics.SeriesProcCPU, subject: p.ProcessID,
 		threshold: float64(pol.CPUHighPercent), need: pol.HighConsecutiveMins,
 		snap: cpuSnap, haveSnap: cpuSnap >= 0, now: now,
 	}); err != nil {
@@ -263,7 +264,7 @@ func (s *Scanner) scanProcessThresholds(ctx context.Context, p ProcessSnap, now 
 	for i := range samples {
 		samples[i].Value = samples[i].Value / float64(snap.MemoryTotalBytes) * 100
 	}
-	return s.applyThreshold(ctx, TypeMemoryHigh, p.ProcessID, samples, memSnap, haveMem, float64(pol.MemoryHighPercent), pol.HighConsecutiveMins, now)
+	return s.applyThreshold(ctx, TypeMemoryHigh, p.ProcessID, p.Name, samples, memSnap, haveMem, float64(pol.MemoryHighPercent), pol.HighConsecutiveMins, now)
 }
 
 func (s *Scanner) scanLocalDB(ctx context.Context, now time.Time) error {
@@ -295,6 +296,7 @@ func (s *Scanner) scanNodeThresholds(ctx context.Context, now time.Time) error {
 type threshEval struct {
 	typ             Type
 	processID       string
+	processName     string
 	series, subject string
 	threshold       float64
 	need            int
@@ -308,23 +310,23 @@ func (s *Scanner) evalThreshold(ctx context.Context, ev threshEval) error {
 	if err != nil {
 		return err
 	}
-	return s.applyThreshold(ctx, ev.typ, ev.processID, samples, ev.snap, ev.haveSnap, ev.threshold, ev.need, ev.now)
+	return s.applyThreshold(ctx, ev.typ, ev.processID, ev.processName, samples, ev.snap, ev.haveSnap, ev.threshold, ev.need, ev.now)
 }
 
-func (s *Scanner) applyThreshold(ctx context.Context, typ Type, processID string, samples []store.MetricSample, snap float64, haveSnap bool, threshold float64, need int, now time.Time) error {
+func (s *Scanner) applyThreshold(ctx context.Context, typ Type, processID, processName string, samples []store.MetricSample, snap float64, haveSnap bool, threshold float64, need int, now time.Time) error {
 	payload := thresholdContext(samples, snap, haveSnap, threshold, need)
 	switch thresholdDecision(samples, snap, haveSnap, threshold, need) {
 	case threshHold:
 		return nil
 	case threshFire:
 		if err := s.observe(ctx, Event{
-			Type: typ, NodeID: s.NodeID, ProcessID: processID, Payload: payload, At: now, Firing: true,
+			Type: typ, NodeID: s.NodeID, ProcessID: processID, ProcessName: processName, Payload: payload, At: now, Firing: true,
 		}); err != nil {
 			return fmt.Errorf("scan %s %s: %w", typ, processID, err)
 		}
 	case threshResolve:
 		if err := s.observe(ctx, Event{
-			Type: typ, NodeID: s.NodeID, ProcessID: processID, Payload: payload, At: now, Firing: false,
+			Type: typ, NodeID: s.NodeID, ProcessID: processID, ProcessName: processName, Payload: payload, At: now, Firing: false,
 		}); err != nil {
 			return fmt.Errorf("scan %s %s: %w", typ, processID, err)
 		}

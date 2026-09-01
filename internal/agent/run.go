@@ -1316,6 +1316,7 @@ func listAlertProcessSnaps(mgr *process.Manager) []alert.ProcessSnap {
 		}
 		out = append(out, alert.ProcessSnap{
 			ProcessID: spec.ProcessID,
+			Name:      spec.Name,
 			Desired:   string(chosen.Desired),
 			Observed:  string(chosen.Observed),
 			Health:    string(chosen.Health),

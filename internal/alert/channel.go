@@ -441,6 +441,7 @@ type dingTalkMarkdownBody struct {
 
 type thresholdPayload struct {
 	Hostname            string   `json:"hostname"`
+	ProcessName         string   `json:"process_name"`
 	CurrentValuePercent *float64 `json:"current_value_percent"`
 	ThresholdPercent    *float64 `json:"threshold_percent"`
 	ConsecutiveMinutes  *int     `json:"consecutive_minutes"`
@@ -457,13 +458,11 @@ func dingTalkMarkdown(rec store.AlertRecord) dingTalkMarkdownBody {
 	}
 	var payload thresholdPayload
 	payloadDecoded := json.Unmarshal([]byte(rec.PayloadJSON), &payload) == nil
-	if payload.Hostname != "" && rec.NodeID != "" {
-		lines = append(lines, "- 节点: **"+payload.Hostname+"** (`"+rec.NodeID+"`)")
-	} else if rec.NodeID != "" {
-		lines = append(lines, "- 节点: `"+rec.NodeID+"`")
+	if rec.NodeID != "" {
+		lines = append(lines, dingTalkNamedID("节点", payload.Hostname, rec.NodeID))
 	}
 	if rec.ProcessID != "" {
-		lines = append(lines, "- 进程: `"+rec.ProcessID+"`")
+		lines = append(lines, dingTalkNamedID("进程", payload.ProcessName, rec.ProcessID))
 	}
 
 	if payloadDecoded {
@@ -523,6 +522,13 @@ func alertStateLabel(state string) string {
 		return "通知测试"
 	}
 	return "告警"
+}
+
+func dingTalkNamedID(label, name, id string) string {
+	if name != "" {
+		return "- " + label + ": **" + name + "** (`" + id + "`)"
+	}
+	return "- " + label + ": `" + id + "`"
 }
 
 func formatPercent(value float64) string {
