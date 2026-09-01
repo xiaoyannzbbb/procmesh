@@ -379,7 +379,7 @@ async function onLogout(): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 1rem 1.25rem;
+  padding: 1rem 0.5rem;
   border-bottom: 1px solid var(--color-border);
   gap: 0.5rem;
 }
