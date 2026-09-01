@@ -169,7 +169,7 @@ func TestUpdateAPI_CreateClusterUpdateUsesCachedPinAndAudit(t *testing.T) {
 		}
 		order = append(order, tg.GetNodeId())
 	}
-	if len(order) < 3 || order[len(order)-1] != "leader" || order[len(order)-2] != "local" {
+	if len(order) < 3 || order[len(order)-1] != "local" || order[len(order)-2] != "leader" {
 		t.Fatalf("order %v", order)
 	}
 	deadline := time.Now().Add(2 * time.Second)
@@ -412,7 +412,7 @@ func TestUpdateAPI_CreateClusterUpdateStaleLeaderNotLast(t *testing.T) {
 	}
 }
 
-func TestUpdateAPI_CreateClusterUpdateLiveLeaderLastWithoutRaftQuorum(t *testing.T) {
+func TestUpdateAPI_CreateClusterUpdateEntryLastWithoutRaftQuorum(t *testing.T) {
 	now := listNow()
 	members := []cluster.NodeSummary{
 		liveMember("a", "host-a", "linux", "amd64", "0.1.0"),
@@ -449,8 +449,8 @@ func TestUpdateAPI_CreateClusterUpdateLiveLeaderLastWithoutRaftQuorum(t *testing
 		}
 		order = append(order, tg.GetNodeId())
 	}
-	if len(order) < 3 || order[len(order)-1] != "leader" || order[len(order)-2] != "local" {
-		t.Fatalf("LIVE gossip leader last, not Raft quorum: %v", order)
+	if len(order) < 3 || order[len(order)-1] != "local" || order[len(order)-2] != "leader" {
+		t.Fatalf("entry last and LIVE gossip leader second-last, not Raft quorum: %v", order)
 	}
 }
 

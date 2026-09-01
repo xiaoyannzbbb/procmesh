@@ -8,7 +8,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/update"
 )
 
-func TestOrderTargets_LeaderLastEntrySecondLast(t *testing.T) {
+func TestOrderTargets_EntryLastLeaderSecondLast(t *testing.T) {
 	t.Parallel()
 	nodes := []update.TargetSpec{
 		{NodeID: "leader", Hostname: "aaa-leader"},
@@ -18,7 +18,7 @@ func TestOrderTargets_LeaderLastEntrySecondLast(t *testing.T) {
 		{NodeID: "skip", Hostname: "host-skip", SkipReason: update.SkipMACOS},
 	}
 	got := update.OrderTargets(nodes, "entry", "leader")
-	want := []string{"a", "b", "entry", "leader", "skip"}
+	want := []string{"a", "b", "leader", "entry", "skip"}
 	if len(got) != len(want) {
 		t.Fatalf("len=%d want %d %+v", len(got), len(want), got)
 	}

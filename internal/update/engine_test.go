@@ -52,6 +52,27 @@ func waitJob(t *testing.T, e *update.Engine, id string, want update.JobStatus) u
 	return update.Job{}
 }
 
+func waitTarget(t *testing.T, e *update.Engine, id, nodeID string, want update.TargetStatus) update.Job {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	var last update.Job
+	for time.Now().Before(deadline) {
+		got, err := e.Get(context.Background(), id)
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		last = got
+		for _, target := range got.Targets {
+			if target.NodeID == nodeID && target.Status == want {
+				return got
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("wait target %s status %s: job=%+v targets=%+v", nodeID, want, last, last.Targets)
+	return update.Job{}
+}
+
 type memClock struct {
 	mu      sync.Mutex
 	now     time.Time
@@ -202,6 +223,80 @@ func TestEngine_ApplyConfirmationLossWaitsForObservedVersion(t *testing.T) {
 	}
 }
 
+func TestEngine_ResumeReconcilesObservedRunningTargetWithoutReplay(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	clock := &memClock{now: now, members: []cluster.NodeSummary{
+		liveNode("entry", "host-entry", testPin().Tag, now),
+	}}
+	st := openUpdateStore(t)
+	pinJSON := `{"repository":"owner/procmesh","tag":"v0.2.0","checksums":{"linux/amd64":"a","linux/arm64":"b","linux/armv7":"c"}}`
+	if err := st.InsertUpdateJob(ctx, store.UpdateJobRecord{
+		JobID: "job-resume", Operator: "admin", SourceAgent: "entry", PinJSON: pinJSON,
+		CreatedAt: now.Add(-time.Minute), StartedAt: now.Add(-time.Minute), FinishedAt: now,
+		Status: string(update.JobCompleted), SummaryJSON: `{}`,
+	}, []store.UpdateJobTargetRecord{{
+		JobID: "job-resume", OperationID: "op-entry", NodeID: "entry", Hostname: "host-entry",
+		Status: string(update.TargetRunning), StartedAt: now.Add(-30 * time.Second),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	apply := &fakeApplier{clock: clock}
+	e := &update.Engine{
+		DB: st, Apply: apply, Members: clock, SourceAgent: "entry",
+		WaitTimeout: 200 * time.Millisecond, PollInterval: 5 * time.Millisecond,
+	}
+	e.Start(ctx)
+	if err := e.Resume(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitTarget(t, e, "job-resume", "entry", update.TargetSuccess)
+	got := waitJob(t, e, "job-resume", update.JobCompleted)
+	if got.Status != update.JobCompleted {
+		t.Fatalf("resumed job=%s, want COMPLETED", got.Status)
+	}
+	if got.Targets[0].Status != update.TargetSuccess {
+		t.Fatalf("resumed target=%s, want SUCCESS", got.Targets[0].Status)
+	}
+	if len(apply.applied()) != 0 {
+		t.Fatalf("recovery must observe, not replay apply: %v", apply.applied())
+	}
+}
+
+func TestEngine_ResumeReconcilesRunningTargetAfterEarlierFailure(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	clock := &memClock{now: now, members: []cluster.NodeSummary{
+		liveNode("entry", "host-entry", testPin().Tag, now),
+	}}
+	st := openUpdateStore(t)
+	pinJSON := `{"repository":"owner/procmesh","tag":"v0.2.0","checksums":{"linux/amd64":"a","linux/arm64":"b","linux/armv7":"c"}}`
+	if err := st.InsertUpdateJob(ctx, store.UpdateJobRecord{
+		JobID: "job-partial-resume", Operator: "admin", SourceAgent: "entry", PinJSON: pinJSON,
+		CreatedAt: now.Add(-time.Minute), StartedAt: now.Add(-time.Minute), FinishedAt: now,
+		Status: string(update.JobPartial), SummaryJSON: `{"failed":1}`,
+	}, []store.UpdateJobTargetRecord{
+		{JobID: "job-partial-resume", OperationID: "op-failed", NodeID: "failed", Status: string(update.TargetFailed)},
+		{JobID: "job-partial-resume", OperationID: "op-entry", NodeID: "entry", Hostname: "host-entry", Status: string(update.TargetRunning), OrderIndex: 1, StartedAt: now.Add(-30 * time.Second)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	e := &update.Engine{
+		DB: st, Apply: &fakeApplier{clock: clock}, Members: clock, SourceAgent: "entry",
+		WaitTimeout: 200 * time.Millisecond, PollInterval: 5 * time.Millisecond,
+	}
+	e.Start(ctx)
+	if err := e.Resume(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := waitTarget(t, e, "job-partial-resume", "entry", update.TargetSuccess)
+	if got.Status != update.JobPartial {
+		t.Fatalf("resumed job=%s, want PARTIAL", got.Status)
+	}
+}
+
 func TestEngine_CreateRejectsEmptyOperatorAndPin(t *testing.T) {
 	ctx := context.Background()
 	now := time.Unix(1_700_000_000, 0)
@@ -262,7 +357,7 @@ func TestEngine_OrderAndSerialWait(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := waitJob(t, e, job.JobID, update.JobCompleted)
-	if applyOrder := apply.applied(); len(applyOrder) != 3 || applyOrder[0] != "a" || applyOrder[1] != "entry" || applyOrder[2] != "leader" {
+	if applyOrder := apply.applied(); len(applyOrder) != 3 || applyOrder[0] != "a" || applyOrder[1] != "leader" || applyOrder[2] != "entry" {
 		t.Fatalf("apply order %v", applyOrder)
 	}
 	if got.Summary.Success != 3 {
@@ -543,6 +638,11 @@ func TestJobRollup(t *testing.T) {
 		{Status: update.TargetSuccess}, {Status: update.TargetPending},
 	}, false) != update.JobRunning {
 		t.Fatal("pending without stop stays running")
+	}
+	if update.RollupJob([]update.Target{
+		{Status: update.TargetSuccess}, {Status: update.TargetRunning},
+	}, true) != update.JobRunning {
+		t.Fatal("running target must keep a stopped job running until recovery")
 	}
 }
 

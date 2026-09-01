@@ -9,8 +9,8 @@ import (
 	"github.com/qleelulu/procmesh/internal/freshness"
 )
 
-// OrderTargets places LIVE control leader last, the current entry node
-// second-to-last when it is not that leader, and remaining eligible nodes
+// OrderTargets places the current entry node last, the LIVE control leader
+// second-to-last when it is not that entry, and remaining eligible nodes
 // by hostname then node_id. Skipped nodes are appended after eligible ones.
 func OrderTargets(nodes []TargetSpec, entryID, liveLeaderID string) []TargetSpec {
 	var eligible, skipped []TargetSpec
@@ -38,10 +38,10 @@ func OrderTargets(nodes []TargetSpec, entryID, liveLeaderID string) []TargetSpec
 }
 
 func targetRank(n TargetSpec, entryID, liveLeaderID string) int {
-	if liveLeaderID != "" && n.NodeID == liveLeaderID {
+	if entryID != "" && n.NodeID == entryID {
 		return 2
 	}
-	if entryID != "" && n.NodeID == entryID {
+	if liveLeaderID != "" && n.NodeID == liveLeaderID {
 		return 1
 	}
 	return 0

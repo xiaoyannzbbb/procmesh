@@ -74,20 +74,26 @@ type Job struct {
 }
 
 // RollupJob computes aggregate status from targets after the worker has stopped.
-// PENDING leftovers after halt are not treated as still running.
+// PENDING leftovers after halt are not treated as still running, but an in-flight
+// RUNNING target must be reconciled before the job can become terminal.
 // Skips and cancels are not failures. Attempted = SUCCESS/FAILED/TIMEOUT/CONFLICT.
 func RollupJob(targets []Target, stopped bool) JobStatus {
 	success, fail := 0, 0
-	pending := false
+	pending, running := false, false
 	for _, t := range targets {
 		switch t.Status {
-		case TargetPending, TargetRunning:
+		case TargetPending:
 			pending = true
+		case TargetRunning:
+			running = true
 		case TargetSuccess:
 			success++
 		case TargetFailed, TargetTimeout, TargetConflict:
 			fail++
 		}
+	}
+	if running {
+		return JobRunning
 	}
 	if pending && !stopped {
 		return JobRunning

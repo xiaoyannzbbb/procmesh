@@ -206,8 +206,13 @@ func TestUpdateJob_ListRunning(t *testing.T) {
 	if err := s.InsertUpdateJob(ctx, store.UpdateJobRecord{
 		JobID: "done", Operator: "a", SourceAgent: "n", PinJSON: `{}`,
 		CreatedAt: now, Status: "COMPLETED", SummaryJSON: `{}`,
-	}, nil); err != nil {
+	}, []store.UpdateJobTargetRecord{{
+		JobID: "done", OperationID: "op-stuck", NodeID: "n", Status: "RUNNING",
+	}}); err != nil {
 		t.Fatal(err)
+	}
+	if running, err := s.HasRunningUpdateJob(ctx); err != nil || !running {
+		t.Fatalf("terminal job with RUNNING target: running=%v err=%v", running, err)
 	}
 	if err := s.InsertUpdateJob(ctx, store.UpdateJobRecord{
 		JobID: "run", Operator: "a", SourceAgent: "n", PinJSON: `{}`,
@@ -216,7 +221,7 @@ func TestUpdateJob_ListRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 	ids, err := s.ListRunningUpdateJobIDs(ctx)
-	if err != nil || len(ids) != 1 || ids[0] != "run" {
+	if err != nil || len(ids) != 2 || ids[0] != "done" || ids[1] != "run" {
 		t.Fatalf("%v %v", ids, err)
 	}
 	list, err := s.ListUpdateJobs(ctx, 1)

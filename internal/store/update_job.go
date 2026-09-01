@@ -170,19 +170,36 @@ func (s *Store) ListUpdateJobs(ctx context.Context, limit int) ([]UpdateJobRecor
 	return out, nil
 }
 
-// HasRunningUpdateJob reports whether a RUNNING job exists on this entry.
+// HasRunningUpdateJob reports whether a RUNNING job or in-flight target exists
+// on this entry.
 func (s *Store) HasRunningUpdateJob(ctx context.Context) (bool, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM update_jobs WHERE status = 'RUNNING'`).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(1)
+		FROM update_jobs j
+		WHERE j.status = 'RUNNING' OR EXISTS (
+			SELECT 1 FROM update_job_targets t
+			WHERE t.job_id = j.job_id AND t.status = 'RUNNING'
+		)
+	`).Scan(&n)
 	if err != nil {
 		return false, fmt.Errorf("has running update job: %w", err)
 	}
 	return n > 0, nil
 }
 
-// ListRunningUpdateJobIDs returns job_ids currently RUNNING.
+// ListRunningUpdateJobIDs returns RUNNING jobs and terminal jobs left with an
+// in-flight target by an older worker. The latter are repaired during Resume.
 func (s *Store) ListRunningUpdateJobIDs(ctx context.Context) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT job_id FROM update_jobs WHERE status = 'RUNNING' ORDER BY created_at ASC, job_id ASC`)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT j.job_id
+		FROM update_jobs j
+		WHERE j.status = 'RUNNING' OR EXISTS (
+			SELECT 1 FROM update_job_targets t
+			WHERE t.job_id = j.job_id AND t.status = 'RUNNING'
+		)
+		ORDER BY j.created_at ASC, j.job_id ASC
+	`)
 	if err != nil {
 		return nil, fmt.Errorf("list running update jobs: %w", err)
 	}

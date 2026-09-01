@@ -193,7 +193,8 @@ func (e *Engine) Start(ctx context.Context) {
 	})
 }
 
-// Resume re-enqueues RUNNING jobs after process restart.
+// Resume re-enqueues RUNNING jobs after process restart and repairs terminal
+// jobs left with an in-flight target by older workers.
 func (e *Engine) Resume(ctx context.Context) error {
 	if e == nil || e.DB == nil {
 		return nil
@@ -372,20 +373,13 @@ func (e *Engine) runJob(ctx context.Context, jobID string) {
 	if err != nil {
 		return
 	}
-	if j.Status != JobRunning {
+	if j.Status != JobRunning && !hasRunningTarget(j.Targets) {
 		return
 	}
 	for _, t := range j.Targets {
 		cur, err := e.Get(ctx, jobID)
 		if err != nil {
 			return
-		}
-		if cur.CancelRemaining {
-			_ = e.cancelPending(ctx, jobID, cur.Targets)
-			break
-		}
-		if haltRemaining(cur.Targets) {
-			break
 		}
 		var live Target
 		found := false
@@ -396,8 +390,27 @@ func (e *Engine) runJob(ctx context.Context, jobID string) {
 				break
 			}
 		}
-		if !found || live.Status != TargetPending {
+		if !found {
 			continue
+		}
+		if live.Status == TargetRunning {
+			if err := e.reconcileRunningTarget(ctx, jobID, cur.Pin, live); err != nil {
+				return
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			continue
+		}
+		if live.Status != TargetPending {
+			continue
+		}
+		if cur.CancelRemaining {
+			_ = e.cancelPending(ctx, jobID, cur.Targets)
+			break
+		}
+		if haltRemaining(cur.Targets) {
+			break
 		}
 		e.runTarget(ctx, jobID, cur.Pin, live)
 		if ctx.Err() != nil {
@@ -405,6 +418,31 @@ func (e *Engine) runJob(ctx context.Context, jobID string) {
 		}
 	}
 	e.finalize(ctx, jobID)
+}
+
+func hasRunningTarget(targets []Target) bool {
+	for _, t := range targets {
+		if t.Status == TargetRunning {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *Engine) reconcileRunningTarget(ctx context.Context, jobID string, pin Pin, t Target) error {
+	waitErr := e.waitReady(ctx, t.NodeID, pin)
+	if ctx.Err() != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return ctx.Err()
+	}
+	if waitErr != nil {
+		t.Status = TargetTimeout
+		t.Error = waitErr.Error()
+	} else {
+		t.Status = TargetSuccess
+		t.Error = ""
+	}
+	t.FinishedAt = time.Now().UTC()
+	return e.DB.UpdateUpdateJobTarget(ctx, jobID, t.OperationID, toStoreJobTarget(jobID, t))
 }
 
 func haltRemaining(targets []Target) bool {
@@ -558,6 +596,9 @@ func (e *Engine) finalize(ctx context.Context, jobID string) {
 		return
 	}
 	status := RollupJob(j.Targets, true)
+	if status == JobRunning {
+		return
+	}
 	summary := CountJobSummary(j.Targets)
 	sumJSON, err := json.Marshal(summary)
 	if err != nil {
