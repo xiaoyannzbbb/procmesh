@@ -27,6 +27,11 @@ const (
 	tailChunk        = 32 * 1024
 )
 
+var rotationGenerations = struct {
+	sync.RWMutex
+	byPath map[string]uint64
+}{byPath: make(map[string]uint64)}
+
 // DiskUsage reports used disk percent for root.
 type DiskUsage func(root string) (usedPercent float64, err error)
 
@@ -68,7 +73,7 @@ type RotatePolicy struct {
 	Compress bool
 }
 
-// Rotate enforces pol on path: size-shift, delaycompress path.2+, cap files, drop aged.
+// Rotate enforces pol on path: size archive, delaycompress path.2+, cap files, drop aged.
 // Never touches store.db, raft/, cluster/, or runtime/.
 func Rotate(path string, pol RotatePolicy, now time.Time) error {
 	if path == "" || rotateProtected(path) {
@@ -136,10 +141,49 @@ func rotateBySize(path string, pol RotatePolicy) error {
 	if maxFiles < 1 {
 		return recreateEmpty(path)
 	}
-	if err := os.Rename(path, path+".1"); err != nil {
-		return fmt.Errorf("rotate rename: %w", err)
+	return archiveAndTruncate(path)
+}
+
+func archiveAndTruncate(path string) error {
+	src, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		return fmt.Errorf("open log for rotation: %w", err)
 	}
-	return recreateEmpty(path)
+	defer src.Close()
+
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".rotate-*")
+	if err != nil {
+		return fmt.Errorf("create log archive: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	closeTmp := func() {
+		if tmp != nil {
+			_ = tmp.Close()
+			tmp = nil
+		}
+	}
+	defer closeTmp()
+
+	if err := tmp.Chmod(fileMode); err != nil {
+		return fmt.Errorf("chmod log archive: %w", err)
+	}
+	if _, err := io.Copy(tmp, src); err != nil {
+		return fmt.Errorf("copy log archive: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		tmp = nil
+		return fmt.Errorf("close log archive: %w", err)
+	}
+	tmp = nil
+	if err := os.Rename(tmpPath, path+".1"); err != nil {
+		return fmt.Errorf("install log archive: %w", err)
+	}
+	if err := src.Truncate(0); err != nil {
+		return fmt.Errorf("truncate current log: %w", err)
+	}
+	markRotated(path)
+	return nil
 }
 
 func recreateEmpty(path string) error {
@@ -151,7 +195,26 @@ func recreateEmpty(path string) error {
 		_ = f.Close()
 		return err
 	}
-	return f.Close()
+	if err := f.Close(); err != nil {
+		return err
+	}
+	markRotated(path)
+	return nil
+}
+
+func markRotated(path string) {
+	path = filepath.Clean(path)
+	rotationGenerations.Lock()
+	rotationGenerations.byPath[path]++
+	rotationGenerations.Unlock()
+}
+
+func rotationGeneration(path string) uint64 {
+	path = filepath.Clean(path)
+	rotationGenerations.RLock()
+	generation := rotationGenerations.byPath[path]
+	rotationGenerations.RUnlock()
+	return generation
 }
 
 func compressArchives(path string) error {
@@ -160,7 +223,7 @@ func compressArchives(path string) error {
 		return err
 	}
 	for _, a := range archs {
-		// delaycompress: child may still hold the just-renamed path.1 inode.
+		// delaycompress keeps the newest archive directly readable until the next rotation.
 		if a.gz || a.index < 2 {
 			continue
 		}

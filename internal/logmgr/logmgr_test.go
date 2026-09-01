@@ -355,6 +355,87 @@ func TestRotate_BySizeAndMaxFiles(t *testing.T) {
 	}
 }
 
+func TestRotate_OpenWriterContinuesInCurrentLog(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "stdout.log")
+	writer, err := os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o640)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+
+	before := strings.Repeat("before-rotation\n", 4)
+	if _, err := writer.WriteString(before); err != nil {
+		t.Fatal(err)
+	}
+	if err := logmgr.Rotate(p, logmgr.RotatePolicy{MaxSize: 32, MaxFiles: 2}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.WriteString("after-rotation\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	lines, err := logmgr.Tail(p, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(lines, "\n") != "after-rotation" {
+		t.Fatalf("current log lines=%q want post-rotation write", lines)
+	}
+	archive, err := os.ReadFile(p + ".1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(archive) != before {
+		t.Fatalf("archive=%q want only pre-rotation content", archive)
+	}
+}
+
+func TestRotate_OpenWriterRetainsMultipleArchives(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "stdout.log")
+	writer, err := os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o640)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+
+	first := strings.Repeat("first-generation\n", 4)
+	second := strings.Repeat("second-generation\n", 4)
+	if _, err := writer.WriteString(first); err != nil {
+		t.Fatal(err)
+	}
+	policy := logmgr.RotatePolicy{MaxSize: 32, MaxFiles: 2}
+	if err := logmgr.Rotate(p, policy, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.WriteString(second); err != nil {
+		t.Fatal(err)
+	}
+	if err := logmgr.Rotate(p, policy, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.WriteString("current-generation\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	current, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newest, err := os.ReadFile(p + ".1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldest, err := os.ReadFile(p + ".2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(current) != "current-generation\n" || string(newest) != second || string(oldest) != first {
+		t.Fatalf("current=%q archive.1=%q archive.2=%q", current, newest, oldest)
+	}
+}
+
 func TestRotate_MaxAgeDeletes(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "stdout.log")

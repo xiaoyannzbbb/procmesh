@@ -653,6 +653,60 @@ func TestReconcile_WritesStdoutToInstanceLog(t *testing.T) {
 	}
 }
 
+func TestRotateLogs_RunningProcessContinuesInCurrentLog(t *testing.T) {
+	ctx := context.Background()
+	m, st, layout := newTestManager(t)
+	t.Cleanup(func() { killManaged(t, st, "p1") })
+	continueFile := filepath.Join(t.TempDir(), "continue")
+	spec := process.ProcessSpec{
+		ProcessID: "p1",
+		Name:      "rotating-log",
+		Command:   "/bin/sh",
+		Args: []string{
+			"-c",
+			"printf 'before-rotation-before-rotation-before-rotation\\n'; while [ ! -f \"$1\" ]; do sleep 0.01; done; printf 'after-rotation\\n'; exec sleep 60",
+			"sh",
+			continueFile,
+		},
+		Instances: 1,
+		Log:       process.LogPolicy{MaxSize: 32, MaxFiles: 2},
+	}
+	if _, err := m.ApplySpec(ctx, spec, 0, "op-c", "t", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetDesired(ctx, "p1", process.DesiredRunning, "op-s", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _ := logmgr.InstancePaths(layout, "p1", process.MakeInstanceID("p1", 0))
+	waitFileContains(t, stdout, "before-rotation")
+	if err := m.RotateLogs(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(continueFile, []byte("continue"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	waitFileContains(t, stdout, "after-rotation")
+
+	lines, err := logmgr.Tail(stdout, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(lines, "\n") != "after-rotation" {
+		t.Fatalf("current log lines=%q want post-rotation process output", lines)
+	}
+	archive, err := os.ReadFile(stdout + ".1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(archive), "before-rotation") || strings.Contains(string(archive), "after-rotation") {
+		t.Fatalf("archive must contain only pre-rotation output, got %q", archive)
+	}
+}
+
 func TestReconcile_EmergencyStdioDevNullAndAudit(t *testing.T) {
 	ctx := context.Background()
 	root := shortRoot(t)

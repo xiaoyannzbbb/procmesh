@@ -62,7 +62,7 @@ func TestFollow_FromEndSkipsExisting(t *testing.T) {
 	}
 }
 
-func TestFollow_ReopensAfterRenameRotate(t *testing.T) {
+func TestFollow_ContinuesAfterRotate(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "stdout.log")
 	if err := os.WriteFile(p, []byte("old\n"), 0o644); err != nil {
@@ -90,7 +90,7 @@ func TestFollow_ReopensAfterRenameRotate(t *testing.T) {
 	}
 }
 
-func TestFollow_FromEndReopensAfterRenameRotate(t *testing.T) {
+func TestFollow_FromEndContinuesAfterRotate(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "stdout.log")
 	if err := os.WriteFile(p, []byte("old\n"), 0o644); err != nil {

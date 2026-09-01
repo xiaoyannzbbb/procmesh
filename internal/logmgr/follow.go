@@ -27,8 +27,9 @@ func Follow(ctx context.Context, path string, fromEnd bool) (<-chan []byte, <-ch
 
 func follow(ctx context.Context, path string, fromEnd bool, dataCh chan<- []byte) error {
 	var (
-		f   *os.File
-		off int64
+		f          *os.File
+		off        int64
+		generation uint64
 	)
 	defer func() {
 		if f != nil {
@@ -53,6 +54,7 @@ func follow(ctx context.Context, path string, fromEnd bool, dataCh chan<- []byte
 				return err
 			}
 			f = opened
+			generation = rotationGeneration(path)
 			if fromEnd {
 				n, err := f.Seek(0, io.SeekEnd)
 				if err != nil {
@@ -63,6 +65,13 @@ func follow(ctx context.Context, path string, fromEnd bool, dataCh chan<- []byte
 			} else if _, err := f.Seek(off, io.SeekStart); err != nil {
 				return err
 			}
+		}
+		if current := rotationGeneration(path); current != generation {
+			off = 0
+			if _, err := f.Seek(0, io.SeekStart); err != nil {
+				return err
+			}
+			generation = current
 		}
 
 		n, err := f.Read(buf)
@@ -98,7 +107,7 @@ func follow(ctx context.Context, path string, fromEnd bool, dataCh chan<- []byte
 }
 
 // reopenIfRotated reports whether the caller must close f and reopen path.
-// Rotate renames the inode at path; an in-place truncate stays on the same fd.
+// It also rewinds the existing fd when the file was truncated in place.
 func reopenIfRotated(f *os.File, path string, off *int64) (bool, error) {
 	st, err := os.Stat(path)
 	if err != nil {
