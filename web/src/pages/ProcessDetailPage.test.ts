@@ -1,6 +1,9 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import { VueQueryPlugin, QueryClient } from "@tanstack/vue-query";
 import { flushPromises, mount } from "@vue/test-utils";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import i18next from "i18next";
 import I18NextVue from "i18next-vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -321,5 +324,29 @@ describe("ProcessDetailPage history", () => {
       expect(svg.html()).not.toContain(String(GOSSIP_CPU));
     }
     expect(wrapper.findAll("polyline")).toHaveLength(0);
+  });
+});
+
+describe("ProcessDetailPage logs layout", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    await i18n.addResourceBundle("en", "common", {
+      processDetail: processDetailEn,
+    });
+  });
+
+  it("fills remaining viewport height when the logs tab is open", async () => {
+    const wrapper = await mountProcessDetailPage(sampleProcess());
+    const logsTab = wrapper.findAll('[role="tab"]').find((tab) => tab.text() === "Logs");
+    expect(logsTab).toBeTruthy();
+    await logsTab!.trigger("click");
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.get(".page").classes()).toContain("logs-fill");
+  });
+
+  it("sizes the logs page against the remaining viewport height", () => {
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "ProcessDetailPage.vue"), "utf8");
+    expect(src).toMatch(/\.logs-fill[\s\S]*100dvh/);
   });
 });

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import { withTarget } from "../lib/headers";
 import { useLogClient } from "../lib/rpc";
 import { session } from "../lib/session";
 import { useI18n } from "../lib/useI18n";
+import { isPinnedToBottom, pinToBottom } from "./logWindowScroll";
 import { formatRemoteError } from "./processView";
 
 const { t } = useI18n();
@@ -26,6 +27,8 @@ const logText = ref("");
 const errorText = ref("");
 const streaming = ref(false);
 const busy = ref(false);
+const logWindow = ref<HTMLElement | null>(null);
+const followBottom = ref(true);
 let abort: AbortController | null = null;
 
 const canDownload = computed(() => (session.value?.permissions ?? []).includes("process.logs.download"));
@@ -36,6 +39,29 @@ function stopStream(): void {
   abort = null;
   streaming.value = false;
 }
+
+function setLogWindow(el: Element | null): void {
+  logWindow.value = el instanceof HTMLElement ? el : null;
+}
+
+function onLogScroll(): void {
+  const el = logWindow.value;
+  if (!el) {
+    return;
+  }
+  followBottom.value = isPinnedToBottom(el);
+}
+
+function stickToBottomIfFollowing(): void {
+  const el = logWindow.value;
+  if (el && followBottom.value) {
+    pinToBottom(el);
+  }
+}
+
+watch(logText, () => {
+  stickToBottomIfFollowing();
+}, { flush: "post" });
 
 onUnmounted(() => {
   stopStream();
@@ -179,22 +205,28 @@ void tail();
       {{ t("processLogs.stderrMergePending") }}
     </p>
     <p v-if="errorText" class="error" role="alert">{{ errorText }}</p>
-    <pre class="log-window" tabindex="0">{{ logText }}</pre>
+    <pre :ref="setLogWindow" class="log-window" tabindex="0" @scroll="onLogScroll">{{ logText }}</pre>
   </section>
 </template>
 
 <style scoped>
 .card {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: var(--color-card);
   padding: 1.25rem;
+  overflow: hidden;
 }
 .title-row {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
   justify-content: space-between;
+  flex-shrink: 0;
   gap: 0.75rem;
   margin-bottom: 0.75rem;
 }
@@ -221,18 +253,20 @@ h2 {
   min-width: 8rem;
 }
 .muted {
+  flex-shrink: 0;
   color: var(--color-muted);
   font-size: 0.875rem;
 }
 .error {
+  flex-shrink: 0;
   margin: 0 0 0.75rem;
   color: var(--color-danger);
   font-size: 0.875rem;
 }
 .log-window {
+  flex: 1;
   margin: 0;
-  min-height: 16rem;
-  max-height: 28rem;
+  min-height: 0;
   overflow: auto;
   padding: 0.75rem;
   border: 1px solid var(--color-border);

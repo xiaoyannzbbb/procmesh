@@ -251,7 +251,7 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
 </script>
 
 <template>
-  <div class="page">
+  <div class="page" :class="{ 'logs-fill': tab === 'logs' }">
     <div class="head">
       <div>
         <RouterLink class="back" to="/processes">{{ t("processDetail.back") }}</RouterLink>
@@ -519,6 +519,19 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
   display: flex;
   flex-direction: column;
   gap: 1rem;
+}
+.logs-fill {
+  height: calc(100dvh - 2rem);
+  min-height: 0;
+  overflow: hidden;
+}
+.logs-fill > :not(.card) {
+  flex-shrink: 0;
+}
+@media (max-width: 768px) {
+  .logs-fill {
+    height: calc(100dvh - 5.5rem);
+  }
 }
 .head {
   display: flex;
