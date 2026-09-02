@@ -84,10 +84,11 @@
 - `web/src/components/LanguageSwitcher.vue`
 - `web/src/components/LanguageSwitcher.test.ts`
 
-**Scripts (3):**
+**Scripts (4):**
 - `web/scripts/generate-i18n-types.ts`
 - `web/scripts/check-i18n-completeness.js`
-- `web/scripts/analyze-bundle.js`
+- `web/scripts/check-bundle-budget.js`
+- `web/scripts/precompress-dist.js`
 
 **Backend (4):**
 - `proto/procmesh/v1/errors.proto`

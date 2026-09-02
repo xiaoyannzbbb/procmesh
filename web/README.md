@@ -35,6 +35,10 @@ npm run i18n:check
 npm run analyze
 ```
 
+Production builds enforce a `170 KiB` gzip budget for the complete login and
+overview critical payloads. The build also emits precompressed `.gz` files for
+the embedded Go server.
+
 ## i18n Support
 
 See [docs/I18N_GUIDE.md](docs/I18N_GUIDE.md) for detailed documentation.

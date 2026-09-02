@@ -6,6 +6,7 @@ import i18next from "i18next";
 import I18NextVue from "i18next-vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import zhCommon from "../../public/locales/zh/common.json";
+import zhFeatures from "../../public/locales/zh/features.json";
 import { ErrorInfoSchema, ProcessSpecSchema } from "../gen/procmesh/v1/api_pb";
 import { session } from "../lib/session";
 import ProcessConfigPanel from "./ProcessConfigPanel.vue";
@@ -18,9 +19,10 @@ beforeEach(async () => {
   await i18n.init({
     lng: "en",
     fallbackLng: "en",
+    fallbackNS: ["features"],
     resources: {
       en: {
-        common: {
+        features: {
           processConfig: {
             conflictBanner: "409 Conflict — reload and retry",
             logPathPending: "Log path will apply after restart",
@@ -68,7 +70,7 @@ beforeEach(async () => {
           },
         },
       },
-      zh: { common: zhCommon },
+      zh: { common: zhCommon, features: zhFeatures },
     },
   });
 });

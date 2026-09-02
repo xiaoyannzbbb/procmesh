@@ -14,6 +14,7 @@ export default defineConfig({
   build: {
     outDir: "../internal/web/dist",
     emptyOutDir: true,
+    manifest: true,
     rollupOptions: {
       output: {
         manualChunks: {
@@ -21,13 +22,14 @@ export default defineConfig({
             "i18next",
             "i18next-vue",
             "i18next-browser-languagedetector",
+            "i18next-http-backend",
           ],
           "vue-core": ["vue", "vue-router"],
           connect: ["@connectrpc/connect", "@connectrpc/connect-web"],
         },
       },
     },
-    chunkSizeWarningLimit: 600,
+    chunkSizeWarningLimit: 250,
   },
   server: {
     port: 5173,

@@ -119,8 +119,14 @@ const actionText = formatAuditAction(event.action, event.metadata)
 |-----------|---------|---------|
 | `common` | UI labels, navigation, actions | Preloaded |
 | `errors` | Error codes and messages | Preloaded |
+| `features` | Non-overview page copy | Lazy (route fallback) |
 | `process` | Process states and labels | Lazy (route) |
 | `audit` | Audit action descriptions | Lazy (route) |
+
+Production loads namespaces from `/locales/{lang}/{namespace}.json` through the
+i18next HTTP backend. Keep login, navigation, and overview copy in `common`;
+place copy used only by other pages in `features` so it stays out of the initial
+payload. Existing common-style keys resolve through the `features` fallback.
 
 ## Adding a New Language
 

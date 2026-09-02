@@ -5,7 +5,9 @@ import I18NextVue from "i18next-vue";
 import { nextTick } from "vue";
 import { beforeEach, describe, expect, it } from "vitest";
 import enCommon from "../../public/locales/en/common.json";
+import enFeatures from "../../public/locales/en/features.json";
 import zhCommon from "../../public/locales/zh/common.json";
+import zhFeatures from "../../public/locales/zh/features.json";
 import { ProcessSpecSchema } from "../gen/procmesh/v1/api_pb";
 import {
   processConfigFormToSpec,
@@ -182,10 +184,11 @@ describe("ProcessConfigForm translations", () => {
     const resourceI18n = i18next.createInstance();
     await resourceI18n.init({
       defaultNS: "common",
+      fallbackNS: ["features"],
       fallbackLng: false,
       resources: {
-        en: { common: enCommon },
-        zh: { common: zhCommon },
+        en: { common: enCommon, features: enFeatures },
+        zh: { common: zhCommon, features: zhFeatures },
       },
     });
 

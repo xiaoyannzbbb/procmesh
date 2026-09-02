@@ -1,0 +1,1 @@
+import{L as r}from"./clusterView-vmtcKXKF.js";function a(e){return!e||e.freshness!==r?!0:e.disableRemoteCreate}function u(e){return!e||e.freshness!==r?!0:e.disableRemoteUpdate}function f(e){return!e||e.freshness!==r?!0:e.disableRemoteDelete}function n(e,t){return t!=="STOPPED"?!1:e==="STOPPED"||e==="FATAL"||e==="UNKNOWN"}export{u as a,f as b,n as p,a as r};

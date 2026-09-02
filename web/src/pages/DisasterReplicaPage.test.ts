@@ -505,10 +505,13 @@ describe("cluster backup and replication clients", () => {
 });
 
 describe("DisasterReplicaPage", () => {
-  it("registers the /disaster-replica route", () => {
+  it("registers and lazy-loads the /disaster-replica route", async () => {
     const resolved = appRouter.resolve("/disaster-replica");
     expect(resolved.matched.some((record) => record.path === "/disaster-replica")).toBe(true);
-    expect(resolved.matched.some((record) => record.components?.default === DisasterReplicaPage)).toBe(true);
+    const component = resolved.matched.find((record) => record.path === "/disaster-replica")?.components?.default;
+    expect(component).toBeTypeOf("function");
+    const loaded = await (component as () => Promise<{ default: typeof DisasterReplicaPage }>)();
+    expect(loaded.default).toBe(DisasterReplicaPage);
   });
 
   it("mounts a permission-gated workflow when replication.read is present", async () => {

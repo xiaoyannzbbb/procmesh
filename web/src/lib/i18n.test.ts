@@ -34,12 +34,14 @@ describe('i18n configuration', () => {
     expect(detection?.caches).toContain('localStorage')
   })
 
-  it('preloads all namespaces with inline resources', () => {
-    const resources = i18n.options.resources
-    expect(resources?.en).toBeDefined()
-    expect(resources?.zh).toBeDefined()
-    expect(resources?.en?.common).toBeDefined()
-    expect(resources?.zh?.common).toBeDefined()
+  it('loads only core namespaces through the HTTP backend', () => {
+    expect(i18n.options.resources).toBeUndefined()
+    expect(i18n.options.ns).toEqual(expect.arrayContaining(['common', 'errors']))
+    expect(i18n.options.ns).not.toEqual(expect.arrayContaining(['process', 'audit']))
+    expect(i18n.options.fallbackNS).toEqual(expect.arrayContaining(['features']))
+    expect(i18n.options.backend).toMatchObject({
+      loadPath: '/locales/{{lng}}/{{ns}}.json',
+    })
   })
 
   it('disables escapeValue for interpolation', () => {

@@ -1,0 +1,1 @@
+import{d as e,c as a,o as s}from"./vue-core-Douva3BT.js";import{_ as o}from"./_plugin-vue_export-helper-BKQXLrhg.js";const r="/favicon.svg",c=["width","height"],n=e({__name:"BrandMark",props:{size:{default:28}},setup(t){return(i,_)=>(s(),a("img",{class:"brand-mark",src:r,width:t.size,height:t.size,alt:""},null,8,c))}}),p=o(n,[["__scopeId","data-v-7761ca7f"]]);export{p as B};

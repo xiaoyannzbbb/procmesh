@@ -1,0 +1,1 @@
+import{u as a}from"./_plugin-vue_export-helper-BKQXLrhg.js";function u(){const{t}=a();return{translateDesiredState:e=>t(`process:desiredState.${e}`,{defaultValue:e}),translateObservedState:e=>t(`process:observedState.${e}`,{defaultValue:e}),translateHealthState:e=>t(`process:healthState.${e}`,{defaultValue:e})}}export{u};

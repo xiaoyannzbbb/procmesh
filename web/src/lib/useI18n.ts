@@ -1,6 +1,5 @@
 import { useTranslation } from 'i18next-vue'
 import { computed } from 'vue'
-import { i18n } from './i18n'
 
 export function useI18n() {
   const { t, i18next } = useTranslation('common')
@@ -22,6 +21,3 @@ export function useI18n() {
     setLanguage,
   }
 }
-
-// Preload errors namespace on module load
-i18n.loadNamespaces(['errors'])

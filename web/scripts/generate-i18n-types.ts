@@ -45,7 +45,12 @@ function generateTypes() {
 
   for (const namespace of namespaces) {
     const filePath = path.join(localesDir, `${namespace}.json`)
-    const content = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
+    let content = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
+    if (namespace === 'common') {
+      const fallbackPath = path.join(localesDir, 'features.json')
+      const fallback = JSON.parse(fs.readFileSync(fallbackPath, 'utf-8'))
+      content = { ...fallback, ...content }
+    }
     const keys = flattenKeys(content)
 
     types.push(`      ${namespace}: {`)

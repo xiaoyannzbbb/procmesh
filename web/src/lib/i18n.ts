@@ -1,36 +1,28 @@
 import i18n from 'i18next'
 import I18NextVue from 'i18next-vue'
 import LanguageDetector from 'i18next-browser-languagedetector'
-import { loadNamespace } from './i18nBackend'
+import HttpBackend from 'i18next-http-backend'
 
-i18n
+const i18nReady = i18n
+  .use(HttpBackend)
   .use(LanguageDetector)
   .init({
     fallbackLng: 'en',
     supportedLngs: ['en', 'zh'],
     defaultNS: 'common',
-    ns: ['common', 'errors', 'process', 'audit'],
+    ns: ['common', 'errors'],
+    fallbackNS: ['features'],
     load: 'languageOnly',
+    maxRetries: 0,
+
+    backend: {
+      loadPath: `${import.meta.env.BASE_URL}locales/{{lng}}/{{ns}}.json`,
+    },
 
     detection: {
       order: ['localStorage', 'navigator'],
       caches: ['localStorage'],
       lookupLocalStorage: 'procmesh_language',
-    },
-
-    resources: {
-      en: {
-        common: loadNamespace('en', 'common'),
-        errors: loadNamespace('en', 'errors'),
-        process: loadNamespace('en', 'process'),
-        audit: loadNamespace('en', 'audit'),
-      },
-      zh: {
-        common: loadNamespace('zh', 'common'),
-        errors: loadNamespace('zh', 'errors'),
-        process: loadNamespace('zh', 'process'),
-        audit: loadNamespace('zh', 'audit'),
-      },
     },
 
     interpolation: {
@@ -64,4 +56,4 @@ const i18nWithMethods: I18nInstance = {
   },
 }
 
-export { i18n, I18NextVue, i18nWithMethods }
+export { i18n, i18nReady, I18NextVue, i18nWithMethods }
