@@ -402,15 +402,16 @@ function statusTone(eligible: boolean, skipReason: string, freshness: string): s
     return "warn";
   }
   if (eligible) {
-    return "ok";
+    return "warn";
   }
   switch (skipReason) {
     case "FAILED":
       return "danger";
+    case "CURRENT":
+      return "ok";
     case "BUSY":
     case "STALE":
     case "SUSPECT":
-    case "CURRENT":
     case "TIMEOUT":
     case "UNAVAILABLE":
     case "CHECK_FAILED":
@@ -775,10 +776,10 @@ onUnmounted(() => {
         <p class="subtitle">{{ subtitle }}</p>
       </div>
       <div class="header-actions">
-        <div v-if="canManageCluster" class="cluster-cta">
           <span v-if="clusterDisableReason" id="cluster-update-reason" class="muted cluster-disabled-hint">
             {{ clusterDisableReason }}
           </span>
+        <div v-if="canManageCluster" class="cluster-cta">
           <button
             type="button"
             class="btn btn-primary cursor-pointer"

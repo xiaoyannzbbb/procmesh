@@ -516,6 +516,22 @@ describe("UpdatesPage", () => {
     expect(unavailRow.text()).not.toContain("Agent does not support in-app update");
   });
 
+  it("uses green for already-current and yellow for updatable", async () => {
+    const { wrapper } = await mountUpdates();
+    const currentBadges = wrapper.findAll('[data-node="n-current"] [data-status]');
+    const eligibleBadges = wrapper.findAll('[data-node="n-eligible"] [data-status]');
+    expect(currentBadges.length).toBeGreaterThan(0);
+    expect(eligibleBadges.length).toBeGreaterThan(0);
+    for (const badge of currentBadges) {
+      expect(badge.classes()).toContain("status-ok");
+      expect(badge.classes()).not.toContain("status-warn");
+    }
+    for (const badge of eligibleBadges) {
+      expect(badge.classes()).toContain("status-warn");
+      expect(badge.classes()).not.toContain("status-ok");
+    }
+  });
+
   it("shows last_updated relative time next to FreshnessBadge", async () => {
     const { wrapper } = await mountUpdates();
     const staleRow = wrapper.get('[data-node="n-stale"]');
