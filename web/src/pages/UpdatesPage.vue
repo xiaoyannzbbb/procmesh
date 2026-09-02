@@ -2,7 +2,7 @@
 /* eslint-disable i18next/no-literal-string -- Template enums, data-* hooks, and comparison literals are not visible copy. */
 import { Code, ConnectError } from "@connectrpc/connect";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
-import { ArrowUpCircle, ChevronDown, ChevronRight, Layers, LoaderCircle, RefreshCw, TriangleAlert } from "lucide-vue-next";
+import { ArrowUpCircle, ChevronDown, ChevronRight, Github, Layers, LoaderCircle, RefreshCw, TriangleAlert } from "lucide-vue-next";
 import { computed, onUnmounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import ConfirmDialog from "../components/ConfirmDialog.vue";
@@ -237,6 +237,20 @@ const subtitle = computed(() => {
     return t("updates.latestUnknown");
   }
   return t("updates.subtitle", { count: nodes.value.length });
+});
+
+function isGithubOwnerRepo(repository: string): boolean {
+  return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository);
+}
+
+const githubReleaseUrl = computed(() => {
+  const tag = latestTag.value.trim();
+  const repo = String(checkLatestQuery.data.value?.repository ?? "").trim();
+  if (!tag || !isGithubOwnerRepo(repo)) {
+    return "";
+  }
+  const [owner, name] = repo.split("/");
+  return `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/releases/tag/${encodeURIComponent(tag)}`;
 });
 
 const isSelfTarget = computed(() => {
@@ -773,7 +787,21 @@ onUnmounted(() => {
       <div>
         <div class="eyebrow">{{ t("updates.eyebrow") }}</div>
         <h1>{{ t("updates.title") }}</h1>
-        <p class="subtitle">{{ subtitle }}</p>
+        <p class="subtitle">
+          <span>{{ subtitle }}</span>
+          <a
+            v-if="githubReleaseUrl"
+            class="github-release-link cursor-pointer"
+            data-action="github-release"
+            :href="githubReleaseUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+            :aria-label="t('updates.githubRelease', { tag: latestTag })"
+            :title="t('updates.githubRelease', { tag: latestTag })"
+          >
+            <Github :size="16" aria-hidden="true" />
+          </a>
+        </p>
       </div>
       <div class="header-actions">
           <span v-if="clusterDisableReason" id="cluster-update-reason" class="muted cluster-disabled-hint">
@@ -1227,10 +1255,36 @@ h1 {
 }
 
 .subtitle {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
   margin: 0.3rem 0 0;
   color: var(--color-muted);
   font-size: 0.875rem;
   line-height: 1.5;
+}
+
+.github-release-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.75rem;
+  height: 1.75rem;
+  margin: -0.25rem 0;
+  color: var(--color-muted);
+  border-radius: 0.375rem;
+}
+
+.github-release-link:hover {
+  color: var(--color-text);
+  background: color-mix(in srgb, var(--color-text) 6%, transparent);
+  text-decoration: none;
+}
+
+.github-release-link:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 .header-actions {

@@ -21,6 +21,7 @@ const updatesI18n = {
   subtitle: "{{count}} nodes",
   latest: "Latest pin: {{tag}}",
   latestUnknown: "Latest pin unavailable",
+  githubRelease: "View {{tag}} on GitHub",
   loading: "Loading node update status…",
   empty: "No nodes",
   emptyHint: "Join agents to this cluster to see update eligibility.",
@@ -477,6 +478,39 @@ async function mountUpdates(opts: {
 }
 
 describe("UpdatesPage", () => {
+  it("links the latest pin to the GitHub release page", async () => {
+    const { wrapper } = await mountUpdates({
+      latestTag: "v0.1.37",
+      checkLatest: vi.fn().mockResolvedValue({
+        repository: "xiaoyannzbbb/procmesh",
+        tag: "v0.1.37",
+        checksums: defaultPin.checksums,
+        checkError: false,
+      }),
+    });
+    const link = wrapper.get('[data-action="github-release"]');
+    expect(wrapper.get(".subtitle").text()).toContain("Latest pin: v0.1.37");
+    expect(link.attributes("href")).toBe(
+      "https://github.com/xiaoyannzbbb/procmesh/releases/tag/v0.1.37",
+    );
+    expect(link.attributes("target")).toBe("_blank");
+    expect(link.attributes("rel")).toBe("noopener noreferrer");
+    expect(link.attributes("aria-label")).toBe("View v0.1.37 on GitHub");
+  });
+
+  it("hides the GitHub release link when the latest pin is unavailable", async () => {
+    const { wrapper } = await mountUpdates({
+      latestTag: "",
+      checkError: true,
+    });
+    expect(wrapper.find('[data-action="github-release"]').exists()).toBe(false);
+  });
+
+  it("hides the GitHub release link when the repository is not a GitHub owner/repo", async () => {
+    const { wrapper } = await mountUpdates();
+    expect(wrapper.find('[data-action="github-release"]').exists()).toBe(false);
+  });
+
   it("renders an eligible row without apply controls", async () => {
     const { wrapper } = await mountUpdates();
     const row = wrapper.get('[data-node="n-eligible"]');

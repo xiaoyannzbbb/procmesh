@@ -225,6 +225,7 @@ declare module "i18next" {
         'updates.subtitle': string
         'updates.latest': string
         'updates.latestUnknown': string
+        'updates.githubRelease': string
         'updates.loading': string
         'updates.empty': string
         'updates.emptyHint': string

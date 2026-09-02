@@ -224,6 +224,7 @@
     "subtitle": "{{count}} nodes",
     "latest": "Latest pin: {{tag}}",
     "latestUnknown": "Latest pin unavailable",
+    "githubRelease": "View {{tag}} on GitHub",
     "loading": "Loading node update status…",
     "empty": "No nodes",
     "emptyHint": "Join agents to this cluster to see update eligibility.",
