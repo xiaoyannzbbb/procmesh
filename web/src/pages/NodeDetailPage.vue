@@ -13,7 +13,8 @@ import {
   type HistoryRange,
 } from "../lib/historyChart";
 import { newOperationId } from "../lib/opid";
-import { useMetricsClient, useNodeClient } from "../lib/rpc";
+import { useNodeClient } from "../lib/rpc/cluster";
+import { useMetricsClient } from "../lib/rpc/metrics";
 import { remoteCreateBlocked } from "../lib/remoteProcess";
 import { session } from "../lib/session";
 import { useI18n } from "../lib/useI18n";

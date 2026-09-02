@@ -6,7 +6,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
 import { STALE, UNKNOWN } from "../lib/freshness";
-import { useNodeClient } from "../lib/rpc";
+import { useNodeClient } from "../lib/rpc/cluster";
 import { useI18n } from "../lib/useI18n";
 import { useProcessState } from "../lib/useProcessState";
 import {

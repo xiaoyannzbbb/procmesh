@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useQuery } from "@tanstack/vue-query";
-import { useNodeClient } from "../lib/rpc";
+import { useNodeClient } from "../lib/rpc/cluster";
 import { useI18n } from "../lib/useI18n";
 import { mapNode } from "../pages/clusterView";
 

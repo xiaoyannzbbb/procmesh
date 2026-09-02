@@ -5,11 +5,11 @@ import { computed, nextTick, ref, watch, type ComponentPublicInstance } from "vu
 import { FileCode2, Pencil, RefreshCw } from "lucide-vue-next";
 import { stringify as stringifyYaml } from "yaml";
 import Drawer from "../components/Drawer.vue";
-import { ProcessSpecSchema, type ProcessSpec } from "../gen/procmesh/v1/api_pb";
+import { ProcessSpecSchema, type ProcessSpec } from "../gen/procmesh/v1/process_types_pb";
 import { isConflict } from "../lib/connecterr";
 import { withTarget } from "../lib/headers";
 import { newOperationId } from "../lib/opid";
-import { useConfigClient, useProcessClient } from "../lib/rpc";
+import { useConfigClient, useProcessClient } from "../lib/rpc/process";
 import { session } from "../lib/session";
 import { useI18n } from "../lib/useI18n";
 import ProcessConfigForm from "./ProcessConfigForm.vue";

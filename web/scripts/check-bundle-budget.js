@@ -6,7 +6,7 @@ import { gzipSync } from "node:zlib";
 const defaultDistDir = fileURLToPath(new URL("../../internal/web/dist/", import.meta.url));
 const distDir = process.argv[2] ? resolve(process.cwd(), process.argv[2]) : defaultDistDir;
 const manifest = JSON.parse(readFileSync(join(distDir, ".vite/manifest.json"), "utf8"));
-const budgetBytes = 170 * 1024;
+const kib = 1024;
 
 function collectManifestFiles(entryKeys) {
   const visitedEntries = new Set();
@@ -51,30 +51,51 @@ const localeFiles = {
 };
 
 const profiles = [
-  { name: "login/en", entries: ["src/pages/LoginPage.vue"], locale: "en" },
-  { name: "login/zh", entries: ["src/pages/LoginPage.vue"], locale: "zh" },
+  { name: "login/en", entries: ["src/pages/LoginPage.vue"], locale: "en", budget: 128 * kib },
+  { name: "login/zh", entries: ["src/pages/LoginPage.vue"], locale: "zh", budget: 128 * kib },
   {
     name: "overview/en",
     entries: ["src/components/AppShell.vue", "src/pages/OverviewPage.vue"],
     locale: "en",
+    budget: 155 * kib,
   },
   {
     name: "overview/zh",
     entries: ["src/components/AppShell.vue", "src/pages/OverviewPage.vue"],
     locale: "zh",
+    budget: 155 * kib,
   },
 ];
 
-console.log(`Bundle budget (${formatKiB(budgetBytes)} gzip):`);
+console.log("Bundle budgets (gzip):");
 let failed = false;
 for (const profile of profiles) {
   const files = new Set(coreFiles);
   for (const file of collectManifestFiles(profile.entries)) files.add(file);
   for (const file of localeFiles[profile.locale]) files.add(file);
   const size = compressedSize(files);
-  const status = size <= budgetBytes ? "PASS" : "FAIL";
-  console.log(`  ${status} ${profile.name.padEnd(12)} ${formatKiB(size)}`);
-  failed ||= size > budgetBytes;
+  const status = size <= profile.budget ? "PASS" : "FAIL";
+  console.log(
+    `  ${status} ${profile.name.padEnd(12)} ${formatKiB(size)} / ${formatKiB(profile.budget)}`,
+  );
+  failed ||= size > profile.budget;
+
+  if (profile.name.startsWith("login/")) {
+    const serviceNames = new Set();
+    for (const file of files) {
+      if (!file.endsWith(".js")) continue;
+      const source = readFileSync(join(distDir, file), "utf8");
+      for (const match of source.matchAll(/procmesh\.v1\.([A-Za-z]+Service)/g)) {
+        serviceNames.add(match[1]);
+      }
+    }
+    if (serviceNames.size !== 1 || !serviceNames.has("AuthService")) {
+      console.error(
+        `  FAIL ${profile.name} includes unexpected RPC services: ${[...serviceNames].sort().join(", ") || "none"}`,
+      );
+      failed = true;
+    }
+  }
 }
 
 const baseline = collectManifestFiles(["index.html"]);
@@ -94,7 +115,7 @@ if (asyncEntries[0]) {
 }
 
 if (failed) {
-  console.error(`Initial payload exceeds the ${formatKiB(budgetBytes)} gzip budget.`);
+  console.error("Initial payload or RPC service isolation check failed.");
   process.exitCode = 1;
 } else {
   console.log(`Bundle manifest: ${relative(process.cwd(), join(distDir, ".vite/manifest.json"))}`);

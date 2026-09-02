@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package procmesh.v1;
+
+option go_package = "github.com/qleelulu/procmesh/proto/procmesh/v1;procmeshv1";
+
+import "procmesh/v1/mutation.proto";
+
+message LoginRequest {
+  string username = 1;
+  string password = 2;
+  int64 ttl_seconds = 3; // 0 = default 12h
+}
+message LoginResponse {
+  string session_id = 1;
+  string user_id = 2;
+  string username = 3;
+  int64 expires_unix = 4;
+  string csrf_token = 5;
+}
+
+message LogoutRequest { MutationMeta meta = 1; }
+message LogoutResponse {}
+
+message CreateAPITokenRequest {
+  MutationMeta meta = 1;
+  string name = 2;
+  int64 ttl_seconds = 3; // 0 = 不过期
+}
+message CreateAPITokenResponse {
+  string token_id = 1;
+  string token = 2; // 只返回一次
+  int64 expires_unix = 3;
+}
+
+message RevokeAPITokenRequest {
+  MutationMeta meta = 1;
+  string token_id = 2;
+}
+message RevokeAPITokenResponse {}
+
+message GetMeRequest {}
+message GetMeResponse {
+  string user_id = 1;
+  string username = 2;
+  string csrf_token = 3;
+  int64 expires_unix = 4;
+  repeated string permissions = 5;
+}
+
+message ChangePasswordRequest {
+  MutationMeta meta = 1;
+  string current_password = 2;
+  string new_password = 3;
+}
+message ChangePasswordResponse {}
+
+service AuthService {
+  rpc Login(LoginRequest) returns (LoginResponse);
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+  rpc CreateAPIToken(CreateAPITokenRequest) returns (CreateAPITokenResponse);
+  rpc RevokeAPIToken(RevokeAPITokenRequest) returns (RevokeAPITokenResponse);
+  rpc GetMe(GetMeRequest) returns (GetMeResponse);
+  rpc ChangePassword(ChangePasswordRequest) returns (ChangePasswordResponse);
+}

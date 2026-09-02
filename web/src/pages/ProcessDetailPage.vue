@@ -15,7 +15,9 @@ import {
 } from "../lib/historyChart";
 import { processDeletable, remoteDeleteBlocked, remoteUpdateBlocked } from "../lib/remoteProcess";
 import { newOperationId } from "../lib/opid";
-import { useMetricsClient, useNodeClient, useProcessClient } from "../lib/rpc";
+import { useNodeClient } from "../lib/rpc/cluster";
+import { useMetricsClient } from "../lib/rpc/metrics";
+import { useProcessClient } from "../lib/rpc/process";
 import { session } from "../lib/session";
 import { useI18n } from "../lib/useI18n";
 import { mapNode } from "./clusterView";

@@ -2,7 +2,9 @@
 import { useQuery } from "@tanstack/vue-query";
 import { Search, X } from "lucide-vue-next";
 import { computed, ref } from "vue";
-import { useGroupClient, useNodeClient, useProcessClient } from "../lib/rpc";
+import { useGroupClient } from "../lib/rpc/access";
+import { useNodeClient } from "../lib/rpc/cluster";
+import { useProcessClient } from "../lib/rpc/process";
 import { useI18n } from "../lib/useI18n";
 import { mapNode } from "../pages/clusterView";
 import {

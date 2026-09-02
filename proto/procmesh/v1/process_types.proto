@@ -1,0 +1,102 @@
+syntax = "proto3";
+
+package procmesh.v1;
+
+option go_package = "github.com/qleelulu/procmesh/proto/procmesh/v1;procmeshv1";
+
+
+message Backoff {
+  int64 initial_ms = 1;
+  int64 max_ms = 2;
+  double multiplier = 3;
+}
+
+message RestartPolicy {
+  string mode = 1;            // never | always | on-failure
+  int32 max_retries = 2;
+  int64 retry_window_ms = 3;
+  Backoff backoff = 4;
+}
+
+message HealthCheck {
+  string type = 1;            // alive | http | tcp | exec
+  string url = 2;
+  string method = 3;
+  string address = 4;
+  string command = 5;
+  int32 expected_status = 6;
+  repeated string args = 7;
+  int64 initial_delay_ms = 8;
+  int64 interval_ms = 9;
+  int64 timeout_ms = 10;
+  int32 failure_threshold = 11;
+  int32 success_threshold = 12;
+  bool restart_on_failure = 13;
+  int64 restart_cooldown_ms = 14;
+}
+
+message LogPolicy {
+  int64 max_size = 1;
+  int32 max_files = 2;
+  int64 max_age_seconds = 3;
+  bool compress = 4;
+  string directory = 5;
+  bool redirect_stderr = 6;
+}
+
+message ResourceLimit {
+  int64 cpu_quota_millis = 1;
+  int64 memory_bytes = 2;
+  int64 open_files = 3;
+}
+
+message Dependency {
+  string process_name = 1;
+  string condition = 2;       // STARTED | HEALTHY
+}
+
+message ProcessSpec {
+  string process_id = 1;
+  string name = 2;
+  string owner_agent_id = 3;
+  string group = 4;
+  string command = 5;
+  repeated string args = 6;
+  string working_directory = 7;
+  string run_as_user = 8;
+  map<string, string> environment = 9;
+  int32 instances = 10;
+  bool autostart = 11;
+  string stop_signal = 12;
+  string kill_signal = 13;
+  int64 stop_timeout_ms = 14;
+  int32 startup_priority = 15;
+  RestartPolicy restart = 16;
+  HealthCheck health = 17;
+  LogPolicy log = 18;
+  ResourceLimit resources = 19;
+  repeated Dependency dependencies = 20;
+  int64 latest_revision = 21;
+}
+
+message Instance {
+  string instance_id = 1;
+  int32 ordinal = 2;
+  string desired = 3;
+  string observed = 4;
+  string health = 5;
+  int32 pid = 6;
+  int64 active_revision = 7;
+  int32 restart_count = 8;
+  int32 exit_code = 9;
+  bool has_exit_code = 10;
+  int64 started_unix_ms = 11;
+  bool log_path_pending = 12;
+  string last_error = 13;
+}
+
+message ProcessView {
+  string process_id = 1;
+  ProcessSpec spec = 2;
+  repeated Instance instances = 3;
+}

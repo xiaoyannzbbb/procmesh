@@ -9,7 +9,7 @@ import Toast from "../components/Toast.vue";
 import { appMessage } from "../lib/connecterr";
 import { LIVE, STALE, UNKNOWN, formatAge, type Freshness } from "../lib/freshness";
 import { newOperationId } from "../lib/opid";
-import { useReplicationClient } from "../lib/rpc";
+import { useReplicationClient } from "../lib/rpc/replication";
 import { timezoneLabel, timezonePickerOptions } from "../lib/timezones";
 import { session } from "../lib/session";
 import { useI18n } from "../lib/useI18n";

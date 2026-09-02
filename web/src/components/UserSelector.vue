@@ -2,7 +2,7 @@
 import { useQuery } from "@tanstack/vue-query";
 import { computed, ref } from "vue";
 import { Search, X } from "lucide-vue-next";
-import { useUserClient } from "../lib/rpc";
+import { useUserClient } from "../lib/rpc/access";
 import { useI18n } from "../lib/useI18n";
 import { formatRemoteError } from "../pages/processView";
 

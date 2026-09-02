@@ -1,0 +1,137 @@
+syntax = "proto3";
+
+package procmesh.v1;
+
+option go_package = "github.com/qleelulu/procmesh/proto/procmesh/v1;procmeshv1";
+
+import "procmesh/v1/errors.proto";
+import "procmesh/v1/mutation.proto";
+
+// ClusterBackupService manages durable backup policy and run metadata. It
+// deliberately contains no snapshot payloads or destination credentials.
+message ClusterBackupPolicy {
+  string policy_id = 1;
+  string name = 2;
+  bool enabled = 3;
+  string schedule_cron = 4;
+  string timezone = 5;
+  string target_selector = 6;
+  repeated string target_node_ids = 7;
+  string sink = 8;
+  string destination_profile = 9;
+  int32 retention_keep_last = 10;
+  int32 retention_keep_days = 11;
+  int64 retention_max_bytes = 12;
+  int32 timeout_seconds = 13;
+  int32 max_concurrency = 14;
+  string unavailable_policy = 15;
+  int64 revision = 16;
+}
+
+message ClusterBackupTask {
+  string run_id = 1;
+  string task_id = 2;
+  string node_id = 3;
+  string snapshot_id = 4;
+  string sha256 = 5;
+  string status = 6;
+  int64 bytes = 7;
+  string error_code = 8;
+  string error_summary = 9;
+  uint64 leader_term = 10;
+  int64 updated_unix = 11;
+}
+
+message ClusterBackupRun {
+  string run_id = 1;
+  string policy_id = 2;
+  int64 policy_revision = 3;
+  repeated string target_node_ids = 4;
+  string status = 5;
+  int32 success = 6;
+  int32 failed = 7;
+  int32 unavailable = 8;
+  int32 timeout = 9;
+  int64 created_unix = 10;
+  int64 started_unix = 11;
+  int64 finished_unix = 12;
+  repeated ClusterBackupTask tasks = 13;
+}
+
+message ClusterBackupDestinationHealth {
+  string sink = 1;
+  string destination_profile = 2;
+  string status = 3;
+  string error_summary = 4;
+  int64 checked_unix = 5;
+  string endpoint_host = 6;
+  string node_id = 7;
+}
+
+message CreateClusterBackupPolicyRequest {
+  MutationMeta meta = 1;
+  ClusterBackupPolicy policy = 2;
+}
+message CreateClusterBackupPolicyResponse { ClusterBackupPolicy policy = 1; }
+
+message UpdateClusterBackupPolicyRequest {
+  MutationMeta meta = 1;
+  ClusterBackupPolicy policy = 2;
+}
+message UpdateClusterBackupPolicyResponse { ClusterBackupPolicy policy = 1; }
+
+message DeleteClusterBackupPolicyRequest {
+  MutationMeta meta = 1;
+  string policy_id = 2;
+}
+message DeleteClusterBackupPolicyResponse {}
+
+message ListClusterBackupPoliciesRequest {}
+message ListClusterBackupPoliciesResponse { repeated ClusterBackupPolicy policies = 1; }
+
+message ValidateClusterBackupPolicyRequest { ClusterBackupPolicy policy = 1; }
+message ValidateClusterBackupPolicyResponse {
+  bool valid = 1;
+  repeated ErrorInfo errors = 2;
+}
+
+message StartClusterBackupRunRequest {
+  MutationMeta meta = 1;
+  string policy_id = 2;
+  repeated string target_node_ids = 3;
+}
+message StartClusterBackupRunResponse { ClusterBackupRun run = 1; }
+
+message GetClusterBackupRunRequest { string run_id = 1; }
+message GetClusterBackupRunResponse { ClusterBackupRun run = 1; }
+
+message ListClusterBackupRunsRequest {
+  string policy_id = 1;
+  int32 limit = 2;
+}
+message ListClusterBackupRunsResponse { repeated ClusterBackupRun runs = 1; }
+
+message RetryFailedClusterBackupTasksRequest {
+  MutationMeta meta = 1;
+  string run_id = 2;
+}
+message RetryFailedClusterBackupTasksResponse { ClusterBackupRun run = 1; }
+
+message GetClusterBackupDestinationHealthRequest {
+  string sink = 1;
+  string destination_profile = 2;
+}
+message GetClusterBackupDestinationHealthResponse { ClusterBackupDestinationHealth health = 1; }
+
+service ClusterBackupService {
+  rpc CreatePolicy(CreateClusterBackupPolicyRequest) returns (CreateClusterBackupPolicyResponse);
+  rpc UpdatePolicy(UpdateClusterBackupPolicyRequest) returns (UpdateClusterBackupPolicyResponse);
+  rpc DeletePolicy(DeleteClusterBackupPolicyRequest) returns (DeleteClusterBackupPolicyResponse);
+  rpc ListPolicies(ListClusterBackupPoliciesRequest) returns (ListClusterBackupPoliciesResponse);
+  rpc ValidatePolicy(ValidateClusterBackupPolicyRequest) returns (ValidateClusterBackupPolicyResponse);
+  rpc StartRun(StartClusterBackupRunRequest) returns (StartClusterBackupRunResponse);
+  rpc GetRun(GetClusterBackupRunRequest) returns (GetClusterBackupRunResponse);
+  rpc ListRuns(ListClusterBackupRunsRequest) returns (ListClusterBackupRunsResponse);
+  rpc RetryFailedTasks(RetryFailedClusterBackupTasksRequest) returns (RetryFailedClusterBackupTasksResponse);
+  rpc GetDestinationHealth(GetClusterBackupDestinationHealthRequest) returns (GetClusterBackupDestinationHealthResponse);
+}

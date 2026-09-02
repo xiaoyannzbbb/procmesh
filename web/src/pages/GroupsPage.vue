@@ -7,7 +7,7 @@ import Drawer from "../components/Drawer.vue";
 import NodeSelector from "../components/NodeSelector.vue";
 import Toast from "../components/Toast.vue";
 import { newOperationId } from "../lib/opid";
-import { useGroupClient } from "../lib/rpc";
+import { useGroupClient } from "../lib/rpc/access";
 import { session } from "../lib/session";
 import { useI18n } from "../lib/useI18n";
 import { formatRemoteError } from "./processView";

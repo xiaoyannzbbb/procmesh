@@ -8,7 +8,7 @@ import enCommon from "../../public/locales/en/common.json";
 import enFeatures from "../../public/locales/en/features.json";
 import zhCommon from "../../public/locales/zh/common.json";
 import zhFeatures from "../../public/locales/zh/features.json";
-import { ProcessSpecSchema } from "../gen/procmesh/v1/api_pb";
+import { ProcessSpecSchema } from "../gen/procmesh/v1/process_types_pb";
 import {
   processConfigFormToSpec,
   specToProcessConfigForm,

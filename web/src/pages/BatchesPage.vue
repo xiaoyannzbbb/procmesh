@@ -7,7 +7,7 @@ import BatchTargetPicker from "../components/BatchTargetPicker.vue";
 import Drawer from "../components/Drawer.vue";
 import Toast from "../components/Toast.vue";
 import { newOperationId } from "../lib/opid";
-import { useBatchClient } from "../lib/rpc";
+import { useBatchClient } from "../lib/rpc/batch";
 import { session } from "../lib/session";
 import { useI18n } from "../lib/useI18n";
 import { formatRemoteError } from "./processView";

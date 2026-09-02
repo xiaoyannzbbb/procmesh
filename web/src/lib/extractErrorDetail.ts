@@ -1,5 +1,5 @@
 import { ConnectError } from '@connectrpc/connect'
-import { ErrorInfoSchema } from '../gen/procmesh/v1/api_pb'
+import { ErrorInfoSchema } from '../gen/procmesh/v1/errors_pb'
 
 export interface ErrorDetail {
   code: string

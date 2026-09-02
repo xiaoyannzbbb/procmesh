@@ -5,7 +5,45 @@ import (
 
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/reflect/protoregistry"
 )
+
+func TestGeneratedServicesHaveDomainProtoFiles(t *testing.T) {
+	wantFiles := map[protoreflect.FullName]string{
+		"procmesh.v1.ProcessService":             "procmesh/v1/process.proto",
+		"procmesh.v1.ConfigService":              "procmesh/v1/process.proto",
+		"procmesh.v1.LogService":                 "procmesh/v1/process.proto",
+		"procmesh.v1.NodeService":                "procmesh/v1/cluster.proto",
+		"procmesh.v1.ClusterService":             "procmesh/v1/cluster.proto",
+		"procmesh.v1.AuthService":                "procmesh/v1/auth.proto",
+		"procmesh.v1.UserService":                "procmesh/v1/access.proto",
+		"procmesh.v1.RoleService":                "procmesh/v1/access.proto",
+		"procmesh.v1.GroupService":               "procmesh/v1/access.proto",
+		"procmesh.v1.AuditService":               "procmesh/v1/audit.proto",
+		"procmesh.v1.MetricsService":             "procmesh/v1/metrics.proto",
+		"procmesh.v1.BatchService":               "procmesh/v1/batch.proto",
+		"procmesh.v1.AlertService":               "procmesh/v1/alert.proto",
+		"procmesh.v1.BackupService":              "procmesh/v1/backup.proto",
+		"procmesh.v1.ClusterBackupService":       "procmesh/v1/cluster_backup.proto",
+		"procmesh.v1.ClusterBackupAgentService":  "procmesh/v1/cluster_backup_agent.proto",
+		"procmesh.v1.PeerReplicationService":     "procmesh/v1/peer_replication.proto",
+		"procmesh.v1.DisasterReplicationService": "procmesh/v1/disaster_replication.proto",
+		"procmesh.v1.UpdateService":              "procmesh/v1/update.proto",
+	}
+
+	for name, wantFile := range wantFiles {
+		t.Run(string(name), func(t *testing.T) {
+			desc, err := protoregistry.GlobalFiles.FindDescriptorByName(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := desc.ParentFile().Path(); got != wantFile {
+				t.Fatalf("descriptor file = %q, want %q", got, wantFile)
+			}
+		})
+	}
+}
 
 func TestGeneratedServiceNames(t *testing.T) {
 	if procmeshv1connect.ProcessServiceName != "procmesh.v1.ProcessService" {

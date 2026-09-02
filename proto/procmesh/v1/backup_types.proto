@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package procmesh.v1;
+
+option go_package = "github.com/qleelulu/procmesh/proto/procmesh/v1;procmeshv1";
+
+
+message BackupRevisionRange {
+  string process_id = 1;
+  int64 min_revision = 2;
+  int64 max_revision = 3;
+}
+
+message BackupSnapshot {
+  string snapshot_id = 1;
+  string cluster_id = 2;
+  string node_id = 3;
+  int64 created_unix_ms = 4;
+  repeated string process_ids = 5;
+  repeated BackupRevisionRange revision_ranges = 6;
+  string sha256 = 7;
+  string sink = 8;
+  string location = 9;
+  string source_node_id = 10;
+}
+
+message BackupEntry {
+  BackupSnapshot snapshot = 1;
+  string source_node = 2;
+  string freshness = 3; // LIVE | STALE | UNKNOWN
+  int64 last_updated_unix_ms = 4;
+}
+
+message RestoreTarget {
+  string process_id = 1;
+  int64 expected_revision = 2;
+}
+
+message RestoreProcessResult {
+  string process_id = 1;
+  string status = 2; // SUCCESS | CONFLICT | INVALID | NOT_FOUND | UNAVAILABLE | DENIED
+  int64 new_revision = 3;
+  string error = 4;
+}

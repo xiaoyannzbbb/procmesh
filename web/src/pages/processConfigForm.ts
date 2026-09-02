@@ -15,7 +15,7 @@ import {
   ResourceLimitSchema,
   RestartPolicySchema,
   type ProcessSpec,
-} from "../gen/procmesh/v1/api_pb";
+} from "../gen/procmesh/v1/process_types_pb";
 
 export type ProcessConfigEnvironmentEntry = { key: string; value: string };
 export type ProcessConfigDependency = { processName: string; condition: string };

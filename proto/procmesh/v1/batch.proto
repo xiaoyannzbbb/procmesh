@@ -1,0 +1,91 @@
+syntax = "proto3";
+
+package procmesh.v1;
+
+option go_package = "github.com/qleelulu/procmesh/proto/procmesh/v1;procmeshv1";
+
+import "procmesh/v1/mutation.proto";
+import "procmesh/v1/process_types.proto";
+
+message ProcessNameRef {
+  string node_id = 1;
+  string process_name = 2;
+}
+
+message BatchSelector {
+  repeated string process_ids = 1;
+  repeated ProcessNameRef process_names = 2;
+  string agent_group_id = 3;
+  string process_group = 4;
+}
+
+message BatchSummary {
+  int32 success = 1;
+  int32 failed = 2;
+  int32 timeout = 3;
+  int32 denied = 4;
+  int32 conflict = 5;
+  int32 unavailable = 6;
+  int32 invalid = 7;
+}
+
+message BatchTarget {
+  string operation_id = 1;
+  string node_id = 2;
+  string process_id = 3;
+  string process_name = 4;
+  string status = 5; // PENDING|RUNNING|SUCCESS|FAILED|TIMEOUT|DENIED|CONFLICT|UNAVAILABLE|INVALID
+  string error = 6;
+  int64 expected_revision = 7;
+  int64 started_unix_ms = 8;
+  int64 finished_unix_ms = 9;
+}
+
+message Batch {
+  string batch_id = 1;
+  string operator = 2;
+  string source_agent = 3;
+  string type = 4; // START|STOP|RESTART|CONFIG_UPDATE
+  BatchSelector selector = 5;
+  string status = 6; // PENDING|RUNNING|COMPLETED|PARTIAL|FAILED
+  BatchSummary summary = 7;
+  int64 created_unix_ms = 8;
+  repeated BatchTarget targets = 9; // List 可省略；Get 必填
+}
+
+message CreateBatchRequest {
+  MutationMeta meta = 1;
+  string type = 2;
+  BatchSelector selector = 3;
+  ProcessSpec config = 4; // CONFIG_UPDATE required
+  string comment = 5;
+}
+message CreateBatchResponse { Batch batch = 1; }
+
+message GetBatchRequest { string batch_id = 1; }
+message GetBatchResponse { Batch batch = 1; }
+
+message ListBatchesRequest { int32 limit = 1; } // 0 = 50；封顶 200
+message ListBatchesResponse { repeated Batch batches = 1; } // 不含 targets，最新在前
+
+message RetryBatchRequest { MutationMeta meta = 1; string batch_id = 2; }
+message RetryBatchResponse { Batch batch = 1; }
+
+message ExportBatchRequest {
+  string batch_id = 1;
+  string format = 2; // json（默认）| csv
+}
+message ExportBatchResponse {
+  bytes content = 1;
+  string content_type = 2;
+  string filename = 3;
+}
+
+service BatchService {
+  rpc CreateBatch(CreateBatchRequest) returns (CreateBatchResponse);
+  rpc GetBatch(GetBatchRequest) returns (GetBatchResponse);
+  rpc ListBatches(ListBatchesRequest) returns (ListBatchesResponse);
+  rpc RetryFailed(RetryBatchRequest) returns (RetryBatchResponse);
+  rpc ReplayTimeout(RetryBatchRequest) returns (RetryBatchResponse);
+  rpc ExportBatch(ExportBatchRequest) returns (ExportBatchResponse);
+}

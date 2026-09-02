@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch, type ComponentPublicInstance } from "vue";
 import { withTarget } from "../lib/headers";
-import { useLogClient } from "../lib/rpc";
+import { useLogClient } from "../lib/rpc/process";
 import { session } from "../lib/session";
 import { useI18n } from "../lib/useI18n";
 import { isPinnedToBottom, pinToBottom } from "./logWindowScroll";

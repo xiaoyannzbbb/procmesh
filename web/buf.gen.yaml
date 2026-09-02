@@ -5,3 +5,8 @@ plugins:
     opt: target=ts
 inputs:
   - directory: ../proto
+    paths:
+      - procmesh/v1
+    exclude_paths:
+      - procmesh/v1/cluster_backup_agent.proto
+      - procmesh/v1/peer_replication.proto

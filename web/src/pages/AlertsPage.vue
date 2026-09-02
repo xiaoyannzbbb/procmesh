@@ -25,7 +25,7 @@ import Drawer from "../components/Drawer.vue";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
 import { LIVE, STALE, UNKNOWN, formatAge, type Freshness } from "../lib/freshness";
 import { newOperationId } from "../lib/opid";
-import { useAlertClient } from "../lib/rpc";
+import { useAlertClient } from "../lib/rpc/alert";
 import { session } from "../lib/session";
 import { useI18n } from "../lib/useI18n";
 import { formatRemoteError } from "./processView";

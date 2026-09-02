@@ -1,0 +1,340 @@
+syntax = "proto3";
+
+package procmesh.v1;
+
+option go_package = "github.com/qleelulu/procmesh/proto/procmesh/v1;procmeshv1";
+
+import "procmesh/v1/backup_types.proto";
+import "procmesh/v1/mutation.proto";
+
+// DisasterReplicationService provides disaster recovery replication management.
+// Replication operations use replication.read/manage; recovery prepare/restore
+// use backup.manage and revalidate process scope on the Owner.
+service DisasterReplicationService {
+  rpc GetTopology(GetTopologyRequest) returns (GetTopologyResponse);
+  rpc GeneratePolicyDraft(GeneratePolicyDraftRequest) returns (GeneratePolicyDraftResponse);
+  rpc ApplyPolicyDraft(ApplyPolicyDraftRequest) returns (ApplyPolicyDraftResponse);
+  rpc ListPolicies(ListPoliciesRequest) returns (ListPoliciesResponse);
+  rpc GetPolicy(GetPolicyRequest) returns (GetPolicyResponse);
+  rpc UpdatePolicy(UpdatePolicyRequest) returns (UpdatePolicyResponse);
+  rpc DeletePolicy(DeletePolicyRequest) returns (DeletePolicyResponse);
+  rpc StartRun(StartRunRequest) returns (StartRunResponse);
+  rpc GetRun(GetRunRequest) returns (GetRunResponse);
+  rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
+  rpc RetryFailedRoutes(RetryFailedRoutesRequest) returns (RetryFailedRoutesResponse);
+  rpc VerifyReplica(VerifyReplicaRequest) returns (VerifyReplicaResponse);
+  rpc ListRecoverableSnapshots(ListRecoverableSnapshotsRequest) returns (ListRecoverableSnapshotsResponse);
+  rpc PrepareRecoverableSnapshotRestore(PrepareRecoverableSnapshotRestoreRequest) returns (PrepareRecoverableSnapshotRestoreResponse);
+  rpc RestoreRecoverableSnapshot(RestoreRecoverableSnapshotRequest) returns (RestoreRecoverableSnapshotResponse);
+}
+
+message AgentTopologyNode {
+  string node_id = 1;
+  string host = 2;
+  string rack = 3;
+  string zone = 4;
+  double capacity_weight = 5;
+  bool admitted = 6;
+  bool alive = 7;
+  string hostname = 8;
+}
+
+message GetTopologyRequest {}
+
+message GetTopologyResponse {
+  repeated AgentTopologyNode nodes = 1;
+  string cluster_id = 2;
+}
+
+message ReplicationRoute {
+  string source_node_id = 1;
+  repeated string target_node_ids = 2;
+  repeated string warnings = 3;
+}
+
+message PolicyDraft {
+  string name = 1;
+  bool enabled = 2;
+  string source_selector = 3;
+  repeated string source_ids = 4;
+  int32 replica_factor = 5;
+  repeated ReplicationRoute routes = 6;
+  string trigger = 7;
+  repeated string primary_policy_ids = 8;
+  string schedule_cron = 9;
+  string timezone = 10;
+  int32 retention_keep_last = 11;
+  int32 retention_keep_days = 12;
+  int64 retention_max_bytes = 13;
+  int32 max_concurrency = 14;
+  bool verify_after_copy = 15;
+  int64 bandwidth_limit = 16;
+  map<string, string> topology_constraints = 17;
+  int64 draft_revision = 18;
+  string draft_hash = 19;
+  repeated string global_warnings = 20;
+  map<string, int32> inbound_load = 21;
+  string topology_health = 22;
+}
+
+message GeneratePolicyDraftRequest {
+  string name = 1;
+  bool enabled = 2;
+  string source_selector = 3;
+  repeated string source_ids = 4;
+  int32 replica_factor = 5;
+  string trigger = 6;
+  repeated string primary_policy_ids = 7;
+  string schedule_cron = 8;
+  string timezone = 9;
+  int32 retention_keep_last = 10;
+  int32 retention_keep_days = 11;
+  int64 retention_max_bytes = 12;
+  int32 max_concurrency = 13;
+  bool verify_after_copy = 14;
+  int64 bandwidth_limit = 15;
+  map<string, string> topology_constraints = 16;
+}
+
+message GeneratePolicyDraftResponse {
+  PolicyDraft draft = 1;
+}
+
+message ApplyPolicyDraftRequest {
+  string policy_id = 1;
+  PolicyDraft draft = 2;
+  int64 draft_revision = 3;
+  string draft_hash = 4;
+  int64 expected_revision = 5;
+  MutationMeta meta = 6;
+}
+
+message ApplyPolicyDraftResponse {
+  string policy_id = 1;
+  int64 revision = 2;
+}
+
+message ReplicationPolicy {
+  string policy_id = 1;
+  string name = 2;
+  bool enabled = 3;
+  string source_selector = 4;
+  repeated string source_ids = 5;
+  int32 replica_factor = 6;
+  repeated ReplicationRoute routes = 7;
+  string trigger = 8;
+  repeated string primary_policy_ids = 9;
+  string schedule_cron = 10;
+  string timezone = 11;
+  int32 retention_keep_last = 12;
+  int32 retention_keep_days = 13;
+  int64 retention_max_bytes = 14;
+  int32 max_concurrency = 15;
+  bool verify_after_copy = 16;
+  int64 bandwidth_limit = 17;
+  map<string, string> topology_constraints = 18;
+  int64 revision = 19;
+  int64 created_at = 20;
+  int64 updated_at = 21;
+}
+
+message ListPoliciesRequest {}
+
+message ListPoliciesResponse {
+  repeated ReplicationPolicy policies = 1;
+}
+
+message GetPolicyRequest {
+  string policy_id = 1;
+}
+
+message GetPolicyResponse {
+  ReplicationPolicy policy = 1;
+}
+
+message UpdatePolicyRequest {
+  string policy_id = 1;
+  string name = 2;
+  bool enabled = 3;
+  string source_selector = 4;
+  repeated string source_ids = 5;
+  int32 replica_factor = 6;
+  repeated ReplicationRoute routes = 7;
+  string trigger = 8;
+  repeated string primary_policy_ids = 9;
+  string schedule_cron = 10;
+  string timezone = 11;
+  int32 retention_keep_last = 12;
+  int32 retention_keep_days = 13;
+  int64 retention_max_bytes = 14;
+  int32 max_concurrency = 15;
+  bool verify_after_copy = 16;
+  int64 bandwidth_limit = 17;
+  map<string, string> topology_constraints = 18;
+  int64 expected_revision = 19;
+  MutationMeta meta = 20;
+}
+
+message UpdatePolicyResponse {
+  string policy_id = 1;
+  int64 revision = 2;
+}
+
+message DeletePolicyRequest {
+  string policy_id = 1;
+  MutationMeta meta = 2;
+}
+
+message DeletePolicyResponse {
+  bool deleted = 1;
+}
+
+message StartRunRequest {
+  string policy_id = 1;
+  MutationMeta meta = 2;
+  // Exactly one binding source is required for MANUAL runs.
+  string primary_run_id = 3;
+  repeated ReplicationSnapshotRef snapshot_refs = 4;
+}
+
+message ReplicationSnapshotRef {
+  string source_node_id = 1;
+  string snapshot_id = 2;
+  string sha256 = 3;
+}
+
+message StartRunResponse {
+  string run_id = 1;
+  string policy_id = 2;
+  int64 policy_revision = 3;
+  int64 started_at = 4;
+}
+
+message ReplicationTask {
+  string task_id = 1;
+  string run_id = 2;
+  string source_node_id = 3;
+  repeated string target_node_ids = 4;
+  string status = 5;
+  string snapshot_id = 6;
+  string sha256 = 7;
+  int64 bytes = 8;
+  string error_code = 9;
+  string error_summary = 10;
+  int64 started_at = 11;
+  int64 finished_at = 12;
+}
+
+message ReplicationRun {
+  string run_id = 1;
+  string policy_id = 2;
+  int64 policy_revision = 3;
+  string status = 4;
+  repeated ReplicationTask tasks = 5;
+  int64 started_at = 6;
+  int64 finished_at = 7;
+}
+
+message GetRunRequest {
+  string run_id = 1;
+}
+
+message GetRunResponse {
+  ReplicationRun run = 1;
+}
+
+message ListRunsRequest {
+  string policy_id = 1;
+}
+
+message ListRunsResponse {
+  repeated ReplicationRun runs = 1;
+}
+
+message RetryFailedRoutesRequest {
+  string run_id = 1;
+  MutationMeta meta = 2;
+}
+
+message RetryFailedRoutesResponse {
+  int32 retried_count = 1;
+}
+
+message ReplicaSnapshot {
+  string snapshot_id = 1;
+  string cluster_id = 2;
+  string source_node_id = 3;
+  string sha256 = 4;
+  int64 created_at = 5;
+  int32 process_count = 6;
+  repeated string process_ids = 7;
+  repeated string storage_node_ids = 8;
+  string freshness = 9;
+  int64 last_updated_unix_ms = 10;
+}
+
+message VerifyReplicaRequest {
+  string source_node_id = 1;
+  string snapshot_id = 2;
+}
+
+message VerifyReplicaResponse {
+  bool valid = 1;
+  string sha256 = 2;
+  int32 process_count = 3;
+  repeated string process_ids = 4;
+  repeated string errors = 5;
+}
+
+message ListRecoverableSnapshotsRequest {}
+
+message ListRecoverableSnapshotsResponse {
+  repeated ReplicaSnapshot snapshots = 1;
+  repeated ReplicaInventoryStatus inventory_statuses = 2;
+}
+
+message PrepareRecoverableSnapshotRestoreRequest {
+  string source_node_id = 1;
+  string snapshot_id = 2;
+  string sha256 = 3;
+  // Optional. Empty selects the Owner copy first, then a currently LIVE Peer.
+  string storage_node_id = 4;
+}
+
+message RecoverableRestoreCandidate {
+  string process_id = 1;
+  string process_name = 2;
+  int64 snapshot_revision = 3;
+  int64 current_revision = 4;
+  bool current_exists = 5;
+}
+
+message PrepareRecoverableSnapshotRestoreResponse {
+  ReplicaSnapshot snapshot = 1;
+  repeated RecoverableRestoreCandidate candidates = 2;
+  string selected_storage_node_id = 3;
+  bool owner_copy = 4;
+}
+
+message RestoreRecoverableSnapshotRequest {
+  MutationMeta meta = 1;
+  string source_node_id = 2;
+  string snapshot_id = 3;
+  string sha256 = 4;
+  // Storage node selected during prepare. The Owner revalidates it at execute.
+  string storage_node_id = 5;
+  repeated RestoreTarget targets = 6;
+}
+
+message RestoreRecoverableSnapshotResponse {
+  repeated RestoreProcessResult results = 1;
+  string restored_from_node_id = 2;
+  bool fetched_from_peer = 3;
+}
+
+message ReplicaInventoryStatus {
+  string node_id = 1;
+  string freshness = 2;
+  int64 last_updated_unix_ms = 3;
+  string error_code = 4;
+}

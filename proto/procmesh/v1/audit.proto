@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package procmesh.v1;
+
+option go_package = "github.com/qleelulu/procmesh/proto/procmesh/v1;procmeshv1";
+
+
+message AuditEvent {
+  string audit_id = 1;
+  int64 timestamp_unix_ms = 2;
+  string user_id = 3;
+  string username = 4;
+  string source_ip = 5;
+  string source_agent = 6;
+  string target_agent = 7;
+  string resource = 8;
+  string action = 9;
+  string operation_id = 10;
+  string result = 11;
+  string metadata_json = 12;
+}
+
+message AuditEntry {
+  AuditEvent event = 1;
+  string source_node = 2;
+  string freshness = 3; // LIVE | STALE | UNKNOWN
+  int64 last_updated_unix_ms = 4;
+}
+
+message ListAuditRequest {
+  string resource = 1;     // 空 = 全部
+  int32 limit = 2;         // 每页数量：0 = 50；封顶 200
+  string target_node = 3;  // 空 = 聚合；非空 = 只查该 node
+  int32 page = 4;          // 1-based；0 = 1；封顶 100
+}
+message ListAuditResponse {
+  repeated AuditEntry entries = 1;
+  int64 total = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+  bool has_more = 5;
+}
+
+service AuditService {
+  rpc ListAudit(ListAuditRequest) returns (ListAuditResponse);
+}

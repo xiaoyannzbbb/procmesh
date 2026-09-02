@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package procmesh.v1;
+
+option go_package = "github.com/qleelulu/procmesh/proto/procmesh/v1;procmeshv1";
+
+
+message ResourceSummary {
+  int32 cpu_percent = 1;
+  int32 memory_percent = 2;
+  int32 disk_percent = 3;
+  bool history_writes_paused = 4;
+  int32 history_pause_percent = 5;
+}
+
+message ProcessSummary {
+  string name = 1;
+  string desired = 2;
+  string observed = 3;
+  string health = 4;
+  int64 latest_revision = 5;
+  int64 active_revision = 6;
+  int64 freshness_unix_ms = 7;
+  string process_id = 8;
+  string group = 9;
+}
+
+message Node {
+  string node_id = 1;
+  string cluster_id = 2;
+  string hostname = 3;
+  string boot_id = 4;
+  string state = 5; // JOINING | ALIVE | SUSPECT | FAILED | LEFT | REMOVED | REVOKED
+  string agent_version = 6;
+  int32 protocol_version = 7;
+  string api_address = 8;
+  string rpc_address = 9;
+  string gossip_address = 10;
+  map<string, string> labels = 11;
+  ResourceSummary resources = 12;
+  repeated ProcessSummary processes = 13;
+  int64 last_updated_unix_ms = 14;
+  repeated string agent_group_ids = 15;
+  string raft_role = 16; // LEADER | VOTER | NON_VOTER | NOT_MEMBER | UNKNOWN
+  string raft_role_freshness = 17; // LIVE | STALE | UNKNOWN
+  bool disable_remote_create = 18;
+  bool disable_remote_update = 19;
+  bool disable_remote_delete = 20;
+  string os = 21; // linux | darwin | ... empty if the peer has not advertised it
+  string arch = 22; // amd64 | arm64 | arm | ... empty if unknown
+}

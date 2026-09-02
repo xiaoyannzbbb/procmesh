@@ -17,7 +17,7 @@ import { computed, nextTick, ref, watch } from "vue";
 import Drawer from "../components/Drawer.vue";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
 import { LIVE, STALE, UNKNOWN, type Freshness } from "../lib/freshness";
-import { useAuditClient } from "../lib/rpc";
+import { useAuditClient } from "../lib/rpc/audit";
 import { useAudit } from "../lib/useAudit";
 import { useI18n } from "../lib/useI18n";
 import { formatRemoteError } from "./processView";

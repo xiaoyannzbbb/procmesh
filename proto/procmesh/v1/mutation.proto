@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package procmesh.v1;
+
+option go_package = "github.com/qleelulu/procmesh/proto/procmesh/v1;procmeshv1";
+
+message MutationMeta {
+  string operation_id = 1;
+  string operator = 2;
+}

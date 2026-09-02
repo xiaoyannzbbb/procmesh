@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { Code, ConnectError } from '@connectrpc/connect'
-import { ErrorInfoSchema } from '../gen/procmesh/v1/api_pb'
+import { ErrorInfoSchema } from '../gen/procmesh/v1/errors_pb'
 import { extractErrorDetail } from './extractErrorDetail'
 
 describe('extractErrorDetail', () => {

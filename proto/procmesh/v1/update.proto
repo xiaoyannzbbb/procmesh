@@ -1,0 +1,138 @@
+syntax = "proto3";
+
+package procmesh.v1;
+
+option go_package = "github.com/qleelulu/procmesh/proto/procmesh/v1;procmeshv1";
+
+import "procmesh/v1/mutation.proto";
+
+message CheckLatestRequest {
+  bool refresh = 1;
+}
+
+message CheckLatestResponse {
+  string repository = 1;
+  string tag = 2;
+  map<string, string> checksums = 3; // "linux/amd64" -> sha256
+  int64 checked_unix_ms = 4;
+  bool from_cache = 5;
+  bool check_error = 6; // true if source failed (even if stale cache returned)
+  string error_message = 7;
+}
+
+message GetLocalUpdateInfoRequest {}
+
+message GetLocalUpdateInfoResponse {
+  string os = 1;
+  string arch = 2;
+  string version = 3;
+  bool enabled = 4;
+  bool busy = 5;
+  string node_id = 6;
+}
+
+message ListNodeUpdateStatusRequest {}
+
+message NodeUpdateStatus {
+  string node_id = 1;
+  string hostname = 2;
+  string os = 3;
+  string arch = 4;
+  string version = 5;
+  string freshness = 6; // LIVE | STALE | UNKNOWN
+  int64 last_updated_unix_ms = 7;
+  bool eligible = 8;
+  string skip_reason = 9; // STALE, UNKNOWN, FAILED, SUSPECT, UNSUPPORTED, MACOS, DISABLED, BUSY, CURRENT
+  bool busy = 10;
+}
+
+message ListNodeUpdateStatusResponse {
+  repeated NodeUpdateStatus nodes = 1;
+  string latest_tag = 2;
+  bool check_error = 3;
+  string error_message = 4;
+  int64 checked_unix_ms = 5;
+}
+
+message UpdatePin {
+  string repository = 1;
+  string tag = 2;
+  map<string, string> checksums = 3; // "linux/amd64" -> sha256
+}
+
+message UpdateJobTarget {
+  string operation_id = 1;
+  string node_id = 2;
+  string hostname = 3;
+  string status = 4; // PENDING|RUNNING|SUCCESS|FAILED|TIMEOUT|CONFLICT|SKIPPED|CANCELLED
+  string skip_reason = 5;
+  string error = 6;
+  int32 order_index = 7;
+  int64 started_unix_ms = 8;
+  int64 finished_unix_ms = 9;
+}
+
+message UpdateJobSummary {
+  int32 success = 1;
+  int32 failed = 2;
+  int32 timeout = 3;
+  int32 conflict = 4;
+  int32 skipped = 5;
+  int32 cancelled = 6;
+}
+
+message UpdateJob {
+  string job_id = 1;
+  string operator = 2;
+  string source_agent = 3;
+  UpdatePin pin = 4;
+  string status = 5; // PENDING|RUNNING|COMPLETED|PARTIAL|FAILED
+  UpdateJobSummary summary = 6;
+  int64 created_unix_ms = 7;
+  int64 started_unix_ms = 8;
+  int64 finished_unix_ms = 9;
+  repeated UpdateJobTarget targets = 10; // List omits; Get includes
+}
+
+message CreateClusterUpdateRequest {
+  MutationMeta meta = 1;
+  UpdatePin pin = 2; // optional; empty tag uses CheckLatest refresh=false
+}
+message CreateClusterUpdateResponse { UpdateJob job = 1; }
+
+message GetUpdateJobRequest { string job_id = 1; }
+message GetUpdateJobResponse { UpdateJob job = 1; }
+
+message ListUpdateJobsRequest { int32 limit = 1; } // 0 = 50; cap 200
+message ListUpdateJobsResponse { repeated UpdateJob jobs = 1; }
+
+message CancelRemainingRequest {
+  MutationMeta meta = 1;
+  string job_id = 2;
+}
+message CancelRemainingResponse { UpdateJob job = 1; }
+
+message RetryUpdateJobRequest {
+  MutationMeta meta = 1;
+  string job_id = 2;
+}
+message RetryUpdateJobResponse { UpdateJob job = 1; }
+
+message ApplyNodeRequest {
+  MutationMeta meta = 1;
+  string node_id = 2;
+  UpdatePin pin = 3;
+}
+message ApplyNodeResponse {}
+
+service UpdateService {
+  rpc CheckLatest(CheckLatestRequest) returns (CheckLatestResponse);
+  rpc GetLocalUpdateInfo(GetLocalUpdateInfoRequest) returns (GetLocalUpdateInfoResponse);
+  rpc ListNodeUpdateStatus(ListNodeUpdateStatusRequest) returns (ListNodeUpdateStatusResponse);
+  rpc CreateClusterUpdate(CreateClusterUpdateRequest) returns (CreateClusterUpdateResponse);
+  rpc GetUpdateJob(GetUpdateJobRequest) returns (GetUpdateJobResponse);
+  rpc ListUpdateJobs(ListUpdateJobsRequest) returns (ListUpdateJobsResponse);
+  rpc CancelRemaining(CancelRemainingRequest) returns (CancelRemainingResponse);
+  rpc RetryUpdateJob(RetryUpdateJobRequest) returns (RetryUpdateJobResponse);
+  rpc ApplyNode(ApplyNodeRequest) returns (ApplyNodeResponse);
+}

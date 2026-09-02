@@ -4,13 +4,10 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
 import { anyLiveLinuxBehind } from "../lib/agentVersion";
 import { LIVE, STALE, UNKNOWN, formatAge, type Freshness } from "../lib/freshness";
-import {
-  useAlertClient,
-  useBatchClient,
-  useClusterClient,
-  useNodeClient,
-  useUpdateClient,
-} from "../lib/rpc";
+import { useAlertClient } from "../lib/rpc/alert";
+import { useBatchClient } from "../lib/rpc/batch";
+import { useClusterClient, useNodeClient } from "../lib/rpc/cluster";
+import { useUpdateClient } from "../lib/rpc/update";
 import { useI18n } from "../lib/useI18n";
 import { formatPercent, mapOverview } from "./clusterView";
 

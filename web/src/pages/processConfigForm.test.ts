@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
-import { ProcessSpecSchema } from "../gen/procmesh/v1/api_pb";
+import { ProcessSpecSchema } from "../gen/procmesh/v1/process_types_pb";
 import {
   parseProcessConfigYaml,
   processConfigFormToSpec,

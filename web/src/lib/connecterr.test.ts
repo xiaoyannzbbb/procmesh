@@ -1,6 +1,6 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it } from "vitest";
-import { ErrorInfoSchema } from "../gen/procmesh/v1/api_pb";
+import { ErrorInfoSchema } from "../gen/procmesh/v1/errors_pb";
 import { appCode, isConflict } from "./connecterr";
 
 function conflictError(): ConnectError {

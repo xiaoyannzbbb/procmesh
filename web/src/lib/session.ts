@@ -1,6 +1,6 @@
 import { createClient, type Client } from "@connectrpc/connect";
 import { inject, ref, type Ref } from "vue";
-import { AuthService } from "../gen/procmesh/v1/api_pb";
+import { AuthService } from "../gen/procmesh/v1/auth_pb";
 import { transport } from "./connect";
 import { clearCsrf, saveCsrf as persistCsrf } from "./csrf";
 

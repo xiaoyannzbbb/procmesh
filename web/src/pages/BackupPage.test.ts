@@ -5,7 +5,7 @@ import i18next from "i18next";
 import I18NextVue from "i18next-vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
-import { ErrorInfoSchema } from "../gen/procmesh/v1/api_pb";
+import { ErrorInfoSchema } from "../gen/procmesh/v1/errors_pb";
 import { session } from "../lib/session";
 import BackupPage from "./BackupPage.vue";
 

@@ -1,0 +1,69 @@
+syntax = "proto3";
+
+package procmesh.v1;
+
+option go_package = "github.com/qleelulu/procmesh/proto/procmesh/v1;procmeshv1";
+
+import "procmesh/v1/backup_types.proto";
+import "procmesh/v1/mutation.proto";
+
+message CreateBackupRequest {
+  MutationMeta meta = 1;
+  string sink = 2;                    // fs | s3 | peer
+  repeated string process_ids = 3;    // 空 = 本机全部
+  repeated string target_node_ids = 4; // peer 必填
+}
+message CreateBackupResponse { BackupSnapshot snapshot = 1; }
+
+message ListBackupsRequest {
+  string sink = 1;                    // 空 = 全部本机 index
+  repeated string peer_node_ids = 2;  // 按需 hop
+  bool include_s3 = 3;
+  int32 limit = 4;                    // 0 = 50；封顶 200
+}
+message ListBackupsResponse { repeated BackupEntry entries = 1; }
+
+message GetBackupRequest {
+  string snapshot_id = 1;
+  string sink = 2;
+  string source_node_id = 3;
+  bool include_payload = 4;
+}
+message GetBackupResponse {
+  BackupSnapshot snapshot = 1;
+  bytes payload = 2;
+}
+
+message DeleteBackupRequest {
+  MutationMeta meta = 1;
+  string snapshot_id = 2;
+  string sink = 3;
+  string source_node_id = 4;
+}
+message DeleteBackupResponse {}
+
+message RestoreBackupRequest {
+  MutationMeta meta = 1;
+  string snapshot_id = 2;
+  string sink = 3;
+  string source_node_id = 4;
+  repeated RestoreTarget targets = 5;
+}
+
+message RestoreBackupResponse { repeated RestoreProcessResult results = 1; }
+
+message PutPeerSnapshotRequest {
+  MutationMeta meta = 1;
+  string source_node_id = 2;
+  bytes payload = 3;
+}
+message PutPeerSnapshotResponse { BackupSnapshot snapshot = 1; }
+
+service BackupService {
+  rpc CreateBackup(CreateBackupRequest) returns (CreateBackupResponse);
+  rpc ListBackups(ListBackupsRequest) returns (ListBackupsResponse);
+  rpc GetBackup(GetBackupRequest) returns (GetBackupResponse);
+  rpc DeleteBackup(DeleteBackupRequest) returns (DeleteBackupResponse);
+  rpc RestoreBackup(RestoreBackupRequest) returns (RestoreBackupResponse);
+  rpc PutPeerSnapshot(PutPeerSnapshotRequest) returns (PutPeerSnapshotResponse);
+}

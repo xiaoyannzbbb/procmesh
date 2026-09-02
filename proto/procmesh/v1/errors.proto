@@ -4,6 +4,11 @@ package procmesh.v1;
 
 option go_package = "github.com/qleelulu/procmesh/proto/procmesh/v1;procmeshv1";
 
+message ErrorInfo {
+  string code = 1;    // CONFLICT, NOT_FOUND, INVALID, DEGRADED, ...
+  string message = 2;
+}
+
 // ErrorDetail provides structured error information for i18n support.
 // The code field allows frontend to look up localized error messages,
 // while message provides an English fallback.

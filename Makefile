@@ -1,4 +1,30 @@
 .PHONY: test test-go test-acceptance test-e2e test-e2e-web proto proto-ts web web-dev bin
+
+PROCMESH_PROTO_FILES := \
+	procmesh/v1/errors.proto \
+	procmesh/v1/mutation.proto \
+	procmesh/v1/process_types.proto \
+	procmesh/v1/process.proto \
+	procmesh/v1/cluster_types.proto \
+	procmesh/v1/cluster.proto \
+	procmesh/v1/auth.proto \
+	procmesh/v1/access.proto \
+	procmesh/v1/audit.proto \
+	procmesh/v1/metrics.proto \
+	procmesh/v1/batch.proto \
+	procmesh/v1/alert.proto \
+	procmesh/v1/backup_types.proto \
+	procmesh/v1/backup.proto \
+	procmesh/v1/cluster_backup.proto \
+	procmesh/v1/cluster_backup_agent.proto \
+	procmesh/v1/peer_replication.proto \
+	procmesh/v1/disaster_replication.proto \
+	procmesh/v1/update.proto
+
+WEB_PROTO_FILES := $(filter-out \
+	procmesh/v1/cluster_backup_agent.proto \
+	procmesh/v1/peer_replication.proto, \
+	$(PROCMESH_PROTO_FILES))
 test: test-go
 test-go:
 	@set -eu; \
@@ -20,16 +46,19 @@ proto:
 	PATH="$$PATH:$$(go env GOPATH)/bin" protoc \
 		--go_out=. --go_opt=module=github.com/qleelulu/procmesh \
 		--connect-go_out=. --connect-go_opt=module=github.com/qleelulu/procmesh \
-		proto/shim/v1/shim.proto \
-		proto/procmesh/v1/api.proto \
-		proto/procmesh/v1/errors.proto
+		proto/shim/v1/shim.proto
+	PATH="$$PATH:$$(go env GOPATH)/bin" protoc \
+		--proto_path=proto \
+		--go_out=. --go_opt=module=github.com/qleelulu/procmesh \
+		--connect-go_out=. --connect-go_opt=module=github.com/qleelulu/procmesh \
+		$(PROCMESH_PROTO_FILES)
 proto-ts:
 	@test -x web/node_modules/.bin/protoc-gen-es || { echo "web/node_modules missing; run: cd web && npm ci"; exit 1; }
 	mkdir -p web/src/gen
 	PATH="$(CURDIR)/web/node_modules/.bin:$$PATH" protoc \
 		--es_out=web/src/gen --es_opt=target=ts \
 		--proto_path=proto \
-		proto/procmesh/v1/api.proto
+		$(WEB_PROTO_FILES)
 web-dev:
 	cd web && npm ci && npm run dev
 web:

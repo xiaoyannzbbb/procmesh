@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.12
 // 	protoc        v3.21.12
-// source: proto/procmesh/v1/errors.proto
+// source: procmesh/v1/errors.proto
 
 package procmeshv1
 
@@ -21,6 +21,58 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type ErrorInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          string                 `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"` // CONFLICT, NOT_FOUND, INVALID, DEGRADED, ...
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ErrorInfo) Reset() {
+	*x = ErrorInfo{}
+	mi := &file_procmesh_v1_errors_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ErrorInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ErrorInfo) ProtoMessage() {}
+
+func (x *ErrorInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_procmesh_v1_errors_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ErrorInfo.ProtoReflect.Descriptor instead.
+func (*ErrorInfo) Descriptor() ([]byte, []int) {
+	return file_procmesh_v1_errors_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *ErrorInfo) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+func (x *ErrorInfo) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
 // ErrorDetail provides structured error information for i18n support.
 // The code field allows frontend to look up localized error messages,
 // while message provides an English fallback.
@@ -38,7 +90,7 @@ type ErrorDetail struct {
 
 func (x *ErrorDetail) Reset() {
 	*x = ErrorDetail{}
-	mi := &file_proto_procmesh_v1_errors_proto_msgTypes[0]
+	mi := &file_procmesh_v1_errors_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -50,7 +102,7 @@ func (x *ErrorDetail) String() string {
 func (*ErrorDetail) ProtoMessage() {}
 
 func (x *ErrorDetail) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_procmesh_v1_errors_proto_msgTypes[0]
+	mi := &file_procmesh_v1_errors_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -63,7 +115,7 @@ func (x *ErrorDetail) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ErrorDetail.ProtoReflect.Descriptor instead.
 func (*ErrorDetail) Descriptor() ([]byte, []int) {
-	return file_proto_procmesh_v1_errors_proto_rawDescGZIP(), []int{0}
+	return file_procmesh_v1_errors_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *ErrorDetail) GetCode() string {
@@ -87,11 +139,14 @@ func (x *ErrorDetail) GetParams() map[string]string {
 	return nil
 }
 
-var File_proto_procmesh_v1_errors_proto protoreflect.FileDescriptor
+var File_procmesh_v1_errors_proto protoreflect.FileDescriptor
 
-const file_proto_procmesh_v1_errors_proto_rawDesc = "" +
+const file_procmesh_v1_errors_proto_rawDesc = "" +
 	"\n" +
-	"\x1eproto/procmesh/v1/errors.proto\x12\vprocmesh.v1\"\xb4\x01\n" +
+	"\x18procmesh/v1/errors.proto\x12\vprocmesh.v1\"9\n" +
+	"\tErrorInfo\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\tR\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\xb4\x01\n" +
 	"\vErrorDetail\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12<\n" +
@@ -101,24 +156,25 @@ const file_proto_procmesh_v1_errors_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B;Z9github.com/qleelulu/procmesh/proto/procmesh/v1;procmeshv1b\x06proto3"
 
 var (
-	file_proto_procmesh_v1_errors_proto_rawDescOnce sync.Once
-	file_proto_procmesh_v1_errors_proto_rawDescData []byte
+	file_procmesh_v1_errors_proto_rawDescOnce sync.Once
+	file_procmesh_v1_errors_proto_rawDescData []byte
 )
 
-func file_proto_procmesh_v1_errors_proto_rawDescGZIP() []byte {
-	file_proto_procmesh_v1_errors_proto_rawDescOnce.Do(func() {
-		file_proto_procmesh_v1_errors_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_proto_procmesh_v1_errors_proto_rawDesc), len(file_proto_procmesh_v1_errors_proto_rawDesc)))
+func file_procmesh_v1_errors_proto_rawDescGZIP() []byte {
+	file_procmesh_v1_errors_proto_rawDescOnce.Do(func() {
+		file_procmesh_v1_errors_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_procmesh_v1_errors_proto_rawDesc), len(file_procmesh_v1_errors_proto_rawDesc)))
 	})
-	return file_proto_procmesh_v1_errors_proto_rawDescData
+	return file_procmesh_v1_errors_proto_rawDescData
 }
 
-var file_proto_procmesh_v1_errors_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
-var file_proto_procmesh_v1_errors_proto_goTypes = []any{
-	(*ErrorDetail)(nil), // 0: procmesh.v1.ErrorDetail
-	nil,                 // 1: procmesh.v1.ErrorDetail.ParamsEntry
+var file_procmesh_v1_errors_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_procmesh_v1_errors_proto_goTypes = []any{
+	(*ErrorInfo)(nil),   // 0: procmesh.v1.ErrorInfo
+	(*ErrorDetail)(nil), // 1: procmesh.v1.ErrorDetail
+	nil,                 // 2: procmesh.v1.ErrorDetail.ParamsEntry
 }
-var file_proto_procmesh_v1_errors_proto_depIdxs = []int32{
-	1, // 0: procmesh.v1.ErrorDetail.params:type_name -> procmesh.v1.ErrorDetail.ParamsEntry
+var file_procmesh_v1_errors_proto_depIdxs = []int32{
+	2, // 0: procmesh.v1.ErrorDetail.params:type_name -> procmesh.v1.ErrorDetail.ParamsEntry
 	1, // [1:1] is the sub-list for method output_type
 	1, // [1:1] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
@@ -126,26 +182,26 @@ var file_proto_procmesh_v1_errors_proto_depIdxs = []int32{
 	0, // [0:1] is the sub-list for field type_name
 }
 
-func init() { file_proto_procmesh_v1_errors_proto_init() }
-func file_proto_procmesh_v1_errors_proto_init() {
-	if File_proto_procmesh_v1_errors_proto != nil {
+func init() { file_procmesh_v1_errors_proto_init() }
+func file_procmesh_v1_errors_proto_init() {
+	if File_procmesh_v1_errors_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_procmesh_v1_errors_proto_rawDesc), len(file_proto_procmesh_v1_errors_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_procmesh_v1_errors_proto_rawDesc), len(file_procmesh_v1_errors_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
-		GoTypes:           file_proto_procmesh_v1_errors_proto_goTypes,
-		DependencyIndexes: file_proto_procmesh_v1_errors_proto_depIdxs,
-		MessageInfos:      file_proto_procmesh_v1_errors_proto_msgTypes,
+		GoTypes:           file_procmesh_v1_errors_proto_goTypes,
+		DependencyIndexes: file_procmesh_v1_errors_proto_depIdxs,
+		MessageInfos:      file_procmesh_v1_errors_proto_msgTypes,
 	}.Build()
-	File_proto_procmesh_v1_errors_proto = out.File
-	file_proto_procmesh_v1_errors_proto_goTypes = nil
-	file_proto_procmesh_v1_errors_proto_depIdxs = nil
+	File_procmesh_v1_errors_proto = out.File
+	file_procmesh_v1_errors_proto_goTypes = nil
+	file_procmesh_v1_errors_proto_depIdxs = nil
 }
