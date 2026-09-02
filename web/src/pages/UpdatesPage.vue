@@ -776,6 +776,9 @@ onUnmounted(() => {
       </div>
       <div class="header-actions">
         <div v-if="canManageCluster" class="cluster-cta">
+          <span v-if="clusterDisableReason" id="cluster-update-reason" class="muted cluster-disabled-hint">
+            {{ clusterDisableReason }}
+          </span>
           <button
             type="button"
             class="btn btn-primary cursor-pointer"
@@ -789,9 +792,6 @@ onUnmounted(() => {
             <LoaderCircle v-if="clustering" class="spin" :size="16" aria-hidden="true" />
             {{ t("updates.clusterUpdate") }}
           </button>
-          <p v-if="clusterDisableReason" id="cluster-update-reason" class="muted cluster-disabled-hint">
-            {{ clusterDisableReason }}
-          </p>
         </div>
         <button
           type="button"
