@@ -17,7 +17,7 @@ import ConfirmDialog from "../components/ConfirmDialog.vue";
 import Drawer from "../components/Drawer.vue";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
 import Toast from "../components/Toast.vue";
-import { LIVE, STALE, UNKNOWN, formatAge, type Freshness } from "../lib/freshness";
+import { LIVE, STALE, UNKNOWN, type Freshness } from "../lib/freshness";
 import { withTarget } from "../lib/headers";
 import { newOperationId } from "../lib/opid";
 import { useBackupClient, useClusterBackupClient, useNodeClient, useProcessClient } from "../lib/rpc";
@@ -589,6 +589,7 @@ function mapEntry(
       location?: string;
       sourceNodeId?: string;
       sha256?: string;
+      createdUnixMs?: bigint | number;
       processIds?: string[];
       revisionRanges?: { processId?: string; minRevision?: bigint | number; maxRevision?: bigint | number }[];
     };
@@ -600,7 +601,6 @@ function mapEntry(
 ) {
   const snapshot = entry.snapshot;
   const freshness = freshnessOf(entry.freshness);
-  const lastUpdatedUnixMs = Number(entry.lastUpdatedUnixMs ?? 0);
   return {
     key: snapshot?.snapshotId || `${entry.sourceNode ?? "node"}:${index}`,
     snapshotId: snapshot?.snapshotId || "—",
@@ -610,7 +610,7 @@ function mapEntry(
     processCount: snapshot?.processIds?.length ?? 0,
     sha256: shortSha(snapshot?.sha256 ?? ""),
     freshness,
-    lastUpdated: formatAge(Date.now(), lastUpdatedUnixMs),
+    backupTime: formatUnix(snapshot?.createdUnixMs),
     canAct: Boolean(canManage.value && snapshot?.snapshotId && canRestoreEntry(entry, snapshot)),
     snapshot: snapshot
       ? {
@@ -1498,7 +1498,7 @@ async function onRetryFailed(): Promise<void> {
                 <th>{{ t("backup.processCount") }}</th>
                 <th>{{ t("backup.sha256") }}</th>
                 <th>{{ t("backup.freshness") }}</th>
-                <th>{{ t("backup.lastUpdated") }}</th>
+                <th>{{ t("backup.backupTime") }}</th>
                 <th v-if="canManage"></th>
               </tr>
             </thead>
@@ -1515,7 +1515,7 @@ async function onRetryFailed(): Promise<void> {
                 <td>{{ row.processCount }}</td>
                 <td class="mono">{{ row.sha256 }}</td>
                 <td><FreshnessBadge :status="row.freshness" /></td>
-                <td>{{ row.lastUpdated }}</td>
+                <td data-backup-time>{{ row.backupTime }}</td>
                 <td v-if="canManage">
                   <div v-if="row.canAct" class="row-actions">
                     <button type="button" class="btn btn-xs" data-action="restore" :disabled="acting" @click="openRestore(row.snapshot!)">

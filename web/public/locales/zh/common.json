@@ -1259,7 +1259,7 @@
     "processCount": "进程数",
     "sha256": "SHA-256",
     "freshness": "新鲜度",
-    "lastUpdated": "最近更新",
+    "backupTime": "备份时间",
     "processIds": "进程",
     "processIdsPlaceholder": "留空表示本机全部进程",
     "processScope": "备份范围",

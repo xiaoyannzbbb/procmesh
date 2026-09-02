@@ -1,12 +1,15 @@
 package web
 
 import (
+	"encoding/json"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestHandler_Root(t *testing.T) {
@@ -66,6 +69,34 @@ func TestHandler_MissingAsset(t *testing.T) {
 
 func TestHasIndex(t *testing.T) {
 	assert.True(t, HasIndex())
+}
+
+func TestEmbed_BackupTimeAssets(t *testing.T) {
+	for locale, want := range map[string]string{
+		"en": "Backup time",
+		"zh": "备份时间",
+	} {
+		t.Run(locale, func(t *testing.T) {
+			body, err := dist.ReadFile("dist/locales/" + locale + "/common.json")
+			require.NoError(t, err)
+
+			var messages map[string]any
+			require.NoError(t, json.Unmarshal(body, &messages))
+			backup, ok := messages["backup"].(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, want, backup["backupTime"])
+			assert.NotContains(t, backup, "lastUpdated")
+		})
+	}
+
+	assets, err := fs.Glob(dist, "dist/assets/index-*.js")
+	require.NoError(t, err)
+	require.Len(t, assets, 1)
+	bundle, err := dist.ReadFile(assets[0])
+	require.NoError(t, err)
+	assert.Contains(t, string(bundle), "backup.backupTime")
+	assert.Contains(t, string(bundle), "createdUnixMs")
+	assert.NotContains(t, string(bundle), "backup.lastUpdated")
 }
 
 func TestEmbed_HandlerSPAFallback(t *testing.T) {

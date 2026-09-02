@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from "vue";
+import { computed, onUnmounted, ref, watch, type ComponentPublicInstance } from "vue";
 import { withTarget } from "../lib/headers";
 import { useLogClient } from "../lib/rpc";
 import { session } from "../lib/session";
@@ -40,7 +40,7 @@ function stopStream(): void {
   streaming.value = false;
 }
 
-function setLogWindow(el: Element | null): void {
+function setLogWindow(el: Element | ComponentPublicInstance | null): void {
   logWindow.value = el instanceof HTMLElement ? el : null;
 }
 

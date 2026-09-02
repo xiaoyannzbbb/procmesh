@@ -1259,7 +1259,7 @@
     "processCount": "Processes",
     "sha256": "SHA-256",
     "freshness": "Freshness",
-    "lastUpdated": "Last updated",
+    "backupTime": "Backup time",
     "processIds": "Processes",
     "processIdsPlaceholder": "Leave empty for all local processes",
     "processScope": "What to back up",

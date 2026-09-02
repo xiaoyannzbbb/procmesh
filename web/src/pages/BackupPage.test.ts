@@ -30,7 +30,7 @@ const backupI18n = {
   processCount: "Processes",
   sha256: "SHA-256",
   freshness: "Freshness",
-  lastUpdated: "Last updated",
+  backupTime: "Backup time",
   processIds: "Process IDs",
   processIdsPlaceholder: "Leave empty for all local processes",
   peerNodeIds: "Peer node IDs",
@@ -378,6 +378,16 @@ describe("BackupPage", () => {
     const { wrapper } = await mountBackup();
     const cells = wrapper.findAll('[data-section="snapshots"] tbody tr td:nth-child(3)');
     expect(cells.map((cell) => cell.text())).toEqual(["n1", "n2"]);
+  });
+
+  it("shows the snapshot backup time instead of the catalog update time", async () => {
+    const { wrapper } = await mountBackup();
+    const snapshots = wrapper.get('[data-section="snapshots"]');
+
+    expect(snapshots.get("thead").text()).toContain("Backup time");
+    expect(snapshots.get('[data-backup-time]').text()).toBe(
+      new Date(Number(liveSnapshot.snapshot.createdUnixMs)).toLocaleString(),
+    );
   });
 
   it("hides create, restore, and delete without backup.manage", async () => {

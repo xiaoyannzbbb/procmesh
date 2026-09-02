@@ -1100,7 +1100,7 @@ declare module "i18next" {
         'backup.processCount': string
         'backup.sha256': string
         'backup.freshness': string
-        'backup.lastUpdated': string
+        'backup.backupTime': string
         'backup.processIds': string
         'backup.processIdsPlaceholder': string
         'backup.processScope': string
