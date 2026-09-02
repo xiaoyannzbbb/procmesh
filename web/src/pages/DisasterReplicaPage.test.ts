@@ -769,18 +769,15 @@ describe("DisasterReplicaPage", () => {
   it("renders PARTIAL and failed routes as warnings, not success green", async () => {
     const { wrapper } = await mountPage();
     const badge = wrapper.get('[data-status="PARTIAL"]');
+    expect(badge.classes()).toContain("status-partial");
     expect(badge.classes()).not.toContain("status-success");
-    const style = (badge.attributes("style") ?? "").toLowerCase();
-    expect(style).not.toMatch(/#d1fae5|#065f46|rgb\(209,\s*250,\s*229\)/);
-    expect(style).toMatch(/#fef3c7|#92400e|rgb\(254,\s*243,\s*199\)/);
     expect(wrapper.get("[data-partial-warning]").text()).toContain("PARTIAL");
     await wrapper.get('[data-run-id="run-partial"]').trigger("click");
     await flushPromises();
     await wrapper.vm.$nextTick();
     const failed = wrapper.get('[data-route-status="FAILED"]');
+    expect(failed.classes()).toContain("status-failed");
     expect(failed.classes()).not.toContain("status-success");
-    const failedStyle = (failed.attributes("style") ?? "").toLowerCase();
-    expect(failedStyle).not.toMatch(/#d1fae5|#065f46/);
   });
 
   it("shows a success toast after verifying a matching replica checksum", async () => {

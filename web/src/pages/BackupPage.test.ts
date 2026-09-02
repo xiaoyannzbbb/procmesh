@@ -716,10 +716,8 @@ describe("BackupPage", () => {
   it("renders PARTIAL as a warning, not success, and retries only failed Agents", async () => {
     const { wrapper, clusterBackupClient } = await mountBackup();
     const badge = wrapper.get('[data-status="PARTIAL"]');
+    expect(badge.classes()).toContain("status-partial");
     expect(badge.classes()).not.toContain("status-success");
-    const style = (badge.attributes("style") ?? "").toLowerCase();
-    expect(style).not.toMatch(/#d1fae5|#065f46|rgb\(209,\s*250,\s*229\)/);
-    expect(style).toMatch(/#fef3c7|#92400e|rgb\(254,\s*243,\s*199\)/);
     expect(wrapper.get("[data-partial-warning]").text()).toContain("PARTIAL");
     expect(wrapper.get("[data-partial-warning]").text()).toContain("not a successful");
     await wrapper.get('[data-run-id="run-partial"]').trigger("click");

@@ -4,6 +4,7 @@ import { computed, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import ConfirmDialog from "../components/ConfirmDialog.vue";
 import HistoryChart from "../components/HistoryChart.vue";
+import ProcessStateBadge from "../components/ProcessStateBadge.vue";
 import { withTarget } from "../lib/headers";
 import {
   historyWindow,
@@ -17,7 +18,6 @@ import { newOperationId } from "../lib/opid";
 import { useMetricsClient, useNodeClient, useProcessClient } from "../lib/rpc";
 import { session } from "../lib/session";
 import { useI18n } from "../lib/useI18n";
-import { useProcessState } from "../lib/useProcessState";
 import { mapNode } from "./clusterView";
 import {
   flattenClusterProcesses,
@@ -29,7 +29,6 @@ import ProcessConfigPanel from "./ProcessConfigPanel.vue";
 import ProcessLogsPanel from "./ProcessLogsPanel.vue";
 
 const { t } = useI18n();
-const { translateDesiredState, translateObservedState, translateHealthState } = useProcessState();
 
 const POLL_MS = 5000;
 const HISTORY_POLL_MS = 60_000;
@@ -255,7 +254,11 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
     <div class="head">
       <div>
         <RouterLink class="back" to="/processes">{{ t("processDetail.back") }}</RouterLink>
-        <h1>{{ detail?.name || idOrName }}</h1>
+        <div class="heading-row">
+          <h1>{{ detail?.name || idOrName }}</h1>
+          <ProcessStateBadge v-if="detail?.observed" kind="observed" :state="detail.observed" />
+          <ProcessStateBadge v-if="detail?.health" kind="health" :state="detail.health" />
+        </div>
       </div>
       <div class="actions">
         <button type="button" class="btn" :disabled="!canStart || acting || !ownerNodeId" @click="run(startMut)">{{ t("processDetail.actions.start") }}</button>
@@ -368,15 +371,24 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
           </div>
           <div>
             <dt>{{ t("processDetail.process.desired") }}</dt>
-            <dd>{{ detail.desired ? translateDesiredState(detail.desired) : '—' }}</dd>
+            <dd>
+              <ProcessStateBadge v-if="detail.desired" kind="desired" :state="detail.desired" />
+              <span v-else>—</span>
+            </dd>
           </div>
           <div>
             <dt>{{ t("processDetail.process.observed") }}</dt>
-            <dd>{{ detail.observed ? translateObservedState(detail.observed) : '—' }}</dd>
+            <dd>
+              <ProcessStateBadge v-if="detail.observed" kind="observed" :state="detail.observed" />
+              <span v-else>—</span>
+            </dd>
           </div>
           <div>
             <dt>{{ t("processDetail.process.health") }}</dt>
-            <dd>{{ detail.health ? translateHealthState(detail.health) : '—' }}</dd>
+            <dd>
+              <ProcessStateBadge v-if="detail.health" kind="health" :state="detail.health" />
+              <span v-else>—</span>
+            </dd>
           </div>
           <div>
             <dt>{{ t("processDetail.process.pid") }}</dt>
@@ -445,9 +457,18 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
           <tbody>
             <tr v-for="inst in detail.instanceRows" :key="inst.instanceId || String(inst.ordinal)">
               <td class="mono">{{ inst.instanceId || inst.ordinal }}</td>
-              <td>{{ inst.desired ? translateDesiredState(inst.desired) : '—' }}</td>
-              <td>{{ inst.observed ? translateObservedState(inst.observed) : '—' }}</td>
-              <td>{{ inst.health ? translateHealthState(inst.health) : '—' }}</td>
+              <td>
+                <ProcessStateBadge v-if="inst.desired" kind="desired" :state="inst.desired" />
+                <span v-else>—</span>
+              </td>
+              <td>
+                <ProcessStateBadge v-if="inst.observed" kind="observed" :state="inst.observed" />
+                <span v-else>—</span>
+              </td>
+              <td>
+                <ProcessStateBadge v-if="inst.health" kind="health" :state="inst.health" />
+                <span v-else>—</span>
+              </td>
               <td>{{ inst.pid }}</td>
               <td>{{ inst.uptime }}</td>
               <td>{{ inst.restartCount }}</td>
@@ -539,8 +560,15 @@ async function run(mut: { mutateAsync: () => Promise<unknown> }): Promise<void> 
   justify-content: space-between;
   gap: 1rem;
 }
+.heading-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
 h1 {
-  margin: 0.25rem 0 0;
+  margin: 0;
   font-size: 1.35rem;
   font-weight: 650;
 }

@@ -383,11 +383,7 @@ const errorText = computed(() => {
               <td>{{ batch.type }}</td>
               <td>{{ batch.status }}</td>
               <td>
-                <span
-                  class="status-timeout"
-                  data-status="TIMEOUT"
-                  style="background-color: #FEF3C7; color: #92400E"
-                >{{ t("batch.timeout") }} {{ batch.summary?.timeout ?? 0 }}</span>
+                <span class="status-timeout" data-status="TIMEOUT">{{ t("batch.timeout") }} {{ batch.summary?.timeout ?? 0 }}</span>
               </td>
             </tr>
           </tbody>
@@ -534,14 +530,7 @@ h3 {
 .recent-hint {
   margin: -0.375rem 0 0.75rem;
 }
-.status-timeout {
-  display: inline-flex;
-  align-items: center;
-  border-radius: 999px;
-  padding: 0.125rem 0.5rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-}
+
 .alert-stale-banner {
   background: var(--color-stale);
   color: var(--color-stale-fg);

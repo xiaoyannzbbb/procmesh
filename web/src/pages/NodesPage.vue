@@ -966,25 +966,6 @@ h1 {
   min-width: 4.2rem;
 }
 
-.raft-role-badge,
-.state-pill,
-.proc-chip,
-.pause-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  border-radius: 999px;
-  padding: 0.125rem 0.5rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  line-height: 1.4;
-  white-space: nowrap;
-}
-
-.raft-role-badge {
-  border-radius: 3px;
-}
-
 .raft-role-leader {
   background: var(--color-live);
   color: var(--color-live-fg);
@@ -1008,31 +989,6 @@ h1 {
 .raft-role-unknown {
   background: var(--color-unknown);
   color: var(--color-unknown-fg);
-}
-
-.state-pill.ok,
-.proc-chip.ok {
-  background: var(--color-live);
-  color: var(--color-live-fg);
-}
-
-.state-pill.warn,
-.proc-chip.warn,
-.pause-chip {
-  background: var(--color-stale);
-  color: var(--color-stale-fg);
-}
-
-.state-pill.neutral,
-.proc-chip.neutral {
-  background: var(--color-unknown);
-  color: var(--color-unknown-fg);
-}
-
-.state-pill.danger,
-.proc-chip.danger {
-  background: color-mix(in srgb, var(--color-danger) 14%, white);
-  color: var(--color-danger);
 }
 
 .resource-stack {

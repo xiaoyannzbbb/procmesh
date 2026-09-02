@@ -1542,41 +1542,6 @@ h3 {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-.severity-badge,
-.channel-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  border-radius: 999px;
-  padding: 0.28rem 0.55rem;
-  font-size: 0.75rem;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.severity-critical {
-  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
-  color: var(--color-danger);
-}
-
-.severity-warning {
-  background: #fef3c7;
-  color: #92400e;
-}
-
-.severity-unknown {
-  background: var(--color-unknown);
-  color: var(--color-unknown-fg);
-}
-
-.status-dot {
-  width: 0.42rem;
-  height: 0.42rem;
-  flex: 0 0 0.42rem;
-  border-radius: 50%;
-  background: currentColor;
-}
-
 .alert-state {
   display: inline-flex;
   align-items: center;
@@ -1778,15 +1743,7 @@ h3 {
   font-size: 0.8rem;
 }
 
-.status-enabled {
-  background: var(--color-live);
-  color: var(--color-live-fg);
-}
 
-.status-disabled {
-  background: var(--color-unknown);
-  color: var(--color-unknown-fg);
-}
 
 .settings-empty {
   padding: 2rem 1rem;

@@ -711,19 +711,6 @@ function statusClass(status: string | undefined): string {
   return "status-unknown";
 }
 
-function statusStyle(status: string | undefined): string {
-  const s = (status || "").toUpperCase();
-  if (isSuccessStatus(s)) {
-    return "background-color: #D1FAE5; color: #065F46";
-  }
-  if (s === "PARTIAL" || s === "TIMEOUT" || s === "PENDING" || s === "RUNNING" || s === "UNAVAILABLE") {
-    return "background-color: #FEF3C7; color: #92400E";
-  }
-  if (s === "FAILED" || s === "CANCELED" || s === "CONFIG_MISSING") {
-    return "background-color: #FEE2E2; color: #991B1B";
-  }
-  return "background-color: #E5E7EB; color: #374151";
-}
 
 function formatUnix(unix: bigint | number | undefined): string {
   const n = unixNumber(unix);
@@ -1372,7 +1359,6 @@ async function onStartRun(): Promise<void> {
                       class="status-badge"
                       :class="statusClass(row.status)"
                       :data-status="row.status"
-                      :style="statusStyle(row.status)"
                     >{{ row.status }}</span>
                   </td>
                   <td>{{ row.lastSuccess }}</td>
@@ -1440,7 +1426,6 @@ async function onStartRun(): Promise<void> {
                     class="status-badge"
                     :class="statusClass(run.status)"
                     :data-status="run.status"
-                    :style="statusStyle(run.status)"
                   >{{ run.status }}</span>
                 </td>
                 <td>{{ formatUnix(run.finishedAt) }}</td>
@@ -1953,7 +1938,6 @@ async function onStartRun(): Promise<void> {
               class="status-badge"
               :class="statusClass(selectedRun.status)"
               :data-status="selectedRun.status"
-              :style="statusStyle(selectedRun.status)"
             >{{ selectedRun.status }}</span>
           </dd>
         </div>
@@ -1981,7 +1965,6 @@ async function onStartRun(): Promise<void> {
                   :class="statusClass(task.status)"
                   :data-status="task.status"
                   :data-route-status="task.status"
-                  :style="statusStyle(task.status)"
                 >{{ task.status }}</span>
               </td>
               <td class="mono">{{ task.snapshotId || "—" }}</td>
@@ -2116,32 +2099,7 @@ h3 {
 .clickable {
   cursor: pointer;
 }
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  border-radius: 3px;
-  padding: 0.125rem 0.5rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-.status-success {
-  background-color: #d1fae5;
-  color: #065f46;
-}
-.status-partial,
-.status-pending {
-  background-color: #fef3c7;
-  color: #92400e;
-}
-.status-failed {
-  background-color: #fee2e2;
-  color: #991b1b;
-}
-.status-unknown {
-  background-color: #e5e7eb;
-  color: #374151;
-}
+
 .facts {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));

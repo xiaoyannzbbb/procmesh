@@ -1413,45 +1413,6 @@ h1 {
   white-space: nowrap;
 }
 
-.group-chip,
-.restart-chip,
-.state-pill {
-  display: inline-flex;
-  align-items: center;
-  border-radius: 999px;
-  padding: 0.125rem 0.5rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  line-height: 1.4;
-}
-
-.group-chip {
-  background: color-mix(in srgb, var(--color-text) 6%, transparent);
-  color: var(--color-muted);
-}
-
-.restart-chip,
-.state-pill.warn,
-.revision.mismatch {
-  background: var(--color-stale);
-  color: var(--color-stale-fg);
-}
-
-.state-pill.ok {
-  background: var(--color-live);
-  color: var(--color-live-fg);
-}
-
-.state-pill.neutral {
-  background: var(--color-unknown);
-  color: var(--color-unknown-fg);
-}
-
-.state-pill.danger {
-  background: color-mix(in srgb, var(--color-danger) 14%, white);
-  color: var(--color-danger);
-}
-
 .status-stack {
   display: flex;
   flex-direction: column;
@@ -1467,13 +1428,6 @@ h1 {
 
 .revision {
   font-variant-numeric: tabular-nums;
-}
-
-.revision.mismatch {
-  border-radius: 999px;
-  padding: 0.125rem 0.5rem;
-  font-size: 0.75rem;
-  font-weight: 600;
 }
 
 .sort-btn {

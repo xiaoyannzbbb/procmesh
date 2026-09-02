@@ -601,31 +601,4 @@ a:not(.back):hover {
   vertical-align: middle;
   padding: 0.5rem 0.4rem;
 }
-.state-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  border-radius: 3px;
-  padding: 0.2rem 0.55rem;
-  font-size: 0.75rem;
-  font-weight: 650;
-  line-height: 1.4;
-  white-space: nowrap;
-}
-.state-pill.ok {
-  background: var(--color-live);
-  color: var(--color-live-fg);
-}
-.state-pill.warn {
-  background: var(--color-stale);
-  color: var(--color-stale-fg);
-}
-.state-pill.neutral {
-  background: var(--color-unknown);
-  color: var(--color-unknown-fg);
-}
-.state-pill.danger {
-  background: color-mix(in srgb, var(--color-danger) 14%, var(--color-card));
-  color: var(--color-danger);
-}
 </style>

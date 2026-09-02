@@ -516,19 +516,6 @@ function statusClass(status: string | undefined): string {
   return "status-unknown";
 }
 
-function statusStyle(status: string | undefined): string {
-  const s = (status || "").toUpperCase();
-  if (isSuccessStatus(s)) {
-    return "background-color: #D1FAE5; color: #065F46";
-  }
-  if (s === "PARTIAL" || s === "TIMEOUT" || s === "PENDING" || s === "RUNNING") {
-    return "background-color: #FEF3C7; color: #92400E";
-  }
-  if (s === "FAILED" || s === "UNAVAILABLE" || s === "CANCELED" || s === "CONFIG_MISSING") {
-    return "background-color: #FEE2E2; color: #991B1B";
-  }
-  return "background-color: #E5E7EB; color: #374151";
-}
 
 function buildPolicyPayload(policyId: string): ClusterPolicy {
   return {
@@ -1322,7 +1309,6 @@ async function onRetryFailed(): Promise<void> {
                   data-latest-run
                   :class="statusClass(row.latestStatus)"
                   :data-status="row.latestStatus"
-                  :style="statusStyle(row.latestStatus)"
                 >{{ row.latestStatus }}</span>
               </td>
               <td>{{ row.retention }}</td>
@@ -1440,7 +1426,6 @@ async function onRetryFailed(): Promise<void> {
                   class="status-badge"
                   :class="statusClass(run.status)"
                   :data-status="run.status"
-                  :style="statusStyle(run.status)"
                 >{{ run.status }}</span>
               </td>
             </tr>
@@ -1483,7 +1468,6 @@ async function onRetryFailed(): Promise<void> {
                   class="status-badge"
                   :class="statusClass(health.status)"
                   :data-status="health.status"
-                  :style="statusStyle(health.status)"
                 >{{ health.status }}</span>
               </td>
               <td>{{ health.sink || "—" }}</td>
@@ -1966,7 +1950,6 @@ async function onRetryFailed(): Promise<void> {
                 class="status-badge"
                 :class="statusClass(selectedRun.status)"
                 :data-status="selectedRun.status"
-                :style="statusStyle(selectedRun.status)"
               >{{ selectedRun.status }}</span>
             </dd>
           </div>
@@ -2021,7 +2004,6 @@ async function onRetryFailed(): Promise<void> {
                     class="status-badge"
                     :class="statusClass(task.status)"
                     :data-status="task.status"
-                    :style="statusStyle(task.status)"
                   >{{ task.status }}</span>
                 </td>
                 <td class="mono">{{ task.snapshotId || "—" }}</td>
@@ -2462,32 +2444,7 @@ tr[data-freshness="STALE"] {
   outline: 2px solid var(--color-accent);
   outline-offset: -2px;
 }
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  border-radius: 3px;
-  padding: 0.125rem 0.5rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-.status-success {
-  background-color: #d1fae5;
-  color: #065f46;
-}
-.status-partial,
-.status-pending {
-  background-color: #fef3c7;
-  color: #92400e;
-}
-.status-failed {
-  background-color: #fee2e2;
-  color: #991b1b;
-}
-.status-unknown {
-  background-color: #e5e7eb;
-  color: #374151;
-}
+
 .field-warning {
   margin: 0;
   padding: 0.625rem 0.75rem;

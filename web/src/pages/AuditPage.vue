@@ -667,12 +667,7 @@ h1 { margin-bottom: 0.35rem; font-size: 1.55rem; font-weight: 700; }
 .action-button { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: 0.2rem; border: 0; background: transparent; color: var(--color-text); padding: 0; text-align: left; cursor: pointer; }
 .action-button:hover strong { color: var(--color-accent); }
 .resource-value { display: block; max-width: 16rem; overflow: hidden; overflow-wrap: anywhere; text-overflow: ellipsis; }
-.result-badge { display: inline-flex; align-items: center; gap: 0.35rem; border-radius: 999px; padding: 0.3rem 0.55rem; font-size: 0.72rem; font-weight: 700; white-space: nowrap; }
-.status-dot { width: 0.42rem; height: 0.42rem; flex: 0 0 0.42rem; border-radius: 50%; background: currentColor; }
-.result-success { background: var(--color-live); color: var(--color-live-fg); }
-.result-warning { background: var(--color-stale); color: var(--color-stale-fg); }
-.result-danger { background: color-mix(in srgb, var(--color-danger) 12%, transparent); color: var(--color-danger); }
-.result-neutral { background: var(--color-unknown); color: var(--color-unknown-fg); }
+
 .view-button { display: inline-flex; min-height: 2.75rem; align-items: center; gap: 0.2rem; border: 0; border-radius: 6px; background: transparent; color: var(--color-accent); font-size: 0.78rem; font-weight: 650; cursor: pointer; }
 .view-button:hover { background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
 .loading-state, .error-state, .empty-state { display: flex; align-items: center; justify-content: center; gap: 0.6rem; color: var(--color-muted); }

@@ -138,14 +138,97 @@ body,
   border-color: var(--color-accent);
 }
 
-.badge {
+.badge,
+.state-pill,
+.status-badge,
+.status-timeout,
+.status-pill,
+.freshness-badge,
+.result-badge,
+.severity-badge,
+.channel-status,
+.group-chip,
+.restart-chip,
+.proc-chip,
+.pause-chip,
+.raft-role-badge,
+.revision.mismatch {
   display: inline-flex;
   align-items: center;
+  gap: 0.35rem;
   border-radius: 999px;
   padding: 0.125rem 0.5rem;
   font-size: 0.75rem;
   font-weight: 600;
-  transition: all 0.2s;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.status-dot {
+  width: 0.42rem;
+  height: 0.42rem;
+  flex: 0 0 0.42rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.state-pill.ok,
+.proc-chip.ok,
+.status-success,
+.status-ok,
+.status-enabled,
+.freshness-live,
+.result-success {
+  background: var(--color-live);
+  color: var(--color-live-fg);
+}
+
+.state-pill.warn,
+.proc-chip.warn,
+.pause-chip,
+.restart-chip,
+.revision.mismatch,
+.status-partial,
+.status-pending,
+.status-timeout,
+.status-warn,
+.freshness-stale,
+.result-warning,
+.severity-warning {
+  background: var(--color-stale);
+  color: var(--color-stale-fg);
+}
+
+.state-pill.danger,
+.proc-chip.danger,
+.status-failed,
+.status-danger,
+.status-denied,
+.status-conflict,
+.status-unavailable,
+.status-invalid,
+.result-danger,
+.severity-critical {
+  background: color-mix(in srgb, var(--color-danger) 14%, var(--color-card));
+  color: var(--color-danger);
+}
+
+.state-pill.neutral,
+.proc-chip.neutral,
+.status-unknown,
+.status-neutral,
+.status-disabled,
+.freshness-unknown,
+.result-neutral,
+.severity-unknown,
+.group-chip {
+  background: var(--color-unknown);
+  color: var(--color-unknown-fg);
+}
+
+.group-chip {
+  background: color-mix(in srgb, var(--color-text) 6%, transparent);
+  color: var(--color-muted);
 }
 
 .table {

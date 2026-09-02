@@ -1339,37 +1339,6 @@ h1 {
   font-size: 0.875rem;
 }
 
-.status-pill {
-  display: inline-flex;
-  align-items: center;
-  min-height: 1.5rem;
-  border-radius: 999px;
-  padding: 0.125rem 0.5rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  line-height: 1.4;
-}
-
-.status-ok {
-  background: var(--color-live);
-  color: var(--color-live-fg);
-}
-
-.status-warn {
-  background: var(--color-stale);
-  color: var(--color-stale-fg);
-}
-
-.status-danger {
-  background: color-mix(in srgb, var(--color-danger) 12%, var(--color-card));
-  color: var(--color-danger);
-}
-
-.status-neutral {
-  background: var(--color-unknown);
-  color: var(--color-unknown-fg);
-}
-
 .updates-table tbody tr.row-stale,
 .node-card.row-stale {
   background: color-mix(in srgb, var(--color-stale) 35%, transparent);

@@ -176,13 +176,6 @@ describe("BatchesPage", () => {
     const timeout = wrapper.get('[data-status="TIMEOUT"]');
     expect(timeout.classes()).toContain("status-timeout");
     expect(timeout.classes()).not.toContain("status-success");
-    const style = (timeout.attributes("style") ?? "").toLowerCase();
-    expect(style).not.toMatch(/#d1fae5|#065f46|#10a37f|bg-green|rgb\(209,\s*250,\s*229\)/);
-    expect(style).toMatch(/#fef3c7|#92400e|rgb\(254,\s*243,\s*199\)|rgb\(146,\s*64,\s*14\)/);
-    const el = timeout.element as HTMLElement;
-    const computed = getComputedStyle(el);
-    const bg = (computed.backgroundColor || el.style.backgroundColor).toLowerCase();
-    expect(bg).not.toMatch(/rgb\(209,\s*250,\s*229\)|#d1fae5/);
   });
 
   it("shows create form when session has batch.execute", async () => {

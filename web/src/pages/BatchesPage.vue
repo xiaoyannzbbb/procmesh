@@ -199,20 +199,6 @@ function statusClass(status: string): string {
   return "status-unknown";
 }
 
-function statusStyle(status: string): string {
-  const s = (status || "").toUpperCase();
-  if (s === "SUCCESS" || s === "COMPLETED") {
-    return "background-color: #D1FAE5; color: #065F46";
-  }
-  if (s === "TIMEOUT" || s === "PARTIAL") {
-    return "background-color: #FEF3C7; color: #92400E";
-  }
-  if (s === "FAILED" || s === "DENIED" || s === "CONFLICT" || s === "UNAVAILABLE" || s === "INVALID") {
-    return "background-color: #FEE2E2; color: #991B1B";
-  }
-  return "background-color: #E5E7EB; color: #374151";
-}
-
 function summaryOf(batch: { summary?: { success?: number; failed?: number; timeout?: number; denied?: number } } | undefined) {
   return {
     success: batch?.summary?.success ?? 0,
@@ -374,7 +360,6 @@ async function onExport(): Promise<void> {
                   class="status-badge"
                   :class="statusClass(detail.status)"
                   :data-status="detail.status"
-                  :style="statusStyle(detail.status)"
                 >{{ detail.status }}</span>
               </dd>
             </div>
@@ -389,7 +374,6 @@ async function onExport(): Promise<void> {
             <span
               class="status-timeout"
               data-status="TIMEOUT"
-              :style="statusStyle('TIMEOUT')"
             >{{ t("batch.timeout") }} {{ summaryOf(detail).timeout }}</span>
             <span>{{ t("batch.denied") }} {{ summaryOf(detail).denied }}</span>
           </div>
@@ -427,7 +411,6 @@ async function onExport(): Promise<void> {
                     class="status-badge"
                     :class="statusClass(target.status)"
                     :data-status="target.status"
-                    :style="statusStyle(target.status)"
                   >{{ target.status }}</span>
                 </td>
                 <td>{{ target.error || "—" }}</td>
@@ -496,7 +479,6 @@ async function onExport(): Promise<void> {
                     class="status-badge"
                     :class="statusClass(batch.status)"
                     :data-status="batch.status"
-                    :style="statusStyle(batch.status)"
                   >{{ batch.status }}</span>
                 </td>
                 <td>{{ summaryOf(batch).success }}</td>
@@ -505,7 +487,6 @@ async function onExport(): Promise<void> {
                   <span
                     class="status-timeout"
                     data-status="TIMEOUT"
-                    :style="statusStyle('TIMEOUT')"
                   >{{ summaryOf(batch).timeout }}</span>
                 </td>
                 <td>{{ formatCreated(batch.createdUnixMs) }}</td>
@@ -860,15 +841,7 @@ h2 {
 .spin {
   animation: spin 0.8s linear infinite;
 }
-.status-badge,
-.status-timeout {
-  display: inline-flex;
-  align-items: center;
-  border-radius: 999px;
-  padding: 0.125rem 0.5rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-}
+
 .card > h2 {
   padding: 1.25rem 1.25rem 0;
 }
