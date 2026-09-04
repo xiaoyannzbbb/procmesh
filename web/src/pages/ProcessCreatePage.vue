@@ -2,7 +2,7 @@
 import { useQuery, useQueryClient } from "@tanstack/vue-query";
 import { computed, nextTick, ref, watch, type ComponentPublicInstance } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { create } from "@bufbuild/protobuf";
+import { clone } from "@bufbuild/protobuf";
 import { ChevronLeft, FileCode2, LoaderCircle, Plus, Server, SlidersHorizontal } from "lucide-vue-next";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
 import { ProcessSpecSchema, type ProcessSpec } from "../gen/procmesh/v1/process_types_pb";
@@ -235,7 +235,7 @@ async function onSubmit(): Promise<void> {
   const created: string[] = [];
   try {
     for (const nodeId of owners) {
-      const next = create(ProcessSpecSchema, spec);
+      const next = clone(ProcessSpecSchema, spec);
       next.processId = "";
       next.ownerAgentId = nodeId;
       next.latestRevision = 0n;

@@ -149,6 +149,80 @@ const expectedAllLeafPaths = [
 ] as const;
 
 describe("ProcessSpec form conversion", () => {
+  it("initializes a create form with the defaults persisted by the backend", () => {
+    const form = emptyProcessConfigForm();
+
+    expect(form).toMatchObject({
+      instances: "1",
+      stopSignal: "SIGTERM",
+      killSignal: "SIGKILL",
+      stopTimeoutMs: "10000",
+      restart: {
+        mode: "on-failure",
+        backoff: { initialMs: "1000", maxMs: "60000", multiplier: "2" },
+      },
+      health: {
+        type: "alive",
+        method: "GET",
+        expectedStatus: "200",
+        timeoutMs: "1000",
+        failureThreshold: "1",
+        successThreshold: "1",
+      },
+      log: {
+        maxSize: "104857600",
+        maxFiles: "10",
+        maxAgeSeconds: "604800",
+        compress: true,
+      },
+    });
+    expect(processConfigFormToSpec(form)).toMatchObject({
+      instances: 1,
+      stopSignal: "SIGTERM",
+      killSignal: "SIGKILL",
+      stopTimeoutMs: 10_000n,
+      restart: {
+        mode: "on-failure",
+        backoff: { initialMs: 1_000n, maxMs: 60_000n, multiplier: 2 },
+      },
+      health: {
+        type: "alive",
+        method: "GET",
+        expectedStatus: 200,
+        timeoutMs: 1_000n,
+        failureThreshold: 1,
+        successThreshold: 1,
+      },
+      log: {
+        maxSize: 104_857_600n,
+        maxFiles: 10,
+        maxAgeSeconds: 604_800n,
+        compress: true,
+      },
+    });
+  });
+
+  it("preserves zero values from an existing ProcessSpec instead of applying create defaults", () => {
+    const form = specToProcessConfigForm(create(ProcessSpecSchema));
+
+    expect(form).toMatchObject({
+      instances: "0",
+      stopSignal: "",
+      killSignal: "",
+      stopTimeoutMs: "0",
+      restart: { mode: "" },
+      log: {
+        maxSize: "0",
+        maxFiles: "0",
+        maxAgeSeconds: "0",
+        compress: false,
+      },
+      hasRestart: false,
+      hasLog: false,
+    });
+    expect(processConfigFormToSpec(form)).toEqual(create(ProcessSpecSchema));
+  });
+
   it("preserves every ProcessSpec leaf through a form round trip", () => {
     expect(processConfigFormToSpec(specToProcessConfigForm(fullSpec))).toEqual(fullSpec);
   });
@@ -184,41 +258,41 @@ describe("ProcessSpec form conversion", () => {
       working_directory: "",
       run_as_user: "",
       environment: {},
-      instances: 0,
+      instances: 1,
       autostart: false,
-      stop_signal: "",
-      kill_signal: "",
-      stop_timeout_ms: 0,
+      stop_signal: "SIGTERM",
+      kill_signal: "SIGKILL",
+      stop_timeout_ms: 10000,
       startup_priority: 0,
       restart: {
-        mode: "",
+        mode: "on-failure",
         max_retries: 0,
         retry_window_ms: 0,
-        backoff: { initial_ms: 0, max_ms: 0, multiplier: 0 },
+        backoff: { initial_ms: 1000, max_ms: 60000, multiplier: 2 },
       },
       health: {
-        type: "",
+        type: "alive",
         url: "",
-        method: "",
+        method: "GET",
         address: "",
         command: "",
-        expected_status: 0,
+        expected_status: 200,
         args: [],
         initial_delay_ms: 0,
         interval_ms: 0,
-        timeout_ms: 0,
-        failure_threshold: 0,
-        success_threshold: 0,
+        timeout_ms: 1000,
+        failure_threshold: 1,
+        success_threshold: 1,
         restart_on_failure: false,
         restart_cooldown_ms: 0,
       },
       log: {
         directory: "",
         redirect_stderr: false,
-        max_size: 0,
-        max_files: 0,
-        max_age_seconds: 0,
-        compress: false,
+        max_size: 104857600,
+        max_files: 10,
+        max_age_seconds: 604800,
+        compress: true,
       },
       resources: {
         cpu_quota_millis: 0,

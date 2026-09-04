@@ -72,7 +72,7 @@ afterEach(() => {
   }
 });
 
-async function mountCreatePage(nodes: unknown[]) {
+async function mountCreatePage(nodes: unknown[], applyProcess = vi.fn()) {
   session.value = {
     userId: "u1",
     username: "admin",
@@ -99,7 +99,7 @@ async function mountCreatePage(nodes: unknown[]) {
       ],
       provide: {
         nodeClient: { listNodes: vi.fn().mockResolvedValue({ nodes }) },
-        processClient: { applyProcess: vi.fn() },
+        processClient: { applyProcess },
       },
     },
   });
@@ -161,6 +161,30 @@ describe("ProcessCreatePage", () => {
     expect(wrapper.find("#process-config-name").exists()).toBe(true);
   });
 
+  it("prefills the create form with backend-persisted defaults", async () => {
+    const wrapper = await mountCreatePage([]);
+
+    const value = (id: string) => (wrapper.get(id).element as HTMLInputElement).value;
+    expect(value("#process-config-instances")).toBe("1");
+    expect(value("#process-config-stopSignal")).toBe("SIGTERM");
+    expect(value("#process-config-killSignal")).toBe("SIGKILL");
+    expect(value("#process-config-stopTimeoutMs")).toBe("10000");
+    expect((wrapper.get("#process-config-restart-mode").element as HTMLSelectElement).value)
+      .toBe("on-failure");
+    expect(value("#process-config-restart-backoff-initialMs")).toBe("1000");
+    expect(value("#process-config-restart-backoff-maxMs")).toBe("60000");
+    expect(value("#process-config-restart-backoff-multiplier")).toBe("2");
+    expect((wrapper.get("#process-config-health-type").element as HTMLSelectElement).value)
+      .toBe("alive");
+    expect(value("#process-config-health-timeoutMs")).toBe("1000");
+    expect(value("#process-config-health-failureThreshold")).toBe("1");
+    expect(value("#process-config-health-successThreshold")).toBe("1");
+    expect(value("#process-config-log-maxSize")).toBe("104857600");
+    expect(value("#process-config-log-maxFiles")).toBe("10");
+    expect(value("#process-config-log-maxAgeSeconds")).toBe("604800");
+    expect((wrapper.get("#process-config-log-compress").element as HTMLInputElement).checked).toBe(true);
+  });
+
   it("shows YAML validation errors after submit", async () => {
     const wrapper = await mountCreatePage([
       {
@@ -198,8 +222,27 @@ describe("ProcessCreatePage", () => {
     expect(yaml).toContain("log:");
     expect(yaml).toContain("resources:");
     expect(yaml).toContain("dependencies:");
+    expect(yaml).toContain("instances: 1");
+    expect(yaml).toContain("stop_signal: SIGTERM");
+    expect(yaml).toContain("kill_signal: SIGKILL");
+    expect(yaml).toContain("stop_timeout_ms: 10000");
+    expect(yaml).toContain("mode: on-failure");
+    expect(yaml).toContain("initial_ms: 1000");
+    expect(yaml).toContain("max_ms: 60000");
+    expect(yaml).toContain("multiplier: 2");
+    expect(yaml).toContain("type: alive");
+    expect(yaml).toContain("method: GET");
+    expect(yaml).toContain("expected_status: 200");
+    expect(yaml).toContain("timeout_ms: 1000");
+    expect(yaml).toContain("failure_threshold: 1");
+    expect(yaml).toContain("success_threshold: 1");
+    expect(yaml).toContain("max_size: 104857600");
+    expect(yaml).toContain("max_files: 10");
+    expect(yaml).toContain("max_age_seconds: 604800");
+    expect(yaml).toContain("compress: true");
     expect(yaml).not.toContain("owner_agent_id:");
     expect(yaml).not.toContain("process_id:");
+    expect(yaml).not.toContain("latest_revision:");
     expect(wrapper.find("[data-error-summary]").exists()).toBe(false);
 
     await formButton.trigger("click");
@@ -207,6 +250,85 @@ describe("ProcessCreatePage", () => {
     expect(wrapper.find("#process-config-name").exists()).toBe(true);
     expect(wrapper.find("[data-error-summary]").exists()).toBe(false);
     expect(formButton.attributes("aria-pressed")).toBe("true");
+  });
+
+  it("preserves user overrides while switching between form and YAML", async () => {
+    const wrapper = await mountCreatePage([]);
+    const [formButton, yamlButton] = wrapper.findAll(".editor-mode-button");
+
+    await wrapper.get("#process-config-instances").setValue("3");
+    await yamlButton.trigger("click");
+    const textarea = wrapper.get("#process-create-yaml");
+    expect((textarea.element as HTMLTextAreaElement).value).toContain("instances: 3");
+
+    await textarea.setValue((textarea.element as HTMLTextAreaElement).value.replace(
+      "stop_timeout_ms: 10000",
+      "stop_timeout_ms: 2500",
+    ));
+    await formButton.trigger("click");
+
+    expect((wrapper.get("#process-config-instances").element as HTMLInputElement).value).toBe("3");
+    expect((wrapper.get("#process-config-stopTimeoutMs").element as HTMLInputElement).value).toBe("2500");
+  });
+
+  it("submits the visible defaults unchanged to every selected owner", async () => {
+    const applyProcess = vi.fn().mockResolvedValue({ spec: { name: "api" } });
+    const wrapper = await mountCreatePage([
+      {
+        nodeId: "node-a",
+        hostname: "host-a",
+        state: "ALIVE",
+        lastUpdatedUnixMs: Date.now(),
+        disableRemoteCreate: false,
+      },
+      {
+        nodeId: "node-b",
+        hostname: "host-b",
+        state: "ALIVE",
+        lastUpdatedUnixMs: Date.now(),
+        disableRemoteCreate: false,
+      },
+    ], applyProcess);
+
+    await wrapper.get("#process-config-name").setValue("api");
+    await wrapper.get("#process-config-command").setValue("/bin/api");
+    for (const checkbox of wrapper.findAll('.owner-row input[type="checkbox"]')) {
+      await checkbox.setValue(true);
+    }
+    await wrapper.get("form.create-form").trigger("submit");
+    await flushPromises();
+
+    expect(applyProcess).toHaveBeenCalledTimes(2);
+    for (const [request] of applyProcess.mock.calls) {
+      expect(request.spec).toMatchObject({
+        instances: 1,
+        stopSignal: "SIGTERM",
+        killSignal: "SIGKILL",
+        stopTimeoutMs: 10_000n,
+        restart: {
+          mode: "on-failure",
+          backoff: { initialMs: 1_000n, maxMs: 60_000n, multiplier: 2 },
+        },
+        health: {
+          type: "alive",
+          method: "GET",
+          expectedStatus: 200,
+          timeoutMs: 1_000n,
+          failureThreshold: 1,
+          successThreshold: 1,
+        },
+        log: {
+          maxSize: 104_857_600n,
+          maxFiles: 10,
+          maxAgeSeconds: 604_800n,
+          compress: true,
+        },
+      });
+    }
+    expect(applyProcess.mock.calls.map(([request]) => request.spec.ownerAgentId)).toEqual([
+      "node-a",
+      "node-b",
+    ]);
   });
 
   it("marks a selected owner card", async () => {

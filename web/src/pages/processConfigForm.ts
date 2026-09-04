@@ -146,7 +146,35 @@ function parseDecimal(value: string, path: string): number {
 }
 
 export function emptyProcessConfigForm(): ProcessConfigFormState {
-  return specToProcessConfigForm(create(ProcessSpecSchema));
+  // Create-only defaults must stay aligned with backend and runtime defaults.
+  return specToProcessConfigForm(create(ProcessSpecSchema, {
+    instances: 1,
+    stopSignal: "SIGTERM",
+    killSignal: "SIGKILL",
+    stopTimeoutMs: 10_000n,
+    restart: {
+      mode: "on-failure",
+      backoff: {
+        initialMs: 1_000n,
+        maxMs: 60_000n,
+        multiplier: 2,
+      },
+    },
+    health: {
+      type: "alive",
+      method: "GET",
+      expectedStatus: 200,
+      timeoutMs: 1_000n,
+      failureThreshold: 1,
+      successThreshold: 1,
+    },
+    log: {
+      maxSize: 104_857_600n,
+      maxFiles: 10,
+      maxAgeSeconds: 604_800n,
+      compress: true,
+    },
+  }));
 }
 
 export function specToProcessConfigForm(spec: ProcessSpec): ProcessConfigFormState {
