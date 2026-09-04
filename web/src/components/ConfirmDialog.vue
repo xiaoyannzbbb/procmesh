@@ -31,6 +31,7 @@ const cancelButtonRef = ref<HTMLButtonElement | null>(null);
 const titleId = useId();
 const messageId = useId();
 let previousActiveElement: HTMLElement | null = null;
+let previousBodyOverflow = "";
 
 const FOCUSABLE_SELECTOR = [
   "button:not([disabled])",
@@ -104,7 +105,7 @@ onMounted(() => document.addEventListener("keydown", onDocumentKeydown));
 onUnmounted(() => {
   document.removeEventListener("keydown", onDocumentKeydown);
   if (props.open) {
-    document.body.style.overflow = "";
+    document.body.style.overflow = previousBodyOverflow;
     previousActiveElement?.focus();
   }
 });
@@ -114,13 +115,14 @@ watch(
   async (isOpen) => {
     if (isOpen) {
       previousActiveElement = document.activeElement as HTMLElement | null;
+      previousBodyOverflow = document.body.style.overflow;
       document.body.style.overflow = "hidden";
       await nextTick();
       (cancelButtonRef.value ?? panelRef.value)?.focus();
       return;
     }
 
-    document.body.style.overflow = "";
+    document.body.style.overflow = previousBodyOverflow;
     await nextTick();
     previousActiveElement?.focus();
     previousActiveElement = null;

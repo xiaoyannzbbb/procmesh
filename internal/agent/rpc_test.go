@@ -340,6 +340,166 @@ func TestAgentForwarder_UserHopUsesMutationTimeout(t *testing.T) {
 	}
 }
 
+func TestCapabilityEndpointRejectsNonLeaderAndAcceptsPreparedLeader(t *testing.T) {
+	const (
+		clusterID = "capability-cluster"
+		leaderID  = "leader"
+		targetID  = "target"
+	)
+	now := time.Now().Truncate(time.Second)
+	leaderBundle, err := control.NewBundle(clusterID, leaderID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetCreds := issuePeerAgentCreds(t, leaderBundle, clusterID, targetID, now)
+	bystanderCreds := issuePeerAgentCreds(t, leaderBundle, clusterID, "bystander", now)
+	leader, err := control.Start(control.RaftConfig{Dir: t.TempDir(), Bind: "127.0.0.1:0", NodeID: leaderID, ClusterID: clusterID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = leader.Shutdown() })
+	target, err := control.Start(control.RaftConfig{Dir: t.TempDir(), Bind: "127.0.0.1:0", NodeID: targetID, ClusterID: clusterID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = target.Shutdown() })
+	if err := leader.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitRaftLeader(leader, raftStartTO); err != nil {
+		t.Fatal(err)
+	}
+	if err := leader.AddNonvoter(targetID, target.Advertise()); err != nil {
+		t.Fatal(err)
+	}
+	apply := func(typ string, body any) {
+		t.Helper()
+		command, encodeErr := control.EncodeCommand(typ, body)
+		if encodeErr != nil {
+			t.Fatal(encodeErr)
+		}
+		if applyErr := leader.Apply(command, raftApplyTO); applyErr != nil {
+			t.Fatal(applyErr)
+		}
+	}
+	apply(control.CmdBootstrap, control.BootstrapBody{ClusterID: clusterID, AdminUser: "admin", PasswordHash: "hash", AdminUserID: "admin", NowUnix: now.Unix()})
+	leaderSerial, _ := control.CertSerial(leaderBundle.AgentCertPEM)
+	targetSerial, _ := control.CertSerial(targetCreds.AgentCertPEM)
+	bystanderSerial, _ := control.CertSerial(bystanderCreds.AgentCertPEM)
+	apply(control.CmdMemberPut, control.MemberPutBody{NodeID: leaderID, RaftAddr: leader.Advertise(), CertSerial: leaderSerial, Status: control.MemberAdmitted})
+	apply(control.CmdMemberPut, control.MemberPutBody{NodeID: targetID, RaftAddr: target.Advertise(), CertSerial: targetSerial, Status: control.MemberAdmitted})
+	apply(control.CmdMemberPut, control.MemberPutBody{NodeID: "bystander", CertSerial: bystanderSerial, Status: control.MemberAdmitted})
+	fingerprint, err := control.CASPKIFingerprint(leaderBundle.CACertPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	apply(control.CmdCapabilityInit, control.CapabilityInitBody{CAFingerprint: fingerprint, Epoch: 1, NodeID: leaderID, CertSerial: leaderSerial})
+	prepare := control.CapabilityPrepareBody{
+		OperationID: "op-capability", NodeID: targetID, CertSerial: targetSerial,
+		CAFingerprint: fingerprint, Epoch: 1, LeaderTerm: leader.CurrentTerm(),
+		Nonce: "0011223344", ExpiresUnix: now.Add(time.Minute).Unix(),
+	}
+	apply(control.CmdCapabilityPrepare, prepare)
+	deadline := time.Now().Add(5 * time.Second)
+	for target.View().AdmissionCapability.Nodes[targetID].Status != control.CapabilityPrepared {
+		if time.Now().After(deadline) {
+			t.Fatal("target did not apply PREPARED")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	targetDir := t.TempDir()
+	writeAgentCreds(t, targetDir, targetCreds)
+	runtime := &rpcRuntime{
+		dir: targetDir, nodeID: targetID, node: target, clusterID: clusterID,
+		opt: Options{RPCListen: "127.0.0.1:0"}, logger: slog.New(slog.DiscardHandler), fwd: &agentForwarder{},
+	}
+	if err := runtime.startRPC(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { runtime.shutdown(context.Background()) })
+	route := api.Route{NodeID: targetID, RPC: runtime.ln.Addr().String()}
+	request := control.CapabilityTransferRequest{Prepare: prepare, CAKeyPEM: leaderBundle.CAKeyPEM}
+
+	wrong := &agentForwarder{}
+	wrong.set(bystanderCreds, clusterID, nil)
+	if _, err := wrong.PromoteCapability(context.Background(), route, request); err == nil || !strings.Contains(err.Error(), "DENIED") {
+		t.Fatalf("non-leader err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(targetDir, "ca.key")); !os.IsNotExist(err) {
+		t.Fatalf("non-leader installed CA key: %v", err)
+	}
+
+	authorized := &agentForwarder{}
+	authorized.set(control.AgentCreds{CACertPEM: leaderBundle.CACertPEM, AgentCertPEM: leaderBundle.AgentCertPEM, AgentKeyPEM: leaderBundle.AgentKeyPEM}, clusterID, nil)
+	response, err := authorized.PromoteCapability(context.Background(), route, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := control.VerifyCapabilityProof(leaderBundle.CACertPEM, control.CapabilityChallenge(prepare), response.Proof); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidLocalPrepareRejectsExpiredChallenge(t *testing.T) {
+	const nodeID = "target"
+	now := time.Now().Truncate(time.Second)
+	bundle, err := control.NewBundle("cluster", nodeID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := control.WriteBundle(dir, bundle); err != nil {
+		t.Fatal(err)
+	}
+	serial, err := control.CertSerial(bundle.AgentCertPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fingerprint, err := control.CASPKIFingerprint(bundle.CACertPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepare := control.CapabilityPrepareBody{
+		OperationID: "op-expired", NodeID: nodeID, CertSerial: serial,
+		CAFingerprint: fingerprint, Epoch: 1, LeaderTerm: 2,
+		Nonce: "nonce", ExpiresUnix: now.Add(-time.Second).Unix(),
+	}
+	state := control.NewState()
+	state.AdmissionCapability = control.AdmissionCapabilityState{
+		CAFingerprint: fingerprint,
+		Epoch:         1,
+		Nodes: map[string]control.AdmissionCapabilityNode{
+			nodeID: {
+				Status: control.CapabilityPrepared, OperationID: prepare.OperationID,
+				CertSerial: serial, LeaderTerm: prepare.LeaderTerm, Epoch: prepare.Epoch,
+				Nonce: prepare.Nonce, ExpiresUnix: prepare.ExpiresUnix,
+			},
+		},
+	}
+	runtime := &rpcRuntime{dir: dir, nodeID: nodeID}
+	if runtime.validLocalPrepare(*state, prepare) {
+		t.Fatal("expired capability challenge accepted")
+	}
+}
+
+func writeAgentCreds(t *testing.T, dir string, creds control.AgentCreds) {
+	t.Helper()
+	for _, file := range []struct {
+		name string
+		data []byte
+		mode os.FileMode
+	}{
+		{name: "ca.crt", data: creds.CACertPEM, mode: 0o640},
+		{name: "agent.crt", data: creds.AgentCertPEM, mode: 0o640},
+		{name: "agent.key", data: creds.AgentKeyPEM, mode: 0o600},
+	} {
+		if err := os.WriteFile(filepath.Join(dir, file.name), file.data, file.mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestAgentForwarder_AlertHopUsesMutationTimeout(t *testing.T) {
 	if alertHopTimeout != rpc.MutationTimeout {
 		t.Fatalf("alertHopTimeout=%v want MutationTimeout=%v", alertHopTimeout, rpc.MutationTimeout)

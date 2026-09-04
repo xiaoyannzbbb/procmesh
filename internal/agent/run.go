@@ -846,6 +846,7 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		Auth:             authSvc,
 		Degraded:         degraded,
 		Ready:            ready,
+		AdmissionReady:   rt.capabilityReady,
 		Started:          started,
 		LocalOnly:        false,
 		LocalID:          clusterDeps.NodeID,

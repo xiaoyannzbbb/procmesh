@@ -303,9 +303,13 @@ Shim 不实现重启策略、健康检查、RBAC。那些都在 Agent。
 
 cluster secret：随机 32 字节，只存 control member 的 `cluster/`（0600）。用途仅限紧急恢复文档/离线运维，**不**作为日常 RPC 凭证。日常认证只有 mTLS。
 
-`procmesh node token create`：一次性 join token（随机，Raft 只存哈希 + TTL + 剩余次数 + 作废标记）。
+`procmesh node token create`：一次性 join token（随机，Raft 只存哈希 + TTL + 剩余次数 + 作废标记）。请求可进入任意 Agent；入口校验 `node.manage` 与 `operation_id` 后通过内部 mTLS 转发到当前 Raft Leader，Leader 重建身份并再次校验权限。Token 创建不提供幂等重放；若返回 `TIMEOUT`，结果可能已经提交，重试会使用新的 `operation_id` 并可能留下额外的有效 Token。
 
 Join：向任一 ALIVE Agent 提交 token → 该 Agent 把签发请求交给 Raft leader → leader 校验 token 并消费次数 → 用 Cluster CA 签发证书 → 写入 membership 授权 → 返回证书与 CA。重复 `node_id`：拒绝后加入者，错误码 `DUPLICATE_NODE_ID`。
+
+普通 joiner/nonvoter 不持有 CA 私钥。`node promote` 先完成 CA-only Admission Capability 配置，再扩充 Raft voter：Leader 写入公开的 `PREPARED` 状态（operation ID、目标节点与证书序列号、Leader term、epoch、随机 nonce、过期时间），通过 `:18683` 内部 mTLS endpoint 传输 `ca.key`；目标确认调用者是当前 Leader 且 PREPARED 已 apply 后，以 `0600` 临时文件、file fsync、rename 和 directory fsync 原子安装，并用 CA 私钥签署 challenge。Leader 用 `ca.crt` 验证 proof、写入 `READY` 后才调用 `AddVoter`。已存在的相同 key 视为幂等成功，不同 key 禁止覆盖；任何安装、proof 或 READY 失败都保持 nonvoter。READY 后扩 voter 失败可用同一 operation ID 重试。
+
+每个 voter 都必须持有与 FSM 指纹一致的 CA 私钥且自身 capability 状态为 READY，否则 `/readyz` 为 degraded，Token 创建和 Join 签发 fail closed；该降级不停止或阻断本地业务进程。旧集群可由持有匹配 `ca.key` 的 Leader 初始化 capability 状态；已有 keyless voter 需在该 Leader 任期内逐个重新执行 `node promote` 补配。滚动升级期间旧 Agent 因不支持 capability endpoint 而晋升失败，不得改变 voter 集合。移除 voter 不能抹除其离线 CA 副本，彻底撤销签发能力需要轮换 Cluster CA。
 
 `procmesh node remove`：membership 删除 **并且** 证书吊销。仅 Gossip LEFT 不算安全删除。被吊销节点再连：拒绝。
 
@@ -338,7 +342,7 @@ Client → 入口 Agent :18680
 - 实现：hashicorp/raft。日志 raft-boltdb/v2，FSM 快照在 bbolt。
 - 默认 3 voter，可配 5。只有显式添加的节点是 voter。
 - 非 voter Agent 用客户端读（follower 读本地 apply 后的缓存；写发给 leader）。
-- FSM 只存：cluster_id、membership 授权、证书与 CRL、users、roles、permissions、bindings、cluster/security policy、join tokens、session 与 API token 元数据。V1.0 **不**存 agent_groups、alert_channels（那些是 V1.1）。
+- FSM 只存：cluster_id、membership 授权、证书与 CRL、users、roles、permissions、bindings、cluster/security policy、join tokens、Admission Capability 的 CA SPKI SHA-256/epoch/PREPARED/READY 公开状态、session 与 API token 元数据。CA 私钥绝不进入 Raft 日志、快照、审计或普通 API。V1.0 **不**存 agent_groups、alert_channels（那些是 V1.1）。
 - 失 quorum：Process Plane 全开；本地 Process 读写开；远程 Mutation 受 RBAC 缓存 TTL 约束（默认 5 分钟）；`user.*` / `role.*` / `node.remove` / 准入 / 安全策略写全部拒绝。
 - 已登录用户失 quorum 时仍可：`process.read`、status、logs.read。
 

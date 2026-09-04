@@ -137,6 +137,11 @@ func (s *ClusterAPI) Join(ctx context.Context, req *connect.Request[procmeshv1.J
 			return s.forwardJoin(ctx, req)
 		}
 	}
+	if n := s.Deps.controlNode(); n != nil && n.View().ClusterID != "" {
+		if err := (control.CapabilityManager{Node: n, Dir: s.Deps.Dir, NodeID: s.Deps.NodeID}).EnsureInitialized(); err != nil {
+			return nil, ToConnect(err)
+		}
+	}
 	now := s.Deps.now()
 	meta, err := control.LoadMeta(s.Deps.Dir)
 	if err != nil {

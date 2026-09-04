@@ -375,6 +375,11 @@ func TestFSM_SnapshotRestore(t *testing.T) {
 		NowUnix:      now.Unix(),
 	}, now)
 	mustFSMApply(t, f, "user_put", control.UserPutBody{ID: "u1", Username: "alice", PasswordHash: "ha"}, now)
+	mustFSMApply(t, f, control.CmdMemberPut, control.MemberPutBody{NodeID: "leader", CertSerial: "AA", Status: control.MemberAdmitted}, now)
+	mustFSMApply(t, f, control.CmdMemberPut, control.MemberPutBody{NodeID: "target", CertSerial: "BB", Status: control.MemberAdmitted}, now)
+	fingerprint := strings.Repeat("a", 64)
+	mustFSMApply(t, f, control.CmdCapabilityInit, control.CapabilityInitBody{CAFingerprint: fingerprint, Epoch: 1, NodeID: "leader", CertSerial: "AA"}, now)
+	mustFSMApply(t, f, control.CmdCapabilityPrepare, control.CapabilityPrepareBody{OperationID: "op-cap", NodeID: "target", CertSerial: "BB", CAFingerprint: fingerprint, Epoch: 1, LeaderTerm: 2, Nonce: "nonce", ExpiresUnix: now.Add(time.Minute).Unix()}, now)
 
 	snap, err := f.Snapshot()
 	if err != nil {
@@ -399,6 +404,9 @@ func TestFSM_SnapshotRestore(t *testing.T) {
 	}
 	if _, ok := view.Roles["viewer"]; !ok {
 		t.Fatal("roles missing after restore")
+	}
+	if view.AdmissionCapability.CAFingerprint != fingerprint || view.AdmissionCapability.Nodes["target"].Status != control.CapabilityPrepared {
+		t.Fatalf("capability missing after restore: %+v", view.AdmissionCapability)
 	}
 }
 

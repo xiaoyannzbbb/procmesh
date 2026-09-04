@@ -365,6 +365,53 @@ declare module "i18next" {
         'nodes.processesMore': string
         'nodes.processCount': string
         'nodes.diskPaused': string
+        'nodes.add.open': string
+        'nodes.add.title': string
+        'nodes.add.close': string
+        'nodes.add.intro': string
+        'nodes.add.seed': string
+        'nodes.add.selectSeed': string
+        'nodes.add.noSeeds': string
+        'nodes.add.nodesLoading': string
+        'nodes.add.nodesFailed': string
+        'nodes.add.cachedWarning': string
+        'nodes.add.refresh': string
+        'nodes.add.freshnessWarning': string
+        'nodes.add.duration': string
+        'nodes.add.durationHint': string
+        'nodes.add.unit': string
+        'nodes.add.units.seconds': string
+        'nodes.add.units.minutes': string
+        'nodes.add.units.hours': string
+        'nodes.add.units.days': string
+        'nodes.add.uses': string
+        'nodes.add.usesHint': string
+        'nodes.add.invalidDuration': string
+        'nodes.add.invalidUses': string
+        'nodes.add.generate': string
+        'nodes.add.regenerate': string
+        'nodes.add.generating': string
+        'nodes.add.permissionLost': string
+        'nodes.add.createFailed': string
+        'nodes.add.createTimeout': string
+        'nodes.add.tokenId': string
+        'nodes.add.expires': string
+        'nodes.add.remainingUses': string
+        'nodes.add.secretWarning': string
+        'nodes.add.executeOnNewNode': string
+        'nodes.add.commandLabel': string
+        'nodes.add.copy': string
+        'nodes.add.copied': string
+        'nodes.add.copyFailed': string
+        'nodes.add.customServerTitle': string
+        'nodes.add.customServerHint': string
+        'nodes.add.parametersChanged': string
+        'nodes.add.seedInvalid': string
+        'nodes.add.closeTitle': string
+        'nodes.add.closeMessage': string
+        'nodes.add.closePendingMessage': string
+        'nodes.add.closeConfirm': string
+        'nodes.add.cancel': string
         'nodes.stats.total': string
         'nodes.stats.alive': string
         'nodes.stats.suspect': string
@@ -1666,6 +1713,53 @@ declare module "i18next" {
         'nodes.processesMore': string
         'nodes.processCount': string
         'nodes.diskPaused': string
+        'nodes.add.open': string
+        'nodes.add.title': string
+        'nodes.add.close': string
+        'nodes.add.intro': string
+        'nodes.add.seed': string
+        'nodes.add.selectSeed': string
+        'nodes.add.noSeeds': string
+        'nodes.add.nodesLoading': string
+        'nodes.add.nodesFailed': string
+        'nodes.add.cachedWarning': string
+        'nodes.add.refresh': string
+        'nodes.add.freshnessWarning': string
+        'nodes.add.duration': string
+        'nodes.add.durationHint': string
+        'nodes.add.unit': string
+        'nodes.add.units.seconds': string
+        'nodes.add.units.minutes': string
+        'nodes.add.units.hours': string
+        'nodes.add.units.days': string
+        'nodes.add.uses': string
+        'nodes.add.usesHint': string
+        'nodes.add.invalidDuration': string
+        'nodes.add.invalidUses': string
+        'nodes.add.generate': string
+        'nodes.add.regenerate': string
+        'nodes.add.generating': string
+        'nodes.add.permissionLost': string
+        'nodes.add.createFailed': string
+        'nodes.add.createTimeout': string
+        'nodes.add.tokenId': string
+        'nodes.add.expires': string
+        'nodes.add.remainingUses': string
+        'nodes.add.secretWarning': string
+        'nodes.add.executeOnNewNode': string
+        'nodes.add.commandLabel': string
+        'nodes.add.copy': string
+        'nodes.add.copied': string
+        'nodes.add.copyFailed': string
+        'nodes.add.customServerTitle': string
+        'nodes.add.customServerHint': string
+        'nodes.add.parametersChanged': string
+        'nodes.add.seedInvalid': string
+        'nodes.add.closeTitle': string
+        'nodes.add.closeMessage': string
+        'nodes.add.closePendingMessage': string
+        'nodes.add.closeConfirm': string
+        'nodes.add.cancel': string
         'nodes.stats.total': string
         'nodes.stats.alive': string
         'nodes.stats.suspect': string

@@ -145,6 +145,22 @@ func TestAccept_LoginThroughOriginalFollowerAfterLeaderChange(t *testing.T) {
 	if !strings.Contains(out, "username=admin") {
 		t.Fatalf("login response missing admin identity: %q", out)
 	}
+
+	tokenAfterFailover := createJoinToken(t, entryAddr)
+	newAddr, _ := startClusterAgent(t, "")
+	code, out, errb = runP1CLI("--server", newAddr, "agent", "join", "--seed", entryAddr, "--token", tokenAfterFailover)
+	if code != 0 {
+		t.Fatalf("join through original follower after leader change exit=%d stdout=%q stderr=%q", code, out, errb)
+	}
+	deadline = time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		code, out, errb = runP1CLI("--server", entryAddr, "node", "list")
+		if code == 0 && len(parseNodeIDs(out)) == 5 {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("new node did not join after failover: code=%d stdout=%q stderr=%q", code, out, errb)
 }
 
 func controlLeaderAt(t *testing.T, addr string) string {

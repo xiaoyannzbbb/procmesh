@@ -4,7 +4,8 @@ import i18next from "i18next";
 import I18NextVue from "i18next-vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, h } from "vue";
-import { createMemoryHistory, createRouter } from "vue-router";
+import { createMemoryHistory, createRouter, RouterView } from "vue-router";
+import { session } from "../lib/session";
 import NodesPage from "./NodesPage.vue";
 
 const Blank = defineComponent({ setup: () => () => h("div") });
@@ -28,21 +29,26 @@ beforeEach(async () => {
 
 const mounted: Array<{ unmount: () => void }> = [];
 
-async function mountNodesPage(nodes: unknown[] = [], query: Record<string, string> = {}) {
+async function mountNodesPage(
+  nodes: unknown[] = [],
+  query: Record<string, string> = {},
+  createJoinToken = vi.fn(),
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  const nodeClient = { listNodes: vi.fn().mockResolvedValue({ nodes }) };
+  const nodeClient = { listNodes: vi.fn().mockResolvedValue({ nodes }), createJoinToken };
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
       { path: "/nodes", component: NodesPage },
       { path: "/nodes/:id", component: Blank },
+      { path: "/other", component: Blank },
     ],
   });
   await router.push({ path: "/nodes", query });
   await router.isReady();
-  const wrapper = mount(NodesPage, {
+  const wrapper = mount(RouterView, {
     global: {
       plugins: [
         [VueQueryPlugin, { queryClient }],
@@ -62,6 +68,9 @@ afterEach(() => {
   while (mounted.length) {
     mounted.pop()?.unmount();
   }
+  session.value = null;
+  document.body.innerHTML = "";
+  document.body.style.overflow = "";
 });
 
 async function addNodesTranslations(language: "en" | "zh") {
@@ -93,6 +102,51 @@ async function addNodesTranslations(language: "en" | "zh") {
       processesMore: chinese ? "还有 {{count}} 个" : "+{{count}} more",
       processCount: chinese ? "{{count}} 个进程" : "{{count}} processes",
       diskPaused: chinese ? "历史写入已暂停" : "History writes paused",
+      add: {
+        open: chinese ? "添加节点" : "Add node",
+        title: chinese ? "添加节点" : "Add node",
+        close: chinese ? "关闭" : "Close",
+        intro: chinese ? "在新节点运行命令。" : "Run this command on the new node.",
+        seed: chinese ? "种子节点" : "Seed node",
+        selectSeed: chinese ? "选择种子节点" : "Select a seed node",
+        noSeeds: chinese ? "没有可用种子节点。" : "No eligible seed nodes are available.",
+        nodesLoading: chinese ? "加载中" : "Loading seed nodes...",
+        nodesFailed: chinese ? "加载失败：{{detail}}" : "Could not load seed nodes: {{detail}}",
+        cachedWarning: chinese ? "刷新失败：{{detail}}" : "Refresh failed: {{detail}}",
+        refresh: chinese ? "重试" : "Retry",
+        freshnessWarning: "{{freshness}}",
+        duration: chinese ? "有效期" : "Valid for",
+        durationHint: chinese ? "正整数" : "Positive whole number",
+        unit: chinese ? "单位" : "Duration unit",
+        units: { seconds: "seconds", minutes: "minutes", hours: "hours", days: "days" },
+        uses: chinese ? "次数" : "Maximum uses",
+        usesHint: chinese ? "正整数" : "Positive whole number",
+        invalidDuration: chinese ? "无效有效期" : "Invalid duration",
+        invalidUses: chinese ? "无效次数" : "Invalid uses",
+        generate: chinese ? "生成" : "Generate join command",
+        regenerate: chinese ? "重新生成" : "Generate a new token",
+        generating: chinese ? "生成中" : "Generating...",
+        permissionLost: chinese ? "权限已撤销。代码：{{code}}" : "Permission revoked. Code: {{code}}",
+        createFailed: chinese ? "创建失败：{{detail}}" : "Could not create token: {{detail}}",
+        tokenId: chinese ? "令牌 ID" : "Token ID",
+        expires: chinese ? "到期" : "Expires",
+        remainingUses: chinese ? "剩余次数" : "Remaining uses",
+        secretWarning: chinese ? "仅显示一次。" : "Shown only once.",
+        executeOnNewNode: chinese ? "在新节点运行" : "Run on the new node",
+        commandLabel: chinese ? "加入命令" : "Join command",
+        copy: chinese ? "复制" : "Copy command",
+        copied: chinese ? "已复制" : "Command copied",
+        copyFailed: chinese ? "复制失败" : "Copy failed",
+        customServerTitle: chinese ? "自定义服务" : "Custom server",
+        customServerHint: chinese ? "服务参数说明" : "Server option help",
+        parametersChanged: chinese ? "参数已变更" : "Parameters changed",
+        seedInvalid: chinese ? "种子节点不可用" : "Seed unavailable",
+        closeTitle: chinese ? "关闭并丢失令牌？" : "Close and lose the token?",
+        closeMessage: chinese ? "明文不可恢复。" : "The plaintext cannot be recovered.",
+        closePendingMessage: chinese ? "请求可能仍会完成。" : "The request may still complete.",
+        closeConfirm: chinese ? "确认关闭" : "Close drawer",
+        cancel: chinese ? "保持打开" : "Keep open",
+      },
       stats: {
         total: chinese ? "全部" : "Total",
         alive: chinese ? "存活" : "Alive",
@@ -365,5 +419,136 @@ describe("NodesPage empty and navigation", () => {
     await flushPromises();
     await wrapper.vm.$nextTick();
     expect(router.currentRoute.value.path).toBe("/nodes/n-a");
+  });
+});
+
+describe("NodesPage add node permission", () => {
+  it("shows the entry only with node.manage and opens the drawer", async () => {
+    await addNodesTranslations("en");
+    session.value = {
+      userId: "u-1",
+      username: "admin",
+      csrfToken: "csrf",
+      permissions: ["node.manage"],
+    };
+    const { wrapper } = await mountNodesPage(sampleNodes());
+
+    const button = wrapper.get('[data-action="add-node"]');
+    expect(button.text()).toBe("Add node");
+    await button.trigger("click");
+    await flushPromises();
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
+  });
+
+  it("does not render the entry without node.manage", async () => {
+    await addNodesTranslations("en");
+    session.value = {
+      userId: "u-1",
+      username: "reader",
+      csrfToken: "csrf",
+      permissions: ["node.read"],
+    };
+    const { wrapper } = await mountNodesPage(sampleNodes());
+    expect(wrapper.find('[data-action="add-node"]').exists()).toBe(false);
+  });
+});
+
+describe("NodesPage add node route lifecycle", () => {
+  const eligibleNode = {
+    nodeId: "n-a",
+    hostname: "agent-a",
+    state: "ALIVE",
+    apiAddress: "10.0.0.11:18680",
+    lastUpdatedUnixMs: Date.now(),
+    processes: [],
+  };
+
+  async function startCreate(createJoinToken: ReturnType<typeof vi.fn>) {
+    await addNodesTranslations("en");
+    session.value = {
+      userId: "u-1",
+      username: "admin",
+      csrfToken: "csrf",
+      permissions: ["node.manage"],
+    };
+    const mountedPage = await mountNodesPage([eligibleNode], {}, createJoinToken);
+    await mountedPage.wrapper.get('[data-action="add-node"]').trigger("click");
+    await flushPromises();
+    const seed = document.body.querySelector<HTMLSelectElement>('select[name="seed"]')!;
+    seed.value = "n-a";
+    seed.dispatchEvent(new Event("change", { bubbles: true }));
+    await flushPromises();
+    document.body.querySelector<HTMLFormElement>("form.join-form")!.dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true }),
+    );
+    await flushPromises();
+    return mountedPage;
+  }
+
+  it("cancels result navigation without clearing the token and clears it on confirmation", async () => {
+    const page = await startCreate(
+      vi.fn().mockResolvedValue({
+        tokenId: "jt-route",
+        token: "pmj_route_secret",
+        expiresUnix: 1_800_000_000n,
+        uses: 1,
+      }),
+    );
+    expect(document.body.textContent).toContain("pmj_route_secret");
+
+    const cancelledNavigation = page.router.push("/other");
+    await flushPromises();
+    expect(document.body.textContent).toContain("Close and lose the token?");
+    const keepOpen = Array.from(document.body.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Keep open",
+    ) as HTMLButtonElement;
+    keepOpen.click();
+    await cancelledNavigation;
+    await flushPromises();
+    expect(page.router.currentRoute.value.path).toBe("/nodes");
+    expect(document.body.textContent).toContain("pmj_route_secret");
+
+    const confirmedNavigation = page.router.push("/other");
+    await flushPromises();
+    const confirm = Array.from(document.body.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Close drawer",
+    ) as HTMLButtonElement;
+    confirm.click();
+    await confirmedNavigation;
+    await flushPromises();
+    expect(page.router.currentRoute.value.path).toBe("/other");
+    expect(document.body.textContent).not.toContain("pmj_route_secret");
+  });
+
+  it("guards a pending request and ignores its response after confirmed navigation", async () => {
+    let resolve!: (value: unknown) => void;
+    const createJoinToken = vi.fn().mockImplementation(
+      () => new Promise((done) => { resolve = done; }),
+    );
+    const page = await startCreate(createJoinToken);
+
+    const cancelledNavigation = page.router.push("/other");
+    await flushPromises();
+    expect(document.body.textContent).toContain("The request may still complete.");
+    const keepOpen = Array.from(document.body.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Keep open",
+    ) as HTMLButtonElement;
+    keepOpen.click();
+    await cancelledNavigation;
+    expect(page.router.currentRoute.value.path).toBe("/nodes");
+    expect(document.body.textContent).toContain("Generating...");
+
+    const confirmedNavigation = page.router.push("/other");
+    await flushPromises();
+    const confirm = Array.from(document.body.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Close drawer",
+    ) as HTMLButtonElement;
+    confirm.click();
+    await confirmedNavigation;
+    resolve({ tokenId: "jt-late", token: "pmj_late", expiresUnix: 1_800_000_000n, uses: 1 });
+    await flushPromises();
+    expect(page.router.currentRoute.value.path).toBe("/other");
+    expect(document.body.textContent).not.toContain("pmj_late");
+    expect(document.body.textContent).not.toContain("jt-late");
   });
 });

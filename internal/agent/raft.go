@@ -177,15 +177,22 @@ func (r *rpcRuntime) ensureLocalMemberAdmitted() error {
 	if view.ClusterID == "" {
 		return nil
 	}
-	if m, ok := view.Member(meta.NodeID); ok && m.Status == control.MemberAdmitted {
-		return nil
-	}
-	if !(n.IsLeader() && n.HasQuorum()) {
-		if err := waitRaftLeader(n, raftStartTO); err != nil {
-			return nil
+	if m, ok := view.Member(meta.NodeID); !ok || m.Status != control.MemberAdmitted {
+		if !(n.IsLeader() && n.HasQuorum()) {
+			if err := waitRaftLeader(n, raftStartTO); err != nil {
+				return nil
+			}
+		}
+		if err := admitBootstrapMember(n, r.dir); err != nil {
+			return err
 		}
 	}
-	return admitBootstrapMember(n, r.dir)
+	if n.IsLeader() {
+		if err := (control.CapabilityManager{Node: n, Dir: r.dir, NodeID: meta.NodeID}).EnsureInitialized(); err != nil && r.logger != nil {
+			r.logger.With("component", "raft").Warn("admission capability initialization deferred")
+		}
+	}
+	return nil
 }
 
 func (r *rpcRuntime) lookupClusterIDLocked() string {
@@ -348,7 +355,10 @@ func applyAdminBootstrap(n *control.Node, clusterDir string) error {
 	if err := n.Apply(cmd, raftApplyTO); err != nil {
 		return err
 	}
-	return admitBootstrapMember(n, clusterDir)
+	if err := admitBootstrapMember(n, clusterDir); err != nil {
+		return err
+	}
+	return (control.CapabilityManager{Node: n, Dir: clusterDir, NodeID: meta.NodeID}).EnsureInitialized()
 }
 
 func admitBootstrapMember(n *control.Node, clusterDir string) error {

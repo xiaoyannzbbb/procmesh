@@ -57,6 +57,11 @@ func NewUserClient(hc *http.Client, base string) procmeshv1connect.UserServiceCl
 	return procmeshv1connect.NewUserServiceClient(hc, base)
 }
 
+// NewNodeClient returns a NodeService client over the given HTTP client and base URL.
+func NewNodeClient(hc *http.Client, base string) procmeshv1connect.NodeServiceClient {
+	return procmeshv1connect.NewNodeServiceClient(hc, base)
+}
+
 // NewConfigClient returns a ConfigService client over the given HTTP client and base URL.
 func NewConfigClient(hc *http.Client, base string) procmeshv1connect.ConfigServiceClient {
 	return procmeshv1connect.NewConfigServiceClient(hc, base)

@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,9 +16,49 @@ import (
 	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
+	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/rpc"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
+
+type nodeForwarderFunc func(context.Context, Route) (procmeshv1connect.NodeServiceClient, error)
+
+func (f nodeForwarderFunc) Node(ctx context.Context, route Route) (procmeshv1connect.NodeServiceClient, error) {
+	return f(ctx, route)
+}
+
+type capabilityForwarderFunc func(context.Context, Route, control.CapabilityTransferRequest) (control.CapabilityTransferResponse, error)
+
+func (f capabilityForwarderFunc) PromoteCapability(ctx context.Context, route Route, request control.CapabilityTransferRequest) (control.CapabilityTransferResponse, error) {
+	return f(ctx, route, request)
+}
+
+type createJoinTokenClientFunc func(context.Context, *connect.Request[procmeshv1.CreateJoinTokenRequest]) (*connect.Response[procmeshv1.CreateJoinTokenResponse], error)
+
+func (f createJoinTokenClientFunc) CreateJoinToken(ctx context.Context, req *connect.Request[procmeshv1.CreateJoinTokenRequest]) (*connect.Response[procmeshv1.CreateJoinTokenResponse], error) {
+	return f(ctx, req)
+}
+
+func (createJoinTokenClientFunc) ListNodes(context.Context, *connect.Request[procmeshv1.ListNodesRequest]) (*connect.Response[procmeshv1.ListNodesResponse], error) {
+	panic("unexpected ListNodes")
+}
+
+func (createJoinTokenClientFunc) GetNode(context.Context, *connect.Request[procmeshv1.GetNodeRequest]) (*connect.Response[procmeshv1.GetNodeResponse], error) {
+	panic("unexpected GetNode")
+}
+
+func (createJoinTokenClientFunc) RevokeJoinToken(context.Context, *connect.Request[procmeshv1.RevokeJoinTokenRequest]) (*connect.Response[procmeshv1.RevokeJoinTokenResponse], error) {
+	panic("unexpected RevokeJoinToken")
+}
+
+func (createJoinTokenClientFunc) RemoveNode(context.Context, *connect.Request[procmeshv1.RemoveNodeRequest]) (*connect.Response[procmeshv1.RemoveNodeResponse], error) {
+	panic("unexpected RemoveNode")
+}
+
+func (createJoinTokenClientFunc) PromoteNode(context.Context, *connect.Request[procmeshv1.PromoteNodeRequest]) (*connect.Response[procmeshv1.PromoteNodeResponse], error) {
+	panic("unexpected PromoteNode")
+}
 
 type failingRaftMembershipReader struct{}
 
@@ -274,6 +316,190 @@ func TestCreateJoinToken_MissingOperationID(t *testing.T) {
 	code, detail := connectDetail(t, err)
 	if code != connect.CodeInvalidArgument || detail != "INVALID" {
 		t.Fatalf("code=%v detail=%s err=%v", code, detail, err)
+	}
+}
+
+func TestCreateJoinToken_FollowerForwardsRequestAndIdentity(t *testing.T) {
+	want := &procmeshv1.CreateJoinTokenResponse{TokenId: "token-1", Token: "pmj_secret", ExpiresUnix: 123, Uses: 1}
+	var gotRoute Route
+	var gotReq *connect.Request[procmeshv1.CreateJoinTokenRequest]
+	api := &NodeAPI{
+		Deps:     ClusterDeps{Dir: t.TempDir()},
+		LocalID:  "follower",
+		IsLeader: func() bool { return false },
+		LeaderRoute: func() (Route, error) {
+			return Route{NodeID: "leader", RPC: "leader:18683"}, nil
+		},
+		Forward: nodeForwarderFunc(func(_ context.Context, route Route) (procmeshv1connect.NodeServiceClient, error) {
+			gotRoute = route
+			return createJoinTokenClientFunc(func(_ context.Context, req *connect.Request[procmeshv1.CreateJoinTokenRequest]) (*connect.Response[procmeshv1.CreateJoinTokenResponse], error) {
+				gotReq = req
+				return connect.NewResponse(want), nil
+			}), nil
+		}),
+	}
+	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-1", SessionID: "session-1"})
+	req := connect.NewRequest(&procmeshv1.CreateJoinTokenRequest{
+		Meta:       &procmeshv1.MutationMeta{OperationId: "op-forward", Operator: "admin"},
+		TtlSeconds: 90,
+		Uses:       2,
+	})
+	req.Header().Set("Authorization", "Bearer browser-secret")
+	req.Header().Set("Cookie", "procmesh_session=browser-session")
+
+	got, err := api.CreateJoinToken(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Msg.GetTokenId() != want.GetTokenId() || got.Msg.GetToken() != want.GetToken() {
+		t.Fatalf("response=%+v", got.Msg)
+	}
+	if gotRoute.NodeID != "leader" || gotRoute.RPC != "leader:18683" {
+		t.Fatalf("route=%+v", gotRoute)
+	}
+	if gotReq == nil || gotReq.Msg.GetMeta().GetOperationId() != "op-forward" || gotReq.Msg.GetTtlSeconds() != 90 || gotReq.Msg.GetUses() != 2 {
+		t.Fatalf("forwarded request=%+v", gotReq)
+	}
+	h := gotReq.Header()
+	if rpc.SourceOf(h) != "follower" || rpc.TargetOf(h) != "leader" || rpc.UserIDOf(h) != "user-1" || rpc.SessionIDOf(h) != "session-1" {
+		t.Fatalf("hop headers=%v", h)
+	}
+	if h.Get("Authorization") != "" || h.Get("Cookie") != "" {
+		t.Fatalf("browser credentials leaked: authorization=%q cookie=%q", h.Get("Authorization"), h.Get("Cookie"))
+	}
+}
+
+func TestCreateJoinToken_FollowerErrorsAreClassified(t *testing.T) {
+	tests := []struct {
+		name    string
+		route   func() (Route, error)
+		forward NodeForwarder
+		want    errcode.Code
+	}{
+		{name: "no leader", route: func() (Route, error) { return Route{}, errors.New("none") }, want: errcode.UNAVAILABLE},
+		{name: "dial failure", route: func() (Route, error) { return Route{NodeID: "leader", RPC: "leader:18683"}, nil }, forward: nodeForwarderFunc(func(context.Context, Route) (procmeshv1connect.NodeServiceClient, error) {
+			return nil, errors.New("dial refused")
+		}), want: errcode.UNAVAILABLE},
+		{name: "call failure before dispatch", route: func() (Route, error) { return Route{NodeID: "leader", RPC: "leader:18683"}, nil }, forward: nodeForwarderFunc(func(context.Context, Route) (procmeshv1connect.NodeServiceClient, error) {
+			return createJoinTokenClientFunc(func(context.Context, *connect.Request[procmeshv1.CreateJoinTokenRequest]) (*connect.Response[procmeshv1.CreateJoinTokenResponse], error) {
+				return nil, errors.New("connection refused")
+			}), nil
+		}), want: errcode.UNAVAILABLE},
+		{name: "uncertain eof", route: func() (Route, error) { return Route{NodeID: "leader", RPC: "leader:18683"}, nil }, forward: nodeForwarderFunc(func(context.Context, Route) (procmeshv1connect.NodeServiceClient, error) {
+			return createJoinTokenClientFunc(func(ctx context.Context, _ *connect.Request[procmeshv1.CreateJoinTokenRequest]) (*connect.Response[procmeshv1.CreateJoinTokenResponse], error) {
+				trace := httptrace.ContextClientTrace(ctx)
+				if trace != nil && trace.WroteRequest != nil {
+					trace.WroteRequest(httptrace.WroteRequestInfo{})
+				}
+				return nil, errors.New("unexpected EOF")
+			}), nil
+		}), want: errcode.TIMEOUT},
+		{name: "structured business error", route: func() (Route, error) { return Route{NodeID: "leader", RPC: "leader:18683"}, nil }, forward: nodeForwarderFunc(func(context.Context, Route) (procmeshv1connect.NodeServiceClient, error) {
+			return createJoinTokenClientFunc(func(context.Context, *connect.Request[procmeshv1.CreateJoinTokenRequest]) (*connect.Response[procmeshv1.CreateJoinTokenResponse], error) {
+				return nil, ToConnect(errcode.E(errcode.DENIED, "rejected"))
+			}), nil
+		}), want: errcode.DENIED},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := &NodeAPI{Deps: ClusterDeps{Dir: t.TempDir()}, LocalID: "follower", IsLeader: func() bool { return false }, LeaderRoute: tt.route, Forward: tt.forward}
+			_, err := api.CreateJoinToken(context.Background(), connect.NewRequest(&procmeshv1.CreateJoinTokenRequest{Meta: &procmeshv1.MutationMeta{OperationId: "op", Operator: "admin"}}))
+			_, detail := connectDetail(t, err)
+			if detail != string(tt.want) {
+				t.Fatalf("detail=%q want=%q err=%v", detail, tt.want, err)
+			}
+		})
+	}
+}
+
+func TestCreateJoinToken_OwnerRechecksNodeManage(t *testing.T) {
+	svc := newTestAuthService(t)
+	putViewerUser(t, svc)
+	sessionID, _, userID, _, err := svc.Login("viewer", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if _, err := control.Init(dir, "leader", "admin", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	path, handler := procmeshv1connect.NewNodeServiceHandler(&NodeAPI{
+		Deps: ClusterDeps{Dir: dir}, Auth: svc, LocalOnly: true, LocalID: "leader",
+	}, connect.WithInterceptors(OwnerAuthInterceptor(svc, "leader")))
+	mux := http.NewServeMux()
+	mux.Handle(path, handler)
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	client := procmeshv1connect.NewNodeServiceClient(server.Client(), server.URL)
+	req := connect.NewRequest(&procmeshv1.CreateJoinTokenRequest{Meta: &procmeshv1.MutationMeta{OperationId: "op-owner-check", Operator: "viewer"}})
+	rpc.SetUserID(req.Header(), userID)
+	rpc.SetSessionID(req.Header(), sessionID)
+	_, err = client.CreateJoinToken(context.Background(), req)
+	code, detail := connectDetail(t, err)
+	if code != connect.CodePermissionDenied || detail != string(errcode.DENIED) {
+		t.Fatalf("code=%v detail=%q err=%v", code, detail, err)
+	}
+}
+
+func TestPromoteNode_TransferFailureKeepsNonvoter(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	dir := t.TempDir()
+	bundle, err := control.NewBundle("cluster", "leader", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := control.WriteBundle(dir, bundle); err != nil {
+		t.Fatal(err)
+	}
+	ctrl := startTestRaft(t, "leader")
+	apply := func(typ string, body any) {
+		t.Helper()
+		command, encodeErr := control.EncodeCommand(typ, body)
+		if encodeErr != nil {
+			t.Fatal(encodeErr)
+		}
+		if applyErr := ctrl.Apply(command, 5*time.Second); applyErr != nil {
+			t.Fatal(applyErr)
+		}
+	}
+	apply(control.CmdBootstrap, control.BootstrapBody{ClusterID: "cluster", AdminUser: "admin", PasswordHash: "hash", AdminUserID: "admin", NowUnix: now.Unix()})
+	leaderSerial, _ := control.CertSerial(bundle.AgentCertPEM)
+	csr, _, err := control.NewCSR("cluster", "target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetCert, err := control.SignCSR(bundle.CACertPEM, bundle.CAKeyPEM, csr, "cluster", "target", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetSerial, _ := control.CertSerial(targetCert)
+	apply(control.CmdMemberPut, control.MemberPutBody{NodeID: "leader", RaftAddr: ctrl.Advertise(), CertSerial: leaderSerial, Status: control.MemberAdmitted})
+	apply(control.CmdMemberPut, control.MemberPutBody{NodeID: "target", RaftAddr: "target-raft", CertSerial: targetSerial, Status: control.MemberAdmitted})
+	if err := ctrl.AddNonvoter("target", "target-raft"); err != nil {
+		t.Fatal(err)
+	}
+	api := &NodeAPI{
+		Deps:    ClusterDeps{Dir: dir, Control: ctrl, Now: func() time.Time { return now }, Mesh: &staticMesh{members: []cluster.NodeSummary{{NodeID: "target", State: cluster.StateAlive, RPCAddress: "target:18683"}}}},
+		LocalID: "leader",
+		Capability: capabilityForwarderFunc(func(context.Context, Route, control.CapabilityTransferRequest) (control.CapabilityTransferResponse, error) {
+			return control.CapabilityTransferResponse{}, errcode.E(errcode.UNAVAILABLE, "install failed")
+		}),
+	}
+	_, err = api.PromoteNode(context.Background(), connect.NewRequest(&procmeshv1.PromoteNodeRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-promote", Operator: "admin"}, NodeId: "target",
+	}))
+	if !errcode.Is(err, errcode.UNAVAILABLE) && connect.CodeOf(err) != connect.CodeUnavailable {
+		t.Fatalf("promote err=%v", err)
+	}
+	membership, err := ctrl.RaftMembershipView()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if membership.Members["target"] != control.RaftNonVoter {
+		t.Fatalf("target role=%q", membership.Members["target"])
+	}
+	if ctrl.View().AdmissionCapability.Nodes["target"].Status != control.CapabilityPrepared {
+		t.Fatalf("target capability=%+v", ctrl.View().AdmissionCapability.Nodes["target"])
 	}
 }
 

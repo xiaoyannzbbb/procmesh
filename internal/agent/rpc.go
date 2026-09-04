@@ -1,8 +1,11 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -16,6 +19,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
+	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/metrics"
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/rpc"
@@ -189,6 +193,7 @@ func (r *rpcRuntime) shutdown(ctx context.Context) {
 
 func (r *rpcRuntime) localHandler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc(capabilityPromotePath, r.capabilityPromote)
 	degraded := r.degradedFn()
 	var revs api.RevisionStore
 	if r.st != nil {
@@ -211,6 +216,15 @@ func (r *rpcRuntime) localHandler() http.Handler {
 		LeaderRoute: r.leaderRoute, LoginForward: r.fwd,
 	})
 	mux.Handle(authp, authh)
+	nodep, nodeh := procmeshv1connect.NewNodeServiceHandler(&api.NodeAPI{
+		Deps: api.ClusterDeps{Dir: r.dir, Store: r.st, Mesh: r.mesh, ControlFn: r.control, NodeID: r.nodeID},
+		Auth: r.auth, Degraded: r.degradedFn(), LocalOnly: true, LocalID: r.nodeID,
+		IsLeader: func() bool {
+			n := r.control()
+			return n != nil && n.IsLeader()
+		},
+	}, opts...)
+	mux.Handle(nodep, nodeh)
 	pp, ph := procmeshv1connect.NewProcessServiceHandler(&api.ProcessAPI{
 		Mgr: r.mgr, Auth: r.auth, Degraded: degraded,
 		LocalOnly: true, LocalID: r.nodeID, Process: r.process,
@@ -395,6 +409,14 @@ func (r *rpcRuntime) degradedFn() func() bool {
 	}
 }
 
+func (r *rpcRuntime) capabilityReady() error {
+	node := r.control()
+	if node == nil || !node.IsVoter() || node.View().ClusterID == "" {
+		return nil
+	}
+	return (control.CapabilityManager{Node: node, Dir: r.dir, NodeID: r.nodeID}).CheckReady()
+}
+
 func advertiseRPC(advertise, bound string) string {
 	if advertise == "" {
 		return bound
@@ -451,6 +473,7 @@ const (
 	processHopTimeout             = rpc.MutationTimeout
 	loginHopTimeout               = rpc.MutationTimeout
 	userHopTimeout                = rpc.MutationTimeout
+	nodeHopTimeout                = rpc.MutationTimeout
 	configHopTimeout              = rpc.MutationTimeout
 	logHopTimeout                 = time.Duration(0)
 	auditHopTimeout               = 2 * time.Second
@@ -459,6 +482,7 @@ const (
 	alertHopTimeout               = rpc.MutationTimeout
 	backupHopTimeout              = rpc.MutationTimeout
 	clusterBackupHopTimeout       = rpc.MutationTimeout
+	capabilityHopTimeout          = rpc.MutationTimeout
 	disasterReplicationHopTimeout = rpc.MutationTimeout
 )
 
@@ -496,6 +520,50 @@ func (f *agentForwarder) User(_ context.Context, rt api.Route) (procmeshv1connec
 		return nil, err
 	}
 	return rpc.NewUserClient(hc, base), nil
+}
+
+func (f *agentForwarder) Node(_ context.Context, rt api.Route) (procmeshv1connect.NodeServiceClient, error) {
+	hc, base, err := f.dial(rt, nodeHopTimeout)
+	if err != nil {
+		return nil, err
+	}
+	return rpc.NewNodeClient(hc, base), nil
+}
+
+func (f *agentForwarder) PromoteCapability(ctx context.Context, rt api.Route, request control.CapabilityTransferRequest) (control.CapabilityTransferResponse, error) {
+	hc, base, err := f.dial(rt, capabilityHopTimeout)
+	if err != nil {
+		return control.CapabilityTransferResponse{}, err
+	}
+	body, err := json.Marshal(request)
+	if err != nil {
+		return control.CapabilityTransferResponse{}, err
+	}
+	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, base+capabilityPromotePath, bytes.NewReader(body))
+	if err != nil {
+		return control.CapabilityTransferResponse{}, err
+	}
+	httpRequest.Header.Set("Content-Type", "application/json")
+	response, err := hc.Do(httpRequest)
+	if err != nil {
+		return control.CapabilityTransferResponse{}, rpc.MapCallError(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		switch response.StatusCode {
+		case http.StatusForbidden:
+			return control.CapabilityTransferResponse{}, errcode.E(errcode.DENIED, "capability transfer rejected")
+		case http.StatusConflict:
+			return control.CapabilityTransferResponse{}, errcode.E(errcode.CONFLICT, "capability transfer rejected")
+		default:
+			return control.CapabilityTransferResponse{}, errcode.E(errcode.UNAVAILABLE, "capability target unavailable")
+		}
+	}
+	var result control.CapabilityTransferResponse
+	if err := json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&result); err != nil {
+		return control.CapabilityTransferResponse{}, errcode.Wrap(errcode.TIMEOUT, "capability response invalid", err)
+	}
+	return result, nil
 }
 
 func (f *agentForwarder) Config(_ context.Context, rt api.Route) (procmeshv1connect.ConfigServiceClient, error) {

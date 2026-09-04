@@ -52,6 +52,7 @@ type Options struct {
 	Auth                *auth.Service // nil = 不鉴权（单测）
 	Degraded            bool
 	Ready               func() error
+	AdmissionReady      func() error
 	Started             time.Time
 	LocalOnly           bool
 	LocalID             string
@@ -108,6 +109,14 @@ func NewServer(opts Options) (*Server, error) {
 	if candidate, ok := opts.Forward.(UserForwarder); ok {
 		userForward = candidate
 	}
+	var nodeForward NodeForwarder
+	if candidate, ok := opts.Forward.(NodeForwarder); ok {
+		nodeForward = candidate
+	}
+	var capabilityForward CapabilityForwarder
+	if candidate, ok := opts.Forward.(CapabilityForwarder); ok {
+		capabilityForward = candidate
+	}
 
 	engine := gin.New()
 	engine.Use(accessLog(opts.Logger))
@@ -141,7 +150,15 @@ func NewServer(opts Options) (*Server, error) {
 		LocalOnly: opts.LocalOnly, LocalID: opts.LocalID, Router: opts.Router, Forward: opts.Forward,
 	}, intercept)
 	mountConnect(engine, lp, lh)
-	np, nh := procmeshv1connect.NewNodeServiceHandler(&NodeAPI{Deps: opts.Cluster, Auth: opts.Auth, Degraded: degraded}, intercept)
+	np, nh := procmeshv1connect.NewNodeServiceHandler(&NodeAPI{
+		Deps: opts.Cluster, Auth: opts.Auth, Degraded: degraded,
+		LocalOnly: opts.LocalOnly, LocalID: opts.LocalID,
+		IsLeader: func() bool {
+			n := opts.Cluster.controlNode()
+			return n == nil || n.IsLeader()
+		},
+		LeaderRoute: opts.LoginLeaderRoute, Forward: nodeForward, Capability: capabilityForward,
+	}, intercept)
 	mountConnect(engine, np, nh)
 	clp, clh := procmeshv1connect.NewClusterServiceHandler(&ClusterAPI{
 		Deps: opts.Cluster, Auth: opts.Auth, Degraded: degraded,
@@ -375,7 +392,7 @@ func (s *Server) healthz(c *gin.Context) {
 }
 
 func (s *Server) readyz(c *gin.Context) {
-	if s.isDegraded() {
+	if s.isDegraded() || s.opts.AdmissionReady != nil && s.opts.AdmissionReady() != nil {
 		c.String(http.StatusServiceUnavailable, "DEGRADED")
 		return
 	}

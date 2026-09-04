@@ -238,6 +238,25 @@ func TestServer_ReadyDegraded(t *testing.T) {
 	}
 }
 
+func TestServer_AdmissionReadinessDoesNotGateProcessPlane(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	srv, err := NewServer(Options{
+		Mgr:            m,
+		AdmissionReady: func() error { return errors.New("ca capability") },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if srv.isDegraded() {
+		t.Fatal("admission readiness must not trip the process-plane degraded gate")
+	}
+	rec := httptest.NewRecorder()
+	srv.Engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if rec.Code != http.StatusServiceUnavailable || rec.Body.String() != "DEGRADED" {
+		t.Fatalf("readyz %d %q", rec.Code, rec.Body.String())
+	}
+}
+
 func TestServer_ConnectAndLegacyJSON(t *testing.T) {
 	m, st, _ := newTestManager(t)
 	srv, err := NewServer(Options{Mgr: m, Store: st, Started: time.Now()})

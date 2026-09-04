@@ -44,6 +44,20 @@ describe("ConfirmDialog", () => {
     wrapper.unmount();
   });
 
+  it("restores an existing body scroll lock when a nested dialog closes", async () => {
+    document.body.style.overflow = "hidden";
+    const wrapper = mount(ConfirmDialog, {
+      attachTo: document.body,
+      props: { open: true, ...labels },
+    });
+    await flushPromises();
+    await wrapper.setProps({ open: false });
+    await flushPromises();
+
+    expect(document.body.style.overflow).toBe("hidden");
+    wrapper.unmount();
+  });
+
   it("renders an optional extra slot inside the accessible dialog", async () => {
     const wrapper = mount(ConfirmDialog, {
       attachTo: document.body,

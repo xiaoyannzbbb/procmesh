@@ -95,6 +95,30 @@ type Member struct {
 	Status                       MemberStatus
 }
 
+type CapabilityStatus string
+
+const (
+	CapabilityPrepared CapabilityStatus = "PREPARED"
+	CapabilityReady    CapabilityStatus = "READY"
+)
+
+type AdmissionCapabilityNode struct {
+	Status      CapabilityStatus `json:"status"`
+	OperationID string           `json:"operation_id,omitempty"`
+	CertSerial  string           `json:"cert_serial"`
+	LeaderTerm  uint64           `json:"leader_term,omitempty"`
+	Epoch       uint64           `json:"epoch"`
+	Nonce       string           `json:"nonce,omitempty"`
+	ExpiresUnix int64            `json:"expires_unix,omitempty"`
+	UpdatedUnix int64            `json:"updated_unix"`
+}
+
+type AdmissionCapabilityState struct {
+	CAFingerprint string                             `json:"ca_spki_sha256,omitempty"`
+	Epoch         uint64                             `json:"epoch,omitempty"`
+	Nodes         map[string]AdmissionCapabilityNode `json:"nodes,omitempty"`
+}
+
 type BackupPolicy struct {
 	PolicyID           string   `json:"policy_id,omitempty"`
 	Name               string   `json:"name,omitempty"`
@@ -196,7 +220,8 @@ type State struct {
 	Bindings                 []Binding                          `json:"bindings"`
 	Sessions                 map[string]Session                 `json:"sessions"`
 	APITokens                map[string]APIToken                `json:"api_tokens"`
-	JoinTokens               map[string]JoinToken               `json:"join_tokens"`    // by id
+	JoinTokens               map[string]JoinToken               `json:"join_tokens"` // by id
+	AdmissionCapability      AdmissionCapabilityState           `json:"admission_capability,omitempty"`
 	Members                  map[string]Member                  `json:"members"`        // by node_id
 	CRL                      map[string]struct{}                `json:"crl"`            // cert serial hex
 	AgentGroups              map[string]AgentGroup              `json:"agent_groups"`   // by group_id
@@ -242,6 +267,9 @@ func (s *State) ensure() {
 	}
 	if s.JoinTokens == nil {
 		s.JoinTokens = map[string]JoinToken{}
+	}
+	if s.AdmissionCapability.Nodes == nil {
+		s.AdmissionCapability.Nodes = map[string]AdmissionCapabilityNode{}
 	}
 	if s.Members == nil {
 		s.Members = map[string]Member{}
@@ -342,6 +370,12 @@ func (s *State) Apply(cmd Command, now time.Time) error {
 		return applyJSON(cmd.Body, s.applyMemberPut)
 	case CmdMemberRemove:
 		return applyJSON(cmd.Body, s.applyMemberRemove)
+	case CmdCapabilityInit:
+		return applyJSON(cmd.Body, func(b CapabilityInitBody) error { return s.applyCapabilityInit(b, now) })
+	case CmdCapabilityPrepare:
+		return applyJSON(cmd.Body, func(b CapabilityPrepareBody) error { return s.applyCapabilityPrepare(b, now) })
+	case CmdCapabilityReady:
+		return applyJSON(cmd.Body, func(b CapabilityReadyBody) error { return s.applyCapabilityReady(b, now) })
 	case CmdCRLAdd:
 		return applyJSON(cmd.Body, s.applyCRLAdd)
 	case CmdGroupPut:

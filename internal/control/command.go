@@ -24,6 +24,9 @@ const (
 	CmdJoinTokenRevoke            = "join_token_revoke"
 	CmdMemberPut                  = "member_put"
 	CmdMemberRemove               = "member_remove"
+	CmdCapabilityInit             = "capability_init"
+	CmdCapabilityPrepare          = "capability_prepare"
+	CmdCapabilityReady            = "capability_ready"
 	CmdCRLAdd                     = "crl_add"
 	CmdGroupPut                   = "group_put"
 	CmdGroupDelete                = "group_delete"
@@ -168,6 +171,26 @@ type MemberPutBody struct {
 type MemberRemoveBody struct {
 	NodeID string `json:"node_id"`
 }
+
+type CapabilityInitBody struct {
+	CAFingerprint string `json:"ca_spki_sha256"`
+	Epoch         uint64 `json:"epoch"`
+	NodeID        string `json:"node_id"`
+	CertSerial    string `json:"cert_serial"`
+}
+
+type CapabilityPrepareBody struct {
+	OperationID   string `json:"operation_id"`
+	NodeID        string `json:"node_id"`
+	CertSerial    string `json:"cert_serial"`
+	CAFingerprint string `json:"ca_spki_sha256"`
+	Epoch         uint64 `json:"epoch"`
+	LeaderTerm    uint64 `json:"leader_term"`
+	Nonce         string `json:"nonce"`
+	ExpiresUnix   int64  `json:"expires_unix"`
+}
+
+type CapabilityReadyBody CapabilityPrepareBody
 
 type CRLAddBody struct {
 	Serial string `json:"serial"`

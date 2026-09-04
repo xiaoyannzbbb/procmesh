@@ -1,14 +1,16 @@
 <script setup lang="ts">
 /* eslint-disable i18next/no-literal-string -- Template enums, data-* hooks, and comparison literals are not visible copy. */
 import { useQuery, useQueryClient } from "@tanstack/vue-query";
-import { Crown, LoaderCircle, RefreshCw, Search, Server, TriangleAlert, X } from "lucide-vue-next";
+import { Crown, LoaderCircle, RefreshCw, Search, Server, TriangleAlert, UserPlus, X } from "lucide-vue-next";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
 import { STALE, UNKNOWN } from "../lib/freshness";
 import { useNodeClient } from "../lib/rpc/cluster";
+import { session } from "../lib/session";
 import { useI18n } from "../lib/useI18n";
 import { useProcessState } from "../lib/useProcessState";
+import AddNodeDrawer from "./AddNodeDrawer.vue";
 import {
   mapNode,
   RAFT_LEADER,
@@ -39,6 +41,9 @@ const nowMs = ref(Date.now());
 const searchQuery = ref(queryString(route.query.q));
 const statusFilter = ref<StatusFilter>(parseStatus(route.query.status));
 const refreshing = ref(false);
+const addNodeOpen = ref(false);
+const addNodeDrawer = ref<{ confirmRouteLeave: () => Promise<boolean> } | null>(null);
+const canManageNodes = computed(() => (session.value?.permissions ?? []).includes("node.manage"));
 
 const query = useQuery({
   queryKey: ["nodes"],
@@ -111,6 +116,11 @@ const errorText = computed(() => {
   return formatRemoteError(err);
 });
 
+const drawerErrorText = computed(() => {
+  const err = query.error.value;
+  return err ? formatRemoteError(err) : "";
+});
+
 const staleBanner = computed(() => stats.value.stale > 0);
 
 const subtitle = computed(() => {
@@ -151,6 +161,11 @@ watch([searchQuery, statusFilter], () => {
   if (!same) {
     void router.replace({ query: next });
   }
+});
+
+onBeforeRouteLeave(async () => {
+  if (!addNodeOpen.value) return true;
+  return (await addNodeDrawer.value?.confirmRouteLeave()) ?? true;
 });
 
 function queryString(value: unknown): string {
@@ -377,6 +392,16 @@ onUnmounted(() => {
       </div>
       <div class="header-actions">
         <span class="updated">{{ t("nodes.lastUpdated", { age: lastUpdatedLabel }) }}</span>
+        <button
+          v-if="canManageNodes"
+          type="button"
+          class="btn btn-primary"
+          data-action="add-node"
+          @click="addNodeOpen = true"
+        >
+          <UserPlus :size="16" aria-hidden="true" />
+          {{ t("nodes.add.open") }}
+        </button>
         <button type="button" class="btn" :disabled="refreshing || loading" @click="refresh">
           <LoaderCircle v-if="refreshing" class="spin" :size="16" aria-hidden="true" />
           <RefreshCw v-else :size="16" aria-hidden="true" />
@@ -682,6 +707,17 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+
+    <AddNodeDrawer
+      ref="addNodeDrawer"
+      :open="addNodeOpen"
+      :nodes="allNodes"
+      :nodes-loading="loading"
+      :nodes-error="drawerErrorText"
+      :can-manage="canManageNodes"
+      @close="addNodeOpen = false"
+      @refresh="refresh"
+    />
   </div>
 </template>
 
@@ -724,7 +760,9 @@ h1 {
 
 .header-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 0.75rem;
 }
 

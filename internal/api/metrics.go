@@ -14,6 +14,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/batch"
 	"github.com/qleelulu/procmesh/internal/control"
+	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/process"
 	"github.com/qleelulu/procmesh/internal/store"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
@@ -85,6 +86,24 @@ func (f *countingForwarder) User(ctx context.Context, rt Route) (procmeshv1conne
 		return nil, unavailableOwner()
 	}
 	return forwarder.User(ctx, rt)
+}
+
+func (f *countingForwarder) Node(ctx context.Context, rt Route) (procmeshv1connect.NodeServiceClient, error) {
+	f.n.Add(1)
+	forwarder, ok := f.inner.(NodeForwarder)
+	if !ok {
+		return nil, errcode.E(errcode.UNAVAILABLE, "node forwarder unavailable")
+	}
+	return forwarder.Node(ctx, rt)
+}
+
+func (f *countingForwarder) PromoteCapability(ctx context.Context, rt Route, request control.CapabilityTransferRequest) (control.CapabilityTransferResponse, error) {
+	f.n.Add(1)
+	forwarder, ok := f.inner.(CapabilityForwarder)
+	if !ok {
+		return control.CapabilityTransferResponse{}, errcode.E(errcode.UNAVAILABLE, "capability forwarder unavailable")
+	}
+	return forwarder.PromoteCapability(ctx, rt, request)
 }
 
 func (f *countingForwarder) ClusterBackup(ctx context.Context, rt Route) (procmeshv1connect.ClusterBackupServiceClient, error) {

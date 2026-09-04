@@ -2,8 +2,11 @@ package api
 
 import (
 	"context"
+	"errors"
+	"net/http/httptrace"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"connectrpc.com/connect"
@@ -11,16 +14,31 @@ import (
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/rpc"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
 
 var _ procmeshv1connect.NodeServiceHandler = (*NodeAPI)(nil)
 
+type NodeForwarder interface {
+	Node(context.Context, Route) (procmeshv1connect.NodeServiceClient, error)
+}
+
+type CapabilityForwarder interface {
+	PromoteCapability(context.Context, Route, control.CapabilityTransferRequest) (control.CapabilityTransferResponse, error)
+}
+
 type NodeAPI struct {
-	Deps     ClusterDeps
-	Auth     *auth.Service
-	Degraded func() bool
+	Deps        ClusterDeps
+	Auth        *auth.Service
+	Degraded    func() bool
+	LocalOnly   bool
+	LocalID     string
+	IsLeader    func() bool
+	LeaderRoute func() (Route, error)
+	Forward     NodeForwarder
+	Capability  CapabilityForwarder
 }
 
 func (s *NodeAPI) ListNodes(ctx context.Context, _ *connect.Request[procmeshv1.ListNodesRequest]) (*connect.Response[procmeshv1.ListNodesResponse], error) {
@@ -74,7 +92,15 @@ func (s *NodeAPI) CreateJoinToken(ctx context.Context, req *connect.Request[proc
 	if err := requireCluster(s.Deps); err != nil {
 		return nil, err
 	}
-	if err := requireCanIssueTokens(s.Deps.Dir); err != nil {
+	if !s.LocalOnly && s.IsLeader != nil && !s.IsLeader() {
+		return s.forwardCreateJoinToken(ctx, req)
+	}
+	controlNode := s.Deps.controlNode()
+	if controlNode != nil && controlNode.View().ClusterID != "" {
+		if err := (control.CapabilityManager{Node: controlNode, Dir: s.Deps.Dir, NodeID: s.LocalID}).EnsureInitialized(); err != nil {
+			return nil, ToConnect(err)
+		}
+	} else if err := requireCanIssueTokens(s.Deps.Dir); err != nil {
 		return nil, err
 	}
 	ttl := time.Duration(req.Msg.GetTtlSeconds()) * time.Second
@@ -83,7 +109,7 @@ func (s *NodeAPI) CreateJoinToken(ctx context.Context, req *connect.Request[proc
 		info  control.TokenInfo
 		err   error
 	)
-	if n := s.Deps.controlNode(); n != nil {
+	if n := controlNode; n != nil {
 		adm := control.Admission{Node: n}
 		plain, info, err = adm.CreateToken(ttl, int(req.Msg.GetUses()), s.Deps.now())
 	} else {
@@ -98,6 +124,53 @@ func (s *NodeAPI) CreateJoinToken(ctx context.Context, req *connect.Request[proc
 		ExpiresUnix: info.ExpiresAt.Unix(),
 		Uses:        int32(info.Remaining),
 	}), nil
+}
+
+func (s *NodeAPI) forwardCreateJoinToken(ctx context.Context, req *connect.Request[procmeshv1.CreateJoinTokenRequest]) (*connect.Response[procmeshv1.CreateJoinTokenResponse], error) {
+	if s.Forward == nil || s.LeaderRoute == nil {
+		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "control leader unavailable"))
+	}
+	route, err := s.LeaderRoute()
+	if err != nil || route.NodeID == "" || route.RPC == "" || route.Local {
+		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "control leader unavailable"))
+	}
+	stampHop(req.Header(), s.LocalID, route.NodeID)
+	stampIdentity(req.Header(), ctx)
+	req.Header().Del("Cookie")
+	client, err := s.Forward.Node(ctx, route)
+	if err != nil {
+		return nil, ToConnect(errcode.Wrap(errcode.UNAVAILABLE, "control leader unavailable", rpc.MapDialError(err)))
+	}
+	var dispatched atomic.Bool
+	trace := &httptrace.ClientTrace{WroteRequest: func(httptrace.WroteRequestInfo) {
+		dispatched.Store(true)
+	}}
+	resp, err := client.CreateJoinToken(httptrace.WithClientTrace(ctx, trace), req)
+	if err != nil {
+		return nil, mapCreateJoinTokenForwardErr(err, dispatched.Load())
+	}
+	return resp, nil
+}
+
+func mapCreateJoinTokenForwardErr(err error, dispatched bool) error {
+	var coded *errcode.Error
+	if errors.As(err, &coded) {
+		return ToConnect(err)
+	}
+	var connectErr *connect.Error
+	if errors.As(err, &connectErr) {
+		for _, detail := range connectErr.Details() {
+			if value, detailErr := detail.Value(); detailErr == nil {
+				if _, ok := value.(*procmeshv1.ErrorInfo); ok {
+					return err
+				}
+			}
+		}
+	}
+	if !dispatched {
+		return ToConnect(errcode.Wrap(errcode.UNAVAILABLE, "control leader unavailable", err))
+	}
+	return ToConnect(errcode.Wrap(errcode.TIMEOUT, "join token result unknown", err))
 }
 
 func (s *NodeAPI) RevokeJoinToken(ctx context.Context, req *connect.Request[procmeshv1.RevokeJoinTokenRequest]) (*connect.Response[procmeshv1.RevokeJoinTokenResponse], error) {
@@ -177,7 +250,8 @@ func (s *NodeAPI) PromoteNode(ctx context.Context, req *connect.Request[procmesh
 	if err := rejectDegraded(s.Degraded); err != nil {
 		return nil, err
 	}
-	if _, _, err := metaOf(req.Msg.GetMeta()); err != nil {
+	operationID, _, err := metaOf(req.Msg.GetMeta())
+	if err != nil {
 		return nil, err
 	}
 	if err := requireCluster(s.Deps); err != nil {
@@ -196,10 +270,25 @@ func (s *NodeAPI) PromoteNode(ctx context.Context, req *connect.Request[procmesh
 	if !ok {
 		return nil, ToConnect(errcode.E(errcode.NOT_FOUND, "node not found"))
 	}
-	// V1.0 默认单 voter 签发；promote 只扩 quorum，不分发 ca.key。
-	// 只有已有 CA 的 voter 能签发；init 节点是默认签发者。
 	if m.Status != control.MemberAdmitted || m.RaftAddr == "" {
 		return nil, ToConnect(errcode.E(errcode.INVALID, "node not admitted"))
+	}
+	if s.Capability == nil {
+		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "capability target unavailable"))
+	}
+	target, ok := findNode(s.Deps.members(), nodeID)
+	if !ok || target.RPCAddress == "" || target.State != cluster.StateAlive {
+		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "capability target unavailable"))
+	}
+	manager := control.CapabilityManager{Node: ctrl, Dir: s.Deps.Dir, NodeID: s.LocalID, Now: s.Deps.Now}
+	if err := manager.Promote(ctx, operationID, nodeID, func(ctx context.Context, request control.CapabilityTransferRequest) (control.CapabilityTransferResponse, error) {
+		return s.Capability.PromoteCapability(ctx, Route{NodeID: nodeID, RPC: target.RPCAddress}, request)
+	}); err != nil {
+		return nil, ToConnect(err)
+	}
+	ready := ctrl.View().AdmissionCapability.Nodes[nodeID]
+	if ready.Status != control.CapabilityReady || ready.CertSerial != m.CertSerial {
+		return nil, ToConnect(errcode.E(errcode.CONFLICT, "capability target not ready"))
 	}
 	if err := ctrl.AddVoter(nodeID, m.RaftAddr); err != nil {
 		return nil, ToConnect(err)
