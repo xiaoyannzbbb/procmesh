@@ -28,7 +28,7 @@ func TestRun_HelpExitsZero(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code=%d stderr=%q", code, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "log-format") || !strings.Contains(stderr.String(), "log-level") || !strings.Contains(stderr.String(), "break-glass-socket") || !strings.Contains(stderr.String(), "break-glass-group") || !strings.Contains(stderr.String(), "pprof-listen") {
+	if !strings.Contains(stderr.String(), "log-format") || !strings.Contains(stderr.String(), "log-level") || !strings.Contains(stderr.String(), "break-glass-socket") || !strings.Contains(stderr.String(), "break-glass-group") || !strings.Contains(stderr.String(), "pprof-listen") || !strings.Contains(stderr.String(), "advertise") {
 		t.Fatalf("help missing logging flags: %q", stderr.String())
 	}
 }

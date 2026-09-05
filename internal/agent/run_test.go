@@ -127,6 +127,52 @@ func TestResolveAdvertiseAddr_RejectsMalformedHostPort(t *testing.T) {
 	}
 }
 
+func TestResolveAPIAdvertise(t *testing.T) {
+	tests := []struct {
+		name         string
+		bound        string
+		configured   string
+		rpcAdvertise string
+		want         string
+	}{
+		{
+			name:         "explicit address wins",
+			bound:        "[::]:18680",
+			configured:   "api.example.com",
+			rpcAdvertise: "10.0.0.1:18683",
+			want:         "api.example.com:18680",
+		},
+		{
+			name:         "wildcard inherits rpc host",
+			bound:        "[::]:18680",
+			rpcAdvertise: "10.0.0.1:18683",
+			want:         "10.0.0.1:18680",
+		},
+		{
+			name:         "concrete bind remains advertised",
+			bound:        "127.0.0.1:18680",
+			rpcAdvertise: "10.0.0.1:18683",
+			want:         "127.0.0.1:18680",
+		},
+		{
+			name:  "wildcard without fallback remains explicit",
+			bound: "0.0.0.0:18680",
+			want:  "0.0.0.0:18680",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveAPIAdvertise(tt.bound, tt.configured, tt.rpcAdvertise)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("resolveAPIAdvertise(%q, %q, %q) = %q, want %q", tt.bound, tt.configured, tt.rpcAdvertise, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLookUser_RejectsOtherUserWithoutRoot(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("running as root")

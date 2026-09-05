@@ -15,6 +15,7 @@ import (
 type Config struct {
 	DataDir    string
 	Listen     string
+	Advertise  string
 	Pprof      Pprof
 	Disk       logmgr.Policy
 	Gossip     Gossip
@@ -107,6 +108,7 @@ type Batch struct {
 type file struct {
 	DataDir    string          `yaml:"data_dir"`
 	Listen     string          `yaml:"listen"`
+	Advertise  string          `yaml:"advertise"`
 	Pprof      *pprofFile      `yaml:"pprof"`
 	Disk       *diskFile       `yaml:"disk"`
 	Gossip     *gossipFile     `yaml:"gossip"`
@@ -295,7 +297,7 @@ func LoadAll(path string, required bool) (Config, error) {
 	if err := upd.Validate(); err != nil {
 		return Config{}, err
 	}
-	cfg := Config{DataDir: f.DataDir, Listen: f.Listen, Disk: p, Batch: batch, Update: upd}
+	cfg := Config{DataDir: f.DataDir, Listen: f.Listen, Advertise: f.Advertise, Disk: p, Batch: batch, Update: upd}
 	if pprof := f.Pprof; pprof != nil {
 		cfg.Pprof.Listen = pprof.Listen
 	}

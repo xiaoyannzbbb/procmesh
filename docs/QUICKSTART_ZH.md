@@ -671,9 +671,16 @@ non-loopback listen requires --insecure-listen
 
 原因是 Agent 绑定了内网 IP，但未显式允许非回环监听。确认端口只在可信网络开放后，在 systemd 的 `ExecStart` 中加入 `--insecure-listen`。
 
-### 11.2 节点列表出现 `0.0.0.0` 或 `127.0.0.1`
+### 11.2 节点列表出现 `[::]`、`0.0.0.0` 或 `127.0.0.1`
 
-多节点部署时，这些地址通常不能供其他节点访问。把 systemd 中四个监听地址改为本机实际静态内网 IP，执行：
+多节点部署时，这些地址通常不能供其他节点访问。优先在 `agent.yaml` 中为 HTTP API 设置独立的可拨号地址；只填 IP 或主机名时会沿用实际监听端口：
+
+```yaml
+listen: "[::]:18680"
+advertise: "10.0.0.11"
+```
+
+也可以把 systemd 中四个监听地址改为本机实际静态内网 IP。修改后执行：
 
 ```bash
 sudo systemctl daemon-reload
@@ -750,7 +757,25 @@ Agent 间 RPC 在集群初始化后使用 mTLS。如果证书或集群身份不�
 
 确认多数 voter 在线且 `18685/TCP` 双向可达。三 voter 集群至少需要两个 voter 在线。Gossip 显示 `ALIVE` 不等于 Raft 一定具有 quorum，两者使用不同端口和一致性机制。
 
-### 11.10 停止 Agent 与停止业务进程的区别
+### 11.10 升级后创建加入令牌返回 `admission capability unavailable`
+
+`v0.1.39` 开始，每个 Raft voter 必须持有与集群 CA 匹配的 Admission Capability。旧版本只在初始化节点保留 `cluster/ca.key`；旧集群已经晋升的其他 voter 升级后若当选 Leader，会拒绝创建令牌和签发 Join，但不会停止本地业务进程。
+
+先确认 Raft 仍有 quorum，并在每个 voter 本机检查哪个节点持有 CA 私钥；不要打印、粘贴或写入日志：
+
+```bash
+sudo test -s /var/lib/procmesh/cluster/ca.key && echo present || echo missing
+```
+
+如果当前 Leader 没有该文件，需要通过受控的加密运维通道，把初始化节点上的 `ca.key` 安装到当前 Leader 的同一目录，权限设为 `0600`。安装前必须在源节点和 Leader 上校验它与各自 `ca.crt` 的公钥一致；不一致时立即停止，不能覆盖。完成后，从当前 Leader 对其余旧 voter 逐个重新执行：
+
+```bash
+procmesh --server <LEADER_API> node promote <VOTER_NODE_ID>
+```
+
+该操作会通过内部 mTLS capability 流程分发 CA 私钥并把节点标记为 `READY`；已有 voter 的 Raft 身份保持不变。全部 voter 完成后再创建加入令牌。迁移期间不要删除数据目录、重新 `cluster init`，也不要通过日志、审计或聊天传递 CA 私钥。
+
+### 11.11 停止 Agent 与停止业务进程的区别
 
 ```bash
 sudo systemctl stop procmesh-agent

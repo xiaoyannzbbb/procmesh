@@ -21,6 +21,7 @@ func run(args []string, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	dataDir := fs.String("data-dir", "", "data directory (overrides agent.yaml data_dir)")
 	listen := fs.String("listen", "", "HTTP listen address (overrides agent.yaml listen)")
+	advertise := fs.String("advertise", "", "HTTP address advertised to cluster peers (overrides agent.yaml advertise)")
 	pprofListen := fs.String("pprof-listen", "", "pprof HTTP listen address (overrides agent.yaml pprof.listen; disabled by default)")
 	rpcListen := fs.String("rpc", "", "RPC listen address (default 127.0.0.1:18683)")
 	controlListen := fs.String("control", "", "control/raft listen address (default 127.0.0.1:18685)")
@@ -51,6 +52,7 @@ func run(args []string, stderr io.Writer) int {
 	err = agent.Run(ctx, agent.Options{
 		DataDir:          *dataDir,
 		Listen:           *listen,
+		APIAdvertise:     *advertise,
 		PprofListen:      *pprofListen,
 		GossipListen:     *gossip,
 		RPCListen:        *rpcListen,

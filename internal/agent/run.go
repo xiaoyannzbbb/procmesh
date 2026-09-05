@@ -93,6 +93,7 @@ func dueAt(now time.Time, last *time.Time, interval time.Duration) bool {
 type Options struct {
 	DataDir            string
 	Listen             string
+	APIAdvertise       string
 	PprofListen        string
 	ShimBin            string
 	InsecureListen     bool
@@ -151,6 +152,9 @@ func Run(ctx context.Context, opt Options) error {
 	}
 	if opt.Listen == "" {
 		opt.Listen = cfg.Listen
+	}
+	if opt.APIAdvertise == "" {
+		opt.APIAdvertise = cfg.Advertise
 	}
 	if opt.PprofListen == "" {
 		opt.PprofListen = cfg.Pprof.Listen
@@ -715,7 +719,13 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		shutdownMesh(mesh)
 		return fmt.Errorf("listen: %w", err)
 	}
-	apiAddr := ln.Addr().String()
+	boundAPIAddr := ln.Addr().String()
+	apiAddr, err := resolveAPIAdvertise(boundAPIAddr, opt.APIAdvertise, opt.RPCAdvertise)
+	if err != nil {
+		_ = ln.Close()
+		shutdownMesh(mesh)
+		return fmt.Errorf("api advertise: %w", err)
+	}
 	if src != nil {
 		src.setAPI(apiAddr)
 	}
@@ -925,13 +935,13 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		}
 	}
 
-	opt.Logger.With("component", "http").Info("http listening", "address", apiAddr)
+	opt.Logger.With("component", "http").Info("http listening", "address", boundAPIAddr, "advertise", apiAddr)
 	if pprofServer != nil {
 		opt.Logger.With("component", "pprof").Info("pprof listening", "address", pprofServer.Addr())
 	}
 	opt.Logger.Info("agent started")
 	if opt.OnListen != nil {
-		opt.OnListen(apiAddr)
+		opt.OnListen(boundAPIAddr)
 	}
 	if breakGlassServer != nil && opt.OnBreakGlassListen != nil {
 		opt.OnBreakGlassListen(opt.BreakGlassSocket)
@@ -1139,6 +1149,32 @@ func resolveAdvertiseAddr(listen, advertise string) (string, error) {
 		return net.JoinHostPort(advertise, port), nil
 	}
 	return "", fmt.Errorf("address %q: %w", advertise, err)
+}
+
+func resolveAPIAdvertise(bound, configured, rpcAdvertise string) (string, error) {
+	if configured != "" {
+		return resolveAdvertiseAddr(bound, configured)
+	}
+	boundHost, _, err := net.SplitHostPort(bound)
+	if err != nil {
+		return "", fmt.Errorf("bound address: %w", err)
+	}
+	if !unspecifiedHost(boundHost) || rpcAdvertise == "" {
+		return bound, nil
+	}
+	rpcHost, _, err := net.SplitHostPort(rpcAdvertise)
+	if err != nil || unspecifiedHost(rpcHost) {
+		return bound, nil
+	}
+	return resolveAdvertiseAddr(bound, rpcHost)
+}
+
+func unspecifiedHost(host string) bool {
+	if host == "" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsUnspecified()
 }
 
 // CheckListen refuses non-loopback binds unless insecure is set.

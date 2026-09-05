@@ -58,7 +58,7 @@ func TestLoad_InvalidOrder(t *testing.T) {
 
 func TestLoadAll_DataDirAndListen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "agent.yaml")
-	body := "data_dir: /var/lib/procmesh\nlisten: 127.0.0.1:18680\n"
+	body := "data_dir: /var/lib/procmesh\nlisten: 0.0.0.0:18680\nadvertise: 10.0.0.1\n"
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestLoadAll_DataDirAndListen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DataDir != "/var/lib/procmesh" || cfg.Listen != "127.0.0.1:18680" {
+	if cfg.DataDir != "/var/lib/procmesh" || cfg.Listen != "0.0.0.0:18680" || cfg.Advertise != "10.0.0.1" {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
