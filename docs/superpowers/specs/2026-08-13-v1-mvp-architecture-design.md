@@ -305,7 +305,11 @@ cluster secret：随机 32 字节，只存 control member 的 `cluster/`（0600�
 
 `procmesh node token create`：一次性 join token（随机，Raft 只存哈希 + TTL + 剩余次数 + 作废标记）。请求可进入任意 Agent；入口校验 `node.manage` 与 `operation_id` 后通过内部 mTLS 转发到当前 Raft Leader，Leader 重建身份并再次校验权限。Token 创建不提供幂等重放；若返回 `TIMEOUT`，结果可能已经提交，重试会使用新的 `operation_id` 并可能留下额外的有效 Token。
 
-Join：向任一 ALIVE Agent 提交 token → 该 Agent 把签发请求交给 Raft leader → leader 校验 token 并消费次数 → 用 Cluster CA 签发证书 → 写入 membership 授权 → 返回证书与 CA。重复 `node_id`：拒绝后加入者，错误码 `DUPLICATE_NODE_ID`。
+Join：向任一 ALIVE Agent 提交 token → 该 Agent 把签发请求交给 Raft leader → leader 用 Cluster CA 签发证书 → 单条 FSM `join_prepare` 原子校验并消费 token，同时持久化证书、operation ID 与 `JOINING` 成员 → Leader 把节点加入 Raft configuration 成为 nonvoter，并读回确认 → 单条 FSM `join_complete` 把成员推进为 `ADMITTED` → 返回证书与 CA。只有 Raft configuration 已确认包含相同 node ID、Raft 地址及 voter/nonvoter 角色，且 FSM 已为 `ADMITTED`，才能返回完整成功。重复 `node_id`：拒绝后加入者，错误码 `DUPLICATE_NODE_ID`。
+
+Join 是可恢复的多阶段操作。`join_prepare` 已提交而后续失败时不得退款或再次消费 token；相同 token、node ID、Raft 地址、CSR 与 operation ID 的重试复用原 attempt 和证书。operation ID 在所有 Join attempt 间全局唯一，不得用同一 operation ID 为另一个节点再次消费多用途 token。加入节点在本地用 `0600` 原子保存 pending CSR/private key，跨 CLI 调用复用，并在成功或确定性拒绝后删除；pending 文件不保存 token 明文。Leader 周期对账 FSM 与 Raft configuration，补齐缺失或地址不一致的 `ADMITTED/JOINING` nonvoter，并在精确确认 configuration 后完成 `JOINING`。Join、remove、promote 必须使用同一 membership 串行化边界。Raft command、日志和快照只保存 join token 哈希，不保存明文。`AddNonvoter` 失败必须返回稳定错误；若错误结果不确定，先读回 configuration，只有 node ID、Raft 地址和角色均匹配时才按成功继续。
+
+生产 Agent 的内嵌 Raft 是准入的必需依赖。`cluster init` 只有在 Raft control 实际启动后才能返回成功并向本地 Store 发布 cluster ID；新建 Raft control 启动失败时必须关闭已挂入内存的节点并撤销本次生成的 Raft 状态、集群身份和一次性管理员凭据，使初始化可安全重试。已经配置 Raft 的 Agent 在 control 不可用时必须 fail closed，不得回退到历史文件 token 分支。
 
 普通 joiner/nonvoter 不持有 CA 私钥。`node promote` 先完成 CA-only Admission Capability 配置，再扩充 Raft voter：Leader 写入公开的 `PREPARED` 状态（operation ID、目标节点与证书序列号、Leader term、epoch、随机 nonce、过期时间），通过 `:18683` 内部 mTLS endpoint 传输 `ca.key`；发送前必须完成 quorum-backed Leader 校验，传输 context 与该 Leader term 绑定，失去领导权立即取消。目标确认调用者是当前 Leader、自身仍为 ADMITTED 且证书未入 CRL、并且 PREPARED 已 apply 后，以 `0600` 临时文件、file fsync、rename 和 directory fsync 原子安装，并用 CA 私钥签署 challenge；context 在 rename 前取消时只清理临时文件，不得持久化密钥。Leader 用 `ca.crt` 验证 proof、写入 `READY` 后才调用 `AddVoter`。READY 与 `AddVoter` 前必须重新验证目标仍为 ADMITTED、证书序列号未变且不在 CRL。Leader 串行化 `node remove` 与 `node promote`；`node remove` 作废该节点 in-flight 的 PREPARED。已存在的相同 key 视为幂等成功，不同 key 禁止覆盖；任何安装、proof 或 READY 失败都保持 nonvoter。READY 后扩 voter 失败可用同一 operation ID 重试，但每次重试必须写入新的 term、nonce 与过期时间并重新验证 proof，不能仅依赖历史 READY。
 
@@ -319,7 +323,7 @@ Join：向任一 ALIVE Agent 提交 token → 该 Agent 把签发请求交给 Ra
 
 禁止：日志、全量 spec、明细 metrics、stdio、大审计记录。
 
-协议不兼容：标 `INCOMPATIBLE_VERSION`，不互操作 Mutation。V1.0 `protocol_version = 1`。
+协议不兼容：标 `INCOMPATIBLE_VERSION`，不互操作 Mutation。引入 `join_prepare` / `join_complete` 后当前 `protocol_version = 2`。从 protocol 1 滚动升级时，Join 保持关闭，直到 Raft configuration 中所有既有成员都通过 Gossip 报告 protocol 2；版本未知时返回可重试的 `UNAVAILABLE`，明确为旧版本时返回 `INCOMPATIBLE_VERSION`。这样旧 FSM 不会收到无法应用的新命令。
 
 ### 9.5 远程 Mutation
 

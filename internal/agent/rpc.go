@@ -60,6 +60,7 @@ type rpcRuntime struct {
 	replicationCoord *backup.ReplicationCoordinator
 	process          api.ProcessRemotePolicy
 	updateLocal      api.LocalInfoProvider
+	membershipOnce   sync.Once
 }
 
 func (r *rpcRuntime) startRPC() error {

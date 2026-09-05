@@ -808,6 +808,7 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 	clusterDeps.LeaderAPI = rt.leaderAPI
 	clusterDeps.RaftAddr = rt.raftAddr
 	clusterDeps.SetRaftLeader = rt.setKnownLeader
+	clusterDeps.InitControl = rt.startControl
 	clusterDeps.OnReady = rt.onReady
 	if err := rt.startRPC(); err != nil {
 		_ = ln.Close()

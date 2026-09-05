@@ -10,6 +10,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/metrics"
 	"github.com/qleelulu/procmesh/internal/store"
+	"github.com/qleelulu/procmesh/internal/version"
 )
 
 const (
@@ -172,7 +173,7 @@ func (s *Scanner) scanMemberVersion(ctx context.Context, clusterID string, m clu
 	if m.State != cluster.StateAlive {
 		return nil
 	}
-	mismatch := m.ProtocolVersion != 0 && m.ProtocolVersion != 1
+	mismatch := m.ProtocolVersion != 0 && m.ProtocolVersion != version.Protocol
 	return s.observe(ctx, Event{Type: TypeVersionMismatch, NodeID: m.NodeID, Hostname: m.Hostname, ClusterID: clusterID, At: now, Firing: mismatch})
 }
 

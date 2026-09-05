@@ -18,6 +18,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/rpc"
+	"github.com/qleelulu/procmesh/internal/version"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
@@ -670,7 +671,7 @@ func TestRevokeJoinToken(t *testing.T) {
 		Token:           tok.Msg.GetToken(),
 		NodeId:          "n1",
 		BootId:          "b1",
-		ProtocolVersion: 1,
+		ProtocolVersion: int32(version.Protocol),
 		CsrPem:          csr,
 	}))
 	code, detail := connectDetail(t, err)

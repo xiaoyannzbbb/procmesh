@@ -19,10 +19,11 @@ import (
 const defaultControlListen = "127.0.0.1:18685"
 
 const (
-	raftStartTO   = 10 * time.Second
-	raftApplyTO   = 5 * time.Second
-	adminUserID   = "user-admin"
-	raftPollEvery = 20 * time.Millisecond
+	raftStartTO              = 10 * time.Second
+	raftApplyTO              = 5 * time.Second
+	adminUserID              = "user-admin"
+	raftPollEvery            = 20 * time.Millisecond
+	membershipReconcileEvery = 5 * time.Second
 )
 
 func resolveControlAddr(listen, advertise string) (bind, adv string, err error) {
@@ -93,11 +94,7 @@ func (r *rpcRuntime) onReady() error {
 	if r == nil {
 		return nil
 	}
-	bootstrap := false
-	if meta, err := control.LoadMeta(r.dir); err == nil && meta.ControlMember {
-		bootstrap = !raftLogExists(r.raftDir)
-	}
-	if err := r.startRaft(bootstrap); err != nil {
+	if err := r.startControl(); err != nil {
 		return err
 	}
 	if err := r.startRPC(); err != nil {
@@ -109,13 +106,33 @@ func (r *rpcRuntime) onReady() error {
 	return nil
 }
 
-func (r *rpcRuntime) startRaft(bootstrap bool) error {
+func (r *rpcRuntime) startControl() error {
+	if r == nil {
+		return nil
+	}
+	bootstrap := false
+	if meta, err := control.LoadMeta(r.dir); err == nil && meta.ControlMember {
+		bootstrap = !raftLogExists(r.raftDir)
+	}
+	return r.startRaft(bootstrap)
+}
+
+func (r *rpcRuntime) startRaft(bootstrap bool) (retErr error) {
 	if r == nil {
 		return nil
 	}
 	recovering := raftLogExists(r.raftDir)
+	var started *control.Node
+	freshStart := false
+	defer func() {
+		if retErr == nil || !freshStart {
+			return
+		}
+		retErr = errors.Join(retErr, r.rollbackFreshRaft(started))
+	}()
 	r.mu.Lock()
 	if r.node == nil {
+		freshStart = !recovering
 		clusterID := r.clusterID
 		if clusterID == "" {
 			clusterID = r.lookupClusterIDLocked()
@@ -136,6 +153,7 @@ func (r *rpcRuntime) startRaft(bootstrap bool) error {
 			return err
 		}
 		r.node = n
+		started = n
 		if r.auth != nil {
 			r.auth.SetStore(n)
 		}
@@ -158,7 +176,66 @@ func (r *rpcRuntime) startRaft(bootstrap bool) error {
 			r.logger.With("component", "raft").Warn("raft fsm not caught up", "error", err)
 		}
 	}
-	return r.ensureLocalMemberAdmitted()
+	if err := r.ensureLocalMemberAdmitted(); err != nil {
+		return err
+	}
+	r.startMembershipReconciler()
+	return nil
+}
+
+func (r *rpcRuntime) rollbackFreshRaft(started *control.Node) error {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	if started != nil && r.node == started {
+		r.node = nil
+	}
+	r.mu.Unlock()
+	if started != nil && r.auth != nil {
+		r.auth.SetStore(nil)
+	}
+	var rollbackErr error
+	if started != nil {
+		rollbackErr = started.Shutdown()
+	}
+	if r.raftDir != "" {
+		if err := os.RemoveAll(r.raftDir); err != nil {
+			rollbackErr = errors.Join(rollbackErr, fmt.Errorf("remove fresh raft state: %w", err))
+		}
+	}
+	return rollbackErr
+}
+
+func (r *rpcRuntime) startMembershipReconciler() {
+	if r == nil || r.ctx == nil {
+		return
+	}
+	r.membershipOnce.Do(func() {
+		r.reconcileRaftMembership()
+		go func() {
+			ticker := time.NewTicker(membershipReconcileEvery)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-r.ctx.Done():
+					return
+				case <-ticker.C:
+					r.reconcileRaftMembership()
+				}
+			}
+		}()
+	})
+}
+
+func (r *rpcRuntime) reconcileRaftMembership() {
+	n := r.control()
+	if n == nil || !n.IsLeader() {
+		return
+	}
+	if err := n.ReconcileRaftMembership(); err != nil && r.logger != nil {
+		r.logger.With("component", "raft").Warn("raft membership reconcile failed", "error", err)
+	}
 }
 
 func (r *rpcRuntime) ensureLocalMemberAdmitted() error {

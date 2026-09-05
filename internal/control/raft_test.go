@@ -118,6 +118,115 @@ func TestRaft_MembershipViewLeaderAndNonvoter(t *testing.T) {
 	}
 }
 
+func TestRaft_ReconcileMembershipAddsMissingMembersAndCompletesJoin(t *testing.T) {
+	n, err := control.Start(control.RaftConfig{
+		Dir:    t.TempDir(),
+		Bind:   "127.0.0.1:0",
+		NodeID: "seed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = n.Shutdown() })
+	if err := n.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	waitLeader(t, []*control.Node{n}, 10*time.Second)
+
+	adm := control.Admission{Node: n}
+	if err := adm.Admit("historical", "historical-raft", "AA"); err != nil {
+		t.Fatal(err)
+	}
+	plain, _, err := adm.CreateToken(time.Hour, 1, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := adm.PrepareJoin(control.JoinPrepare{
+		OperationID: "op-pending",
+		Token:       plain,
+		NodeID:      "pending",
+		RaftAddr:    "pending-raft",
+		CSRHash:     "csr-hash",
+		CertPEM:     []byte("cert"),
+		CertSerial:  "BB",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := n.RaftMembershipView()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := before.Members["historical"]; ok {
+		t.Fatal("historical member unexpectedly present before reconcile")
+	}
+	if _, ok := before.Members["pending"]; ok {
+		t.Fatal("pending member unexpectedly present before reconcile")
+	}
+
+	if err := n.ReconcileRaftMembership(); err != nil {
+		t.Fatal(err)
+	}
+	after, err := n.RaftMembershipView()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Members["historical"] != control.RaftNonVoter || after.Members["pending"] != control.RaftNonVoter {
+		t.Fatalf("membership after reconcile=%+v", after.Members)
+	}
+	state := n.View()
+	if state.Members["historical"].Status != control.MemberAdmitted {
+		t.Fatalf("historical member=%+v", state.Members["historical"])
+	}
+	if state.Members["pending"].Status != control.MemberAdmitted || state.JoinAttempts["pending"].Status != control.JoinCompleted {
+		t.Fatalf("pending member=%+v attempt=%+v", state.Members["pending"], state.JoinAttempts["pending"])
+	}
+}
+
+func TestRaft_ReconcileMembershipCorrectsAddressBeforeCompletingJoin(t *testing.T) {
+	n, err := control.Start(control.RaftConfig{
+		Dir:    t.TempDir(),
+		Bind:   "127.0.0.1:0",
+		NodeID: "seed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = n.Shutdown() })
+	if err := n.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	waitLeader(t, []*control.Node{n}, 10*time.Second)
+	if err := n.AddNonvoter("pending", "old-raft-address"); err != nil {
+		t.Fatal(err)
+	}
+
+	adm := control.Admission{Node: n}
+	plain, _, err := adm.CreateToken(time.Hour, 1, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := adm.PrepareJoin(control.JoinPrepare{
+		OperationID: "op-address", Token: plain, NodeID: "pending", RaftAddr: "new-raft-address",
+		CSRHash: "csr-hash", CertPEM: []byte("cert"), CertSerial: "AA",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if matches, err := n.RaftMemberMatches("pending", "new-raft-address"); err != nil || matches {
+		t.Fatalf("new address unexpectedly present before reconcile: matches=%v err=%v", matches, err)
+	}
+
+	if err := n.ReconcileRaftMembership(); err != nil {
+		t.Fatal(err)
+	}
+	if matches, err := n.RaftMemberMatches("pending", "new-raft-address"); err != nil || !matches {
+		t.Fatalf("new address not committed after reconcile: matches=%v err=%v", matches, err)
+	}
+	state := n.View()
+	if state.Members["pending"].Status != control.MemberAdmitted || state.JoinAttempts["pending"].Status != control.JoinCompleted {
+		t.Fatalf("member=%+v attempt=%+v", state.Members["pending"], state.JoinAttempts["pending"])
+	}
+}
+
 func TestRaft_MembershipViewClearsLeaderWithoutQuorum(t *testing.T) {
 	nodes := startInmemVoters(t, 3)
 	leader := waitLeader(t, nodes, 10*time.Second)

@@ -14,6 +14,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/metrics"
 	"github.com/qleelulu/procmesh/internal/store"
+	"github.com/qleelulu/procmesh/internal/version"
 )
 
 type scanEnv struct {
@@ -497,7 +498,7 @@ func TestScanner_LeaderSuspectTooLongAndRecover(t *testing.T) {
 	e.requireResolved(t, "NODE_SUSPECT:n2")
 }
 
-func TestScanner_ProtocolZeroAndOneNotMismatch(t *testing.T) {
+func TestScanner_ProtocolZeroAndCurrentNotMismatch(t *testing.T) {
 	e := newScanEnv(t)
 	view := alert.ClusterView{
 		ClusterID:  "cid",
@@ -507,10 +508,12 @@ func TestScanner_ProtocolZeroAndOneNotMismatch(t *testing.T) {
 		LeaderAddr: "127.0.0.1:9",
 		Members: []cluster.NodeSummary{
 			{NodeID: "n2", State: cluster.StateAlive, ProtocolVersion: 0},
-			{NodeID: "n3", State: cluster.StateAlive, ProtocolVersion: 1},
+			{NodeID: "n3", State: cluster.StateAlive, ProtocolVersion: version.Protocol},
+			{NodeID: "n4", State: cluster.StateAlive, ProtocolVersion: version.Protocol - 1},
 		},
 	}
 	e.scanCluster(t, view)
 	e.requireAbsent(t, "VERSION_MISMATCH:n2")
 	e.requireAbsent(t, "VERSION_MISMATCH:n3")
+	e.requireFiring(t, "VERSION_MISMATCH:n4")
 }

@@ -22,6 +22,8 @@ const (
 	CmdJoinTokenPut               = "join_token_put"
 	CmdJoinTokenConsume           = "join_token_consume"
 	CmdJoinTokenRevoke            = "join_token_revoke"
+	CmdJoinPrepare                = "join_prepare"
+	CmdJoinComplete               = "join_complete"
 	CmdMemberPut                  = "member_put"
 	CmdMemberRemove               = "member_remove"
 	CmdCapabilityInit             = "capability_init"
@@ -154,11 +156,27 @@ type JoinTokenPutBody struct {
 }
 
 type JoinTokenConsumeBody struct {
-	Plain string `json:"plain"`
+	Plain string `json:"plain,omitempty"` // legacy log replay only
+	Hash  string `json:"hash,omitempty"`
 }
 
 type JoinTokenRevokeBody struct {
 	ID string `json:"id"`
+}
+
+type JoinPrepareBody struct {
+	OperationID string `json:"operation_id"`
+	TokenHash   string `json:"token_hash"`
+	NodeID      string `json:"node_id"`
+	RaftAddr    string `json:"raft_addr"`
+	CSRHash     string `json:"csr_sha256"`
+	CertPEM     []byte `json:"cert_pem"`
+	CertSerial  string `json:"cert_serial"`
+}
+
+type JoinCompleteBody struct {
+	OperationID string `json:"operation_id"`
+	NodeID      string `json:"node_id"`
 }
 
 type MemberPutBody struct {

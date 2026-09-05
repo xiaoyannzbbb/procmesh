@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -182,6 +183,35 @@ func AppendGossipSeed(dir, addr string) error {
 func AlreadyInited(dir string) bool {
 	st, err := os.Stat(filepath.Join(dir, metaFileName))
 	return err == nil && !st.IsDir()
+}
+
+// RollbackInit removes artifacts created by an Init whose cluster identity has
+// not been published. The cluster ID check prevents one failed request from
+// deleting a different, completed initialization.
+func RollbackInit(dir, clusterID string) error {
+	meta, err := LoadMeta(dir)
+	if err != nil {
+		return err
+	}
+	if clusterID == "" || meta.ClusterID != clusterID {
+		return errcode.E(errcode.CONFLICT, "cluster initialization changed")
+	}
+	files := []string{
+		metaFileName,
+		adminFileName,
+		secretFileName,
+		caCertFile,
+		caKeyFile,
+		agentCertFile,
+		agentKeyFile,
+	}
+	var cleanupErr error
+	for _, name := range files {
+		if removeErr := os.Remove(filepath.Join(dir, name)); removeErr != nil && !os.IsNotExist(removeErr) {
+			cleanupErr = errors.Join(cleanupErr, fmt.Errorf("remove %s: %w", name, removeErr))
+		}
+	}
+	return cleanupErr
 }
 
 func writeFile(path string, data []byte, perm os.FileMode) error {

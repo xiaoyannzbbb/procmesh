@@ -67,10 +67,17 @@ type RaftMembershipView struct {
 	Members   map[string]RaftSuffrage
 	LeaderID  string
 	HasQuorum bool
+	addresses map[string]string
 }
 
 type RaftMembershipReader interface {
 	RaftMembershipView() (RaftMembershipView, error)
+}
+
+// RaftMembershipVerifier confirms internal membership identity without
+// exposing control-plane addresses through RaftMembershipView consumers.
+type RaftMembershipVerifier interface {
+	RaftMemberMatches(nodeID, raftAddr string) (bool, error)
 }
 
 func Start(cfg RaftConfig) (*Node, error) {
@@ -276,6 +283,7 @@ func (n *Node) RaftMembershipView() (RaftMembershipView, error) {
 	view := RaftMembershipView{
 		Members:   make(map[string]RaftSuffrage, len(future.Configuration().Servers)),
 		HasQuorum: n.HasQuorum(),
+		addresses: make(map[string]string, len(future.Configuration().Servers)),
 	}
 	for _, server := range future.Configuration().Servers {
 		var suffrage RaftSuffrage
@@ -287,7 +295,9 @@ func (n *Node) RaftMembershipView() (RaftMembershipView, error) {
 		default:
 			return RaftMembershipView{}, fmt.Errorf("unknown raft suffrage %d", server.Suffrage)
 		}
-		view.Members[string(server.ID)] = suffrage
+		nodeID := string(server.ID)
+		view.Members[nodeID] = suffrage
+		view.addresses[nodeID] = string(server.Address)
 	}
 	if !view.HasQuorum {
 		return view, nil
@@ -297,6 +307,22 @@ func (n *Node) RaftMembershipView() (RaftMembershipView, error) {
 		view.LeaderID = string(leaderID)
 	}
 	return view, nil
+}
+
+func (n *Node) RaftMemberMatches(nodeID, raftAddr string) (bool, error) {
+	view, err := n.RaftMembershipView()
+	if err != nil {
+		return false, err
+	}
+	return view.memberMatches(nodeID, raftAddr), nil
+}
+
+func (v RaftMembershipView) memberMatches(nodeID, raftAddr string) bool {
+	role, exists := v.Members[nodeID]
+	if !exists || (role != RaftNonVoter && role != RaftVoter) {
+		return false
+	}
+	return raftAddr != "" && v.addresses[nodeID] == raftAddr
 }
 
 func (n *Node) IsLeader() bool {
@@ -336,6 +362,13 @@ func (n *Node) CurrentTerm() uint64 {
 
 func (n *Node) Advertise() string { return n.advertise }
 
+func (n *Node) NodeID() string {
+	if n == nil {
+		return ""
+	}
+	return n.id
+}
+
 func (n *Node) View() State {
 	if n == nil || n.fsm == nil {
 		return *NewState()
@@ -369,6 +402,66 @@ func (n *Node) WithMembershipOp(fn func() error) error {
 	n.membershipMu.Lock()
 	defer n.membershipMu.Unlock()
 	return fn()
+}
+
+// ReconcileRaftMembership converges admitted and in-progress members from the
+// FSM into the Raft configuration. The FSM remains the desired membership.
+func (n *Node) ReconcileRaftMembership() error {
+	return n.WithMembershipOp(func() error {
+		if err := n.requireLeader(); err != nil {
+			return err
+		}
+		membership, err := n.RaftMembershipView()
+		if err != nil {
+			return fmt.Errorf("read raft membership: %w", err)
+		}
+		state := n.View()
+		nodeIDs := make([]string, 0, len(state.Members))
+		for nodeID, member := range state.Members {
+			if member.Status == MemberAdmitted || member.Status == MemberJoining {
+				nodeIDs = append(nodeIDs, nodeID)
+			}
+		}
+		sort.Strings(nodeIDs)
+		for _, nodeID := range nodeIDs {
+			member := state.Members[nodeID]
+			if member.RaftAddr == "" {
+				continue
+			}
+			if !membership.memberMatches(nodeID, member.RaftAddr) {
+				addErr := n.AddNonvoter(nodeID, member.RaftAddr)
+				refreshed, readErr := n.RaftMembershipView()
+				if readErr != nil {
+					return errcode.Wrap(errcode.UNAVAILABLE, "confirm raft nonvoter", readErr)
+				}
+				if !refreshed.memberMatches(nodeID, member.RaftAddr) {
+					if addErr != nil {
+						return errcode.Wrap(errcode.UNAVAILABLE, "add raft nonvoter", addErr)
+					}
+					return errcode.E(errcode.UNAVAILABLE, "raft nonvoter address not committed")
+				}
+				membership = refreshed
+			}
+			if member.Status != MemberJoining {
+				continue
+			}
+			attempt, ok := state.JoinAttempts[nodeID]
+			if !ok {
+				return errcode.E(errcode.CONFLICT, "joining member has no join attempt")
+			}
+			cmd, encodeErr := EncodeCommand(CmdJoinComplete, JoinCompleteBody{
+				OperationID: attempt.OperationID,
+				NodeID:      nodeID,
+			})
+			if encodeErr != nil {
+				return encodeErr
+			}
+			if applyErr := n.Apply(cmd, admissionApplyTO); applyErr != nil {
+				return applyErr
+			}
+		}
+		return nil
+	})
 }
 
 // LeaderTermContext is canceled as soon as this node leaves the supplied

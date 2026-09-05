@@ -22,6 +22,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/auth"
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
+	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/store"
 	"github.com/qleelulu/procmesh/internal/version"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
@@ -103,15 +104,18 @@ func newClusterEnvAuth(t *testing.T, degraded, withMesh bool, onReady func() err
 }
 
 type clusterEnvCfg struct {
-	degraded  bool
-	withMesh  bool
-	onReady   func() error
-	auth      *auth.Service
-	control   *control.Node
-	onAdmit   func(nodeID, raftAddr string) error
-	leaderAPI func() string
-	raftAddr  func() string
-	logger    *slog.Logger
+	degraded       bool
+	withMesh       bool
+	initControl    func() error
+	onReady        func() error
+	auth           *auth.Service
+	control        *control.Node
+	controlFn      func() *control.Node
+	raftMembership control.RaftMembershipReader
+	onAdmit        func(nodeID, raftAddr string) error
+	leaderAPI      func() string
+	raftAddr       func() string
+	logger         *slog.Logger
 }
 
 func newClusterEnvFull(t *testing.T, cfg clusterEnvCfg) *clusterEnv {
@@ -154,16 +158,19 @@ func newClusterEnvFull(t *testing.T, cfg clusterEnvCfg) *clusterEnv {
 		GossipAddr: func() string {
 			return env.local.GossipAddress
 		},
-		Now:       func() time.Time { return env.now },
-		NodeID:    nodeID,
-		Hostname:  local.Hostname,
-		BootID:    bootID,
-		APIAddr:   local.APIAddress,
-		OnReady:   cfg.onReady,
-		Control:   cfg.control,
-		OnAdmit:   cfg.onAdmit,
-		LeaderAPI: cfg.leaderAPI,
-		RaftAddr:  cfg.raftAddr,
+		Now:            func() time.Time { return env.now },
+		NodeID:         nodeID,
+		Hostname:       local.Hostname,
+		BootID:         bootID,
+		APIAddr:        local.APIAddress,
+		InitControl:    cfg.initControl,
+		OnReady:        cfg.onReady,
+		Control:        cfg.control,
+		ControlFn:      cfg.controlFn,
+		RaftMembership: cfg.raftMembership,
+		OnAdmit:        cfg.onAdmit,
+		LeaderAPI:      cfg.leaderAPI,
+		RaftAddr:       cfg.raftAddr,
 	}
 	if env.mesh != nil {
 		deps.Mesh = env.mesh
@@ -253,6 +260,61 @@ func TestInit_OnReadyAfterCerts(t *testing.T) {
 	}
 	if record["level"] != "WARN" || record["msg"] != "cluster ready failed" || record["error"] != "rpc listen failed" {
 		t.Fatalf("cluster warning = %#v", record)
+	}
+}
+
+func TestInit_ControlStartupFailureIsReturned(t *testing.T) {
+	ctx := context.Background()
+	controlNode := startTestRaft(t, "init-control")
+	controlReady := false
+	startAttempts := 0
+	e := newClusterEnvFull(t, clusterEnvCfg{
+		withMesh: true,
+		controlFn: func() *control.Node {
+			if controlReady {
+				return controlNode
+			}
+			return nil
+		},
+		initControl: func() error {
+			startAttempts++
+			if startAttempts == 1 {
+				return errors.New("injected startRaft failure")
+			}
+			controlReady = true
+			return nil
+		},
+	})
+	request := func(operationID string) (*connect.Response[procmeshv1.InitClusterResponse], error) {
+		return e.cluster.Init(ctx, connect.NewRequest(&procmeshv1.InitClusterRequest{
+			Meta:          &procmeshv1.MutationMeta{OperationId: operationID, Operator: "t"},
+			AdminUsername: "admin",
+		}))
+	}
+	_, err := request("op-init-control-failure")
+	code, detail := connectDetail(t, err)
+	if code != connect.CodeUnavailable || detail != "UNAVAILABLE" {
+		t.Fatalf("init code=%v detail=%s err=%v", code, detail, err)
+	}
+	clusterID, storeErr := e.store.GetClusterID(ctx)
+	if storeErr != nil || clusterID != "" {
+		t.Fatalf("cluster id published after failed control startup: id=%q err=%v", clusterID, storeErr)
+	}
+	if control.AlreadyInited(e.dir) {
+		t.Fatal("failed control startup left cluster initialized")
+	}
+	for _, name := range []string{"cluster.json", "secret", "admin.bootstrap", "ca.crt", "ca.key", "agent.crt", "agent.key"} {
+		if _, statErr := os.Stat(filepath.Join(e.dir, name)); !os.IsNotExist(statErr) {
+			t.Fatalf("failed control startup left %s: %v", name, statErr)
+		}
+	}
+
+	retried, err := request("op-init-control-retry")
+	if err != nil {
+		t.Fatalf("retry init: %v", err)
+	}
+	if retried.Msg.GetClusterId() == "" || retried.Msg.GetAdminPassword() == "" {
+		t.Fatalf("retry did not return usable credentials: %+v", retried.Msg)
 	}
 }
 
@@ -549,6 +611,7 @@ func TestJoin_FSMMissingCADoesNotConsumeToken(t *testing.T) {
 		NodeId:          "n-fsm",
 		BootId:          "boot-n-fsm",
 		ProtocolVersion: int32(version.Protocol),
+		RaftAddress:     "n-fsm-raft",
 		CsrPem:          csr,
 	}))
 	code, detail := connectDetail(t, err)
@@ -567,9 +630,45 @@ func TestJoin_FSMMissingCADoesNotConsumeToken(t *testing.T) {
 		NodeId:          "n-fsm",
 		BootId:          "boot-n-fsm",
 		ProtocolVersion: int32(version.Protocol),
+		RaftAddress:     "n-fsm-raft",
 		CsrPem:          csr,
 	})); err != nil {
 		t.Fatalf("same token after restoring ca.key: %v", err)
+	}
+}
+
+func TestJoin_ControlUnavailableDoesNotFallBackToFileToken(t *testing.T) {
+	ctx := context.Background()
+	e := newClusterEnvFull(t, clusterEnvCfg{
+		withMesh:  true,
+		controlFn: func() *control.Node { return nil },
+	})
+	if _, err := control.Init(e.dir, e.nodeID, "admin", e.now); err != nil {
+		t.Fatal(err)
+	}
+	plain, _, err := control.CreateToken(e.dir, time.Hour, 1, e.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	csr, _, err := control.NewCSR("join", "control-missing-joiner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.cluster.Join(ctx, connect.NewRequest(&procmeshv1.JoinClusterRequest{
+		Meta:            &procmeshv1.MutationMeta{OperationId: "op-control-missing-join", Operator: "t"},
+		Token:           plain,
+		NodeId:          "control-missing-joiner",
+		BootId:          "control-missing-boot",
+		ProtocolVersion: int32(version.Protocol),
+		RaftAddress:     "control-missing-raft",
+		CsrPem:          csr,
+	}))
+	code, detail := connectDetail(t, err)
+	if code != connect.CodeUnavailable || detail != "UNAVAILABLE" {
+		t.Fatalf("join code=%v detail=%s err=%v", code, detail, err)
+	}
+	if err := control.ConsumeToken(e.dir, plain, e.now); err != nil {
+		t.Fatalf("file token was consumed while control was unavailable: %v", err)
 	}
 }
 
@@ -590,6 +689,7 @@ func TestJoin_FSMBadCSRDoesNotConsumeToken(t *testing.T) {
 		NodeId:          "n-bad",
 		BootId:          "boot-n-bad",
 		ProtocolVersion: int32(version.Protocol),
+		RaftAddress:     "n-bad-raft",
 		CsrPem:          []byte("not-a-csr"),
 	}))
 	code, detail := connectDetail(t, err)
@@ -606,6 +706,7 @@ func TestJoin_FSMBadCSRDoesNotConsumeToken(t *testing.T) {
 		NodeId:          "n-bad",
 		BootId:          "boot-n-bad",
 		ProtocolVersion: int32(version.Protocol),
+		RaftAddress:     "n-bad-raft",
 		CsrPem:          csr,
 	})); err != nil {
 		t.Fatalf("same token after bad csr: %v", err)
@@ -925,6 +1026,107 @@ func TestRequestJoin_SeedUnreachable(t *testing.T) {
 	}
 }
 
+func TestJoinErrorRetryable_PreservesPendingUnlessRejectionIsDefinitive(t *testing.T) {
+	tests := []struct {
+		name      string
+		err       error
+		retryable bool
+	}{
+		{name: "request canceled with unknown outcome", err: connect.NewError(connect.CodeCanceled, context.Canceled), retryable: true},
+		{name: "transport failure", err: errors.New("connection reset"), retryable: true},
+		{name: "admission unavailable", err: ToConnect(errcode.E(errcode.UNAVAILABLE, "add raft nonvoter failed")), retryable: true},
+		{name: "admission timeout", err: ToConnect(errcode.E(errcode.TIMEOUT, "join timed out")), retryable: true},
+		{name: "invalid token", err: ToConnect(errcode.E(errcode.INVALID, "invalid join token")), retryable: false},
+		{name: "revoked node", err: ToConnect(errcode.E(errcode.DENIED, "node removed")), retryable: false},
+		{name: "duplicate node", err: ToConnect(errcode.E(errcode.DUPLICATE_NODE_ID, "node_id already admitted")), retryable: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := joinErrorRetryable(tt.err); got != tt.retryable {
+				t.Fatalf("joinErrorRetryable()=%v want %v: %v", got, tt.retryable, tt.err)
+			}
+		})
+	}
+}
+
+func TestRequestJoin_RetriesPendingAdmissionWithSameIdentity(t *testing.T) {
+	ctx := context.Background()
+	raftNode := startTestRaft(t, "seed")
+	addCalls := 0
+	seed := newClusterEnvFull(t, clusterEnvCfg{
+		withMesh: true,
+		control:  raftNode,
+		onAdmit: func(nodeID, raftAddr string) error {
+			addCalls++
+			if addCalls == 1 {
+				return errors.New("injected AddNonvoter failure")
+			}
+			return raftNode.AddNonvoter(nodeID, raftAddr)
+		},
+	})
+	seed.init(t)
+	tok, err := seed.node.CreateJoinToken(ctx, connect.NewRequest(&procmeshv1.CreateJoinTokenRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-token-pending", Operator: "t"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	joiner := newClusterEnvFull(t, clusterEnvCfg{
+		withMesh: true,
+		raftAddr: func() string { return "pending-joiner-raft" },
+	})
+	first := connect.NewRequest(&procmeshv1.RequestJoinRequest{
+		Meta:       &procmeshv1.MutationMeta{OperationId: "op-local-first", Operator: "t"},
+		SeedServer: seed.url,
+		Token:      tok.Msg.GetToken(),
+	})
+	_, firstErr := joiner.cluster.RequestJoin(ctx, first)
+	if connect.CodeOf(firstErr) != connect.CodeUnavailable {
+		t.Fatalf("first RequestJoin code=%v err=%v", connect.CodeOf(firstErr), firstErr)
+	}
+	if !strings.Contains(firstErr.Error(), "add raft nonvoter failed") {
+		t.Fatalf("first RequestJoin hid admission failure: %v", firstErr)
+	}
+	if control.AlreadyInited(joiner.dir) {
+		t.Fatal("failed RequestJoin persisted completed cluster identity")
+	}
+	pendingPath := filepath.Join(joiner.dir, "join.pending.json")
+	stat, err := os.Stat(pendingPath)
+	if err != nil {
+		t.Fatalf("pending join file: %v", err)
+	}
+	if stat.Mode().Perm() != 0o600 {
+		t.Fatalf("pending join mode=%o", stat.Mode().Perm())
+	}
+	prepared := raftNode.View().JoinAttempts[joiner.nodeID]
+	if prepared.OperationID != "op-local-first" || prepared.Status != control.JoinPreparing {
+		t.Fatalf("prepared=%+v", prepared)
+	}
+
+	second := connect.NewRequest(&procmeshv1.RequestJoinRequest{
+		Meta:       &procmeshv1.MutationMeta{OperationId: "op-local-second", Operator: "t"},
+		SeedServer: seed.url,
+		Token:      tok.Msg.GetToken(),
+	})
+	resp, err := joiner.cluster.RequestJoin(ctx, second)
+	if err != nil {
+		t.Fatalf("resume RequestJoin: %v", err)
+	}
+	if resp.Msg.GetClusterId() == "" {
+		t.Fatal("resume returned empty cluster_id")
+	}
+	certPEM, err := os.ReadFile(filepath.Join(joiner.dir, "agent.crt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(certPEM) != string(prepared.CertPEM) {
+		t.Fatal("resume did not persist the prepared certificate")
+	}
+	if _, err := os.Stat(pendingPath); !os.IsNotExist(err) {
+		t.Fatalf("pending join file remains after success: %v", err)
+	}
+}
+
 func TestJoin_UsesRaftTokenNotFile(t *testing.T) {
 	ctx := context.Background()
 	raftNode := startTestRaft(t, "seed")
@@ -934,7 +1136,7 @@ func TestJoin_UsesRaftTokenNotFile(t *testing.T) {
 		control:  raftNode,
 		onAdmit: func(nodeID, raftAddr string) error {
 			admitted = append(admitted, nodeID+"="+raftAddr)
-			return nil
+			return raftNode.AddNonvoter(nodeID, raftAddr)
 		},
 	})
 	inited := e.init(t)
@@ -984,6 +1186,296 @@ func TestJoin_UsesRaftTokenNotFile(t *testing.T) {
 	}
 	if len(admitted) != 1 || admitted[0] != joinerID+"=127.0.0.1:118685" {
 		t.Fatalf("onAdmit=%v", admitted)
+	}
+}
+
+func TestJoin_AddNonvoterFailureReturnsUnavailableAndCanResume(t *testing.T) {
+	ctx := context.Background()
+	raftNode := startTestRaft(t, "seed")
+	addCalls := 0
+	e := newClusterEnvFull(t, clusterEnvCfg{
+		withMesh: true,
+		control:  raftNode,
+		onAdmit: func(nodeID, raftAddr string) error {
+			addCalls++
+			if addCalls == 1 {
+				return errors.New("injected AddNonvoter failure")
+			}
+			return raftNode.AddNonvoter(nodeID, raftAddr)
+		},
+	})
+	e.init(t)
+	adm := control.Admission{Node: raftNode}
+	plain, info, err := adm.CreateToken(time.Hour, 1, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	csr, _, err := control.NewCSR("join", "retry-joiner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := connect.NewRequest(&procmeshv1.JoinClusterRequest{
+		Meta:            &procmeshv1.MutationMeta{OperationId: "op-retry-join", Operator: "t"},
+		Token:           plain,
+		NodeId:          "retry-joiner",
+		BootId:          "retry-boot",
+		ProtocolVersion: int32(version.Protocol),
+		RaftAddress:     "retry-joiner-raft",
+		CsrPem:          csr,
+	})
+	if _, err := e.cluster.Join(ctx, req); connect.CodeOf(err) != connect.CodeUnavailable {
+		t.Fatalf("first join code=%v err=%v", connect.CodeOf(err), err)
+	}
+	view := raftNode.View()
+	if got := view.JoinTokens[info.ID].Remaining; got != 0 {
+		t.Fatalf("remaining=%d want 0", got)
+	}
+	if member := view.Members[req.Msg.GetNodeId()]; member.Status != control.MemberJoining {
+		t.Fatalf("member after failure=%+v", member)
+	}
+	prepared := view.JoinAttempts[req.Msg.GetNodeId()]
+	if prepared.Status != control.JoinPreparing || len(prepared.CertPEM) == 0 {
+		t.Fatalf("attempt after failure=%+v", prepared)
+	}
+
+	joined, err := e.cluster.Join(ctx, req)
+	if err != nil {
+		t.Fatalf("resume join: %v", err)
+	}
+	if string(joined.Msg.GetCertPem()) != string(prepared.CertPEM) {
+		t.Fatal("resume returned a different certificate")
+	}
+	view = raftNode.View()
+	if view.Members[req.Msg.GetNodeId()].Status != control.MemberAdmitted || view.JoinAttempts[req.Msg.GetNodeId()].Status != control.JoinCompleted {
+		t.Fatalf("completed member=%+v attempt=%+v", view.Members[req.Msg.GetNodeId()], view.JoinAttempts[req.Msg.GetNodeId()])
+	}
+	membership, err := raftNode.RaftMembershipView()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if membership.Members[req.Msg.GetNodeId()] != control.RaftNonVoter {
+		t.Fatalf("raft role=%q", membership.Members[req.Msg.GetNodeId()])
+	}
+	if addCalls != 2 {
+		t.Fatalf("AddNonvoter calls=%d want 2", addCalls)
+	}
+}
+
+func TestJoin_AddNonvoterErrorAfterCommitUsesMembershipReadback(t *testing.T) {
+	ctx := context.Background()
+	raftNode := startTestRaft(t, "seed")
+	e := newClusterEnvFull(t, clusterEnvCfg{
+		withMesh: true,
+		control:  raftNode,
+		onAdmit: func(nodeID, raftAddr string) error {
+			if err := raftNode.AddNonvoter(nodeID, raftAddr); err != nil {
+				return err
+			}
+			return errors.New("injected lost AddNonvoter acknowledgement")
+		},
+	})
+	e.init(t)
+	adm := control.Admission{Node: raftNode}
+	plain, _, err := adm.CreateToken(time.Hour, 1, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	csr, _, err := control.NewCSR("join", "uncertain-joiner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined, err := e.cluster.Join(ctx, connect.NewRequest(&procmeshv1.JoinClusterRequest{
+		Meta:            &procmeshv1.MutationMeta{OperationId: "op-uncertain-join", Operator: "t"},
+		Token:           plain,
+		NodeId:          "uncertain-joiner",
+		BootId:          "uncertain-boot",
+		ProtocolVersion: int32(version.Protocol),
+		RaftAddress:     "uncertain-joiner-raft",
+		CsrPem:          csr,
+	}))
+	if err != nil {
+		t.Fatalf("join after committed AddNonvoter: %v", err)
+	}
+	if len(joined.Msg.GetCertPem()) == 0 || raftNode.View().Members["uncertain-joiner"].Status != control.MemberAdmitted {
+		t.Fatalf("join did not complete after membership readback: %+v", raftNode.View().Members["uncertain-joiner"])
+	}
+}
+
+func TestJoin_DoesNotSucceedWithoutCommittedRaftMembership(t *testing.T) {
+	ctx := context.Background()
+	raftNode := startTestRaft(t, "seed")
+	e := newClusterEnvFull(t, clusterEnvCfg{
+		withMesh: true,
+		control:  raftNode,
+		onAdmit:  func(string, string) error { return nil },
+	})
+	e.init(t)
+	adm := control.Admission{Node: raftNode}
+	plain, _, err := adm.CreateToken(time.Hour, 1, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	csr, _, err := control.NewCSR("join", "missing-membership")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.cluster.Join(ctx, connect.NewRequest(&procmeshv1.JoinClusterRequest{
+		Meta:            &procmeshv1.MutationMeta{OperationId: "op-missing-membership", Operator: "t"},
+		Token:           plain,
+		NodeId:          "missing-membership",
+		BootId:          "missing-membership-boot",
+		ProtocolVersion: int32(version.Protocol),
+		RaftAddress:     "missing-membership-raft",
+		CsrPem:          csr,
+	}))
+	if connect.CodeOf(err) != connect.CodeUnavailable || !strings.Contains(err.Error(), "raft nonvoter not committed") {
+		t.Fatalf("join without membership code=%v err=%v", connect.CodeOf(err), err)
+	}
+	if member := raftNode.View().Members["missing-membership"]; member.Status != control.MemberJoining {
+		t.Fatalf("member=%+v want JOINING", member)
+	}
+}
+
+func TestJoin_StaleRaftAddressDoesNotCompleteAdmission(t *testing.T) {
+	ctx := context.Background()
+	raftNode := startTestRaft(t, "seed")
+	if err := raftNode.AddNonvoter("stale-address", "old-raft-address"); err != nil {
+		t.Fatal(err)
+	}
+	e := newClusterEnvFull(t, clusterEnvCfg{
+		withMesh: true,
+		control:  raftNode,
+		onAdmit:  func(string, string) error { return errors.New("injected AddNonvoter failure") },
+	})
+	e.init(t)
+	adm := control.Admission{Node: raftNode}
+	plain, _, err := adm.CreateToken(time.Hour, 1, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	csr, _, err := control.NewCSR("join", "stale-address")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.cluster.Join(ctx, connect.NewRequest(&procmeshv1.JoinClusterRequest{
+		Meta:            &procmeshv1.MutationMeta{OperationId: "op-stale-address", Operator: "t"},
+		Token:           plain,
+		NodeId:          "stale-address",
+		BootId:          "stale-address-boot",
+		ProtocolVersion: int32(version.Protocol),
+		RaftAddress:     "new-raft-address",
+		CsrPem:          csr,
+	}))
+	if connect.CodeOf(err) != connect.CodeUnavailable {
+		t.Fatalf("join with stale Raft address code=%v err=%v", connect.CodeOf(err), err)
+	}
+	if member := raftNode.View().Members["stale-address"]; member.Status != control.MemberJoining {
+		t.Fatalf("member=%+v want JOINING", member)
+	}
+}
+
+func TestJoin_MixedProtocolRaftMemberBlocksNewFSMCommands(t *testing.T) {
+	if version.Protocol != 2 {
+		t.Fatalf("join FSM protocol=%d want 2", version.Protocol)
+	}
+	ctx := context.Background()
+	raftNode := startTestRaft(t, "seed")
+	e := newClusterEnvFull(t, clusterEnvCfg{
+		withMesh: true,
+		control:  raftNode,
+		raftMembership: staticRaftMembershipReader{view: control.RaftMembershipView{
+			Members: map[string]control.RaftSuffrage{
+				"seed":        control.RaftVoter,
+				"old-control": control.RaftVoter,
+			},
+			LeaderID:  "seed",
+			HasQuorum: true,
+		}},
+	})
+	e.init(t)
+	e.mesh.setMembers([]cluster.NodeSummary{
+		e.local,
+		{NodeID: "seed", State: cluster.StateAlive, ProtocolVersion: version.Protocol},
+		{NodeID: "old-control", State: cluster.StateAlive, ProtocolVersion: 1},
+	})
+	adm := control.Admission{Node: raftNode}
+	plain, info, err := adm.CreateToken(time.Hour, 1, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	csr, _, err := control.NewCSR("join", "mixed-version-joiner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.cluster.Join(ctx, connect.NewRequest(&procmeshv1.JoinClusterRequest{
+		Meta:            &procmeshv1.MutationMeta{OperationId: "op-mixed-version", Operator: "t"},
+		Token:           plain,
+		NodeId:          "mixed-version-joiner",
+		BootId:          "mixed-version-boot",
+		ProtocolVersion: int32(version.Protocol),
+		RaftAddress:     "mixed-version-raft",
+		CsrPem:          csr,
+	}))
+	code, detail := connectDetail(t, err)
+	if code != connect.CodeFailedPrecondition || detail != "INCOMPATIBLE_VERSION" {
+		t.Fatalf("mixed-version join code=%v detail=%s err=%v", code, detail, err)
+	}
+	view := raftNode.View()
+	if got := view.JoinTokens[info.ID].Remaining; got != 1 {
+		t.Fatalf("mixed-version join consumed token: remaining=%d", got)
+	}
+	if _, exists := view.JoinAttempts["mixed-version-joiner"]; exists {
+		t.Fatal("mixed-version join created an attempt")
+	}
+}
+
+func TestJoin_PreviouslyJoinedRaftMemberStillRequiresCurrentProtocol(t *testing.T) {
+	ctx := context.Background()
+	raftNode := startTestRaft(t, "seed")
+	e := newClusterEnvFull(t, clusterEnvCfg{withMesh: true, control: raftNode})
+	e.init(t)
+	adm := control.Admission{Node: raftNode}
+	oldToken, _, err := adm.CreateToken(time.Hour, 1, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := adm.PrepareJoin(control.JoinPrepare{
+		OperationID: "op-previous", Token: oldToken, NodeID: "previous", RaftAddr: "previous-raft",
+		CSRHash: "previous-csr", CertPEM: []byte("previous-cert"), CertSerial: "AA",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := raftNode.AddNonvoter("previous", "previous-raft"); err != nil {
+		t.Fatal(err)
+	}
+	e.mesh.setMembers([]cluster.NodeSummary{
+		e.local,
+		{NodeID: "previous", State: cluster.StateAlive, ProtocolVersion: version.Protocol - 1},
+	})
+
+	plain, info, err := adm.CreateToken(time.Hour, 1, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	csr, _, err := control.NewCSR("join", "next")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.cluster.Join(ctx, connect.NewRequest(&procmeshv1.JoinClusterRequest{
+		Meta:            &procmeshv1.MutationMeta{OperationId: "op-next", Operator: "t"},
+		Token:           plain,
+		NodeId:          "next",
+		BootId:          "next-boot",
+		ProtocolVersion: int32(version.Protocol),
+		RaftAddress:     "next-raft",
+		CsrPem:          csr,
+	}))
+	code, detail := connectDetail(t, err)
+	if code != connect.CodeFailedPrecondition || detail != "INCOMPATIBLE_VERSION" {
+		t.Fatalf("downgraded member join code=%v detail=%s err=%v", code, detail, err)
+	}
+	if got := raftNode.View().JoinTokens[info.ID].Remaining; got != 1 {
+		t.Fatalf("blocked join consumed token: remaining=%d", got)
 	}
 }
 
@@ -1110,8 +1602,12 @@ func TestJoin_ForwardsToLeader(t *testing.T) {
 		t.Fatal("raftB should not be leader")
 	}
 
-	envA := newClusterEnvFull(t, clusterEnvCfg{control: raftA})
+	envA := newClusterEnvFull(t, clusterEnvCfg{control: raftA, withMesh: true})
 	inited := envA.init(t)
+	envA.mesh.setMembers([]cluster.NodeSummary{
+		{NodeID: "a", State: cluster.StateAlive, ProtocolVersion: version.Protocol},
+		{NodeID: "b", State: cluster.StateAlive, ProtocolVersion: version.Protocol},
+	})
 
 	envB := newClusterEnvFull(t, clusterEnvCfg{
 		control:   raftB,
@@ -1145,6 +1641,7 @@ func TestJoin_ForwardsToLeader(t *testing.T) {
 		BootId:          "boot-fwd",
 		ProtocolVersion: int32(version.Protocol),
 		ApiAddress:      "127.0.0.1:9101",
+		RaftAddress:     "forward-joiner-raft",
 		CsrPem:          csr,
 	}))
 	if err != nil {

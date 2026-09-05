@@ -76,6 +76,28 @@ func TestInit_ConflictIfExists(t *testing.T) {
 	}
 }
 
+func TestRollbackInit_RequiresMatchingClusterAndRemovesArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	result, err := control.Init(dir, "n", "admin", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := control.RollbackInit(dir, "different-cluster"); !errcode.Is(err, errcode.CONFLICT) {
+		t.Fatalf("mismatched rollback err=%v", err)
+	}
+	if !control.AlreadyInited(dir) {
+		t.Fatal("mismatched rollback removed cluster metadata")
+	}
+	if err := control.RollbackInit(dir, result.ClusterID); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"cluster.json", "secret", "admin.bootstrap", "ca.crt", "ca.key", "agent.crt", "agent.key"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Fatalf("rollback left %s: %v", name, err)
+		}
+	}
+}
+
 func TestLoadMeta_NotFound(t *testing.T) {
 	_, err := control.LoadMeta(t.TempDir())
 	if !errcode.Is(err, errcode.NOT_FOUND) {

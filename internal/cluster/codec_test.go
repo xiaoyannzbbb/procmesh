@@ -31,7 +31,7 @@ func TestEncodeMeta_OmitsProcessesAndFits512(t *testing.T) {
 	if len(got.Processes) != 0 {
 		t.Fatalf("meta must omit processes: %+v", got.Processes)
 	}
-	if got.NodeID != "n1" || got.ProtocolVersion != 1 {
+	if got.NodeID != "n1" || got.ProtocolVersion != version.Protocol {
 		t.Fatalf("%+v", got)
 	}
 	if !got.DisableRemoteCreate || !got.DisableRemoteUpdate || !got.DisableRemoteDelete {

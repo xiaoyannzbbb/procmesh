@@ -49,9 +49,17 @@ const (
 type MemberStatus string
 
 const (
+	MemberJoining  MemberStatus = "JOINING"
 	MemberAdmitted MemberStatus = "ADMITTED"
 	MemberRemoved  MemberStatus = "REMOVED"
 	MemberRevoked  MemberStatus = "REVOKED"
+)
+
+type JoinStatus string
+
+const (
+	JoinPreparing JoinStatus = "PREPARING"
+	JoinCompleted JoinStatus = "COMPLETED"
 )
 
 type User struct {
@@ -88,6 +96,19 @@ type JoinToken struct {
 	ExpiresUnix int64
 	Remaining   int
 	Revoked     bool
+}
+
+type JoinAttempt struct {
+	OperationID string     `json:"operation_id"`
+	TokenID     string     `json:"token_id"`
+	NodeID      string     `json:"node_id"`
+	RaftAddr    string     `json:"raft_addr"`
+	CSRHash     string     `json:"csr_sha256"`
+	CertPEM     []byte     `json:"cert_pem"`
+	CertSerial  string     `json:"cert_serial"`
+	Status      JoinStatus `json:"status"`
+	CreatedUnix int64      `json:"created_unix"`
+	UpdatedUnix int64      `json:"updated_unix"`
 }
 
 type Member struct {
@@ -220,7 +241,8 @@ type State struct {
 	Bindings                 []Binding                          `json:"bindings"`
 	Sessions                 map[string]Session                 `json:"sessions"`
 	APITokens                map[string]APIToken                `json:"api_tokens"`
-	JoinTokens               map[string]JoinToken               `json:"join_tokens"` // by id
+	JoinTokens               map[string]JoinToken               `json:"join_tokens"`             // by id
+	JoinAttempts             map[string]JoinAttempt             `json:"join_attempts,omitempty"` // by node_id
 	AdmissionCapability      AdmissionCapabilityState           `json:"admission_capability,omitempty"`
 	Members                  map[string]Member                  `json:"members"`        // by node_id
 	CRL                      map[string]struct{}                `json:"crl"`            // cert serial hex
@@ -267,6 +289,9 @@ func (s *State) ensure() {
 	}
 	if s.JoinTokens == nil {
 		s.JoinTokens = map[string]JoinToken{}
+	}
+	if s.JoinAttempts == nil {
+		s.JoinAttempts = map[string]JoinAttempt{}
 	}
 	if s.AdmissionCapability.Nodes == nil {
 		s.AdmissionCapability.Nodes = map[string]AdmissionCapabilityNode{}
@@ -366,6 +391,10 @@ func (s *State) Apply(cmd Command, now time.Time) error {
 		return applyJSON(cmd.Body, func(b JoinTokenConsumeBody) error { return s.applyJoinTokenConsume(b, now) })
 	case CmdJoinTokenRevoke:
 		return applyJSON(cmd.Body, s.applyJoinTokenRevoke)
+	case CmdJoinPrepare:
+		return applyJSON(cmd.Body, func(b JoinPrepareBody) error { return s.applyJoinPrepare(b, now) })
+	case CmdJoinComplete:
+		return applyJSON(cmd.Body, func(b JoinCompleteBody) error { return s.applyJoinComplete(b, now) })
 	case CmdMemberPut:
 		return applyJSON(cmd.Body, s.applyMemberPut)
 	case CmdMemberRemove:
@@ -769,23 +798,12 @@ func (s *State) applyJoinTokenPut(b JoinTokenPutBody, now time.Time) error {
 }
 
 func (s *State) applyJoinTokenConsume(b JoinTokenConsumeBody, now time.Time) error {
-	want := hashToken(b.Plain)
-	wantB := []byte(want)
-	var rec *JoinToken
-	var id string
-	for k, tok := range s.JoinTokens {
-		gotB := []byte(tok.Hash)
-		if len(gotB) != len(wantB) {
-			continue
-		}
-		if subtle.ConstantTimeCompare(gotB, wantB) == 1 {
-			cp := tok
-			rec = &cp
-			id = k
-			break
-		}
+	wantHash := b.Hash
+	if wantHash == "" && b.Plain != "" {
+		wantHash = hashToken(b.Plain)
 	}
-	if rec == nil {
+	id, rec, ok := s.joinTokenByHash(wantHash)
+	if !ok {
 		return errcode.E(errcode.INVALID, "invalid join token")
 	}
 	if rec.Revoked {
@@ -798,8 +816,119 @@ func (s *State) applyJoinTokenConsume(b JoinTokenConsumeBody, now time.Time) err
 		return errcode.E(errcode.DENIED, "join token exhausted")
 	}
 	rec.Remaining--
-	s.JoinTokens[id] = *rec
+	s.JoinTokens[id] = rec
 	return nil
+}
+
+func (s *State) applyJoinPrepare(b JoinPrepareBody, now time.Time) error {
+	if b.OperationID == "" || b.NodeID == "" || b.RaftAddr == "" || b.CSRHash == "" || len(b.CertPEM) == 0 || b.CertSerial == "" {
+		return errcode.E(errcode.INVALID, "join preparation fields required")
+	}
+	tokenID, token, ok := s.joinTokenByHash(b.TokenHash)
+	if !ok {
+		return errcode.E(errcode.INVALID, "invalid join token")
+	}
+	for nodeID, attempt := range s.JoinAttempts {
+		if nodeID != b.NodeID && attempt.OperationID == b.OperationID {
+			return errcode.E(errcode.CONFLICT, "join operation_id already used for another node")
+		}
+	}
+	serial := strings.ToUpper(b.CertSerial)
+	member, memberExists := s.Members[b.NodeID]
+	if memberExists && (member.Status == MemberRemoved || member.Status == MemberRevoked) {
+		return errcode.E(errcode.DENIED, "node removed")
+	}
+	if existing, exists := s.JoinAttempts[b.NodeID]; exists {
+		if existing.OperationID == b.OperationID && existing.TokenID == tokenID && existing.RaftAddr == b.RaftAddr &&
+			existing.CSRHash == b.CSRHash {
+			return nil
+		}
+		return errcode.E(errcode.CONFLICT, "different join already pending for node")
+	}
+	if memberExists {
+		return errcode.E(errcode.DUPLICATE_NODE_ID, "node_id already admitted")
+	}
+	if token.Revoked {
+		return errcode.E(errcode.DENIED, "join token revoked")
+	}
+	if !now.Before(time.Unix(token.ExpiresUnix, 0)) {
+		return errcode.E(errcode.DENIED, "join token expired")
+	}
+	if token.Remaining <= 0 {
+		return errcode.E(errcode.DENIED, "join token exhausted")
+	}
+
+	token.Remaining--
+	s.JoinTokens[tokenID] = token
+	s.JoinAttempts[b.NodeID] = JoinAttempt{
+		OperationID: b.OperationID,
+		TokenID:     tokenID,
+		NodeID:      b.NodeID,
+		RaftAddr:    b.RaftAddr,
+		CSRHash:     b.CSRHash,
+		CertPEM:     append([]byte(nil), b.CertPEM...),
+		CertSerial:  serial,
+		Status:      JoinPreparing,
+		CreatedUnix: now.Unix(),
+		UpdatedUnix: now.Unix(),
+	}
+	s.Members[b.NodeID] = Member{
+		NodeID:     b.NodeID,
+		RaftAddr:   b.RaftAddr,
+		CertSerial: serial,
+		Status:     MemberJoining,
+	}
+	return nil
+}
+
+func (s *State) applyJoinComplete(b JoinCompleteBody, now time.Time) error {
+	if b.OperationID == "" || b.NodeID == "" {
+		return errcode.E(errcode.INVALID, "join completion fields required")
+	}
+	attempt, ok := s.JoinAttempts[b.NodeID]
+	if !ok {
+		return errcode.E(errcode.NOT_FOUND, "join attempt not found")
+	}
+	if attempt.OperationID != b.OperationID {
+		return errcode.E(errcode.CONFLICT, "join operation does not match")
+	}
+	member, ok := s.Members[b.NodeID]
+	if !ok {
+		return errcode.E(errcode.NOT_FOUND, "joining member not found")
+	}
+	if member.Status == MemberRemoved || member.Status == MemberRevoked {
+		return errcode.E(errcode.DENIED, "node removed")
+	}
+	if member.RaftAddr != attempt.RaftAddr || !strings.EqualFold(member.CertSerial, attempt.CertSerial) {
+		return errcode.E(errcode.CONFLICT, "joining member changed")
+	}
+	if attempt.Status == JoinCompleted && member.Status == MemberAdmitted {
+		return nil
+	}
+	if attempt.Status != JoinPreparing || member.Status != MemberJoining {
+		return errcode.E(errcode.CONFLICT, "join attempt is not preparing")
+	}
+	member.Status = MemberAdmitted
+	attempt.Status = JoinCompleted
+	attempt.UpdatedUnix = now.Unix()
+	s.Members[b.NodeID] = member
+	s.JoinAttempts[b.NodeID] = attempt
+	return nil
+}
+
+func (s *State) joinTokenByPlain(plain string) (string, JoinToken, bool) {
+	return s.joinTokenByHash(hashToken(plain))
+}
+
+func (s *State) joinTokenByHash(hash string) (string, JoinToken, bool) {
+	wantB := []byte(hash)
+	for id, tok := range s.JoinTokens {
+		gotB := []byte(tok.Hash)
+		if len(gotB) == len(wantB) && subtle.ConstantTimeCompare(gotB, wantB) == 1 {
+			return id, tok, true
+		}
+	}
+	return "", JoinToken{}, false
 }
 
 func (s *State) applyJoinTokenRevoke(b JoinTokenRevokeBody) error {

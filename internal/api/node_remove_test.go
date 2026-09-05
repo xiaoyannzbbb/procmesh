@@ -18,7 +18,9 @@ func TestRemoveNode_AddsCRLAndDeniesRejoin(t *testing.T) {
 	e := newClusterEnvFull(t, clusterEnvCfg{
 		withMesh: true,
 		control:  raftNode,
-		onAdmit:  func(string, string) error { return nil },
+		onAdmit: func(nodeID, raftAddr string) error {
+			return raftNode.AddNonvoter(nodeID, raftAddr)
+		},
 	})
 	e.init(t)
 	adm := control.Admission{Node: raftNode}

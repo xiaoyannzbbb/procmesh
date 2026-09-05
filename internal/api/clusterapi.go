@@ -2,16 +2,20 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"connectrpc.com/connect"
@@ -38,11 +42,13 @@ type ClusterDeps struct {
 	BootID         string
 	APIAddr        string
 	HTTPClient     *http.Client
+	InitControl    func() error // required Init phase; failure must leave the runtime retryable
 	OnReady        func() error // called after Init/RequestJoin persist certs and before SetClusterID; failure is logged, Store must be attached
 	Control        *control.Node
 	ControlFn      func() *control.Node                // 晚绑定；优先于 Control
 	RaftMembership control.RaftMembershipReader        // nil → use ControlFn/Control
-	OnAdmit        func(nodeID, raftAddr string) error // leader AddNonvoter；nil 忽略
+	RaftVerifier   control.RaftMembershipVerifier      // nil → use ControlFn/Control
+	OnAdmit        func(nodeID, raftAddr string) error // optional leader AddNonvoter override
 	LeaderAPI      func() string                       // 非 leader 转发 Join 的 API 地址
 	RaftAddr       func() string                       // 本机 Raft advertise，RequestJoin 填入
 	SetRaftLeader  func(addr string)                   // RequestJoin 记下 seed 返回的 leader
@@ -71,6 +77,8 @@ type ClusterAPI struct {
 	Auth     *auth.Service
 	Degraded func() bool
 	Logger   *slog.Logger
+	initMu   sync.Mutex
+	joinMu   sync.Mutex
 }
 
 func (s *ClusterAPI) Init(ctx context.Context, req *connect.Request[procmeshv1.InitClusterRequest]) (*connect.Response[procmeshv1.InitClusterResponse], error) {
@@ -83,6 +91,8 @@ func (s *ClusterAPI) Init(ctx context.Context, req *connect.Request[procmeshv1.I
 	if err := requireCluster(s.Deps); err != nil {
 		return nil, err
 	}
+	s.initMu.Lock()
+	defer s.initMu.Unlock()
 	nodeID, err := s.Deps.localNodeID(ctx)
 	if err != nil {
 		return nil, ToConnect(err)
@@ -91,8 +101,26 @@ func (s *ClusterAPI) Init(ctx context.Context, req *connect.Request[procmeshv1.I
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	if err := s.callOnReady(); err != nil {
-		s.warn("cluster ready failed", err)
+	rollback := func(startErr error) (*connect.Response[procmeshv1.InitClusterResponse], error) {
+		if rollbackErr := control.RollbackInit(s.Deps.Dir, result.ClusterID); rollbackErr != nil {
+			startErr = errors.Join(startErr, fmt.Errorf("rollback cluster init: %w", rollbackErr))
+		}
+		return nil, ToConnect(errcode.Wrap(errcode.UNAVAILABLE, "start raft control", startErr))
+	}
+	if s.Deps.InitControl != nil {
+		if startErr := s.Deps.InitControl(); startErr != nil {
+			return rollback(startErr)
+		}
+	}
+	readyErr := s.callOnReady()
+	if s.Deps.raftControlRequired() && s.Deps.controlNode() == nil {
+		if readyErr == nil {
+			readyErr = errcode.E(errcode.UNAVAILABLE, "raft control unavailable")
+		}
+		return rollback(readyErr)
+	}
+	if readyErr != nil {
+		s.warn("cluster ready failed", readyErr)
 	}
 	if s.Deps.Store != nil {
 		if err := s.Deps.Store.SetClusterID(ctx, result.ClusterID); err != nil {
@@ -111,7 +139,8 @@ func (s *ClusterAPI) Join(ctx context.Context, req *connect.Request[procmeshv1.J
 	if err := rejectDegraded(s.Degraded); err != nil {
 		return nil, err
 	}
-	if _, _, err := metaOf(req.Msg.GetMeta()); err != nil {
+	operationID, _, err := metaOf(req.Msg.GetMeta())
+	if err != nil {
 		return nil, err
 	}
 	if err := requireCluster(s.Deps); err != nil {
@@ -121,6 +150,9 @@ func (s *ClusterAPI) Join(ctx context.Context, req *connect.Request[procmeshv1.J
 		return nil, err
 	}
 	adm := s.Deps.admission()
+	if s.Deps.raftControlRequired() && adm == nil {
+		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "raft control unavailable"))
+	}
 	// 先查 FSM 吊销：被删节点可能仍在 gossip 为 ALIVE，CheckJoin 会先撞 DUPLICATE_NODE_ID。
 	if adm != nil && adm.IsRevoked(req.Msg.GetNodeId()) {
 		return nil, ToConnect(errcode.E(errcode.DENIED, "node removed"))
@@ -159,28 +191,59 @@ func (s *ClusterAPI) Join(ctx context.Context, req *connect.Request[procmeshv1.J
 		return nil, ToConnect(err)
 	}
 	if adm != nil {
-		if err := adm.ConsumeToken(req.Msg.GetToken(), now); err != nil {
-			return nil, ToConnect(err)
-		}
 		serial, err := control.CertSerial(certPEM)
 		if err != nil {
 			return nil, ToConnect(err)
 		}
-		if err := adm.Admit(req.Msg.GetNodeId(), req.Msg.GetRaftAddress(), serial); err != nil {
-			return nil, ToConnect(err)
+		raftAddr := req.Msg.GetRaftAddress()
+		if raftAddr == "" {
+			return nil, ToConnect(errcode.E(errcode.INVALID, "raft_address required"))
 		}
-		if raftAddr := req.Msg.GetRaftAddress(); raftAddr != "" {
+		csrHash := sha256.Sum256(req.Msg.GetCsrPem())
+		join := func() error {
+			if compatibilityErr := s.requireJoinFSMCompatibility(req.Msg.GetNodeId()); compatibilityErr != nil {
+				return compatibilityErr
+			}
+			attempt, prepareErr := adm.PrepareJoin(control.JoinPrepare{
+				OperationID: operationID,
+				Token:       req.Msg.GetToken(),
+				NodeID:      req.Msg.GetNodeId(),
+				RaftAddr:    raftAddr,
+				CSRHash:     hex.EncodeToString(csrHash[:]),
+				CertPEM:     certPEM,
+				CertSerial:  serial,
+			})
+			if prepareErr != nil {
+				return prepareErr
+			}
+			certPEM = attempt.CertPEM
 			add := s.Deps.OnAdmit
 			if add == nil {
 				if n := s.Deps.controlNode(); n != nil {
 					add = n.AddNonvoter
 				}
 			}
-			if add != nil {
-				if err := add(req.Msg.GetNodeId(), raftAddr); err != nil {
-					s.warn("add raft nonvoter failed", err)
-				}
+			if add == nil {
+				return errcode.E(errcode.UNAVAILABLE, "raft membership unavailable")
 			}
+			if addErr := add(req.Msg.GetNodeId(), raftAddr); addErr != nil {
+				if s.raftMemberPresent(req.Msg.GetNodeId(), raftAddr) {
+					return adm.CompleteJoin(operationID, req.Msg.GetNodeId())
+				}
+				return errcode.Wrap(errcode.UNAVAILABLE, "add raft nonvoter failed", addErr)
+			}
+			if !s.raftMemberPresent(req.Msg.GetNodeId(), raftAddr) {
+				return errcode.E(errcode.UNAVAILABLE, "raft nonvoter not committed")
+			}
+			return adm.CompleteJoin(operationID, req.Msg.GetNodeId())
+		}
+		if n := s.Deps.controlNode(); n != nil {
+			err = n.WithMembershipOp(join)
+		} else {
+			err = join()
+		}
+		if err != nil {
+			return nil, ToConnect(err)
 		}
 	} else {
 		if err := control.ConsumeToken(s.Deps.Dir, req.Msg.GetToken(), now); err != nil {
@@ -204,11 +267,52 @@ func (s *ClusterAPI) Join(ctx context.Context, req *connect.Request[procmeshv1.J
 	return connect.NewResponse(resp), nil
 }
 
+func (s *ClusterAPI) raftMemberPresent(nodeID, raftAddr string) bool {
+	verifier := s.Deps.raftMembershipVerifier()
+	if verifier == nil {
+		return false
+	}
+	matches, err := verifier.RaftMemberMatches(nodeID, raftAddr)
+	return err == nil && matches
+}
+
+func (s *ClusterAPI) requireJoinFSMCompatibility(joiningNodeID string) error {
+	reader := s.Deps.raftMembershipReader()
+	if reader == nil {
+		return errcode.E(errcode.UNAVAILABLE, "raft membership unavailable")
+	}
+	membership, err := reader.RaftMembershipView()
+	if err != nil {
+		return errcode.Wrap(errcode.UNAVAILABLE, "read raft membership", err)
+	}
+	protocols := make(map[string]int)
+	for _, member := range s.Deps.members() {
+		if member.NodeID != "" {
+			protocols[member.NodeID] = member.ProtocolVersion
+		}
+	}
+	controlNode := s.Deps.controlNode()
+	for nodeID := range membership.Members {
+		if nodeID == controlNode.NodeID() || nodeID == joiningNodeID {
+			continue
+		}
+		protocol, ok := protocols[nodeID]
+		if !ok || protocol == 0 {
+			return errcode.E(errcode.UNAVAILABLE, "raft member protocol unknown")
+		}
+		if protocol != version.Protocol {
+			return errcode.E(errcode.INCOMPATIBLE_VERSION, "raft member protocol is incompatible with join FSM")
+		}
+	}
+	return nil
+}
+
 func (s *ClusterAPI) RequestJoin(ctx context.Context, req *connect.Request[procmeshv1.RequestJoinRequest]) (*connect.Response[procmeshv1.RequestJoinResponse], error) {
 	if err := rejectDegraded(s.Degraded); err != nil {
 		return nil, err
 	}
-	if _, _, err := metaOf(req.Msg.GetMeta()); err != nil {
+	operationID, operator, err := metaOf(req.Msg.GetMeta())
+	if err != nil {
 		return nil, err
 	}
 	if err := requireCluster(s.Deps); err != nil {
@@ -223,17 +327,19 @@ func (s *ClusterAPI) RequestJoin(ctx context.Context, req *connect.Request[procm
 	if req.Msg.GetToken() == "" {
 		return nil, ToConnect(errcode.E(errcode.INVALID, "token required"))
 	}
+	s.joinMu.Lock()
+	defer s.joinMu.Unlock()
 	nodeID, err := s.Deps.localNodeID(ctx)
 	if err != nil {
 		return nil, ToConnect(err)
 	}
-	csrPEM, keyPEM, err := control.NewCSR("join", nodeID)
+	pending, err := loadOrCreatePendingJoin(s.Deps.Dir, nodeID, req.Msg.GetSeedServer(), req.Msg.GetToken(), operationID)
 	if err != nil {
 		return nil, ToConnect(err)
 	}
 	client := procmeshv1connect.NewClusterServiceClient(s.Deps.httpClient(), seedBaseURL(req.Msg.GetSeedServer()))
 	joined, err := client.Join(ctx, connect.NewRequest(&procmeshv1.JoinClusterRequest{
-		Meta:            req.Msg.GetMeta(),
+		Meta:            &procmeshv1.MutationMeta{OperationId: pending.OperationID, Operator: operator},
 		Token:           req.Msg.GetToken(),
 		NodeId:          nodeID,
 		Hostname:        s.Deps.Hostname,
@@ -242,9 +348,14 @@ func (s *ClusterAPI) RequestJoin(ctx context.Context, req *connect.Request[procm
 		ApiAddress:      s.Deps.APIAddr,
 		GossipAddress:   s.Deps.gossipAddr(),
 		RaftAddress:     s.Deps.raftAddr(),
-		CsrPem:          csrPEM,
+		CsrPem:          pending.CSRPEM,
 	}))
 	if err != nil {
+		if !joinErrorRetryable(err) {
+			if removeErr := removePendingJoin(s.Deps.Dir); removeErr != nil {
+				s.warn("remove rejected pending join failed", removeErr)
+			}
+		}
 		return nil, mapSeedErr(err)
 	}
 	now := s.Deps.now()
@@ -257,8 +368,11 @@ func (s *ClusterAPI) RequestJoin(ctx context.Context, req *connect.Request[procm
 	if gossip := joined.Msg.GetGossipAddress(); gossip != "" {
 		meta.GossipSeeds = []string{gossip}
 	}
-	if err := writeJoinerBundle(s.Deps.Dir, joined.Msg.GetCaPem(), joined.Msg.GetCertPem(), keyPEM, meta); err != nil {
+	if err := writeJoinerBundle(s.Deps.Dir, joined.Msg.GetCaPem(), joined.Msg.GetCertPem(), pending.KeyPEM, meta); err != nil {
 		return nil, ToConnect(err)
+	}
+	if err := removePendingJoin(s.Deps.Dir); err != nil {
+		s.warn("remove completed pending join failed", err)
 	}
 	if err := s.callOnReady(); err != nil {
 		s.warn("cluster ready failed", err)
@@ -585,9 +699,20 @@ func (d ClusterDeps) controlNode() *control.Node {
 	return d.Control
 }
 
+func (d ClusterDeps) raftControlRequired() bool {
+	return d.InitControl != nil || d.ControlFn != nil || d.Control != nil
+}
+
 func (d ClusterDeps) raftMembershipReader() control.RaftMembershipReader {
 	if d.RaftMembership != nil {
 		return d.RaftMembership
+	}
+	return d.controlNode()
+}
+
+func (d ClusterDeps) raftMembershipVerifier() control.RaftMembershipVerifier {
+	if d.RaftVerifier != nil {
+		return d.RaftVerifier
 	}
 	return d.controlNode()
 }
@@ -622,6 +747,9 @@ func mapJoinForwardErr(err error) error {
 	}
 	var ce *connect.Error
 	if errors.As(err, &ce) {
+		if hasProcMeshErrorInfo(ce) {
+			return err
+		}
 		switch ce.Code() {
 		case connect.CodeUnavailable, connect.CodeUnknown, connect.CodeDeadlineExceeded:
 			return ToConnect(errcode.E(errcode.UNAVAILABLE, "leader unreachable"))
@@ -677,6 +805,9 @@ func mapSeedErr(err error) error {
 	}
 	var ce *connect.Error
 	if errors.As(err, &ce) {
+		if hasProcMeshErrorInfo(ce) {
+			return err
+		}
 		switch ce.Code() {
 		case connect.CodeUnavailable, connect.CodeUnknown, connect.CodeDeadlineExceeded:
 			return ToConnect(errcode.E(errcode.UNAVAILABLE, "seed unreachable"))
@@ -685,6 +816,23 @@ func mapSeedErr(err error) error {
 		}
 	}
 	return ToConnect(errcode.E(errcode.UNAVAILABLE, "seed unreachable"))
+}
+
+func hasProcMeshErrorInfo(err *connect.Error) bool {
+	_, ok := procMeshErrorInfo(err)
+	return ok
+}
+
+func procMeshErrorInfo(err *connect.Error) (*procmeshv1.ErrorInfo, bool) {
+	for _, detail := range err.Details() {
+		value, detailErr := detail.Value()
+		if detailErr == nil {
+			if info, ok := value.(*procmeshv1.ErrorInfo); ok {
+				return info, true
+			}
+		}
+	}
+	return nil, false
 }
 
 // writeJoinerBundle persists CA + agent cert/key and cluster.json.

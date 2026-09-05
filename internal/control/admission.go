@@ -17,6 +17,16 @@ type Admission struct {
 	Node *Node
 }
 
+type JoinPrepare struct {
+	OperationID string
+	Token       string
+	NodeID      string
+	RaftAddr    string
+	CSRHash     string
+	CertPEM     []byte
+	CertSerial  string
+}
+
 func (a *Admission) CreateToken(ttl time.Duration, uses int, now time.Time) (plain string, info TokenInfo, err error) {
 	if err := a.requireNode(); err != nil {
 		return "", TokenInfo{}, err
@@ -62,7 +72,7 @@ func (a *Admission) ConsumeToken(plain string, now time.Time) error {
 		return err
 	}
 	_ = now // FSM 用 log AppendedAt 判过期
-	cmd, err := EncodeCommand(CmdJoinTokenConsume, JoinTokenConsumeBody{Plain: plain})
+	cmd, err := EncodeCommand(CmdJoinTokenConsume, JoinTokenConsumeBody{Hash: hashToken(plain)})
 	if err != nil {
 		return err
 	}
@@ -74,6 +84,43 @@ func (a *Admission) RevokeToken(id string) error {
 		return err
 	}
 	cmd, err := EncodeCommand(CmdJoinTokenRevoke, JoinTokenRevokeBody{ID: id})
+	if err != nil {
+		return err
+	}
+	return a.Node.Apply(cmd, admissionApplyTO)
+}
+
+func (a *Admission) PrepareJoin(in JoinPrepare) (JoinAttempt, error) {
+	if err := a.requireNode(); err != nil {
+		return JoinAttempt{}, err
+	}
+	cmd, err := EncodeCommand(CmdJoinPrepare, JoinPrepareBody{
+		OperationID: in.OperationID,
+		TokenHash:   hashToken(in.Token),
+		NodeID:      in.NodeID,
+		RaftAddr:    in.RaftAddr,
+		CSRHash:     in.CSRHash,
+		CertPEM:     in.CertPEM,
+		CertSerial:  in.CertSerial,
+	})
+	if err != nil {
+		return JoinAttempt{}, err
+	}
+	if err := a.Node.Apply(cmd, admissionApplyTO); err != nil {
+		return JoinAttempt{}, err
+	}
+	attempt, ok := a.Node.View().JoinAttempts[in.NodeID]
+	if !ok || attempt.OperationID != in.OperationID {
+		return JoinAttempt{}, errcode.E(errcode.UNAVAILABLE, "join preparation not committed")
+	}
+	return attempt, nil
+}
+
+func (a *Admission) CompleteJoin(operationID, nodeID string) error {
+	if err := a.requireNode(); err != nil {
+		return err
+	}
+	cmd, err := EncodeCommand(CmdJoinComplete, JoinCompleteBody{OperationID: operationID, NodeID: nodeID})
 	if err != nil {
 		return err
 	}

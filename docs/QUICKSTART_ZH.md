@@ -700,7 +700,13 @@ sudo systemctl restart procmesh-agent
 5. 三个节点是否使用兼容的协议版本；
 6. 节点间 `18689/TCP+UDP` 和 `18685/TCP` 是否放通。
 
-创建新令牌后可以重试，但如果返回 `cluster already initialized`，说明该数据目录已有集群身份，不应继续重复执行 `agent join`。
+如果返回 `UNAVAILABLE` 或 `TIMEOUT`，先排除网络或 Raft quorum 问题，然后使用相同的 seed 和 token 重新执行原命令。Agent 会复用本地 `cluster/join.pending.json` 中的加入身份和服务端 Join attempt，不会再次消费 token；该文件包含临时 private key，权限必须保持 `0600`，不要复制或手工修改。确定性的 token、节点身份或协议错误会自动清理 pending attempt；修正问题后重新执行，只有 token 已失效或耗尽时才需创建新 token。
+
+CLI 只有在节点已写入 Raft configuration 且准入状态为 `ADMITTED` 后才报告成功。如果返回 `cluster already initialized`，说明该数据目录已经完成集群身份写入，不应继续重复执行 `agent join`。
+
+包含 protocol 1 节点的集群升级到 protocol 2 时，应先滚动升级 Raft configuration 中全部现存 voter 和 nonvoter，升级期间不要执行 Join。混合版本状态下 Join 会返回 `INCOMPATIBLE_VERSION`；成员版本尚未通过 Gossip 确认时返回 `UNAVAILABLE`。不要通过重建 token 绕过该门控。
+
+`cluster init` 只有在本机 Raft control 完成启动后才返回管理员初始密码。若该阶段返回 `UNAVAILABLE`，本次生成的集群身份与 Raft 临时状态会被撤销，可以在排除监听地址、磁盘权限等问题后重新执行初始化。
 
 ### 11.4 CLI 返回 authentication required
 

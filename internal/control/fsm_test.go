@@ -380,6 +380,11 @@ func TestFSM_SnapshotRestore(t *testing.T) {
 	fingerprint := strings.Repeat("a", 64)
 	mustFSMApply(t, f, control.CmdCapabilityInit, control.CapabilityInitBody{CAFingerprint: fingerprint, Epoch: 1, NodeID: "leader", CertSerial: "AA"}, now)
 	mustFSMApply(t, f, control.CmdCapabilityPrepare, control.CapabilityPrepareBody{OperationID: "op-cap", NodeID: "target", CertSerial: "BB", CAFingerprint: fingerprint, Epoch: 1, LeaderTerm: 2, Nonce: "nonce", ExpiresUnix: now.Add(time.Minute).Unix()}, now)
+	mustFSMApply(t, f, control.CmdJoinTokenPut, control.JoinTokenPutBody{ID: "join-token", Hash: "join-token-hash", TTLSeconds: 3600, Remaining: 1}, now)
+	mustFSMApply(t, f, control.CmdJoinPrepare, control.JoinPrepareBody{
+		OperationID: "op-join", TokenHash: "join-token-hash", NodeID: "joiner", RaftAddr: "joiner-raft",
+		CSRHash: "join-csr-hash", CertPEM: []byte("join-cert"), CertSerial: "cc",
+	}, now)
 
 	snap, err := f.Snapshot()
 	if err != nil {
@@ -407,6 +412,16 @@ func TestFSM_SnapshotRestore(t *testing.T) {
 	}
 	if view.AdmissionCapability.CAFingerprint != fingerprint || view.AdmissionCapability.Nodes["target"].Status != control.CapabilityPrepared {
 		t.Fatalf("capability missing after restore: %+v", view.AdmissionCapability)
+	}
+	attempt := view.JoinAttempts["joiner"]
+	if attempt.OperationID != "op-join" || attempt.Status != control.JoinPreparing || string(attempt.CertPEM) != "join-cert" {
+		t.Fatalf("join attempt missing after restore: %+v", attempt)
+	}
+	if member := view.Members["joiner"]; member.Status != control.MemberJoining || member.RaftAddr != "joiner-raft" {
+		t.Fatalf("joining member missing after restore: %+v", member)
+	}
+	if remaining := view.JoinTokens["join-token"].Remaining; remaining != 0 {
+		t.Fatalf("restored join token remaining=%d want 0", remaining)
 	}
 }
 
