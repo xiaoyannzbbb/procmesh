@@ -839,6 +839,9 @@ func (s *State) applyMemberRemove(b MemberRemoveBody) error {
 	if m.CertSerial != "" {
 		s.CRL[strings.ToUpper(m.CertSerial)] = struct{}{}
 	}
+	if node, ok := s.AdmissionCapability.Nodes[b.NodeID]; ok && node.Status == CapabilityPrepared {
+		delete(s.AdmissionCapability.Nodes, b.NodeID)
+	}
 	for id, g := range s.AgentGroups {
 		var filtered []string
 		changed := false

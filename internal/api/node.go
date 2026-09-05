@@ -230,14 +230,20 @@ func (s *NodeAPI) RemoveNode(ctx context.Context, req *connect.Request[procmeshv
 	if nodeID == self {
 		return nil, ToConnect(errcode.E(errcode.INVALID, "cannot remove self"))
 	}
-	cmd, err := control.EncodeCommand(control.CmdMemberRemove, control.MemberRemoveBody{NodeID: nodeID})
+	err = ctrl.WithMembershipOp(func() error {
+		cmd, encodeErr := control.EncodeCommand(control.CmdMemberRemove, control.MemberRemoveBody{NodeID: nodeID})
+		if encodeErr != nil {
+			return encodeErr
+		}
+		if applyErr := ctrl.Apply(cmd, authApplyTimeout); applyErr != nil {
+			return applyErr
+		}
+		if removeErr := ctrl.RemoveServer(nodeID); removeErr != nil && !ignoreRemoveServerErr(removeErr) {
+			return removeErr
+		}
+		return nil
+	})
 	if err != nil {
-		return nil, ToConnect(err)
-	}
-	if err := ctrl.Apply(cmd, authApplyTimeout); err != nil {
-		return nil, ToConnect(err)
-	}
-	if err := ctrl.RemoveServer(nodeID); err != nil && !ignoreRemoveServerErr(err) {
 		return nil, ToConnect(err)
 	}
 	return connect.NewResponse(&procmeshv1.RemoveNodeResponse{}), nil
@@ -265,35 +271,55 @@ func (s *NodeAPI) PromoteNode(ctx context.Context, req *connect.Request[procmesh
 	if nodeID == "" {
 		return nil, ToConnect(errcode.E(errcode.INVALID, "node_id required"))
 	}
-	view := ctrl.View()
-	m, ok := view.Member(nodeID)
-	if !ok {
-		return nil, ToConnect(errcode.E(errcode.NOT_FOUND, "node not found"))
-	}
-	if m.Status != control.MemberAdmitted || m.RaftAddr == "" {
-		return nil, ToConnect(errcode.E(errcode.INVALID, "node not admitted"))
-	}
 	if s.Capability == nil {
 		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "capability target unavailable"))
 	}
-	target, ok := findNode(s.Deps.members(), nodeID)
-	if !ok || target.RPCAddress == "" || target.State != cluster.StateAlive {
-		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "capability target unavailable"))
-	}
-	manager := control.CapabilityManager{Node: ctrl, Dir: s.Deps.Dir, NodeID: s.LocalID, Now: s.Deps.Now}
-	if err := manager.Promote(ctx, operationID, nodeID, func(ctx context.Context, request control.CapabilityTransferRequest) (control.CapabilityTransferResponse, error) {
-		return s.Capability.PromoteCapability(ctx, Route{NodeID: nodeID, RPC: target.RPCAddress}, request)
-	}); err != nil {
-		return nil, ToConnect(err)
-	}
-	ready := ctrl.View().AdmissionCapability.Nodes[nodeID]
-	if ready.Status != control.CapabilityReady || ready.CertSerial != m.CertSerial {
-		return nil, ToConnect(errcode.E(errcode.CONFLICT, "capability target not ready"))
-	}
-	if err := ctrl.AddVoter(nodeID, m.RaftAddr); err != nil {
+	err = ctrl.WithMembershipOp(func() error {
+		m, admitErr := admittedPromoteMember(ctrl.View(), nodeID)
+		if admitErr != nil {
+			return admitErr
+		}
+		target, ok := findNode(s.Deps.members(), nodeID)
+		if !ok || target.RPCAddress == "" || target.State != cluster.StateAlive {
+			return errcode.E(errcode.UNAVAILABLE, "capability target unavailable")
+		}
+		manager := control.CapabilityManager{Node: ctrl, Dir: s.Deps.Dir, NodeID: s.LocalID, Now: s.Deps.Now}
+		if promoteErr := manager.Promote(ctx, operationID, nodeID, func(ctx context.Context, request control.CapabilityTransferRequest) (control.CapabilityTransferResponse, error) {
+			return s.Capability.PromoteCapability(ctx, Route{NodeID: nodeID, RPC: target.RPCAddress}, request)
+		}); promoteErr != nil {
+			return promoteErr
+		}
+		m, admitErr = admittedPromoteMember(ctrl.View(), nodeID)
+		if admitErr != nil {
+			return admitErr
+		}
+		ready := ctrl.View().AdmissionCapability.Nodes[nodeID]
+		if ready.Status != control.CapabilityReady || !strings.EqualFold(ready.CertSerial, m.CertSerial) {
+			return errcode.E(errcode.CONFLICT, "capability target not ready")
+		}
+		if err := ctrl.VerifyLeaderTerm(ready.LeaderTerm); err != nil {
+			return err
+		}
+		return ctrl.AddVoter(nodeID, m.RaftAddr)
+	})
+	if err != nil {
 		return nil, ToConnect(err)
 	}
 	return connect.NewResponse(&procmeshv1.PromoteNodeResponse{}), nil
+}
+
+func admittedPromoteMember(view control.State, nodeID string) (control.Member, error) {
+	m, ok := view.Member(nodeID)
+	if !ok {
+		return control.Member{}, errcode.E(errcode.NOT_FOUND, "node not found")
+	}
+	if m.Status != control.MemberAdmitted || m.RaftAddr == "" {
+		return control.Member{}, errcode.E(errcode.INVALID, "node not admitted")
+	}
+	if view.SerialRevoked(m.CertSerial) {
+		return control.Member{}, errcode.E(errcode.DENIED, "certificate revoked")
+	}
+	return m, nil
 }
 
 func ignoreRemoveServerErr(err error) bool {

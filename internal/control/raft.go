@@ -2,6 +2,7 @@ package control
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -46,6 +47,7 @@ type Node struct {
 	id            string
 	clusterID     string
 	quorumContact time.Duration
+	membershipMu  sync.Mutex
 
 	closers   []io.Closer
 	closeOnce sync.Once
@@ -353,6 +355,78 @@ func (n *Node) CacheFresh(ttl time.Duration) bool {
 		return true
 	}
 	return time.Since(n.LastContact()) < ttl
+}
+
+// WithMembershipOp serializes Leader-side membership mutations such as
+// node remove and node promote, including capability transfer.
+func (n *Node) WithMembershipOp(fn func() error) error {
+	if n == nil {
+		return errcode.E(errcode.UNAVAILABLE, "raft control not configured")
+	}
+	if fn == nil {
+		return errcode.E(errcode.INVALID, "membership operation required")
+	}
+	n.membershipMu.Lock()
+	defer n.membershipMu.Unlock()
+	return fn()
+}
+
+// LeaderTermContext is canceled as soon as this node leaves the supplied
+// leader term. Callers use it to stop in-flight side effects before a new
+// leader can authorize a conflicting membership operation.
+func (n *Node) LeaderTermContext(parent context.Context, term uint64) (context.Context, func(), error) {
+	if n == nil || n.raft == nil {
+		return nil, nil, errcode.E(errcode.UNAVAILABLE, "raft control not configured")
+	}
+	if parent == nil || term == 0 {
+		return nil, nil, errcode.E(errcode.INVALID, "leader context and term required")
+	}
+
+	observations := make(chan raft.Observation, 1)
+	observer := raft.NewObserver(observations, false, func(observation *raft.Observation) bool {
+		state, ok := observation.Data.(raft.RaftState)
+		return ok && state != raft.Leader
+	})
+	n.raft.RegisterObserver(observer)
+	if !n.IsLeader() || n.CurrentTerm() != term {
+		n.raft.DeregisterObserver(observer)
+		return nil, nil, errcode.E(errcode.CONFLICT, "control leader term changed")
+	}
+
+	ctx, cancel := context.WithCancel(parent)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer n.raft.DeregisterObserver(observer)
+		select {
+		case <-ctx.Done():
+		case <-observations:
+			cancel()
+		}
+	}()
+	var stopOnce sync.Once
+	stop := func() {
+		stopOnce.Do(cancel)
+		<-done
+	}
+	return ctx, stop, nil
+}
+
+// VerifyLeaderTerm performs a quorum-backed leadership check for term.
+func (n *Node) VerifyLeaderTerm(term uint64) error {
+	if n == nil || n.raft == nil {
+		return errcode.E(errcode.UNAVAILABLE, "raft control not configured")
+	}
+	if term == 0 || !n.IsLeader() || n.CurrentTerm() != term {
+		return errcode.E(errcode.CONFLICT, "control leader term changed")
+	}
+	if err := n.raft.VerifyLeader().Error(); err != nil {
+		return errcode.Wrap(errcode.CONFLICT, "control leader quorum lost", err)
+	}
+	if !n.IsLeader() || n.CurrentTerm() != term {
+		return errcode.E(errcode.CONFLICT, "control leader term changed")
+	}
+	return nil
 }
 
 func (n *Node) AddNonvoter(id, addr string) error {

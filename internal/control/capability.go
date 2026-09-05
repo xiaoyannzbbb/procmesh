@@ -176,20 +176,42 @@ func (m CapabilityManager) Promote(ctx context.Context, operationID, targetNodeI
 	if prepare.ExpiresUnix <= now.Unix() {
 		return errcode.E(errcode.CONFLICT, "capability prepare expired")
 	}
+	transferCtx, stopTransfer, err := m.Node.LeaderTermContext(ctx, prepare.LeaderTerm)
+	if err != nil {
+		return err
+	}
+	defer stopTransfer()
 	bundle, err := LoadBundle(m.Dir)
 	if err != nil {
 		return errcode.Wrap(errcode.DEGRADED, "admission capability unavailable", err)
 	}
-	response, err := transfer(ctx, CapabilityTransferRequest{Prepare: prepare, CAKeyPEM: bundle.CAKeyPEM})
+	if err := m.Node.VerifyLeaderTerm(prepare.LeaderTerm); err != nil {
+		return err
+	}
+	response, err := transfer(transferCtx, CapabilityTransferRequest{Prepare: prepare, CAKeyPEM: bundle.CAKeyPEM})
 	if err != nil {
+		if ctx.Err() == nil && transferCtx.Err() != nil {
+			return errcode.E(errcode.CONFLICT, "control leader term changed")
+		}
 		return err
 	}
 	challenge := CapabilityChallenge(prepare)
 	if err := VerifyCapabilityProof(bundle.CACertPEM, challenge, response.Proof); err != nil {
 		return err
 	}
-	if !m.Node.IsLeader() || m.Node.CurrentTerm() != prepare.LeaderTerm {
-		return errcode.E(errcode.CONFLICT, "control leader term changed")
+	if err := m.Node.VerifyLeaderTerm(prepare.LeaderTerm); err != nil {
+		return err
+	}
+	state = m.Node.View()
+	target, ok = state.Members[targetNodeID]
+	if !ok || target.Status != MemberAdmitted || target.CertSerial == "" {
+		return errcode.E(errcode.INVALID, "capability target not admitted")
+	}
+	if !strings.EqualFold(target.CertSerial, prepare.CertSerial) {
+		return errcode.E(errcode.CONFLICT, "capability certificate changed")
+	}
+	if state.SerialRevoked(prepare.CertSerial) {
+		return errcode.E(errcode.DENIED, "certificate revoked")
 	}
 	command, err := EncodeCommand(CmdCapabilityReady, CapabilityReadyBody(prepare))
 	if err != nil {
@@ -232,8 +254,23 @@ func CASPKIFingerprint(caCertPEM []byte) (string, error) {
 }
 
 func InstallCAKey(dir string, caKeyPEM []byte) error {
+	return InstallCAKeyContext(context.Background(), dir, caKeyPEM)
+}
+
+// InstallCAKeyContext installs a CA key unless the authorizing leader term has
+// ended. Cancellation before rename leaves no persistent key behind.
+func InstallCAKeyContext(ctx context.Context, dir string, caKeyPEM []byte) error {
+	if ctx == nil {
+		return errcode.E(errcode.INVALID, "CA key install context required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	caKeyInstallMu.Lock()
 	defer caKeyInstallMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	caCertPEM, err := os.ReadFile(filepath.Join(dir, caCertFile))
 	if err != nil {
@@ -251,6 +288,9 @@ func InstallCAKey(dir string, caKeyPEM []byte) error {
 		if err != nil || !info.Mode().IsRegular() {
 			return errcode.E(errcode.DENIED, "existing CA key is not a regular file")
 		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := os.Chmod(path, 0o600); err != nil {
 			return fmt.Errorf("chmod CA key: %w", err)
 		}
@@ -258,10 +298,10 @@ func InstallCAKey(dir string, caKeyPEM []byte) error {
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("read existing CA key: %w", err)
 	}
-	return installCAKeyAtomic(path, caKeyPEM)
+	return installCAKeyAtomic(ctx, path, caKeyPEM)
 }
 
-func installCAKeyAtomic(path string, caKeyPEM []byte) error {
+func installCAKeyAtomic(ctx context.Context, path string, caKeyPEM []byte) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".ca.key-*.tmp")
 	if err != nil {
@@ -286,6 +326,9 @@ func installCAKeyAtomic(path string, caKeyPEM []byte) error {
 	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close CA key temp file: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("install CA key: %w", err)
@@ -390,12 +433,8 @@ func (s *State) applyCapabilityInit(body CapabilityInitBody, now time.Time) erro
 	if !validCAFingerprint(body.CAFingerprint) || body.Epoch == 0 || body.NodeID == "" || body.CertSerial == "" {
 		return errcode.E(errcode.INVALID, "capability init fields required")
 	}
-	member, ok := s.Members[body.NodeID]
-	if !ok || member.Status != MemberAdmitted {
-		return errcode.E(errcode.INVALID, "capability node not admitted")
-	}
-	if strings.ToUpper(member.CertSerial) != body.CertSerial {
-		return errcode.E(errcode.CONFLICT, "capability certificate changed")
+	if err := s.requireAdmittedCapabilityNode(body.NodeID, body.CertSerial); err != nil {
+		return err
 	}
 	capability := &s.AdmissionCapability
 	if capability.CAFingerprint != "" {
@@ -434,12 +473,8 @@ func (s *State) applyCapabilityPrepare(body CapabilityPrepareBody, now time.Time
 	if body.CAFingerprint != capability.CAFingerprint || body.Epoch != capability.Epoch {
 		return errcode.E(errcode.CONFLICT, "capability epoch or fingerprint changed")
 	}
-	member, ok := s.Members[body.NodeID]
-	if !ok || member.Status != MemberAdmitted {
-		return errcode.E(errcode.INVALID, "capability node not admitted")
-	}
-	if strings.ToUpper(member.CertSerial) != body.CertSerial {
-		return errcode.E(errcode.CONFLICT, "capability certificate changed")
+	if err := s.requireAdmittedCapabilityNode(body.NodeID, body.CertSerial); err != nil {
+		return err
 	}
 	for nodeID, existing := range capability.Nodes {
 		if existing.OperationID == body.OperationID && nodeID != body.NodeID {
@@ -474,6 +509,9 @@ func (s *State) applyCapabilityReady(body CapabilityReadyBody, now time.Time) er
 	if prepare.CAFingerprint != capability.CAFingerprint || prepare.Epoch != capability.Epoch {
 		return errcode.E(errcode.CONFLICT, "capability epoch or fingerprint changed")
 	}
+	if err := s.requireAdmittedCapabilityNode(prepare.NodeID, prepare.CertSerial); err != nil {
+		return err
+	}
 	existing, ok := capability.Nodes[prepare.NodeID]
 	if !ok || !capabilityNodeMatches(existing, prepare) {
 		return errcode.E(errcode.CONFLICT, "capability prepare changed")
@@ -490,6 +528,20 @@ func (s *State) applyCapabilityReady(body CapabilityReadyBody, now time.Time) er
 	existing.Status = CapabilityReady
 	existing.UpdatedUnix = now.Unix()
 	s.AdmissionCapability.Nodes[prepare.NodeID] = existing
+	return nil
+}
+
+func (s *State) requireAdmittedCapabilityNode(nodeID, certSerial string) error {
+	member, ok := s.Members[nodeID]
+	if !ok || member.Status != MemberAdmitted {
+		return errcode.E(errcode.INVALID, "capability node not admitted")
+	}
+	if strings.ToUpper(member.CertSerial) != strings.ToUpper(certSerial) {
+		return errcode.E(errcode.CONFLICT, "capability certificate changed")
+	}
+	if s.SerialRevoked(certSerial) {
+		return errcode.E(errcode.DENIED, "certificate revoked")
+	}
 	return nil
 }
 

@@ -10,6 +10,30 @@ import (
 	"github.com/qleelulu/procmesh/internal/errcode"
 )
 
+func newCapabilityRevocationFixture(t *testing.T, now time.Time) (*control.State, control.CapabilityPrepareBody) {
+	t.Helper()
+	state := mustBootstrap(t, now)
+	for _, member := range []control.MemberPutBody{
+		{NodeID: "node-a", CertSerial: "AA11", Status: control.MemberAdmitted},
+		{NodeID: "node-b", CertSerial: "BB22", Status: control.MemberAdmitted},
+	} {
+		if err := state.Apply(mustEncode(t, control.CmdMemberPut, member), now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	init := control.CapabilityInitBody{
+		CAFingerprint: strings.Repeat("a", 64), Epoch: 1, NodeID: "node-a", CertSerial: "AA11",
+	}
+	if err := state.Apply(mustEncode(t, control.CmdCapabilityInit, init), now); err != nil {
+		t.Fatal(err)
+	}
+	return state, control.CapabilityPrepareBody{
+		OperationID: "op-promote-b", NodeID: "node-b", CertSerial: "BB22",
+		CAFingerprint: init.CAFingerprint, Epoch: 1, LeaderTerm: 7,
+		Nonce: "001122", ExpiresUnix: now.Add(time.Minute).Unix(),
+	}
+}
+
 func TestAdmissionCapabilityStateLifecycle(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	state := mustBootstrap(t, now)
@@ -120,6 +144,51 @@ func TestAdmissionCapabilityStateRejectsConflictsAndFencing(t *testing.T) {
 	wrongTerm.LeaderTerm++
 	if err := state.Apply(mustEncode(t, control.CmdCapabilityReady, wrongTerm), now); !errcode.Is(err, errcode.CONFLICT) {
 		t.Fatalf("term fence err=%v", err)
+	}
+}
+
+func TestAdmissionCapabilityReadyRejectsRevokedMember(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	state, prepare := newCapabilityRevocationFixture(t, now)
+	if err := state.Apply(mustEncode(t, control.CmdCapabilityPrepare, prepare), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Apply(mustEncode(t, control.CmdMemberRemove, control.MemberRemoveBody{NodeID: "node-b"}), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Apply(mustEncode(t, control.CmdCapabilityReady, control.CapabilityReadyBody(prepare)), now.Add(time.Second)); !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("ready after revoke err=%v want INVALID", err)
+	}
+	if _, ok := state.AdmissionCapability.Nodes["node-b"]; ok {
+		t.Fatalf("prepared capability survived revoke: %+v", state.AdmissionCapability.Nodes["node-b"])
+	}
+}
+
+func TestAdmissionCapabilityReadyRejectsRevokedIdempotent(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	state, prepare := newCapabilityRevocationFixture(t, now)
+	if err := state.Apply(mustEncode(t, control.CmdCapabilityPrepare, prepare), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Apply(mustEncode(t, control.CmdCapabilityReady, control.CapabilityReadyBody(prepare)), now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Apply(mustEncode(t, control.CmdMemberRemove, control.MemberRemoveBody{NodeID: "node-b"}), now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Apply(mustEncode(t, control.CmdCapabilityReady, control.CapabilityReadyBody(prepare)), now.Add(3*time.Second)); !errcode.Is(err, errcode.INVALID) {
+		t.Fatalf("idempotent ready after revoke err=%v want INVALID", err)
+	}
+}
+
+func TestAdmissionCapabilityRejectsRevokedCertificate(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	state, prepare := newCapabilityRevocationFixture(t, now)
+	if err := state.Apply(mustEncode(t, control.CmdCRLAdd, control.CRLAddBody{Serial: "BB22"}), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Apply(mustEncode(t, control.CmdCapabilityPrepare, prepare), now); !errcode.Is(err, errcode.DENIED) {
+		t.Fatalf("prepare after CRL err=%v want DENIED", err)
 	}
 }
 

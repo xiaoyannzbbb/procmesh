@@ -441,7 +441,14 @@ func TestCreateJoinToken_OwnerRechecksNodeManage(t *testing.T) {
 	}
 }
 
-func TestPromoteNode_TransferFailureKeepsNonvoter(t *testing.T) {
+type nodePromotionFixture struct {
+	now     time.Time
+	dir     string
+	control *control.Node
+}
+
+func newNodePromotionFixture(t *testing.T) *nodePromotionFixture {
+	t.Helper()
 	now := time.Now().Truncate(time.Second)
 	dir := t.TempDir()
 	bundle, err := control.NewBundle("cluster", "leader", now)
@@ -478,28 +485,132 @@ func TestPromoteNode_TransferFailureKeepsNonvoter(t *testing.T) {
 	if err := ctrl.AddNonvoter("target", "target-raft"); err != nil {
 		t.Fatal(err)
 	}
-	api := &NodeAPI{
-		Deps:    ClusterDeps{Dir: dir, Control: ctrl, Now: func() time.Time { return now }, Mesh: &staticMesh{members: []cluster.NodeSummary{{NodeID: "target", State: cluster.StateAlive, RPCAddress: "target:18683"}}}},
-		LocalID: "leader",
-		Capability: capabilityForwarderFunc(func(context.Context, Route, control.CapabilityTransferRequest) (control.CapabilityTransferResponse, error) {
-			return control.CapabilityTransferResponse{}, errcode.E(errcode.UNAVAILABLE, "install failed")
-		}),
+	return &nodePromotionFixture{now: now, dir: dir, control: ctrl}
+}
+
+func (f *nodePromotionFixture) api(capability CapabilityForwarder) *NodeAPI {
+	return &NodeAPI{
+		Deps: ClusterDeps{
+			Dir: f.dir, Control: f.control, NodeID: "leader", Now: func() time.Time { return f.now },
+			Mesh: &staticMesh{members: []cluster.NodeSummary{{NodeID: "target", State: cluster.StateAlive, RPCAddress: "target:18683"}}},
+		},
+		LocalID:    "leader",
+		Capability: capability,
 	}
-	_, err = api.PromoteNode(context.Background(), connect.NewRequest(&procmeshv1.PromoteNodeRequest{
+}
+
+func TestPromoteNode_TransferFailureKeepsNonvoter(t *testing.T) {
+	fixture := newNodePromotionFixture(t)
+	api := fixture.api(capabilityForwarderFunc(func(context.Context, Route, control.CapabilityTransferRequest) (control.CapabilityTransferResponse, error) {
+		return control.CapabilityTransferResponse{}, errcode.E(errcode.UNAVAILABLE, "install failed")
+	}))
+	_, err := api.PromoteNode(context.Background(), connect.NewRequest(&procmeshv1.PromoteNodeRequest{
 		Meta: &procmeshv1.MutationMeta{OperationId: "op-promote", Operator: "admin"}, NodeId: "target",
 	}))
 	if !errcode.Is(err, errcode.UNAVAILABLE) && connect.CodeOf(err) != connect.CodeUnavailable {
 		t.Fatalf("promote err=%v", err)
 	}
-	membership, err := ctrl.RaftMembershipView()
+	membership, err := fixture.control.RaftMembershipView()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if membership.Members["target"] != control.RaftNonVoter {
 		t.Fatalf("target role=%q", membership.Members["target"])
 	}
-	if ctrl.View().AdmissionCapability.Nodes["target"].Status != control.CapabilityPrepared {
-		t.Fatalf("target capability=%+v", ctrl.View().AdmissionCapability.Nodes["target"])
+	if fixture.control.View().AdmissionCapability.Nodes["target"].Status != control.CapabilityPrepared {
+		t.Fatalf("target capability=%+v", fixture.control.View().AdmissionCapability.Nodes["target"])
+	}
+}
+
+func TestPromoteNode_RemoveDuringTransferDoesNotAddVoter(t *testing.T) {
+	fixture := newNodePromotionFixture(t)
+	ctrl := fixture.control
+	api := fixture.api(capabilityForwarderFunc(func(ctx context.Context, _ Route, request control.CapabilityTransferRequest) (control.CapabilityTransferResponse, error) {
+		cmd, encodeErr := control.EncodeCommand(control.CmdMemberRemove, control.MemberRemoveBody{NodeID: "target"})
+		if encodeErr != nil {
+			return control.CapabilityTransferResponse{}, encodeErr
+		}
+		if applyErr := ctrl.Apply(cmd, 5*time.Second); applyErr != nil {
+			return control.CapabilityTransferResponse{}, applyErr
+		}
+		if removeErr := ctrl.RemoveServer("target"); removeErr != nil {
+			return control.CapabilityTransferResponse{}, removeErr
+		}
+		proof, signErr := control.SignCapabilityProof(request.CAKeyPEM, control.CapabilityChallenge(request.Prepare))
+		return control.CapabilityTransferResponse{Proof: proof}, signErr
+	}))
+	_, err := api.PromoteNode(context.Background(), connect.NewRequest(&procmeshv1.PromoteNodeRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-promote-revoke", Operator: "admin"}, NodeId: "target",
+	}))
+	if err == nil {
+		t.Fatal("promote after concurrent remove succeeded")
+	}
+	view := ctrl.View()
+	member, ok := view.Member("target")
+	if !ok || member.Status != control.MemberRevoked {
+		t.Fatalf("member=%+v ok=%v", member, ok)
+	}
+	if view.AdmissionCapability.Nodes["target"].Status == control.CapabilityReady {
+		t.Fatalf("revoked node marked READY: %+v", view.AdmissionCapability.Nodes["target"])
+	}
+	membership, err := ctrl.RaftMembershipView()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if membership.Members["target"] == control.RaftVoter {
+		t.Fatalf("revoked node became voter: %+v", membership.Members)
+	}
+}
+
+func TestRemoveNodeWaitsForInFlightPromote(t *testing.T) {
+	fixture := newNodePromotionFixture(t)
+	ctrl := fixture.control
+	started := make(chan struct{})
+	release := make(chan struct{})
+	api := fixture.api(capabilityForwarderFunc(func(ctx context.Context, _ Route, request control.CapabilityTransferRequest) (control.CapabilityTransferResponse, error) {
+		close(started)
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return control.CapabilityTransferResponse{}, ctx.Err()
+		}
+		return control.CapabilityTransferResponse{}, errcode.E(errcode.UNAVAILABLE, "install failed")
+	}))
+	promoteDone := make(chan error, 1)
+	go func() {
+		_, promoteErr := api.PromoteNode(context.Background(), connect.NewRequest(&procmeshv1.PromoteNodeRequest{
+			Meta: &procmeshv1.MutationMeta{OperationId: "op-promote-lock", Operator: "admin"}, NodeId: "target",
+		}))
+		promoteDone <- promoteErr
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("promote did not start transfer")
+	}
+	removeDone := make(chan error, 1)
+	go func() {
+		_, removeErr := api.RemoveNode(context.Background(), connect.NewRequest(&procmeshv1.RemoveNodeRequest{
+			Meta: &procmeshv1.MutationMeta{OperationId: "op-rm-lock", Operator: "admin"}, NodeId: "target",
+		}))
+		removeDone <- removeErr
+	}()
+	select {
+	case err := <-removeDone:
+		t.Fatalf("remove completed during in-flight promote: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release)
+	if err := <-promoteDone; err == nil {
+		t.Fatal("promote succeeded after blocked transfer")
+	}
+	if err := <-removeDone; err != nil {
+		t.Fatalf("remove err=%v", err)
+	}
+	view := ctrl.View()
+	member, ok := view.Member("target")
+	if !ok || member.Status != control.MemberRevoked {
+		t.Fatalf("member=%+v ok=%v", member, ok)
 	}
 }
 

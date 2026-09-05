@@ -47,6 +47,10 @@ func (r *rpcRuntime) capabilityPromote(w http.ResponseWriter, request *http.Requ
 		return
 	}
 	if !r.waitLocalPrepare(request, transfer.Prepare) {
+		if node = r.control(); node != nil && capabilityNodeForbidden(node.View(), r.nodeID, transfer.Prepare.CertSerial) {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
 		w.WriteHeader(http.StatusConflict)
 		return
 	}
@@ -61,7 +65,19 @@ func (r *rpcRuntime) capabilityPromote(w http.ResponseWriter, request *http.Requ
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
-	if err := control.InstallCAKey(r.dir, transfer.CAKeyPEM); err != nil {
+	if capabilityNodeForbidden(state, r.nodeID, transfer.Prepare.CertSerial) {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+	if err := request.Context().Err(); err != nil {
+		w.WriteHeader(http.StatusConflict)
+		return
+	}
+	if err := control.InstallCAKeyContext(request.Context(), r.dir, transfer.CAKeyPEM); err != nil {
+		if request.Context().Err() != nil {
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
@@ -88,8 +104,14 @@ func (r *rpcRuntime) waitLocalPrepare(request *http.Request, prepare control.Cap
 	defer ticker.Stop()
 	for {
 		node := r.control()
-		if node != nil && r.validLocalPrepare(node.View(), prepare) {
-			return true
+		if node != nil {
+			state := node.View()
+			if capabilityNodeForbidden(state, r.nodeID, prepare.CertSerial) {
+				return false
+			}
+			if r.validLocalPrepare(state, prepare) {
+				return true
+			}
 		}
 		if !time.Now().Before(deadline) {
 			return false
@@ -112,6 +134,9 @@ func (r *rpcRuntime) validLocalPrepare(state control.State, prepare control.Capa
 	if prepare.CAFingerprint != state.AdmissionCapability.CAFingerprint || prepare.Epoch != state.AdmissionCapability.Epoch {
 		return false
 	}
+	if !capabilityNodeAuthorized(state, r.nodeID, prepare.CertSerial) {
+		return false
+	}
 	candidate, ok := state.AdmissionCapability.Nodes[r.nodeID]
 	if !ok || candidate.Status != control.CapabilityPrepared {
 		return false
@@ -129,6 +154,24 @@ func (r *rpcRuntime) validLocalPrepare(state control.State, prepare control.Capa
 	}
 	fingerprint, err := control.CASPKIFingerprint(creds.CACertPEM)
 	return err == nil && fingerprint == prepare.CAFingerprint
+}
+
+func capabilityNodeAuthorized(state control.State, nodeID, certSerial string) bool {
+	member, ok := state.Members[nodeID]
+	if !ok || member.Status != control.MemberAdmitted {
+		return false
+	}
+	if certSerial != "" && !strings.EqualFold(member.CertSerial, certSerial) {
+		return false
+	}
+	return !state.SerialRevoked(certSerial)
+}
+
+func capabilityNodeForbidden(state control.State, nodeID, certSerial string) bool {
+	if _, ok := state.Members[nodeID]; !ok {
+		return false
+	}
+	return !capabilityNodeAuthorized(state, nodeID, certSerial)
 }
 
 func capabilityPeer(request *http.Request) (clusterID, nodeID, serial string, ok bool) {
