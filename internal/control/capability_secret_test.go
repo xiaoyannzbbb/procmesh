@@ -134,13 +134,9 @@ func TestCapabilityManagerPreparesTransfersAndMarksReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager := control.CapabilityManager{Node: node, Dir: dir, NodeID: "leader", Now: func() time.Time { return now }}
-	var firstNonce string
+	var nonces []string
 	transfer := func(_ context.Context, request control.CapabilityTransferRequest) (control.CapabilityTransferResponse, error) {
-		if firstNonce == "" {
-			firstNonce = request.Prepare.Nonce
-		} else if firstNonce != request.Prepare.Nonce {
-			t.Fatalf("retry changed nonce: %q -> %q", firstNonce, request.Prepare.Nonce)
-		}
+		nonces = append(nonces, request.Prepare.Nonce)
 		if err := control.InstallCAKey(targetDir, request.CAKeyPEM); err != nil {
 			return control.CapabilityTransferResponse{}, err
 		}
@@ -158,11 +154,22 @@ func TestCapabilityManagerPreparesTransfersAndMarksReady(t *testing.T) {
 	if ready.Status != control.CapabilityReady || ready.OperationID != "op-promote" {
 		t.Fatalf("target capability=%+v", ready)
 	}
-	if err := manager.Promote(context.Background(), "op-promote", "target", func(context.Context, control.CapabilityTransferRequest) (control.CapabilityTransferResponse, error) {
-		t.Fatal("ready retry must not transfer key")
-		return control.CapabilityTransferResponse{}, nil
-	}); err != nil {
+	if err := os.Remove(filepath.Join(targetDir, "ca.key")); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(2 * time.Minute)
+	if err := manager.Promote(context.Background(), "op-promote", "target", transfer); err != nil {
 		t.Fatalf("ready retry: %v", err)
+	}
+	if len(nonces) != 2 || nonces[0] == nonces[1] {
+		t.Fatalf("ready retry must use a fresh proof challenge, nonces=%v", nonces)
+	}
+	if _, err := os.Stat(filepath.Join(targetDir, "ca.key")); err != nil {
+		t.Fatalf("ready retry did not restore target CA key: %v", err)
+	}
+	ready = node.View().AdmissionCapability.Nodes["target"]
+	if ready.Status != control.CapabilityReady || ready.Nonce != nonces[1] {
+		t.Fatalf("ready retry did not commit fresh proof: %+v", ready)
 	}
 	if err := os.Remove(filepath.Join(dir, "ca.key")); err != nil {
 		t.Fatal(err)

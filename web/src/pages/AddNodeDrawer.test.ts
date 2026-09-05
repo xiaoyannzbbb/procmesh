@@ -3,6 +3,7 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import i18next from "i18next";
 import I18NextVue from "i18next-vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ErrorInfoSchema } from "../gen/procmesh/v1/errors_pb";
 import { session } from "../lib/session";
 import type { NodeView } from "./clusterView";
 import AddNodeDrawer from "./AddNodeDrawer.vue";
@@ -213,9 +214,15 @@ describe("AddNodeDrawer", () => {
   });
 
   it("uses a new operation ID and warns when retrying an uncertain timeout", async () => {
+    const timeout = new ConnectError("join token result unknown", Code.DeadlineExceeded, undefined, [
+      {
+        desc: ErrorInfoSchema,
+        value: { code: "TIMEOUT", message: "TIMEOUT: join token result unknown" },
+      },
+    ]);
     const createJoinToken = vi
       .fn()
-      .mockRejectedValueOnce(new ConnectError("join token result unknown", Code.DeadlineExceeded))
+      .mockRejectedValueOnce(timeout)
       .mockResolvedValueOnce({ tokenId: "jt-1", token: "pmj_example", expiresUnix: 1_800_000_000n, uses: 1 });
     await mountDrawer({ createJoinToken });
     const seed = document.body.querySelector<HTMLSelectElement>("select[name=seed]")!;

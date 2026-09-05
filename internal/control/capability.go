@@ -145,14 +145,14 @@ func (m CapabilityManager) Promote(ctx context.Context, operationID, targetNodeI
 	if !ok || target.Status != MemberAdmitted || target.CertSerial == "" {
 		return errcode.E(errcode.INVALID, "capability target not admitted")
 	}
-	if ready, ok := state.AdmissionCapability.Nodes[targetNodeID]; ok && ready.Status == CapabilityReady && ready.CertSerial == target.CertSerial && ready.Epoch == state.AdmissionCapability.Epoch {
-		return nil
-	}
 
 	now := m.now()
 	prepare, reuse, err := existingCapabilityPrepare(state.AdmissionCapability, operationID, targetNodeID)
 	if err != nil {
 		return err
+	}
+	if ready, ok := state.AdmissionCapability.Nodes[targetNodeID]; ok && ready.Status == CapabilityReady && ready.CertSerial == target.CertSerial && ready.Epoch == state.AdmissionCapability.Epoch {
+		reuse = false
 	}
 	if !reuse {
 		nonce := make([]byte, 32)
@@ -450,7 +450,10 @@ func (s *State) applyCapabilityPrepare(body CapabilityPrepareBody, now time.Time
 		if capabilityNodeMatches(existing, body) {
 			return nil
 		}
-		return errcode.E(errcode.CONFLICT, "capability operation parameters changed")
+		// A READY operation may publish a fresh challenge before retrying AddVoter.
+		if existing.Status != CapabilityReady || existing.CertSerial != body.CertSerial || existing.Epoch != body.Epoch {
+			return errcode.E(errcode.CONFLICT, "capability operation parameters changed")
+		}
 	}
 	s.AdmissionCapability.Nodes[body.NodeID] = AdmissionCapabilityNode{
 		Status: CapabilityPrepared, OperationID: body.OperationID, CertSerial: body.CertSerial,

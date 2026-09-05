@@ -6,6 +6,7 @@ import { computed, nextTick, onUnmounted, ref, watch } from "vue";
 import ConfirmDialog from "../components/ConfirmDialog.vue";
 import Drawer from "../components/Drawer.vue";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
+import { appCode } from "../lib/connecterr";
 import { newOperationId } from "../lib/opid";
 import { useNodeClient } from "../lib/rpc/cluster";
 import { session } from "../lib/session";
@@ -182,10 +183,10 @@ function displayCreateError(error: unknown): string {
   if (error instanceof ConnectError && error.code === Code.PermissionDenied) {
     return t("nodes.add.permissionLost", { code: PERMISSION_DENIED_CODE });
   }
-  const detail = formatRemoteError(error);
-  if (detail === "TIMEOUT") {
+  if (appCode(error) === "TIMEOUT") {
     return t("nodes.add.createTimeout");
   }
+  const detail = formatRemoteError(error);
   return t("nodes.add.createFailed", { detail });
 }
 
