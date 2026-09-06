@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add the offline `procmesh-agent --data-dir DIR --reset-node-identity` maintenance mode for rotating an uninitialized Agent's node ID and discarding an abandoned pending Join without deleting process-plane data. The command refuses running, initialized, or Raft-backed Agents.
+
 ### Fixed
 
 - Prevent Raft Leader churn when an older Agent has persisted a wildcard peer address such as `0.0.0.0:18685` or `[::]:18685`. New joins reject non-dialable Raft advertise addresses before consuming a token, the transport refuses unsafe legacy peer dials, and membership reconciliation reports those entries as blocked instead of admitting them.

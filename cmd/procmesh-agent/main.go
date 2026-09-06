@@ -33,11 +33,25 @@ func run(args []string, stderr io.Writer) int {
 	config := fs.String("config", "", "agent.yaml path (optional)")
 	logFormat := fs.String("log-format", "text", "log format: text or json")
 	logLevel := fs.String("log-level", "info", "log level: debug, info, warn, or error")
+	resetNodeIdentity := fs.Bool("reset-node-identity", false, "rotate an uninitialized local node identity and exit (requires --data-dir and a stopped Agent)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
 		return 2
+	}
+	if *resetNodeIdentity {
+		if *dataDir == "" {
+			fmt.Fprintln(stderr, "--reset-node-identity requires --data-dir")
+			return 2
+		}
+		newID, err := agent.ResetNodeIdentity(context.Background(), *dataDir)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		fmt.Fprintf(stderr, "node identity reset; node_id=%s\n", newID)
+		return 0
 	}
 
 	logger, err := logging.New(stderr, *logFormat, *logLevel)

@@ -204,6 +204,17 @@ procmesh --server 127.0.0.1:18680 --operation-id <UUID> cluster membership recon
 
 `cluster membership reconcile` 只修复 FSM 已授权或已明确移除的成员，不会自动删除 FSM 未知的 Raft 成员，也不会晋升 voter。完整的权限、状态、退出码和 `BLOCKED` 处置说明参见[Raft 成员关系检查与修复](docs/QUICKSTART_ZH.md#114-raft-成员关系检查与修复)。运行 `procmesh` 可查看完整命令列表和参数说明。
 
+未完成入群的 Agent 如果需要放弃旧 Join，并以全新的 node ID 重新加入，可以在停止 Agent 后运行离线身份重置：
+
+```bash
+sudo systemctl stop procmesh-agent
+sudo procmesh-agent --data-dir /var/lib/procmesh --reset-node-identity
+sudo systemctl start procmesh-agent
+procmesh agent join --seed 10.0.0.11:18680 --token '<NEW_TOKEN>'
+```
+
+必须使用 systemd `ExecStart` 中相同的绝对 `--data-dir`。该操作保留进程配置、日志、备份和指标，只轮换本地 node ID 并删除未完成的 Join identity；运行中的 Agent、已经存在集群证书/`cluster.json` 或 Raft 状态，以及当前平台不支持数据目录锁时会拒绝执行。它不会删除远端成员或撤销旧 token，完整的适用条件与恢复步骤参见[加入失败](docs/QUICKSTART_ZH.md#113-加入失败)。
+
 ## 运维与安全
 
 ### 端口

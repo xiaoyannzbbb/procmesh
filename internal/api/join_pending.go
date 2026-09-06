@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/control"
@@ -135,6 +136,24 @@ func removePendingJoin(dir string) error {
 	path := filepath.Join(dir, pendingJoinFile)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove pending join: %w", err)
+	}
+	return syncDirectory(dir)
+}
+
+// DiscardPendingJoin removes an unfinished local Join identity. Callers must
+// only use it as part of an explicit reset of an uninitialized Agent.
+func DiscardPendingJoin(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("read pending join directory: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.Name() != pendingJoinFile && !strings.HasPrefix(entry.Name(), ".join.pending-") {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove pending join: %w", err)
+		}
 	}
 	return syncDirectory(dir)
 }

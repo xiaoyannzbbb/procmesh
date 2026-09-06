@@ -718,6 +718,37 @@ CLI 只有在节点已写入 Raft configuration 且准入状态为 `ADMITTED` �
 
 Raft advertise 必须是可拨号的 `host:port`，不能使用监听通配地址 `0.0.0.0`、`::` 或端口 `0`。Agent 会在本地发起 Join 前检查，Leader 也会在消费 token 或创建 Join attempt 前重新检查。监听地址可以继续使用 `0.0.0.0:18685`，但此时必须通过 `control.advertise` 或 `network.advertise_host` 提供其他节点实际可达的地址。
 
+#### 放弃未完成的 Join 并作为新节点加入
+
+`CONFLICT: different join already pending` 表示 `$data_dir/cluster/join.pending.json` 中保存的 node ID、规范化 seed 或 token 哈希与本次命令不同。普通网络、Leader 或 quorum 故障必须继续使用原 seed 和原 token 重试，不能重置身份；这样才能复用相同 CSR、private key 和服务端 Join attempt，避免重复消费 token。
+
+只有明确需要放弃旧 Join，且旧 node ID 已被 `node remove`、吊销或不应再使用时，才执行离线身份重置。先从 systemd `ExecStart` 确认实际数据目录，然后执行：
+
+```bash
+sudo systemctl stop procmesh-agent
+
+sudo /usr/local/bin/procmesh-agent \
+  --data-dir /var/lib/procmesh \
+  --reset-node-identity
+
+sudo systemctl start procmesh-agent
+
+procmesh agent join \
+  --seed 10.0.0.11:18680 \
+  --token '<NEW_TOKEN>'
+```
+
+`--reset-node-identity` 是一次性维护模式，完成后立即退出并输出新的 node ID。它要求显式提供已经存在的绝对数据目录，并执行以下操作：
+
+- 获取 `$data_dir/agent.lock` 非阻塞独占锁；Agent 仍在运行时返回 `CONFLICT`，不会等待或修改文件。
+- 删除 `cluster/join.pending.json` 以及崩溃遗留的 `.join.pending-*` 临时密钥文件。
+- 生成新的 UUID，以临时文件、`fsync` 和原子 rename 更新 `$data_dir/node_id`，同时更新 SQLite `local_meta`。
+- 保留 `store.db` 中的进程配置和实例状态，以及日志、备份、指标、shim runtime 和更新回滚文件。
+
+以下任一情况都会拒绝重置：数据目录不是绝对路径或不存在，缺少现有 `node_id`/`store.db`，当前平台不支持数据目录锁，Agent 仍持有数据目录锁，`cluster/` 中除了 pending Join 之外还存在证书或集群身份，或者 `raft/` 非空。已入群节点不能用该参数复制或绕过已移除身份；应先按成员关系恢复流程处理。
+
+重置只影响本机，不会删除 Raft/FSM 中的远端成员，也不会撤销或恢复 Join token。先在健康 Leader 上确认旧成员已经移除；旧 token 若仍有效应主动撤销，再创建新 token。不要把 token 传给 `--reset-node-identity`，也不要为了重置身份删除整个数据目录。
+
 包含 protocol 1 节点的集群升级到 protocol 2 时，应先滚动升级 Raft configuration 中全部现存 voter 和 nonvoter，升级期间不要执行 Join。混合版本状态下 Join 会返回 `INCOMPATIBLE_VERSION`；成员版本尚未通过 Gossip 确认时返回 `UNAVAILABLE`。不要通过重建 token 绕过该门控。
 
 `cluster init` 只有在本机 Raft control 完成启动后才返回管理员初始密码。若该阶段返回 `UNAVAILABLE`，本次生成的集群身份与 Raft 临时状态会被撤销，可以在排除监听地址、磁盘权限等问题后重新执行初始化。

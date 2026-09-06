@@ -186,6 +186,11 @@ func Run(ctx context.Context, opt Options) error {
 	if err := layout.Ensure(); err != nil {
 		return fmt.Errorf("ensure layout: %w", err)
 	}
+	dataLock, err := acquireDataDirLock(layout.Root)
+	if err != nil {
+		return err
+	}
+	defer dataLock.Close()
 
 	degraded := false
 	st, err := store.Open(layout.Store)
