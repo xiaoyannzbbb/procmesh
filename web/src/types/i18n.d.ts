@@ -994,6 +994,11 @@ declare module "i18next" {
         'replica.n1Warning': string
         'replica.offlineWarning': string
         'replica.policyRevision': string
+        'replica.routeTopologyStale': string
+        'replica.routeTopologyUnknown': string
+        'replica.missingSources': string
+        'replica.extraSources': string
+        'replica.invalidRouteNodes': string
         'replica.replicaFactor': string
         'replica.trigger': string
         'replica.schedule': string
@@ -2347,6 +2352,11 @@ declare module "i18next" {
         'replica.n1Warning': string
         'replica.offlineWarning': string
         'replica.policyRevision': string
+        'replica.routeTopologyStale': string
+        'replica.routeTopologyUnknown': string
+        'replica.missingSources': string
+        'replica.extraSources': string
+        'replica.invalidRouteNodes': string
         'replica.replicaFactor': string
         'replica.trigger': string
         'replica.schedule': string

@@ -160,26 +160,27 @@ type BackupPolicy struct {
 }
 
 type ReplicationPolicy struct {
-	PolicyID            string             `json:"policy_id,omitempty"`
-	Name                string             `json:"name,omitempty"`
-	Enabled             bool               `json:"enabled"`
-	SourceSelector      string             `json:"source_selector,omitempty"`
-	SourceIDs           []string           `json:"source_ids,omitempty"`
-	ReplicaFactor       int                `json:"replica_factor,omitempty"`
-	Routes              []ReplicationRoute `json:"routes,omitempty"`
-	Trigger             string             `json:"trigger,omitempty"`
-	PrimaryPolicyIDs    []string           `json:"primary_policy_ids,omitempty"`
-	ScheduleCron        string             `json:"schedule_cron,omitempty"`
-	Timezone            string             `json:"timezone,omitempty"`
-	RetentionKeepLast   int                `json:"retention_keep_last,omitempty"`
-	RetentionKeepDays   int                `json:"retention_keep_days,omitempty"`
-	RetentionMaxBytes   int64              `json:"retention_max_bytes,omitempty"`
-	MaxConcurrency      int                `json:"max_concurrency,omitempty"`
-	VerifyAfterCopy     bool               `json:"verify_after_copy"`
-	BandwidthLimit      int64              `json:"bandwidth_limit,omitempty"`
-	TopologyConstraints map[string]string  `json:"topology_constraints,omitempty"`
-	Revision            int64              `json:"revision,omitempty"`
-	ScheduleEpochUnix   int64              `json:"schedule_epoch_unix,omitempty"`
+	PolicyID              string             `json:"policy_id,omitempty"`
+	Name                  string             `json:"name,omitempty"`
+	Enabled               bool               `json:"enabled"`
+	SourceSelector        string             `json:"source_selector,omitempty"`
+	SourceIDs             []string           `json:"source_ids,omitempty"`
+	ReplicaFactor         int                `json:"replica_factor,omitempty"`
+	Routes                []ReplicationRoute `json:"routes,omitempty"`
+	Trigger               string             `json:"trigger,omitempty"`
+	PrimaryPolicyIDs      []string           `json:"primary_policy_ids,omitempty"`
+	ScheduleCron          string             `json:"schedule_cron,omitempty"`
+	Timezone              string             `json:"timezone,omitempty"`
+	RetentionKeepLast     int                `json:"retention_keep_last,omitempty"`
+	RetentionKeepDays     int                `json:"retention_keep_days,omitempty"`
+	RetentionMaxBytes     int64              `json:"retention_max_bytes,omitempty"`
+	MaxConcurrency        int                `json:"max_concurrency,omitempty"`
+	VerifyAfterCopy       bool               `json:"verify_after_copy"`
+	BandwidthLimit        int64              `json:"bandwidth_limit,omitempty"`
+	TopologyConstraints   map[string]string  `json:"topology_constraints,omitempty"`
+	Revision              int64              `json:"revision,omitempty"`
+	ScheduleEpochUnix     int64              `json:"schedule_epoch_unix,omitempty"`
+	RouteTopologyRevision int64              `json:"route_topology_revision,omitempty"`
 }
 
 type FireRecord struct {
@@ -1562,6 +1563,23 @@ func (s *State) validateRunTargets(selector string, selectorIDs, targets []strin
 	return nil
 }
 
+func validateReplicationRunSources(policy ReplicationPolicy, sources []string) error {
+	if err := validateTargetNodeIDs(sources); err != nil {
+		return err
+	}
+	want := make([]string, 0, len(policy.Routes))
+	for _, route := range policy.Routes {
+		want = append(want, route.SourceNodeID)
+	}
+	got := append([]string(nil), sources...)
+	sort.Strings(want)
+	sort.Strings(got)
+	if !equalStrings(got, want) {
+		return errcode.E(errcode.CONFLICT, "replication policy routes changed")
+	}
+	return nil
+}
+
 func validateTaskMetadata(task ClusterBackupTask) error {
 	if !validMetadataString(task.RunID, maxMetadataIDLen) || !validMetadataString(task.TaskID, maxMetadataIDLen) || !validMetadataString(task.NodeID, maxMetadataIDLen) {
 		return errcode.E(errcode.INVALID, "invalid task id")
@@ -1600,10 +1618,8 @@ func (s *State) applyCreateRun(b CreateRunBody) error {
 		}
 		replicationPolicy = policy
 		policyRevision = policy.Revision
-		if policy.SourceSelector != "" {
-			if err := s.validateRunTargets(policy.SourceSelector, policy.SourceIDs, b.Run.TargetNodeIDs); err != nil {
-				return err
-			}
+		if err := validateReplicationRunSources(policy, b.Run.TargetNodeIDs); err != nil {
+			return err
 		}
 	} else {
 		policy, ok := s.BackupPolicies[b.Run.PolicyID]
@@ -2220,6 +2236,7 @@ func (s *State) applyReplicationPolicyPut(b ReplicationPolicyPutBody, now time.T
 	cur.RetentionKeepLast, cur.RetentionKeepDays, cur.RetentionMaxBytes = b.RetentionKeepLast, b.RetentionKeepDays, b.RetentionMaxBytes
 	cur.MaxConcurrency, cur.VerifyAfterCopy, cur.BandwidthLimit = b.MaxConcurrency, b.VerifyAfterCopy, b.BandwidthLimit
 	cur.TopologyConstraints = mapsClone(b.TopologyConstraints)
+	cur.RouteTopologyRevision = b.RouteTopologyRevision
 	cur.ScheduleEpochUnix = now.Unix()
 	cur.Revision++
 	s.ReplicationPolicies[b.PolicyID] = cur

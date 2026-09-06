@@ -93,6 +93,28 @@ func TestPlanAutomaticReplicationRuns_SkipsDisabledAndEmptyCron(t *testing.T) {
 	}
 }
 
+func TestListDueReplicationFiresContinuesAfterInvalidPolicy(t *testing.T) {
+	epoch := time.Date(2027, 1, 15, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2027, 1, 16, 2, 0, 0, 0, time.UTC)
+	state := control.NewState()
+	state.ReplicationPolicies["a-bad"] = control.ReplicationPolicy{
+		PolicyID: "a-bad", Enabled: true, ScheduleCron: "invalid", Timezone: "UTC",
+		ScheduleEpochUnix: epoch.Unix(),
+	}
+	state.ReplicationPolicies["z-good"] = control.ReplicationPolicy{
+		PolicyID: "z-good", Enabled: true, ScheduleCron: "0 2 * * *", Timezone: "UTC",
+		ScheduleEpochUnix: epoch.Unix(),
+	}
+
+	fires, err := listDueReplicationFires(*state, now)
+	if err == nil || !strings.Contains(err.Error(), "a-bad") {
+		t.Fatalf("error=%v, want invalid policy identity", err)
+	}
+	if len(fires) != 1 || fires[0].policy.PolicyID != "z-good" {
+		t.Fatalf("fires=%+v, want valid policy to remain schedulable", fires)
+	}
+}
+
 func TestPlanAutomaticReplicationRuns_SkipFireWhenPolicyRunning(t *testing.T) {
 	epoch := time.Date(2027, 1, 15, 0, 0, 0, 0, time.UTC)
 	now := time.Date(2027, 1, 16, 2, 0, 0, 0, time.UTC)
@@ -217,6 +239,39 @@ func TestClaimReplicationRuns_CreatesEmptySnapshotRunAndClaimsFire(t *testing.T)
 		if run.RunID != runs[0].RunID {
 			t.Fatalf("second claim created extra run %+v", run)
 		}
+	}
+}
+
+func TestClaimReplicationRuns_UsesSavedAllAdmittedRoutesAfterMemberAdded(t *testing.T) {
+	now := time.Date(2027, 1, 16, 2, 0, 0, 0, time.UTC)
+	node, apply := startScheduledReplicationControl(t)
+	apply(control.CmdReplicationPolicyPut, control.ReplicationPolicyPutBody{
+		OperationID: "policy", PolicyID: "rp-stable", Name: "rp-stable", Enabled: true,
+		SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1,
+		Routes: []control.ReplicationRoute{
+			{SourceNodeID: "source", TargetNodeIDs: []string{"target"}},
+			{SourceNodeID: "target", TargetNodeIDs: []string{"source"}},
+		},
+		ScheduleCron: "0 2 * * *", Timezone: "UTC", ExpectedRevision: -1,
+	})
+	apply(control.CmdMemberPut, control.MemberPutBody{NodeID: "added-later", Status: control.MemberAdmitted})
+
+	ctrl := raftReplicationControl{runtime: &rpcRuntime{node: node}}
+	runs, err := ctrl.ClaimReplicationRuns(context.Background(), node.CurrentTerm(), now)
+	if err != nil {
+		t.Fatalf("ClaimReplicationRuns() after member addition: %v", err)
+	}
+	if len(runs) != 1 || len(runs[0].Tasks) != 2 {
+		t.Fatalf("runs=%+v, want the two saved routes", runs)
+	}
+	for _, task := range runs[0].Tasks {
+		if task.SourceNodeID == "added-later" || task.TargetNodeID == "added-later" {
+			t.Fatalf("new node was silently added to frozen routes: %+v", task)
+		}
+	}
+	again, err := ctrl.ClaimReplicationRuns(context.Background(), node.CurrentTerm(), now.Add(5*time.Second))
+	if err != nil || len(again) != 0 {
+		t.Fatalf("next scheduler tick runs=%+v error=%v, want claimed fire without repeated conflict", again, err)
 	}
 }
 

@@ -826,30 +826,35 @@ func (x *ApplyPolicyDraftResponse) GetRevision() int64 {
 }
 
 type ReplicationPolicy struct {
-	state               protoimpl.MessageState `protogen:"open.v1"`
-	PolicyId            string                 `protobuf:"bytes,1,opt,name=policy_id,json=policyId,proto3" json:"policy_id,omitempty"`
-	Name                string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	Enabled             bool                   `protobuf:"varint,3,opt,name=enabled,proto3" json:"enabled,omitempty"`
-	SourceSelector      string                 `protobuf:"bytes,4,opt,name=source_selector,json=sourceSelector,proto3" json:"source_selector,omitempty"`
-	SourceIds           []string               `protobuf:"bytes,5,rep,name=source_ids,json=sourceIds,proto3" json:"source_ids,omitempty"`
-	ReplicaFactor       int32                  `protobuf:"varint,6,opt,name=replica_factor,json=replicaFactor,proto3" json:"replica_factor,omitempty"`
-	Routes              []*ReplicationRoute    `protobuf:"bytes,7,rep,name=routes,proto3" json:"routes,omitempty"`
-	Trigger             string                 `protobuf:"bytes,8,opt,name=trigger,proto3" json:"trigger,omitempty"`
-	PrimaryPolicyIds    []string               `protobuf:"bytes,9,rep,name=primary_policy_ids,json=primaryPolicyIds,proto3" json:"primary_policy_ids,omitempty"`
-	ScheduleCron        string                 `protobuf:"bytes,10,opt,name=schedule_cron,json=scheduleCron,proto3" json:"schedule_cron,omitempty"`
-	Timezone            string                 `protobuf:"bytes,11,opt,name=timezone,proto3" json:"timezone,omitempty"`
-	RetentionKeepLast   int32                  `protobuf:"varint,12,opt,name=retention_keep_last,json=retentionKeepLast,proto3" json:"retention_keep_last,omitempty"`
-	RetentionKeepDays   int32                  `protobuf:"varint,13,opt,name=retention_keep_days,json=retentionKeepDays,proto3" json:"retention_keep_days,omitempty"`
-	RetentionMaxBytes   int64                  `protobuf:"varint,14,opt,name=retention_max_bytes,json=retentionMaxBytes,proto3" json:"retention_max_bytes,omitempty"`
-	MaxConcurrency      int32                  `protobuf:"varint,15,opt,name=max_concurrency,json=maxConcurrency,proto3" json:"max_concurrency,omitempty"`
-	VerifyAfterCopy     bool                   `protobuf:"varint,16,opt,name=verify_after_copy,json=verifyAfterCopy,proto3" json:"verify_after_copy,omitempty"`
-	BandwidthLimit      int64                  `protobuf:"varint,17,opt,name=bandwidth_limit,json=bandwidthLimit,proto3" json:"bandwidth_limit,omitempty"`
-	TopologyConstraints map[string]string      `protobuf:"bytes,18,rep,name=topology_constraints,json=topologyConstraints,proto3" json:"topology_constraints,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Revision            int64                  `protobuf:"varint,19,opt,name=revision,proto3" json:"revision,omitempty"`
-	CreatedAt           int64                  `protobuf:"varint,20,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	UpdatedAt           int64                  `protobuf:"varint,21,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	PolicyId              string                 `protobuf:"bytes,1,opt,name=policy_id,json=policyId,proto3" json:"policy_id,omitempty"`
+	Name                  string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Enabled               bool                   `protobuf:"varint,3,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	SourceSelector        string                 `protobuf:"bytes,4,opt,name=source_selector,json=sourceSelector,proto3" json:"source_selector,omitempty"`
+	SourceIds             []string               `protobuf:"bytes,5,rep,name=source_ids,json=sourceIds,proto3" json:"source_ids,omitempty"`
+	ReplicaFactor         int32                  `protobuf:"varint,6,opt,name=replica_factor,json=replicaFactor,proto3" json:"replica_factor,omitempty"`
+	Routes                []*ReplicationRoute    `protobuf:"bytes,7,rep,name=routes,proto3" json:"routes,omitempty"`
+	Trigger               string                 `protobuf:"bytes,8,opt,name=trigger,proto3" json:"trigger,omitempty"`
+	PrimaryPolicyIds      []string               `protobuf:"bytes,9,rep,name=primary_policy_ids,json=primaryPolicyIds,proto3" json:"primary_policy_ids,omitempty"`
+	ScheduleCron          string                 `protobuf:"bytes,10,opt,name=schedule_cron,json=scheduleCron,proto3" json:"schedule_cron,omitempty"`
+	Timezone              string                 `protobuf:"bytes,11,opt,name=timezone,proto3" json:"timezone,omitempty"`
+	RetentionKeepLast     int32                  `protobuf:"varint,12,opt,name=retention_keep_last,json=retentionKeepLast,proto3" json:"retention_keep_last,omitempty"`
+	RetentionKeepDays     int32                  `protobuf:"varint,13,opt,name=retention_keep_days,json=retentionKeepDays,proto3" json:"retention_keep_days,omitempty"`
+	RetentionMaxBytes     int64                  `protobuf:"varint,14,opt,name=retention_max_bytes,json=retentionMaxBytes,proto3" json:"retention_max_bytes,omitempty"`
+	MaxConcurrency        int32                  `protobuf:"varint,15,opt,name=max_concurrency,json=maxConcurrency,proto3" json:"max_concurrency,omitempty"`
+	VerifyAfterCopy       bool                   `protobuf:"varint,16,opt,name=verify_after_copy,json=verifyAfterCopy,proto3" json:"verify_after_copy,omitempty"`
+	BandwidthLimit        int64                  `protobuf:"varint,17,opt,name=bandwidth_limit,json=bandwidthLimit,proto3" json:"bandwidth_limit,omitempty"`
+	TopologyConstraints   map[string]string      `protobuf:"bytes,18,rep,name=topology_constraints,json=topologyConstraints,proto3" json:"topology_constraints,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Revision              int64                  `protobuf:"varint,19,opt,name=revision,proto3" json:"revision,omitempty"`
+	CreatedAt             int64                  `protobuf:"varint,20,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	UpdatedAt             int64                  `protobuf:"varint,21,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	RouteTopologyRevision int64                  `protobuf:"varint,22,opt,name=route_topology_revision,json=routeTopologyRevision,proto3" json:"route_topology_revision,omitempty"`
+	TopologyStatus        string                 `protobuf:"bytes,23,opt,name=topology_status,json=topologyStatus,proto3" json:"topology_status,omitempty"`
+	MissingSourceIds      []string               `protobuf:"bytes,24,rep,name=missing_source_ids,json=missingSourceIds,proto3" json:"missing_source_ids,omitempty"`
+	ExtraSourceIds        []string               `protobuf:"bytes,25,rep,name=extra_source_ids,json=extraSourceIds,proto3" json:"extra_source_ids,omitempty"`
+	InvalidRouteNodeIds   []string               `protobuf:"bytes,26,rep,name=invalid_route_node_ids,json=invalidRouteNodeIds,proto3" json:"invalid_route_node_ids,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *ReplicationPolicy) Reset() {
@@ -1027,6 +1032,41 @@ func (x *ReplicationPolicy) GetUpdatedAt() int64 {
 		return x.UpdatedAt
 	}
 	return 0
+}
+
+func (x *ReplicationPolicy) GetRouteTopologyRevision() int64 {
+	if x != nil {
+		return x.RouteTopologyRevision
+	}
+	return 0
+}
+
+func (x *ReplicationPolicy) GetTopologyStatus() string {
+	if x != nil {
+		return x.TopologyStatus
+	}
+	return ""
+}
+
+func (x *ReplicationPolicy) GetMissingSourceIds() []string {
+	if x != nil {
+		return x.MissingSourceIds
+	}
+	return nil
+}
+
+func (x *ReplicationPolicy) GetExtraSourceIds() []string {
+	if x != nil {
+		return x.ExtraSourceIds
+	}
+	return nil
+}
+
+func (x *ReplicationPolicy) GetInvalidRouteNodeIds() []string {
+	if x != nil {
+		return x.InvalidRouteNodeIds
+	}
+	return nil
 }
 
 type ListPoliciesRequest struct {
@@ -3081,7 +3121,7 @@ const file_procmesh_v1_disaster_replication_proto_rawDesc = "" +
 	"\x04meta\x18\x06 \x01(\v2\x19.procmesh.v1.MutationMetaR\x04meta\"S\n" +
 	"\x18ApplyPolicyDraftResponse\x12\x1b\n" +
 	"\tpolicy_id\x18\x01 \x01(\tR\bpolicyId\x12\x1a\n" +
-	"\brevision\x18\x02 \x01(\x03R\brevision\"\xa9\a\n" +
+	"\brevision\x18\x02 \x01(\x03R\brevision\"\x97\t\n" +
 	"\x11ReplicationPolicy\x12\x1b\n" +
 	"\tpolicy_id\x18\x01 \x01(\tR\bpolicyId\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n" +
@@ -3107,7 +3147,12 @@ const file_procmesh_v1_disaster_replication_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\x14 \x01(\x03R\tcreatedAt\x12\x1d\n" +
 	"\n" +
-	"updated_at\x18\x15 \x01(\x03R\tupdatedAt\x1aF\n" +
+	"updated_at\x18\x15 \x01(\x03R\tupdatedAt\x126\n" +
+	"\x17route_topology_revision\x18\x16 \x01(\x03R\x15routeTopologyRevision\x12'\n" +
+	"\x0ftopology_status\x18\x17 \x01(\tR\x0etopologyStatus\x12,\n" +
+	"\x12missing_source_ids\x18\x18 \x03(\tR\x10missingSourceIds\x12(\n" +
+	"\x10extra_source_ids\x18\x19 \x03(\tR\x0eextraSourceIds\x123\n" +
+	"\x16invalid_route_node_ids\x18\x1a \x03(\tR\x13invalidRouteNodeIds\x1aF\n" +
 	"\x18TopologyConstraintsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x15\n" +

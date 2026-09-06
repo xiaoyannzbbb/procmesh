@@ -107,13 +107,10 @@ func (c *ReplicationCoordinator) Tick(ctx context.Context) error {
 		return nil
 	}
 	runs, err := c.Control.ClaimReplicationRuns(ctx, term, c.now())
-	if err != nil {
-		return err
-	}
 	for _, run := range runs {
 		c.DispatchRun(ctx, run)
 	}
-	return nil
+	return err
 }
 
 func retryableReplicationTask(status string) bool {

@@ -287,26 +287,27 @@ func (d *DisasterReplicationAPI) ApplyPolicyDraft(ctx context.Context, req *conn
 	}
 
 	body := control.ReplicationPolicyPutBody{
-		OperationID:         req.Msg.Meta.OperationId,
-		PolicyID:            req.Msg.PolicyId,
-		Name:                req.Msg.Draft.Name,
-		Enabled:             req.Msg.Draft.Enabled,
-		SourceSelector:      req.Msg.Draft.SourceSelector,
-		SourceIDs:           req.Msg.Draft.SourceIds,
-		ReplicaFactor:       int(req.Msg.Draft.ReplicaFactor),
-		Routes:              routes,
-		Trigger:             req.Msg.Draft.Trigger,
-		PrimaryPolicyIDs:    req.Msg.Draft.PrimaryPolicyIds,
-		ScheduleCron:        req.Msg.Draft.ScheduleCron,
-		Timezone:            req.Msg.Draft.Timezone,
-		RetentionKeepLast:   int(req.Msg.Draft.RetentionKeepLast),
-		RetentionKeepDays:   int(req.Msg.Draft.RetentionKeepDays),
-		RetentionMaxBytes:   req.Msg.Draft.RetentionMaxBytes,
-		MaxConcurrency:      int(req.Msg.Draft.MaxConcurrency),
-		VerifyAfterCopy:     req.Msg.Draft.VerifyAfterCopy,
-		BandwidthLimit:      req.Msg.Draft.BandwidthLimit,
-		TopologyConstraints: constraints,
-		ExpectedRevision:    req.Msg.ExpectedRevision,
+		OperationID:           req.Msg.Meta.OperationId,
+		PolicyID:              req.Msg.PolicyId,
+		Name:                  req.Msg.Draft.Name,
+		Enabled:               req.Msg.Draft.Enabled,
+		SourceSelector:        req.Msg.Draft.SourceSelector,
+		SourceIDs:             req.Msg.Draft.SourceIds,
+		ReplicaFactor:         int(req.Msg.Draft.ReplicaFactor),
+		Routes:                routes,
+		Trigger:               req.Msg.Draft.Trigger,
+		PrimaryPolicyIDs:      req.Msg.Draft.PrimaryPolicyIds,
+		ScheduleCron:          req.Msg.Draft.ScheduleCron,
+		Timezone:              req.Msg.Draft.Timezone,
+		RetentionKeepLast:     int(req.Msg.Draft.RetentionKeepLast),
+		RetentionKeepDays:     int(req.Msg.Draft.RetentionKeepDays),
+		RetentionMaxBytes:     req.Msg.Draft.RetentionMaxBytes,
+		MaxConcurrency:        int(req.Msg.Draft.MaxConcurrency),
+		VerifyAfterCopy:       req.Msg.Draft.VerifyAfterCopy,
+		BandwidthLimit:        req.Msg.Draft.BandwidthLimit,
+		TopologyConstraints:   constraints,
+		RouteTopologyRevision: currentRevision,
+		ExpectedRevision:      req.Msg.ExpectedRevision,
 	}
 
 	cmd, err := control.EncodeCommand(control.CmdReplicationPolicyPut, body)
@@ -346,9 +347,10 @@ func (d *DisasterReplicationAPI) ListPolicies(ctx context.Context, req *connect.
 	}
 
 	st := d.StateFn()
+	currentTopologyRevision := topologyDraftRevision(d.replicationTopology())
 	policies := make([]*procmeshv1.ReplicationPolicy, 0, len(st.ReplicationPolicies))
 	for _, p := range st.ReplicationPolicies {
-		policies = append(policies, replicationPolicyToProto(p))
+		policies = append(policies, replicationPolicyToProtoWithTopology(st, p, currentTopologyRevision))
 	}
 
 	// Sort by policy_id for stable output
@@ -378,7 +380,7 @@ func (d *DisasterReplicationAPI) GetPolicy(ctx context.Context, req *connect.Req
 	}
 
 	return connect.NewResponse(&procmeshv1.GetPolicyResponse{
-		Policy: replicationPolicyToProto(policy),
+		Policy: replicationPolicyToProtoWithTopology(st, policy, topologyDraftRevision(d.replicationTopology())),
 	}), nil
 }
 
@@ -417,26 +419,27 @@ func (d *DisasterReplicationAPI) UpdatePolicy(ctx context.Context, req *connect.
 	}
 
 	body := control.ReplicationPolicyPutBody{
-		OperationID:         req.Msg.Meta.OperationId,
-		PolicyID:            req.Msg.PolicyId,
-		Name:                req.Msg.Name,
-		Enabled:             req.Msg.Enabled,
-		SourceSelector:      req.Msg.SourceSelector,
-		SourceIDs:           req.Msg.SourceIds,
-		ReplicaFactor:       int(req.Msg.ReplicaFactor),
-		Routes:              routes,
-		Trigger:             req.Msg.Trigger,
-		PrimaryPolicyIDs:    req.Msg.PrimaryPolicyIds,
-		ScheduleCron:        req.Msg.ScheduleCron,
-		Timezone:            req.Msg.Timezone,
-		RetentionKeepLast:   int(req.Msg.RetentionKeepLast),
-		RetentionKeepDays:   int(req.Msg.RetentionKeepDays),
-		RetentionMaxBytes:   req.Msg.RetentionMaxBytes,
-		MaxConcurrency:      int(req.Msg.MaxConcurrency),
-		VerifyAfterCopy:     req.Msg.VerifyAfterCopy,
-		BandwidthLimit:      req.Msg.BandwidthLimit,
-		TopologyConstraints: constraints,
-		ExpectedRevision:    req.Msg.ExpectedRevision,
+		OperationID:           req.Msg.Meta.OperationId,
+		PolicyID:              req.Msg.PolicyId,
+		Name:                  req.Msg.Name,
+		Enabled:               req.Msg.Enabled,
+		SourceSelector:        req.Msg.SourceSelector,
+		SourceIDs:             req.Msg.SourceIds,
+		ReplicaFactor:         int(req.Msg.ReplicaFactor),
+		Routes:                routes,
+		Trigger:               req.Msg.Trigger,
+		PrimaryPolicyIDs:      req.Msg.PrimaryPolicyIds,
+		ScheduleCron:          req.Msg.ScheduleCron,
+		Timezone:              req.Msg.Timezone,
+		RetentionKeepLast:     int(req.Msg.RetentionKeepLast),
+		RetentionKeepDays:     int(req.Msg.RetentionKeepDays),
+		RetentionMaxBytes:     req.Msg.RetentionMaxBytes,
+		MaxConcurrency:        int(req.Msg.MaxConcurrency),
+		VerifyAfterCopy:       req.Msg.VerifyAfterCopy,
+		BandwidthLimit:        req.Msg.BandwidthLimit,
+		TopologyConstraints:   constraints,
+		RouteTopologyRevision: topologyDraftRevision(d.replicationTopology()),
+		ExpectedRevision:      req.Msg.ExpectedRevision,
 	}
 
 	cmd, err := control.EncodeCommand(control.CmdReplicationPolicyPut, body)
@@ -1701,26 +1704,107 @@ func replicationPolicyToProto(p control.ReplicationPolicy) *procmeshv1.Replicati
 	}
 
 	return &procmeshv1.ReplicationPolicy{
-		PolicyId:            p.PolicyID,
-		Name:                p.Name,
-		Enabled:             p.Enabled,
-		SourceSelector:      p.SourceSelector,
-		SourceIds:           p.SourceIDs,
-		ReplicaFactor:       int32(p.ReplicaFactor),
-		Routes:              routes,
-		Trigger:             p.Trigger,
-		PrimaryPolicyIds:    p.PrimaryPolicyIDs,
-		ScheduleCron:        p.ScheduleCron,
-		Timezone:            p.Timezone,
-		RetentionKeepLast:   int32(p.RetentionKeepLast),
-		RetentionKeepDays:   int32(p.RetentionKeepDays),
-		RetentionMaxBytes:   p.RetentionMaxBytes,
-		MaxConcurrency:      int32(p.MaxConcurrency),
-		VerifyAfterCopy:     p.VerifyAfterCopy,
-		BandwidthLimit:      p.BandwidthLimit,
-		TopologyConstraints: constraints,
-		Revision:            p.Revision,
+		PolicyId:              p.PolicyID,
+		Name:                  p.Name,
+		Enabled:               p.Enabled,
+		SourceSelector:        p.SourceSelector,
+		SourceIds:             p.SourceIDs,
+		ReplicaFactor:         int32(p.ReplicaFactor),
+		Routes:                routes,
+		Trigger:               p.Trigger,
+		PrimaryPolicyIds:      p.PrimaryPolicyIDs,
+		ScheduleCron:          p.ScheduleCron,
+		Timezone:              p.Timezone,
+		RetentionKeepLast:     int32(p.RetentionKeepLast),
+		RetentionKeepDays:     int32(p.RetentionKeepDays),
+		RetentionMaxBytes:     p.RetentionMaxBytes,
+		MaxConcurrency:        int32(p.MaxConcurrency),
+		VerifyAfterCopy:       p.VerifyAfterCopy,
+		BandwidthLimit:        p.BandwidthLimit,
+		TopologyConstraints:   constraints,
+		Revision:              p.Revision,
+		RouteTopologyRevision: p.RouteTopologyRevision,
 	}
+}
+
+func replicationPolicyToProtoWithTopology(st control.State, p control.ReplicationPolicy, currentRevision int64) *procmeshv1.ReplicationPolicy {
+	out := replicationPolicyToProto(p)
+	desired := replicationDesiredSources(st, p)
+	routed := make(map[string]struct{}, len(p.Routes))
+	invalid := make(map[string]struct{})
+	for _, route := range p.Routes {
+		routed[route.SourceNodeID] = struct{}{}
+		if !replicationMemberAdmitted(st, route.SourceNodeID) {
+			invalid[route.SourceNodeID] = struct{}{}
+		}
+		for _, targetID := range route.TargetNodeIDs {
+			if !replicationMemberAdmitted(st, targetID) {
+				invalid[targetID] = struct{}{}
+			}
+		}
+	}
+	for sourceID := range desired {
+		if _, ok := routed[sourceID]; !ok {
+			out.MissingSourceIds = append(out.MissingSourceIds, sourceID)
+		}
+	}
+	for sourceID := range routed {
+		if _, ok := desired[sourceID]; !ok {
+			out.ExtraSourceIds = append(out.ExtraSourceIds, sourceID)
+		}
+	}
+	for nodeID := range invalid {
+		out.InvalidRouteNodeIds = append(out.InvalidRouteNodeIds, nodeID)
+	}
+	sort.Strings(out.MissingSourceIds)
+	sort.Strings(out.ExtraSourceIds)
+	sort.Strings(out.InvalidRouteNodeIds)
+
+	switch {
+	case len(out.MissingSourceIds) > 0 || len(out.ExtraSourceIds) > 0 || len(out.InvalidRouteNodeIds) > 0:
+		out.TopologyStatus = "STALE"
+	case p.RouteTopologyRevision == 0:
+		out.TopologyStatus = "UNKNOWN"
+	case p.RouteTopologyRevision != currentRevision:
+		out.TopologyStatus = "STALE"
+	default:
+		out.TopologyStatus = "CURRENT"
+	}
+	return out
+}
+
+func replicationDesiredSources(st control.State, p control.ReplicationPolicy) map[string]struct{} {
+	desired := make(map[string]struct{})
+	switch p.SourceSelector {
+	case "ALL_ADMITTED":
+		for nodeID, member := range st.Members {
+			if member.Status == control.MemberAdmitted {
+				desired[nodeID] = struct{}{}
+			}
+		}
+	case "EXPLICIT_NODES":
+		for _, nodeID := range p.SourceIDs {
+			desired[nodeID] = struct{}{}
+		}
+	case "AGENT_GROUP":
+		for _, groupID := range p.SourceIDs {
+			group, ok := st.AgentGroups[groupID]
+			if !ok {
+				continue
+			}
+			for _, nodeID := range group.MemberIDs {
+				if replicationMemberAdmitted(st, nodeID) {
+					desired[nodeID] = struct{}{}
+				}
+			}
+		}
+	}
+	return desired
+}
+
+func replicationMemberAdmitted(st control.State, nodeID string) bool {
+	member, ok := st.Members[nodeID]
+	return ok && member.Status == control.MemberAdmitted
 }
 
 func computePolicyDraftHashForTopology(req *procmeshv1.GeneratePolicyDraftRequest, topologyRevision int64) string {

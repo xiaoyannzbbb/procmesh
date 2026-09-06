@@ -136,6 +136,11 @@ message ReplicationPolicy {
   int64 revision = 19;
   int64 created_at = 20;
   int64 updated_at = 21;
+  int64 route_topology_revision = 22;
+  string topology_status = 23;
+  repeated string missing_source_ids = 24;
+  repeated string extra_source_ids = 25;
+  repeated string invalid_route_node_ids = 26;
 }
 
 message ListPoliciesRequest {}

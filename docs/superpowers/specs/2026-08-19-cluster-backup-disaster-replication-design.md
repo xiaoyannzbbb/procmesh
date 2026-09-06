@@ -257,12 +257,13 @@ ReplicationPolicy
   verify_after_copy     bool
   bandwidth_limit       可选
   topology_constraints  anti-affinity 规则
+  route_topology_revision 生成或更新 route 时的拓扑 revision
   revision
 ```
 
 产品面不再暴露 `trigger` / `primary_policy_ids`。兼容字段若仍出现在 Proto 中，服务端写入时清空，且不得再作为捕获前置。
 
-`ReplicationRoute` 是生成后的稳定结果。运行任务使用：
+`ReplicationRoute` 是生成后的稳定结果。`ALL_ADMITTED` 和 `AGENT_GROUP` 在生成、更新策略时解析为 route；后续成员变化不会静默改写已审核的 route。List/Get policy 根据当前 selector、成员与 route topology revision 返回 `CURRENT`、`STALE` 或 `UNKNOWN`，并列出未覆盖 source、多余 source 和不再准入的 route 节点。历史策略没有 `route_topology_revision` 时返回 `UNKNOWN`，直到用户重新生成并确认配置。运行任务使用：
 
 ```text
 ReplicationTaskKey = replication_policy_id + source_snapshot_id + target_node_id
@@ -294,11 +295,15 @@ Preview 返回完整 route 表、故障域信息、每个目标的预计 inbound
 
 自动：`enabled` 且 `schedule_cron` 非空时，仅当前 Raft Leader 在 `fire > ScheduleEpochUnix` 时创建 replication run；不补跑策略写入前已过的 cron。`enabled=false` 跳过 cron，手动仍允许。
 
+Replication run 必须冻结并执行所引用 policy revision 已保存的 route，不在运行创建时把 route source 与当前成员集合重新做动态相等校验。策略应用后新增、撤销成员或修改 Agent Group 会把策略拓扑状态标记为 `STALE`，但不会让原有稳定 route 的自动或手动运行返回 `target nodes changed`。用户通过预览确认并以 `expected_revision` CAS 应用新 route 后，下一次运行使用新 revision；当前已运行任务不变。
+
 每个源节点先捕获本地 process spec 与 revision history，以 `sink=replica` 落盘并产生稳定 `snapshot_id`+checksum，再按路由经 mTLS 复制到 Peer。不读取 `ClusterBackupRun`，也不写主备份 `BackupRuns`。Peer 只校验并落盘，不 apply。
 
 手动：`StartRun` 走同一捕获+复制流水线，不要求 `primary_run_id` / 既有主备份快照引用。应用拓扑只写策略，不立刻创建 run。
 
 同策略同时最多一个 `RUNNING`；若 cron fire 撞上运行中，该 fire 记为 `SKIPPED`，不排队。失败 route 继续推进，run 可为 `PARTIAL`。
+
+调度 claim 按策略隔离错误。单个策略解析或 Raft apply 失败时，已经成功 claim 的其它 run 仍须派发，后续策略仍须继续处理；协调器在完成可执行工作后返回聚合错误用于日志与监控，不能因一个坏策略饿死其它策略或 run takeover。
 
 重试只处理失败任务：已有冻结快照则只重传；快照为空或源文件丢失则对该源重捕获。成功任务不动。目标节点已存在相同 snapshot ID 和 checksum 时直接返回幂等成功；ID 相同但 checksum 不同视为冲突并阻止覆盖。
 
@@ -418,6 +423,7 @@ Owner 完成必要的 Peer 回源、hydrate 和逐进程 apply。两者都不得
 返回给公开调用方。
 
 Draft API 不直接写 Raft；`ApplyPolicyDraft` 必须带 draft revision 和规范化策略摘要 hash，防止用户基于旧拓扑或已修改的策略输入覆盖当前状态；可编辑 route 由 FSM 独立校验。
+Apply 成功后把本次 topology revision 与 route 一起写入 policy。直接 `UpdatePolicy` 替换 route 时也记录 Leader 当前 topology revision；该值只用于漂移检测，不替代 policy `expected_revision` CAS。
 
 ### 12.3 内部 `PeerReplicationService`
 

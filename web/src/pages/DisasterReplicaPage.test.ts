@@ -72,6 +72,11 @@ const replicaI18n = {
   n1Warning: "Single-node cluster: no replica target is available.",
   offlineWarning: "Admitted node {{id}} is offline and remains in topology.",
   policyRevision: "Policy revision",
+  routeTopologyStale: "Saved replica routes are out of date. Generate and review a replacement configuration.",
+  routeTopologyUnknown: "These saved routes predate topology tracking.",
+  missingSources: "Uncovered source nodes: {{nodes}}.",
+  extraSources: "Sources no longer selected: {{nodes}}.",
+  invalidRouteNodes: "Routes reference nodes that are no longer admitted: {{nodes}}.",
   replicaFactor: "Replica factor",
   trigger: "Trigger",
   schedule: "Schedule",
@@ -589,6 +594,23 @@ describe("DisasterReplicaPage", () => {
     expect(config.get('[data-node-id="n2"]').attributes("data-admitted")).toBe("true");
     expect(config.get("[data-offline-warning]").text()).toContain("n2");
     expect(config.get("[data-offline-warning]").text()).toMatch(/offline|topology/i);
+  });
+
+  it("shows saved route topology drift and the uncovered source nodes", async () => {
+    const { wrapper } = await mountPage({
+      policies: [{
+        ...replicaPolicy,
+        topologyStatus: "STALE",
+        missingSourceIds: ["n4"],
+        extraSourceIds: [],
+        invalidRouteNodeIds: [],
+      }],
+    });
+
+    const warning = wrapper.get("[data-policy-topology-stale]");
+    expect(warning.text()).toMatch(/out of date|拓扑/);
+    expect(warning.text()).toContain("n4");
+    expect(wrapper.get('[data-action="generate"]').exists()).toBe(true);
   });
 
   it("shows node names in the topology node column", async () => {

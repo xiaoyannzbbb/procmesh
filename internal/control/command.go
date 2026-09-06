@@ -328,6 +328,7 @@ type ReplicationPolicyPutBody struct {
 	VerifyAfterCopy        bool
 	BandwidthLimit         int64
 	TopologyConstraints    map[string]string
+	RouteTopologyRevision  int64
 	ExpectedRevision       int64 `json:"expected_revision,omitempty"`
 }
 

@@ -38,21 +38,19 @@ func (a raftReplicationControl) ClaimReplicationRuns(_ context.Context, term uin
 		return nil, fmt.Errorf("control plane unavailable")
 	}
 	state := n.View()
-	fires, err := listDueReplicationFires(state, now)
-	if err != nil {
-		return nil, err
-	}
+	fires, listErr := listDueReplicationFires(state, now)
+	claimErrs := []error{listErr}
 	created := make([]backup.FrozenReplicationRun, 0, len(fires))
 	for _, fire := range fires {
 		if fire.skipRunning {
 			if err := claimReplicationFire(n, fire, term, now, "SKIPPED", ""); err != nil {
-				return nil, err
+				claimErrs = append(claimErrs, fmt.Errorf("replication policy %q: %w", fire.policy.PolicyID, err))
 			}
 			continue
 		}
 		if fire.runExists {
 			if err := claimReplicationFire(n, fire, term, now, "CLAIMED", fire.runID); err != nil {
-				return nil, err
+				claimErrs = append(claimErrs, fmt.Errorf("replication policy %q: %w", fire.policy.PolicyID, err))
 			}
 			continue
 		}
@@ -64,16 +62,18 @@ func (a raftReplicationControl) ClaimReplicationRuns(_ context.Context, term uin
 		plan.ScheduledUnix = fire.fire.Unix()
 		cmd, err := control.EncodeCommand(control.CmdBackupRunCreate, plan.Create)
 		if err != nil {
-			return nil, err
+			claimErrs = append(claimErrs, fmt.Errorf("replication policy %q: %w", fire.policy.PolicyID, err))
+			continue
 		}
 		if err := n.Apply(cmd, 5*time.Second); err != nil {
-			return nil, err
-		}
-		if err := claimReplicationFire(n, fire, term, now, "CLAIMED", plan.Create.Run.RunID); err != nil {
-			return nil, err
+			claimErrs = append(claimErrs, fmt.Errorf("replication policy %q: %w", fire.policy.PolicyID, err))
+			continue
 		}
 		if frozen := frozenReplicationRunFromPlan(plan, term); len(frozen.Tasks) > 0 {
 			created = append(created, frozen)
+		}
+		if err := claimReplicationFire(n, fire, term, now, "CLAIMED", plan.Create.Run.RunID); err != nil {
+			claimErrs = append(claimErrs, fmt.Errorf("replication policy %q: %w", fire.policy.PolicyID, err))
 		}
 	}
 	state = n.View()
@@ -91,7 +91,7 @@ func (a raftReplicationControl) ClaimReplicationRuns(_ context.Context, term uin
 			runnable = append(runnable, backup.FrozenReplicationRun{RunID: claimed.RunID, PolicyID: claimed.PolicyID, PolicyRevision: claimed.PolicyRevision, LeaderTerm: term, LeaseExpiresUnix: claimed.LeaseUntilUnix, MaxConcurrency: claimed.MaxConcurrency, Tasks: tasks})
 		}
 	}
-	return append(created, runnable...), nil
+	return append(created, runnable...), errors.Join(claimErrs...)
 }
 
 func claimReplicationFire(n *control.Node, fire dueReplicationFire, term uint64, now time.Time, status, runID string) error {
@@ -170,6 +170,7 @@ func listDueReplicationFires(state control.State, now time.Time) ([]dueReplicati
 	}
 	sort.Strings(ids)
 	out := make([]dueReplicationFire, 0)
+	var policyErrs []error
 	for _, id := range ids {
 		policy := state.ReplicationPolicies[id]
 		if !policy.Enabled || strings.TrimSpace(policy.ScheduleCron) == "" {
@@ -180,7 +181,8 @@ func listDueReplicationFires(state control.State, now time.Time) ([]dueReplicati
 		}
 		fire, err := backup.PreviousOrEqualInTimezone(policy.ScheduleCron, policy.Timezone, now)
 		if err != nil {
-			return nil, err
+			policyErrs = append(policyErrs, fmt.Errorf("replication policy %q: %w", policy.PolicyID, err))
+			continue
 		}
 		if fire.IsZero() {
 			continue
@@ -205,7 +207,7 @@ func listDueReplicationFires(state control.State, now time.Time) ([]dueReplicati
 			skipRunning: !runExists && policyHasRunningReplication(state, policy.PolicyID),
 		})
 	}
-	return out, nil
+	return out, errors.Join(policyErrs...)
 }
 
 func policyHasRunningReplication(state control.State, policyID string) bool {

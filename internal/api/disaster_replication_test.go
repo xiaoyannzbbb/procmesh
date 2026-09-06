@@ -44,25 +44,26 @@ func newDisasterReplicationClient(t *testing.T, api *DisasterReplicationAPI, opt
 func TestReplicationPolicyToProto(t *testing.T) {
 	now := time.Now()
 	policy := control.ReplicationPolicy{
-		PolicyID:            "policy-123",
-		Name:                "test-policy",
-		Enabled:             true,
-		SourceSelector:      "all",
-		SourceIDs:           []string{"node-1", "node-2"},
-		ReplicaFactor:       2,
-		Routes:              []control.ReplicationRoute{{SourceNodeID: "node-1", TargetNodeIDs: []string{"node-2", "node-3"}}},
-		Trigger:             "MANUAL",
-		PrimaryPolicyIDs:    []string{"primary-1"},
-		ScheduleCron:        "0 0 * * *",
-		Timezone:            "UTC",
-		RetentionKeepLast:   10,
-		RetentionKeepDays:   30,
-		RetentionMaxBytes:   1000000,
-		MaxConcurrency:      5,
-		VerifyAfterCopy:     true,
-		BandwidthLimit:      100000,
-		TopologyConstraints: map[string]string{"zone": "us-west"},
-		Revision:            7,
+		PolicyID:              "policy-123",
+		Name:                  "test-policy",
+		Enabled:               true,
+		SourceSelector:        "all",
+		SourceIDs:             []string{"node-1", "node-2"},
+		ReplicaFactor:         2,
+		Routes:                []control.ReplicationRoute{{SourceNodeID: "node-1", TargetNodeIDs: []string{"node-2", "node-3"}}},
+		Trigger:               "MANUAL",
+		PrimaryPolicyIDs:      []string{"primary-1"},
+		ScheduleCron:          "0 0 * * *",
+		Timezone:              "UTC",
+		RetentionKeepLast:     10,
+		RetentionKeepDays:     30,
+		RetentionMaxBytes:     1000000,
+		MaxConcurrency:        5,
+		VerifyAfterCopy:       true,
+		BandwidthLimit:        100000,
+		TopologyConstraints:   map[string]string{"zone": "us-west"},
+		Revision:              7,
+		RouteTopologyRevision: 42,
 	}
 
 	proto := replicationPolicyToProto(policy)
@@ -99,6 +100,9 @@ func TestReplicationPolicyToProto(t *testing.T) {
 	}
 	if proto.Revision != 7 {
 		t.Errorf("Revision: got %d, want 7", proto.Revision)
+	}
+	if proto.RouteTopologyRevision != 42 {
+		t.Errorf("RouteTopologyRevision: got %d, want 42", proto.RouteTopologyRevision)
 	}
 	if proto.ScheduleCron != "0 0 * * *" {
 		t.Errorf("ScheduleCron: got %q, want %q", proto.ScheduleCron, "0 0 * * *")
@@ -751,6 +755,40 @@ func TestDisasterReplicationAPI_ListPolicies(t *testing.T) {
 
 	if len(resp.Msg.Policies) != 2 {
 		t.Errorf("policies: got %d, want 2", len(resp.Msg.Policies))
+	}
+}
+
+func TestDisasterReplicationAPI_ListPoliciesReportsRouteTopologyDrift(t *testing.T) {
+	api, state, authSvc := setupMinimalAPI(t)
+	state.ReplicationPolicies["policy-stale"] = control.ReplicationPolicy{
+		PolicyID: "policy-stale", Name: "stale", SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1, Revision: 3,
+		Routes: []control.ReplicationRoute{
+			{SourceNodeID: "node-1", TargetNodeIDs: []string{"node-2"}},
+			{SourceNodeID: "node-2", TargetNodeIDs: []string{"node-1"}},
+		},
+	}
+	sid, _, _, _, err := authSvc.Login("admin", testAdminPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := api.ListPolicies(context.Background(), bearerReq(sid, &procmeshv1.ListPoliciesRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := resp.Msg.Policies[0]
+	fields := policy.ProtoReflect().Descriptor().Fields()
+	statusField := fields.ByName("topology_status")
+	missingField := fields.ByName("missing_source_ids")
+	if statusField == nil || missingField == nil {
+		t.Fatal("replication policy response must expose topology drift fields")
+	}
+	if got := policy.ProtoReflect().Get(statusField).String(); got != "STALE" {
+		t.Fatalf("topology_status=%q, want STALE", got)
+	}
+	missing := policy.ProtoReflect().Get(missingField).List()
+	if missing.Len() != 1 || missing.Get(0).String() != "node-3" {
+		t.Fatalf("missing_source_ids=%v, want [node-3]", missing)
 	}
 }
 

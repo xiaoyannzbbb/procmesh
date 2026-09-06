@@ -2338,6 +2338,40 @@ func TestFSM_ReplicationPolicyPutRouteSourcesMatchSelector(t *testing.T) {
 	}
 }
 
+func TestFSM_ReplicationRunUsesSavedRoutesAfterAdmittedMemberAdded(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	s := admittedReplicationState(t)
+	policy := control.ReplicationPolicyPutBody{
+		OperationID: "policy-create", PolicyID: "rp-stable", Name: "stable-routes", Enabled: true,
+		SourceSelector: "ALL_ADMITTED", ReplicaFactor: 1, Routes: admittedReplicationRoutes(), ExpectedRevision: -1,
+	}
+	if err := s.Apply(mustEncode(t, control.CmdReplicationPolicyPut, policy), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Apply(mustEncode(t, control.CmdMemberPut, control.MemberPutBody{NodeID: "node-d", Status: control.MemberAdmitted}), now); err != nil {
+		t.Fatal(err)
+	}
+
+	run := control.ClusterBackupRun{
+		RunID: "run-stable", PolicyID: policy.PolicyID, PolicyRevision: 1,
+		TargetNodeIDs: []string{"node-a", "node-b", "node-c"}, Status: "RUNNING",
+	}
+	tasks := []control.ClusterBackupTask{
+		{RunID: run.RunID, TaskID: "task-a", SourceNodeID: "node-a", NodeID: "node-b", Status: "PENDING"},
+		{RunID: run.RunID, TaskID: "task-b", SourceNodeID: "node-b", NodeID: "node-a", Status: "PENDING"},
+		{RunID: run.RunID, TaskID: "task-c", SourceNodeID: "node-c", NodeID: "node-a", Status: "PENDING"},
+	}
+	err := s.CreateRun(control.CreateRunBody{
+		OperationID: "run-create", LeaderTerm: 1, Replication: true, Run: run, Tasks: tasks,
+	})
+	if err != nil {
+		t.Fatalf("CreateRun() after topology drift: %v", err)
+	}
+	if _, ok := s.ReplicationTasks[run.RunID+":task-d"]; ok {
+		t.Fatal("new member must not be silently added to saved policy routes")
+	}
+}
+
 func TestFSM_ReplicationPolicyDeleteRejectsMissingPolicy(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	s := mustBootstrap(t, now)

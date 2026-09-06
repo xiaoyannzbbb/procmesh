@@ -52,6 +52,11 @@ type ReplicaPolicy = {
   bandwidthLimit?: bigint;
   topologyConstraints?: Record<string, string>;
   revision?: bigint | number;
+  routeTopologyRevision?: bigint | number;
+  topologyStatus?: string;
+  missingSourceIds?: string[];
+  extraSourceIds?: string[];
+  invalidRouteNodeIds?: string[];
 };
 
 type ReplicaTask = {
@@ -310,6 +315,9 @@ const overviewUnreachable = computed(
 const hasPartialRun = computed(() => runs.value.some((run) => isPartial(run.status)));
 const offlineAdmitted = computed(() => topologyNodes.value.filter((node) => node.admitted && !node.alive));
 const shownRevision = computed(() => appliedRevision.value || currentPolicy.value?.revision || "");
+const policyTopologyStatus = computed(() => (currentPolicy.value?.topologyStatus || "").toUpperCase());
+const policyTopologyStale = computed(() => policyTopologyStatus.value === "STALE");
+const policyTopologyUnknown = computed(() => policyTopologyStatus.value === "UNKNOWN");
 const overviewFreshness = computed<Freshness>(() => {
   if (overviewUnreachable.value) {
     return UNKNOWN;
@@ -1243,6 +1251,35 @@ async function onStartRun(): Promise<void> {
         <p v-if="shownRevision !== ''" class="muted" data-policy-revision>
           {{ t("replica.policyRevision") }}: {{ shownRevision }}
         </p>
+        <div
+          v-if="policyTopologyStale"
+          class="banner warning-banner policy-topology-warning"
+          data-policy-topology-stale
+          role="status"
+        >
+          <TriangleAlert :size="18" aria-hidden="true" />
+          <div>
+            <strong>{{ t("replica.routeTopologyStale") }}</strong>
+            <p v-if="currentPolicy?.missingSourceIds?.length">
+              {{ t("replica.missingSources", { nodes: currentPolicy.missingSourceIds.join(", ") }) }}
+            </p>
+            <p v-if="currentPolicy?.extraSourceIds?.length">
+              {{ t("replica.extraSources", { nodes: currentPolicy.extraSourceIds.join(", ") }) }}
+            </p>
+            <p v-if="currentPolicy?.invalidRouteNodeIds?.length">
+              {{ t("replica.invalidRouteNodes", { nodes: currentPolicy.invalidRouteNodeIds.join(", ") }) }}
+            </p>
+          </div>
+        </div>
+        <div
+          v-else-if="policyTopologyUnknown"
+          class="banner warning-banner policy-topology-warning"
+          data-policy-topology-unknown
+          role="status"
+        >
+          <TriangleAlert :size="18" aria-hidden="true" />
+          {{ t("replica.routeTopologyUnknown") }}
+        </div>
         <p
           v-for="node in offlineAdmitted"
           :key="`offline-${node.nodeId}`"
@@ -2062,6 +2099,22 @@ h3 {
 .warning-banner {
   background: #fef3c7;
   color: #92400e;
+}
+.policy-topology-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+}
+.policy-topology-warning svg {
+  flex: 0 0 auto;
+  margin-top: 0.125rem;
+}
+.policy-topology-warning > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.policy-topology-warning p {
+  margin: 0.25rem 0 0;
 }
 .card {
   border: 1px solid var(--color-border);

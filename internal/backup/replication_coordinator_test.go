@@ -3,6 +3,7 @@ package backup_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -21,6 +22,7 @@ import (
 type replicationControlFake struct {
 	mu       sync.Mutex
 	runs     []backup.FrozenReplicationRun
+	claimErr error
 	updates  []backup.ReplicationTaskUpdate
 	beginErr error
 	begin    func(context.Context, backup.ReplicationTaskUpdate) error
@@ -404,7 +406,7 @@ func (f replicationDispatcherFunc) DispatchReplicationTask(ctx context.Context, 
 }
 
 func (f *replicationControlFake) ClaimReplicationRuns(context.Context, uint64, time.Time) ([]backup.FrozenReplicationRun, error) {
-	return append([]backup.FrozenReplicationRun(nil), f.runs...), nil
+	return append([]backup.FrozenReplicationRun(nil), f.runs...), f.claimErr
 }
 
 func (f *replicationControlFake) BeginReplicationTask(ctx context.Context, update backup.ReplicationTaskUpdate) error {
@@ -431,6 +433,34 @@ func (f *replicationDispatcherFake) DispatchReplicationTask(_ context.Context, t
 	defer f.mu.Unlock()
 	f.dispatch = append(f.dispatch, task)
 	return nil
+}
+
+func TestReplicationCoordinator_DispatchesClaimedRunsWhenAnotherPolicyFails(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	claimErr := errcode.E(errcode.CONFLICT, "policy-b topology changed")
+	controlPlane := &replicationControlFake{
+		claimErr: claimErr,
+		runs: []backup.FrozenReplicationRun{{
+			RunID: "run-a", PolicyID: "policy-a", PolicyRevision: 2, LeaderTerm: 9,
+			LeaseExpiresUnix: now.Add(time.Minute).Unix(), MaxConcurrency: 1,
+			Tasks: []backup.FrozenReplicationTask{{
+				TaskID: "task-a", SourceNodeID: "source-a", TargetNodeID: "target-a", Status: "PENDING",
+			}},
+		}},
+	}
+	dispatcher := &replicationDispatcherFake{}
+	coordinator := backup.NewReplicationCoordinator(backup.ReplicationCoordinatorConfig{
+		Control: controlPlane, Dispatcher: dispatcher, IsLeader: func() bool { return true },
+		CurrentTerm: func() uint64 { return 9 }, Now: func() time.Time { return now },
+	})
+
+	err := coordinator.Tick(context.Background())
+	if !errors.Is(err, claimErr) {
+		t.Fatalf("Tick() error=%v, want claim error", err)
+	}
+	if len(dispatcher.dispatch) != 1 || dispatcher.dispatch[0].RunID != "run-a" {
+		t.Fatalf("dispatched=%+v, want successfully claimed run despite another policy error", dispatcher.dispatch)
+	}
 }
 
 func TestReplicationCoordinator_LeaderOnlyDispatchesFrozenPendingRoutes(t *testing.T) {
