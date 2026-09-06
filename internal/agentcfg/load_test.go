@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/qleelulu/procmesh/internal/agentcfg"
+	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/logmgr"
 )
 
@@ -68,6 +69,51 @@ func TestLoadAll_DataDirAndListen(t *testing.T) {
 	}
 	if cfg.DataDir != "/var/lib/procmesh" || cfg.Listen != "0.0.0.0:18680" || cfg.Advertise != "10.0.0.1" {
 		t.Fatalf("config = %+v", cfg)
+	}
+}
+
+func TestLoadAll_NetworkAdvertiseHost(t *testing.T) {
+	for _, host := range []string{"10.0.0.1", "agent.example.com", "[2001:db8::1]"} {
+		t.Run(host, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "agent.yaml")
+			body := "network:\n  advertise_host: \"" + host + "\"\n"
+			if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := agentcfg.LoadAll(path, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Network.AdvertiseHost != host {
+				t.Fatalf("network advertise host = %q, want %q", cfg.Network.AdvertiseHost, host)
+			}
+		})
+	}
+}
+
+func TestLoadAll_NetworkAdvertiseHostRejectsInvalidValues(t *testing.T) {
+	tests := []struct {
+		name string
+		host string
+	}{
+		{name: "IPv4 wildcard", host: "0.0.0.0"},
+		{name: "IPv6 wildcard", host: "::"},
+		{name: "address with port", host: "10.0.0.1:18680"},
+		{name: "whitespace", host: "agent example.com"},
+		{name: "wildcard hostname", host: "*"},
+		{name: "bracketed hostname", host: "[agent.example.com]"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "agent.yaml")
+			body := "network:\n  advertise_host: \"" + tt.host + "\"\n"
+			if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := agentcfg.LoadAll(path, true); !errcode.Is(err, errcode.INVALID) {
+				t.Fatalf("expected advertise_host %q to be rejected", tt.host)
+			}
+		})
 	}
 }
 

@@ -153,9 +153,7 @@ func Run(ctx context.Context, opt Options) error {
 	if opt.Listen == "" {
 		opt.Listen = cfg.Listen
 	}
-	if opt.APIAdvertise == "" {
-		opt.APIAdvertise = cfg.Advertise
-	}
+	opt.APIAdvertise = chooseAdvertise(opt.APIAdvertise, cfg.Advertise, cfg.Network.AdvertiseHost)
 	if opt.PprofListen == "" {
 		opt.PprofListen = cfg.Pprof.Listen
 	}
@@ -259,10 +257,7 @@ func Run(ctx context.Context, opt Options) error {
 	if gossipListen == "" {
 		gossipListen = defaultGossipListen
 	}
-	gossipAdvertise := opt.GossipAdvertise
-	if gossipAdvertise == "" {
-		gossipAdvertise = cfg.Gossip.Advertise
-	}
+	gossipAdvertise := chooseAdvertise(opt.GossipAdvertise, cfg.Gossip.Advertise, cfg.Network.AdvertiseHost)
 	if err := CheckListen(gossipListen, opt.InsecureListen); err != nil {
 		return err
 	}
@@ -277,9 +272,7 @@ func Run(ctx context.Context, opt Options) error {
 	if opt.RPCListen == "" {
 		opt.RPCListen = defaultRPCListen
 	}
-	if opt.RPCAdvertise == "" {
-		opt.RPCAdvertise = cfg.RPC.Advertise
-	}
+	opt.RPCAdvertise = chooseAdvertise(opt.RPCAdvertise, cfg.RPC.Advertise, cfg.Network.AdvertiseHost)
 	if err := CheckListen(opt.RPCListen, opt.InsecureListen); err != nil {
 		return err
 	}
@@ -294,9 +287,7 @@ func Run(ctx context.Context, opt Options) error {
 	if opt.ControlListen == "" {
 		opt.ControlListen = defaultControlListen
 	}
-	if opt.ControlAdvertise == "" {
-		opt.ControlAdvertise = cfg.Control.Advertise
-	}
+	opt.ControlAdvertise = chooseAdvertise(opt.ControlAdvertise, cfg.Control.Advertise, cfg.Network.AdvertiseHost)
 	if err := CheckListen(opt.ControlListen, opt.InsecureListen); err != nil {
 		return err
 	}
@@ -1150,6 +1141,16 @@ func resolveAdvertiseAddr(listen, advertise string) (string, error) {
 		return net.JoinHostPort(advertise, port), nil
 	}
 	return "", fmt.Errorf("address %q: %w", advertise, err)
+}
+
+func chooseAdvertise(explicit, configured, sharedHost string) string {
+	if explicit != "" {
+		return explicit
+	}
+	if configured != "" {
+		return configured
+	}
+	return sharedHost
 }
 
 func resolveAPIAdvertise(bound, configured, rpcAdvertise string) (string, error) {

@@ -1,10 +1,12 @@
 package agentcfg
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/qleelulu/procmesh/internal/errcode"
@@ -16,6 +18,7 @@ type Config struct {
 	DataDir    string
 	Listen     string
 	Advertise  string
+	Network    Network
 	Pprof      Pprof
 	Disk       logmgr.Policy
 	Gossip     Gossip
@@ -56,6 +59,59 @@ type Process struct {
 	DisableRemoteCreate bool
 	DisableRemoteUpdate bool
 	DisableRemoteDelete bool
+}
+
+type Network struct {
+	AdvertiseHost string
+}
+
+func (n Network) Validate() error {
+	host := n.AdvertiseHost
+	if host == "" {
+		return nil
+	}
+	parsedHost := host
+	bracketed := strings.HasPrefix(parsedHost, "[") || strings.HasSuffix(parsedHost, "]")
+	if bracketed {
+		if !strings.HasPrefix(parsedHost, "[") || !strings.HasSuffix(parsedHost, "]") {
+			return errcode.E(errcode.INVALID, "network advertise_host must be a valid IP address or hostname")
+		}
+		parsedHost = strings.TrimSuffix(strings.TrimPrefix(parsedHost, "["), "]")
+	}
+	if ip := net.ParseIP(parsedHost); ip != nil {
+		if ip.IsUnspecified() {
+			return errcode.E(errcode.INVALID, "network advertise_host must be dialable")
+		}
+		return nil
+	}
+	if strings.Contains(host, ":") {
+		return errcode.E(errcode.INVALID, "network advertise_host must be a host without a port")
+	}
+	if bracketed || !validHostname(host) {
+		return errcode.E(errcode.INVALID, "network advertise_host must be a valid IP address or hostname")
+	}
+	return nil
+}
+
+func validHostname(host string) bool {
+	if len(host) > 253 {
+		return false
+	}
+	host = strings.TrimSuffix(host, ".")
+	if host == "" {
+		return false
+	}
+	for _, label := range strings.Split(host, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, c := range label {
+			if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '-' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 type Backup struct {
@@ -109,6 +165,7 @@ type file struct {
 	DataDir    string          `yaml:"data_dir"`
 	Listen     string          `yaml:"listen"`
 	Advertise  string          `yaml:"advertise"`
+	Network    *networkFile    `yaml:"network"`
 	Pprof      *pprofFile      `yaml:"pprof"`
 	Disk       *diskFile       `yaml:"disk"`
 	Gossip     *gossipFile     `yaml:"gossip"`
@@ -119,6 +176,10 @@ type file struct {
 	Backup     *backupFile     `yaml:"backup"`
 	Process    *processFile    `yaml:"process"`
 	Update     *updateFile     `yaml:"update"`
+}
+
+type networkFile struct {
+	AdvertiseHost string `yaml:"advertise_host"`
 }
 
 type pprofFile struct {
@@ -298,6 +359,12 @@ func LoadAll(path string, required bool) (Config, error) {
 		return Config{}, err
 	}
 	cfg := Config{DataDir: f.DataDir, Listen: f.Listen, Advertise: f.Advertise, Disk: p, Batch: batch, Update: upd}
+	if network := f.Network; network != nil {
+		cfg.Network.AdvertiseHost = network.AdvertiseHost
+	}
+	if err := cfg.Network.Validate(); err != nil {
+		return Config{}, err
+	}
 	if pprof := f.Pprof; pprof != nil {
 		cfg.Pprof.Listen = pprof.Listen
 	}

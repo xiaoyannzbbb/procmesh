@@ -127,6 +127,69 @@ func TestResolveAdvertiseAddr_RejectsMalformedHostPort(t *testing.T) {
 	}
 }
 
+func TestChooseAdvertise(t *testing.T) {
+	tests := []struct {
+		name       string
+		explicit   string
+		configured string
+		sharedHost string
+		want       string
+	}{
+		{
+			name:       "runtime option wins",
+			explicit:   "option.example.com:28683",
+			configured: "config.example.com:18683",
+			sharedHost: "10.0.0.1",
+			want:       "option.example.com:28683",
+		},
+		{
+			name:       "endpoint config overrides shared host",
+			configured: "config.example.com:18683",
+			sharedHost: "10.0.0.1",
+			want:       "config.example.com:18683",
+		},
+		{
+			name:       "shared host is fallback",
+			sharedHost: "10.0.0.1",
+			want:       "10.0.0.1",
+		},
+		{
+			name: "empty preserves existing behavior",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := chooseAdvertise(tt.explicit, tt.configured, tt.sharedHost); got != tt.want {
+				t.Fatalf("chooseAdvertise(%q, %q, %q) = %q, want %q", tt.explicit, tt.configured, tt.sharedHost, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSharedAdvertiseHostUsesEachListenPort(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		listen string
+		want   string
+	}{
+		{name: "HTTP", listen: "0.0.0.0:18680", want: "10.0.0.1:18680"},
+		{name: "Gossip", listen: "0.0.0.0:18689", want: "10.0.0.1:18689"},
+		{name: "RPC", listen: "0.0.0.0:18683", want: "10.0.0.1:18683"},
+		{name: "Control", listen: "0.0.0.0:18685", want: "10.0.0.1:18685"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			selected := chooseAdvertise("", "", "10.0.0.1")
+			got, err := resolveAdvertiseAddr(tt.listen, selected)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("advertise = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestResolveAPIAdvertise(t *testing.T) {
 	tests := []struct {
 		name         string

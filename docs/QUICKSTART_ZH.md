@@ -2,7 +2,7 @@
 
 本文面向第一次部署 ProcMesh 的运维人员，目标是完成以下工作：
 
-1. 构建并安装 ProcMesh；
+1. 安装 ProcMesh；
 2. 用 systemd 启动 Agent；
 3. 初始化单节点或三节点集群；
 4. 创建、启动并检查第一个托管进程；
@@ -52,49 +52,80 @@ ProcMesh 没有独立的中心服务器。每个节点都运行一个 Agent，�
 
 如果只想快速验证功能，可先执行本节。正式三节点部署请继续阅读第 4 节。
 
-### 3.1 构建
+### 3.1 安装 ProcMesh
 
-构建机需要：
+选择下面任意一种方式。两种方式安装的 Release 都包含 `procmesh`、`procmesh-agent` 和 `procmesh-shim`。
 
-- Go 1.25 或更高版本；
-- Node.js 22.20.0 或更高的 22.x 版本（低于 23）；
-- npm；
-- GNU Make。
+#### 自动安装（Linux，推荐）
 
-在仓库根目录执行：
+安装器会下载最新正式 Release，并使用 Release 提供的 SHA-256 校验值验证压缩包：
 
 ```bash
-make web
-make bin
+curl -fsSL https://raw.githubusercontent.com/xiaoyannzbbb/procmesh/main/scripts/install.sh | bash
 ```
 
-`make web` 会把前端构建到 `internal/web/dist/`，随后 `make bin` 会把 Web UI 嵌入 Agent。最终产物位于：
+安装过程需要交互式终端。建议保留默认安装目录 `/usr/local/bin`；如果希望 Agent 作为系统服务运行，请在提示时选择安装 systemd unit，并选择立即启用和启动服务。已有配置、数据目录和 systemd unit 不会被覆盖。
+
+默认监听地址是 `127.0.0.1:18680`。选择非回环地址时，安装器会加入 `--insecure-listen`，但不会启用 HTTPS；必须通过防火墙、HTTPS 反向代理、VPN 或堡垒机限制访问。
+
+创建新的 Agent 配置时，安装器还会探测本机出口网卡 IPv4 和公网 IPv4，供用户选择 `network.advertise_host`。公网地址依次通过 `api.ipify.org`、`ip.sb` 和 `ifconfig.me` 探测，每个来源最多等待 3 秒，全部失败也不会中止安装；默认保持该配置为空。选择地址只改变公布地址，不会扩大 HTTP、Gossip、RPC 或 Raft 的监听范围。
+
+#### 从 GitHub Release 下载
+
+打开 [GitHub Releases](https://github.com/xiaoyannzbbb/procmesh/releases/latest)，下载与操作系统及 CPU 架构匹配的压缩包，同时下载 `checksums.txt`：
 
 ```text
-bin/procmesh
-bin/procmesh-agent
-bin/procmesh-shim
+procmesh_<version>_linux_<amd64|arm64|armv7>.tar.gz
+procmesh_<version>_darwin_<amd64|arm64>.tar.gz
 ```
 
-### 3.2 前台启动单节点 Agent
+在 Linux 上校验并安装三个二进制程序。将 `VERSION` 和 `ARCH` 改为实际下载版本和架构，其中版本号不含开头的 `v`：
+
+```bash
+VERSION='X.Y.Z'
+ARCH='amd64'
+ARCHIVE="procmesh_${VERSION}_linux_${ARCH}.tar.gz"
+awk -v file="$ARCHIVE" '$2 == file { print }' checksums.txt | sha256sum -c -
+tar -xzf "$ARCHIVE"
+PACKAGE_DIR="${ARCHIVE%.tar.gz}"
+sudo install -m 0755 \
+  "$PACKAGE_DIR/procmesh" \
+  "$PACKAGE_DIR/procmesh-agent" \
+  "$PACKAGE_DIR/procmesh-shim" \
+  /usr/local/bin/
+```
+
+macOS 可使用 `shasum -a 256 -c -` 替代 `sha256sum -c -`。Linux 压缩包还包含默认 `agent.yaml` 和 systemd unit。
+
+### 3.2 启动并检查单节点 Agent
+
+如果自动安装时已经启用 systemd 服务，不需要再前台启动 Agent，直接检查服务和 HTTP 端点：
+
+```bash
+sudo systemctl status procmesh-agent --no-pager
+curl -fsS http://127.0.0.1:18680/healthz
+curl -fsS http://127.0.0.1:18680/readyz
+```
+
+如果只安装了二进制程序，可在前台启动一个用于体验的单节点 Agent：
 
 ```bash
 mkdir -p /tmp/procmesh-quickstart
-./bin/procmesh-agent \
+procmesh-agent \
   --data-dir /tmp/procmesh-quickstart \
   --listen 127.0.0.1:18680 \
   --rpc 127.0.0.1:18683 \
   --control 127.0.0.1:18685 \
   --gossip 127.0.0.1:18689 \
-  --shim-bin ./bin/procmesh-shim
+  --shim-bin "$(command -v procmesh-shim)"
 ```
 
-保持该终端运行，另开终端验证：
+以前台方式启动时，保持该终端运行，另开终端验证：
 
 ```bash
 curl -fsS http://127.0.0.1:18680/healthz
 curl -fsS http://127.0.0.1:18680/readyz
-./bin/procmesh --server 127.0.0.1:18680 status
+procmesh --server 127.0.0.1:18680 status
 ```
 
 `healthz` 和 `readyz` 应返回 `ok`，`status` 应输出 `ready` 和当前进程数。
@@ -104,7 +135,7 @@ curl -fsS http://127.0.0.1:18680/readyz
 初始化只能成功执行一次：
 
 ```bash
-./bin/procmesh --server 127.0.0.1:18680 cluster init --admin-user admin
+procmesh --server 127.0.0.1:18680 cluster init --admin-user admin
 ```
 
 输出格式如下：
@@ -121,42 +152,16 @@ admin_password=<一次性显示的随机密码>
 登录时，省略 `--password` 可从标准输入读取密码，避免密码直接出现在命令参数中：
 
 ```bash
-./bin/procmesh --server 127.0.0.1:18680 login --user admin
+procmesh --server 127.0.0.1:18680 login --user admin
 ```
 
 输入上一条命令返回的密码并回车。CLI 会把会话以 `0600` 权限保存到 `~/.config/procmesh/session`。不要用 `sudo procmesh` 登录后再用普通用户执行命令，否则两个用户读取的会话文件不同。
 
 现在可在浏览器访问 `http://127.0.0.1:18680/`，或直接跳到第 7 节启动进程。浏览器不会复用 CLI 保存的会话，需要在 Web 登录页再次使用管理员账号和密码登录。
 
-## 4. 构建和分发生产二进制
+## 4. 在每个生产节点安装 Release
 
-### 4.1 在构建机编译
-
-```bash
-make web
-make bin
-go test ./...
-```
-
-如果构建机与生产节点的 CPU 架构不同，需要设置对应的交叉编译参数。以下示例构建 Linux AMD64 二进制；前端仍应先在当前平台执行 `make web`：
-
-```bash
-GOOS=linux GOARCH=amd64 go build -o bin/procmesh ./cmd/procmesh
-GOOS=linux GOARCH=amd64 go build -o bin/procmesh-agent ./cmd/procmesh-agent
-GOOS=linux GOARCH=amd64 go build -o bin/procmesh-shim ./cmd/procmesh-shim
-```
-
-ARM64 节点把 `GOARCH=amd64` 改为 `GOARCH=arm64`。
-
-### 4.2 在每个节点安装
-
-将三个文件分发到每个节点后执行：
-
-```bash
-sudo install -m 0755 bin/procmesh /usr/local/bin/procmesh
-sudo install -m 0755 bin/procmesh-agent /usr/local/bin/procmesh-agent
-sudo install -m 0755 bin/procmesh-shim /usr/local/bin/procmesh-shim
-```
+在三个节点上分别按照第 3.1 节的任一方式安装 ProcMesh。自动安装时保留默认安装目录 `/usr/local/bin`；在询问是否安装 systemd unit 时选择否，下一节会创建适用于多节点拓扑的配置和 unit。
 
 验证文件和版本兼容性：
 
@@ -167,7 +172,7 @@ command -v procmesh-shim
 procmesh-agent --help
 ```
 
-三个节点应使用同一次构建产生的二进制，避免协议版本不一致导致节点拒绝加入。
+三个节点应安装同一版本的 Release，避免协议版本不一致导致节点拒绝加入。
 
 ## 5. 配置 systemd
 
@@ -673,12 +678,15 @@ non-loopback listen requires --insecure-listen
 
 ### 11.2 节点列表出现 `[::]`、`0.0.0.0` 或 `127.0.0.1`
 
-多节点部署时，这些地址通常不能供其他节点访问。优先在 `agent.yaml` 中为 HTTP API 设置独立的可拨号地址；只填 IP 或主机名时会沿用实际监听端口：
+多节点部署时，这些地址通常不能供其他节点访问。如果 HTTP、Gossip、RPC 和 Raft 共用同一个可达主机，可在 `agent.yaml` 中统一配置；各端点会沿用自己的实际监听端口：
 
 ```yaml
 listen: "[::]:18680"
-advertise: "10.0.0.11"
+network:
+  advertise_host: "10.0.0.11"
 ```
+
+`network.advertise_host` 不改变监听地址，并且不能包含端口。使用不同网络或 NAT 端口映射时，应继续分别配置顶层 `advertise`、`gossip.advertise`、`rpc.advertise` 或 `control.advertise`；端点配置优先于共享主机。
 
 也可以把 systemd 中四个监听地址改为本机实际静态内网 IP。修改后执行：
 

@@ -65,6 +65,174 @@ prompt_yes_no() {
   done
 }
 
+valid_ipv4() {
+  local address=$1
+  local octet value
+  local -a octets
+
+  IFS=. read -r -a octets <<<"$address"
+  ((${#octets[@]} == 4)) || return 1
+  for octet in "${octets[@]}"; do
+    [[ "$octet" =~ ^[0-9]+$ && ${#octet} -le 3 ]] || return 1
+    value=$((10#$octet))
+    ((value >= 0 && value <= 255)) || return 1
+  done
+}
+
+valid_hostname() {
+  local host=${1%.}
+  local label
+  local -a labels
+
+  [[ -n "$host" && ${#host} -le 253 ]] || return 1
+  IFS=. read -r -a labels <<<"$host"
+  for label in "${labels[@]}"; do
+    [[ ${#label} -ge 1 && ${#label} -le 63 ]] || return 1
+    [[ "$label" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$ ]] || return 1
+  done
+}
+
+valid_ipv6() {
+  local address=$1
+  local compressed=false
+  local group group_count=0 normalized suffix
+  local -a groups
+
+  if [[ "$address" == \[*\] ]]; then
+    address=${address#\[}
+    address=${address%\]}
+  elif [[ "$address" == \[* || "$address" == *\] ]]; then
+    return 1
+  fi
+  [[ "$address" == *:*:* && "$address" =~ ^[0-9A-Fa-f:]+$ && "$address" =~ [1-9A-Fa-f] && "$address" != *:::* ]] || return 1
+  if [[ "$address" == *::* ]]; then
+    compressed=true
+    suffix=${address#*::}
+    [[ "$suffix" != *::* ]] || return 1
+  fi
+  normalized=${address//::/:}
+  IFS=: read -r -a groups <<<"$normalized"
+  for group in "${groups[@]}"; do
+    [[ -z "$group" ]] && continue
+    [[ ${#group} -le 4 ]] || return 1
+    ((group_count += 1))
+  done
+  if [[ "$compressed" == true ]]; then
+    ((group_count < 8))
+  else
+    ((group_count == 8))
+  fi
+}
+
+valid_advertise_host() {
+  local host=$1
+
+  [[ -n "$host" && "$host" != "0.0.0.0" && "$host" != "::" && "$host" != "[::]" ]] || return 1
+  if valid_ipv4 "$host"; then
+    return 0
+  fi
+  if [[ "$host" == *:* || "$host" == \[* || "$host" == *\] ]]; then
+    valid_ipv6 "$host"
+    return
+  fi
+  valid_hostname "$host"
+}
+
+detect_lan_ipv4() {
+  local candidate route_output
+
+  if command -v ip >/dev/null 2>&1; then
+    route_output=$(ip -4 route get 1.1.1.1 2>/dev/null || true)
+    candidate=$(awk '{ for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit } }' <<<"$route_output")
+    if valid_advertise_host "$candidate" && [[ "$candidate" != 127.* && "$candidate" != 169.254.* ]]; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+  fi
+
+  if command -v hostname >/dev/null 2>&1; then
+    for candidate in $(hostname -I 2>/dev/null || true); do
+      if valid_advertise_host "$candidate" && [[ "$candidate" != 127.* && "$candidate" != 169.254.* ]]; then
+        printf '%s\n' "$candidate"
+        return
+      fi
+    done
+  fi
+}
+
+detect_public_ipv4() {
+  local candidate endpoint
+
+  for endpoint in \
+    https://api.ipify.org \
+    https://api.ip.sb/ip \
+    https://ifconfig.me/ip; do
+    candidate=$(curl --fail --silent --location --max-time 3 --connect-timeout 2 \
+      --proto '=https' --tlsv1.2 -4 --user-agent 'procmesh-installer/1' \
+      "$endpoint" 2>/dev/null || true)
+    candidate=${candidate//$'\r'/}
+    candidate=${candidate//$'\n'/}
+    if valid_advertise_host "$candidate"; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+  done
+}
+
+prompt_advertise_host() {
+  local lan_ip=$1
+  local public_ip=$2
+  local answer default_choice manual_value
+
+  default_choice=4
+
+  while true; do
+    {
+      printf '\nChoose network.advertise_host for endpoints without an explicit advertise address:\n'
+      printf '  1) Local interface IPv4: %s\n' "${lan_ip:-not detected}"
+      printf '  2) Public IPv4:          %s\n' "${public_ip:-not detected}"
+      printf '  3) Enter another IP address or hostname\n'
+      printf '  4) Leave unset\n'
+      printf 'Advertise selection does not change listen addresses.\n'
+      printf 'Selection [%s]: ' "$default_choice"
+    } >"$tty"
+    IFS= read -r answer <"$tty" || die "unable to read interactive input"
+    answer=${answer:-$default_choice}
+    case "$answer" in
+      1)
+        if [[ -n "$lan_ip" ]]; then
+          warn 'advertise host selected; ensure every non-overridden endpoint listens on an address reachable through this host'
+          REPLY=$lan_ip
+          return
+        fi
+        printf 'No local interface IPv4 address was detected.\n' >"$tty"
+        ;;
+      2)
+        if [[ -n "$public_ip" ]]; then
+          warn 'public advertise host selected; ensure every non-overridden ProcMesh endpoint is reachable at this address'
+          REPLY=$public_ip
+          return
+        fi
+        printf 'No public IPv4 address was detected.\n' >"$tty"
+        ;;
+      3)
+        prompt_value 'Advertise host (without port)' ''
+        manual_value=$REPLY
+        if valid_advertise_host "$manual_value"; then
+          REPLY=$manual_value
+          return
+        fi
+        printf 'Enter a non-wildcard IP address or valid DNS hostname without a port.\n' >"$tty"
+        ;;
+      4)
+        REPLY=''
+        return
+        ;;
+      *) printf 'Please select 1, 2, 3, or 4.\n' >"$tty" ;;
+    esac
+  done
+}
+
 expand_home() {
   case "$1" in
     '~') printf '%s\n' "$HOME" ;;
@@ -173,11 +341,15 @@ write_default_config() {
   local destination=$1
   local data_dir=$2
   local listen_address=$3
+  local advertise_host=$4
 
   cat >"$destination" <<EOF
 # ProcMesh Agent configuration generated by scripts/install.sh.
 data_dir: "$data_dir"
 listen: "$listen_address"
+
+network:
+  advertise_host: "$advertise_host"
 
 disk:
   warn_percent: 85
@@ -190,6 +362,38 @@ batch:
   max_concurrency: 16
   target_timeout: "30s"
 EOF
+}
+
+write_packaged_config() {
+  local source=$1
+  local destination=$2
+  local data_dir=$3
+  local listen_address=$4
+  local advertise_host=$5
+
+  awk -v data_dir="$data_dir" -v listen_address="$listen_address" -v advertise_host="$advertise_host" '
+    /^data_dir:/ {
+      print "data_dir: \"" data_dir "\""
+      next
+    }
+    /^listen:/ {
+      print "listen: \"" listen_address "\""
+      next
+    }
+    /^  advertise_host:/ {
+      print "  advertise_host: \"" advertise_host "\""
+      found_advertise_host = 1
+      next
+    }
+    { print }
+    END {
+      if (!found_advertise_host) {
+        print ""
+        print "network:"
+        print "  advertise_host: \"" advertise_host "\""
+      }
+    }
+  ' "$source" >"$destination"
 }
 
 write_systemd_unit() {
@@ -229,6 +433,7 @@ WantedBy=multi-user.target
 EOF
 }
 
+main() {
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   usage
   exit 0
@@ -329,6 +534,14 @@ if prompt_yes_no 'Install a systemd unit' no; then
     require_systemd_safe_value "$listen_host"
 
     listen_address="$listen_host:$listen_port"
+    advertise_host=''
+    if [[ ! -e "$config_path" ]]; then
+      lan_ip=$(detect_lan_ipv4)
+      public_ip=$(detect_public_ipv4)
+      prompt_advertise_host "$lan_ip" "$public_ip"
+      advertise_host=$REPLY
+      require_systemd_safe_value "$advertise_host"
+    fi
     insecure_flag=''
     case "$listen_host" in
       127.*|::1|localhost) ;;
@@ -352,13 +565,11 @@ if prompt_yes_no 'Install a systemd unit' no; then
         run_privileged install -d -m 0750 "$config_parent"
       fi
       if [[ -f "$package_dir/agent.yaml" ]]; then
-        sed \
-          -e "s|^data_dir:.*|data_dir: \"$data_dir\"|" \
-          -e "s|^listen:.*|listen: \"$listen_address\"|" \
-          "$package_dir/agent.yaml" >"$tmp_dir/agent.yaml"
+        write_packaged_config "$package_dir/agent.yaml" "$tmp_dir/agent.yaml" \
+          "$data_dir" "$listen_address" "$advertise_host"
       else
         warn 'release archive has no agent.yaml; generating the documented baseline configuration'
-        write_default_config "$tmp_dir/agent.yaml" "$data_dir" "$listen_address"
+        write_default_config "$tmp_dir/agent.yaml" "$data_dir" "$listen_address" "$advertise_host"
       fi
       run_privileged install -m 0640 "$tmp_dir/agent.yaml" "$config_path"
       printf 'Created default configuration: %s\n' "$config_path"
@@ -388,3 +599,8 @@ if [[ "$agent_was_running" == true ]]; then
 fi
 
 printf 'ProcMesh %s installation complete.\n' "$tag"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
