@@ -69,30 +69,69 @@ test_validate_advertise_host() {
   done
 }
 
+test_listen_host_helpers() {
+  for host in 127.0.0.1 127.0.0.2 localhost ::1 '[::1]'; do
+    is_loopback_host "$host" || fail "expected loopback listen host: $host"
+  done
+  for host in 0.0.0.0 :: '[::]' 10.0.0.1; do
+    if is_loopback_host "$host"; then
+      fail "expected non-loopback listen host: $host"
+    fi
+  done
+  for host in '' 0.0.0.0 :: '[::]'; do
+    is_unspecified_host "$host" || fail "expected unspecified listen host: $host"
+  done
+  if is_unspecified_host '10.0.0.1'; then
+    fail 'concrete listen host was classified as unspecified'
+  fi
+  assert_eq '0.0.0.0:18689' "$(join_host_port '0.0.0.0' 18689)" 'IPv4 listen address'
+  assert_eq '[::]:18689' "$(join_host_port '::' 18689)" 'IPv6 listen address'
+  assert_eq '[2001:db8::1]:18689' "$(join_host_port '[2001:db8::1]' 18689)" 'bracketed IPv6 listen address'
+}
+
 test_write_packaged_config() {
   local source output
   source=$(mktemp)
   output=$(mktemp)
   trap 'rm -f "$source" "$output"' RETURN
   printf 'data_dir: "/old"\nlisten: "127.0.0.1:18680"\n' >"$source"
-  write_packaged_config "$source" "$output" '/var/lib/procmesh' '0.0.0.0:18680' '10.0.0.1'
+  write_packaged_config "$source" "$output" '/var/lib/procmesh' '0.0.0.0:18680' '10.0.0.1' \
+    '0.0.0.0:18689' '0.0.0.0:18683' '0.0.0.0:18685'
   grep -Fq 'data_dir: "/var/lib/procmesh"' "$output" || fail 'packaged config data_dir was not replaced'
   grep -Fq 'listen: "0.0.0.0:18680"' "$output" || fail 'packaged config listen was not replaced'
   grep -Fq '  advertise_host: "10.0.0.1"' "$output" || fail 'packaged config advertise host was not added'
 
-  printf 'data_dir: "/old"\nlisten: "127.0.0.1:18680"\nnetwork:\n  advertise_host: ""\n' >"$source"
-  write_packaged_config "$source" "$output" '/srv/procmesh' '127.0.0.1:28080' 'agent.example.com'
+  printf 'data_dir: "/old"\nlisten: "127.0.0.1:18680"\nnetwork:\n  advertise_host: ""\ngossip:\n  listen: "127.0.0.1:18689"\nrpc:\n  listen: "127.0.0.1:18683"\ncontrol:\n  listen: "127.0.0.1:18685"\n' >"$source"
+  write_packaged_config "$source" "$output" '/srv/procmesh' '127.0.0.1:28080' 'agent.example.com' \
+    '10.0.0.1:18689' '10.0.0.1:18683' '10.0.0.1:18685'
   assert_eq '1' "$(grep -c '^network:$' "$output")" 'packaged config network section count'
   grep -Fq '  advertise_host: "agent.example.com"' "$output" || fail 'packaged config advertise host was not replaced'
+  grep -Fq '  listen: "10.0.0.1:18689"' "$output" || fail 'packaged config gossip listen was not replaced'
+  grep -Fq '  listen: "10.0.0.1:18683"' "$output" || fail 'packaged config RPC listen was not replaced'
+  grep -Fq '  listen: "10.0.0.1:18685"' "$output" || fail 'packaged config control listen was not replaced'
+
+  write_packaged_config "$source" "$output" '/srv/procmesh' '127.0.0.1:28080' '' '' '' ''
+  grep -Fq '  listen: "127.0.0.1:18689"' "$output" || fail 'packaged config gossip listen was not preserved'
+  grep -Fq '  listen: "127.0.0.1:18683"' "$output" || fail 'packaged config RPC listen was not preserved'
+  grep -Fq '  listen: "127.0.0.1:18685"' "$output" || fail 'packaged config control listen was not preserved'
 }
 
 test_write_default_config() {
   local output
   output=$(mktemp)
   trap 'rm -f "$output"' RETURN
-  write_default_config "$output" '/var/lib/procmesh' '0.0.0.0:18680' '10.0.0.1'
+  write_default_config "$output" '/var/lib/procmesh' '0.0.0.0:18680' '10.0.0.1' \
+    '0.0.0.0:18689' '0.0.0.0:18683' '0.0.0.0:18685'
   grep -Fq 'network:' "$output" || fail 'default config has no network section'
   grep -Fq '  advertise_host: "10.0.0.1"' "$output" || fail 'default config has no advertise host'
+  grep -Fq '  listen: "0.0.0.0:18689"' "$output" || fail 'default config has no gossip listen'
+  grep -Fq '  listen: "0.0.0.0:18683"' "$output" || fail 'default config has no RPC listen'
+  grep -Fq '  listen: "0.0.0.0:18685"' "$output" || fail 'default config has no control listen'
+
+  write_default_config "$output" '/var/lib/procmesh' '127.0.0.1:18680' '' '' '' ''
+  if grep -Eq '^(gossip|rpc|control):$' "$output"; then
+    fail 'default config exposed cluster listeners without opt-in'
+  fi
 }
 
 test_stdin_entrypoint() {
@@ -106,6 +145,7 @@ test_stdin_entrypoint() {
 test_detect_lan_ipv4
 test_detect_public_ipv4
 test_validate_advertise_host
+test_listen_host_helpers
 test_write_default_config
 test_write_packaged_config
 test_stdin_entrypoint

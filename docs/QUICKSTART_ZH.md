@@ -70,6 +70,8 @@ curl -fsSL https://raw.githubusercontent.com/xiaoyannzbbb/procmesh/main/scripts/
 
 创建新的 Agent 配置时，安装器还会探测本机出口网卡 IPv4 和公网 IPv4，供用户选择 `network.advertise_host`。公网地址依次通过 `api.ipify.org`、`ip.sb` 和 `ifconfig.me` 探测，每个来源最多等待 3 秒，全部失败也不会中止安装；默认保持该配置为空。选择地址只改变公布地址，不会扩大 HTTP、Gossip、RPC 或 Raft 的监听范围。
 
+HTTP 使用非回环监听地址时，安装器会询问是否让 Gossip、RPC 和 Raft Control 使用相同的监听主机，默认不启用。启用后应仅在可信集群网络开放 `18689/TCP+UDP`、`18683/TCP` 和 `18685/TCP`；使用 `0.0.0.0` 或 `::` 时必须同时选择可拨号的 `network.advertise_host`。
+
 #### 从 GitHub Release 下载
 
 打开 [GitHub Releases](https://github.com/xiaoyannzbbb/procmesh/releases/latest)，下载与操作系统及 CPU 架构匹配的压缩包，同时下载 `checksums.txt`：
