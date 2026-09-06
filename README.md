@@ -196,9 +196,13 @@ procmesh --server 127.0.0.1:18680 process rollback demo-worker \
 # 管理节点与远程 Owner 上的进程
 procmesh --server 127.0.0.1:18680 node list
 procmesh --server 127.0.0.1:18680 --node <NODE_ID> process list
+
+# 检查并修复 FSM 与 Raft configuration 的成员关系差异
+procmesh --server 127.0.0.1:18680 cluster membership check
+procmesh --server 127.0.0.1:18680 --operation-id <UUID> cluster membership reconcile
 ```
 
-运行 `procmesh` 可查看完整命令列表和参数说明。
+`cluster membership reconcile` 只修复 FSM 已授权或已明确移除的成员，不会自动删除 FSM 未知的 Raft 成员，也不会晋升 voter。完整的权限、状态、退出码和 `BLOCKED` 处置说明参见[Raft 成员关系检查与修复](docs/QUICKSTART_ZH.md#114-raft-成员关系检查与修复)。运行 `procmesh` 可查看完整命令列表和参数说明。
 
 ## 运维与安全
 

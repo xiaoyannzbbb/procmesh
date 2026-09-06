@@ -704,27 +704,78 @@ sudo systemctl restart procmesh-agent
 
 CLI 只有在节点已写入 Raft configuration 且准入状态为 `ADMITTED` 后才报告成功。如果返回 `cluster already initialized`，说明该数据目录已经完成集群身份写入，不应继续重复执行 `agent join`。
 
-加入在远端提交 `join_prepare` 后若因成员写入超时或 Leader 切换而失败，本地尚不会写入 `cluster.json`，只保留可复用的 pending identity；不要删除 pending 文件、数据目录或重复初始化。Leader 会每 5 秒自动对账 FSM 准入状态与 Raft configuration。若本地已经存在 `cluster.json`，说明远端曾确认成员关系并完成 `ADMITTED`，不应重新执行 Join；可以在任一已加入 Agent 上用以下命令检查和触发同一套幂等修复逻辑：
-
-```bash
-# cluster.read；可在任一 Agent 执行
-procmesh --server 10.0.0.11:18680 cluster membership check
-
-# cluster.manage；请求会转发到当前 Raft Leader
-procmesh --server 10.0.0.11:18680 cluster membership reconcile
-```
-
-输出中的 `CLEAN` 表示一致；`DRIFTED` 表示存在可自动修复项；`BLOCKED` 表示至少有一项需要人工判断。命令会先打印 `freshness`、quorum、Leader、修复数量和逐节点问题，再在非 `CLEAN` 时返回非零退出码。报告不会暴露 Raft 地址。
-
-自动修复只会补齐或纠正 FSM 中 `JOINING`/`ADMITTED` 的成员、在精确读回确认后完成 `JOINING`，以及从 Raft configuration 移除 FSM 已明确标记为 `REMOVED`/`REVOKED` 的成员。若出现 `UNEXPECTED_MEMBER`，该成员在 Raft 中存在但 FSM 无记录，系统只报告 `BLOCKED`，绝不会自动删除；应先核对集群历史、quorum 和备份，再按事故恢复流程处理。`INVALID_DESIRED_MEMBER` 表示 FSM 成员缺少 Raft 地址，同样需要先修复权威状态。
-
-可通过 `/metrics` 观察 `procmesh_raft_membership_reconcile_pending_issues`、`procmesh_raft_membership_reconcile_last_success_unix` 和 `procmesh_raft_membership_reconcile_consecutive_failures`。连续失败只在首次失败和恢复时写日志，避免周期任务反复刷屏。
+加入在远端提交 `join_prepare` 后若因成员写入超时或 Leader 切换而失败，本地尚不会写入 `cluster.json`，只保留可复用的 pending identity；不要删除 pending 文件、数据目录或重复初始化。Leader 会在启动时及此后每 5 秒自动对账 FSM 准入状态与 Raft configuration。若本地已经存在 `cluster.json`，说明远端曾确认成员关系并完成 `ADMITTED`，不应重新执行 Join；按下一节检查成员关系。
 
 包含 protocol 1 节点的集群升级到 protocol 2 时，应先滚动升级 Raft configuration 中全部现存 voter 和 nonvoter，升级期间不要执行 Join。混合版本状态下 Join 会返回 `INCOMPATIBLE_VERSION`；成员版本尚未通过 Gossip 确认时返回 `UNAVAILABLE`。不要通过重建 token 绕过该门控。
 
 `cluster init` 只有在本机 Raft control 完成启动后才返回管理员初始密码。若该阶段返回 `UNAVAILABLE`，本次生成的集群身份与 Raft 临时状态会被撤销，可以在排除监听地址、磁盘权限等问题后重新执行初始化。
 
-### 11.4 CLI 返回 authentication required
+### 11.4 Raft 成员关系检查与修复
+
+ProcMesh 同时维护两份成员信息：Raft FSM 中的准入状态是权威期望，Raft configuration 是实际参与控制面复制的成员集合。`cluster membership reconcile` 比较二者，并用与后台周期任务相同的幂等逻辑收敛可安全修复的差异。它不是重新 Join，也不会重建集群、修改业务进程或自动晋升 voter。
+
+通常无需定期手工执行，因为当前 Leader 会自动对账。以下场景适合手工检查：Join 返回 `UNAVAILABLE`/`TIMEOUT`、`node remove` 结果不确定、Leader 切换后成员角色异常，或相关 Prometheus 指标持续非零。
+
+#### 标准操作流程
+
+先执行只读检查：
+
+```bash
+procmesh --server 10.0.0.11:18680 cluster membership check
+```
+
+确认报告后再触发修复。建议显式指定 UUID；如果请求返回 `TIMEOUT`，使用同一个 `operation_id` 重试：
+
+```bash
+procmesh --server 10.0.0.11:18680 \
+  --operation-id <UUID> \
+  cluster membership reconcile
+
+# 修复后重新读取当前状态
+procmesh --server 10.0.0.11:18680 cluster membership check
+```
+
+CLI 未指定 `--operation-id` 时会自动生成。`check` 需要集群范围的 `cluster.read` 权限；`reconcile` 需要 `cluster.manage`、有效 quorum，并由当前 Raft Leader 执行。请求可以发送到任一 Agent，入口节点会通过内部 mTLS 转发到 Leader，Leader 会重新鉴权并写入 `cluster.membership.reconcile` 审计事件。
+
+#### 状态与退出码
+
+| `status` | 含义 | 后续操作 |
+| --- | --- | --- |
+| `CLEAN` | FSM 与 Raft configuration 一致。 | 无需处理，CLI 退出码为 `0`。 |
+| `DRIFTED` | 只有可自动修复的差异。 | 执行 `reconcile`；非 `CLEAN` 报告的退出码为 `1`。 |
+| `BLOCKED` | 至少存在一个不能安全自动处理的问题。 | 查看逐节点 issue 并人工核对；CLI 退出码为 `1`。 |
+
+RPC、认证或 quorum 错误同样返回退出码 `1`，但错误写到 stderr；参数错误返回 `2`。当 quorum 丢失时，`check` 在本地 configuration 仍可读的情况下会返回 `freshness=STALE`、`has_quorum=false` 和 `leader=false`，而 `reconcile` 返回 `UNAVAILABLE` 且不写入。
+
+报告首先输出以下 `key=value` 字段：
+
+- `status`：整体结果；
+- `freshness`：`LIVE` 或 `STALE`；
+- `has_quorum`、`leader`：当前控制面可写性；
+- `observed_unix_ms`：本次观测时间；
+- `repaired`：仅 `reconcile` 返回，本次已解决的可修复 issue 数；
+- `issues`：剩余 issue 数。
+
+随后每行 issue 依次为 `node_id`、`kind`、`member_state`、`actual_role`、`repairable`，字段间使用 Tab，缺失值显示为 `-`。报告和审计均不包含 Raft 地址。
+
+#### 修复边界
+
+| issue `kind` | `reconcile` 的行为 |
+| --- | --- |
+| `MISSING_MEMBER` | FSM 中为 `JOINING`/`ADMITTED`，但 Raft 中缺失：作为 nonvoter 补入。 |
+| `ADDRESS_MISMATCH` | node ID 存在但地址不一致：纠正地址，并保留当前 voter/nonvoter 身份。 |
+| `JOIN_INCOMPLETE` | Raft 已精确包含该成员，但 FSM 仍为 `JOINING`：推进为 `ADMITTED`。 |
+| `REMOVAL_PENDING` | FSM 已为 `REMOVED`/`REVOKED`，但 Raft 中仍存在：重试移除。 |
+| `UNEXPECTED_MEMBER` | Raft 中存在、FSM 中完全未知：标记 `BLOCKED`，绝不自动删除。 |
+| `INVALID_DESIRED_MEMBER` | FSM 中的活动成员缺少 Raft 地址：标记 `BLOCKED`，不猜测或覆盖权威状态。 |
+
+同一轮中一个成员失败不会阻塞其它独立成员。即使最终状态为 `BLOCKED`，命令仍可能已经修复其它安全项，因此应同时检查 `repaired` 和剩余 issue。不要为消除 `UNEXPECTED_MEMBER` 或 `INVALID_DESIRED_MEMBER` 而直接编辑 Raft/FSM 文件或删除数据目录；先核对节点身份、集群历史、quorum 和备份，再按事故恢复流程处理。
+
+#### 可观测性
+
+可通过 `/metrics` 观察 `procmesh_raft_membership_reconcile_pending_issues`、`procmesh_raft_membership_reconcile_last_success_unix` 和 `procmesh_raft_membership_reconcile_consecutive_failures`。连续失败只在首次失败和恢复时写日志，避免周期任务反复刷屏。
+
+### 11.5 CLI 返回 authentication required
 
 重新针对当前 `--server` 登录：
 
@@ -734,7 +785,7 @@ procmesh --server 10.0.0.11:18680 login --user admin
 
 默认会话只匹配登录时的 server 地址。使用 `10.0.0.11:18680` 登录后，改用主机名或另一个节点地址时不会自动复用该会话。
 
-### 11.5 创建后进程一直是 STOPPED
+### 11.6 创建后进程一直是 STOPPED
 
 `process apply` 只保存配置并创建实例记录。执行：
 
@@ -742,7 +793,7 @@ procmesh --server 10.0.0.11:18680 login --user admin
 procmesh --server 10.0.0.11:18680 process start <NAME>
 ```
 
-### 11.6 启动进程时报 shim not found
+### 11.7 启动进程时报 shim not found
 
 确认 `procmesh-shim` 位于 `PATH` 中或与 `procmesh-agent` 在同一目录。本文 systemd 单元还通过 `--shim-bin /usr/local/bin/procmesh-shim` 显式指定了路径：
 
@@ -751,7 +802,7 @@ ls -l /usr/local/bin/procmesh-shim
 sudo journalctl -u procmesh-agent -n 100 --no-pager
 ```
 
-### 11.7 进程启动后立即退出或进入 FATAL
+### 11.8 进程启动后立即退出或进入 FATAL
 
 检查以下内容：
 
@@ -764,7 +815,7 @@ sudo journalctl -u procmesh-agent -n 200 --no-pager
 
 重点确认命令路径、工作目录、运行用户权限、环境变量、端口冲突、cgroup v2 权限和健康检查地址。
 
-### 11.8 远程操作失败，但本地操作正常
+### 11.9 远程操作失败，但本地操作正常
 
 检查目标节点是否为 `ALIVE`，其 `rpc_address` 是否为实际内网 IP，以及节点间 `18683/TCP` 是否可达：
 
@@ -775,11 +826,11 @@ nc -vz 10.0.0.12 18683
 
 Agent 间 RPC 在集群初始化后使用 mTLS。如果证书或集群身份不一致，不要手工复制单个证书文件，应通过正常的加入流程恢复节点。
 
-### 11.9 Raft 操作返回 quorum 或 unavailable
+### 11.10 Raft 操作返回 quorum 或 unavailable
 
 确认多数 voter 在线且 `18685/TCP` 双向可达。三 voter 集群至少需要两个 voter 在线。Gossip 显示 `ALIVE` 不等于 Raft 一定具有 quorum，两者使用不同端口和一致性机制。
 
-### 11.10 升级后创建加入令牌返回 `admission capability unavailable`
+### 11.11 升级后创建加入令牌返回 `admission capability unavailable`
 
 `v0.1.39` 开始，每个 Raft voter 必须持有与集群 CA 匹配的 Admission Capability。旧版本只在初始化节点保留 `cluster/ca.key`；旧集群已经晋升的其他 voter 升级后若当选 Leader，会拒绝创建令牌和签发 Join，但不会停止本地业务进程。
 
@@ -797,7 +848,7 @@ procmesh --server <LEADER_API> node promote <VOTER_NODE_ID>
 
 该操作会通过内部 mTLS capability 流程分发 CA 私钥并把节点标记为 `READY`；已有 voter 的 Raft 身份保持不变。全部 voter 完成后再创建加入令牌。迁移期间不要删除数据目录、重新 `cluster init`，也不要通过日志、审计或聊天传递 CA 私钥。
 
-### 11.11 停止 Agent 与停止业务进程的区别
+### 11.12 停止 Agent 与停止业务进程的区别
 
 ```bash
 sudo systemctl stop procmesh-agent
@@ -836,6 +887,8 @@ curl -fsS http://10.0.0.11:18680/readyz
 procmesh --server 10.0.0.11:18680 login --user admin
 procmesh --server 10.0.0.11:18680 node list
 procmesh --server 10.0.0.11:18680 node token create --ttl 30m --uses 1
+procmesh --server 10.0.0.11:18680 cluster membership check
+procmesh --server 10.0.0.11:18680 --operation-id <UUID> cluster membership reconcile
 
 # 本机进程
 procmesh --server 10.0.0.11:18680 process list
