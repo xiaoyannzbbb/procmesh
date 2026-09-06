@@ -153,7 +153,7 @@ func Start(cfg RaftConfig) (*Node, error) {
 		}
 		advertise = tcpAddr
 	}
-	trans, err := raft.NewTCPTransport(cfg.Bind, advertise, 3, 10*time.Second, io.Discard)
+	trans, err := newRaftTCPTransport(cfg.Bind, advertise)
 	if err != nil {
 		_ = snaps.Close()
 		_ = store.Close()
@@ -393,7 +393,7 @@ func (n *Node) CheckRaftMembership() (MembershipReport, error) {
 			}
 			continue
 		}
-		if member.RaftAddr == "" {
+		if member.RaftAddr == "" || IsUnspecifiedRaftAddress(member.RaftAddr) {
 			report.Issues = append(report.Issues, MembershipIssue{
 				NodeID:      nodeID,
 				Kind:        MembershipInvalidDesired,
@@ -565,7 +565,7 @@ func (n *Node) ReconcileRaftMembership() error {
 		sort.Strings(nodeIDs)
 		for _, nodeID := range nodeIDs {
 			member := state.Members[nodeID]
-			if member.RaftAddr == "" {
+			if member.RaftAddr == "" || IsUnspecifiedRaftAddress(member.RaftAddr) {
 				continue
 			}
 			if !membership.memberMatches(nodeID, member.RaftAddr) {

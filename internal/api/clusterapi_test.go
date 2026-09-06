@@ -128,6 +128,9 @@ type clusterEnvCfg struct {
 
 func newClusterEnvFull(t *testing.T, cfg clusterEnvCfg) *clusterEnv {
 	t.Helper()
+	if cfg.raftAddr == nil {
+		cfg.raftAddr = func() string { return "127.0.0.1:18685" }
+	}
 	m, st, layout := newTestManager(t)
 	ctx := context.Background()
 	nodeID, err := st.GetOrCreateNodeID(ctx)
@@ -619,7 +622,7 @@ func TestJoin_FSMMissingCADoesNotConsumeToken(t *testing.T) {
 		NodeId:          "n-fsm",
 		BootId:          "boot-n-fsm",
 		ProtocolVersion: int32(version.Protocol),
-		RaftAddress:     "n-fsm-raft",
+		RaftAddress:     "n-fsm.invalid:18685",
 		CsrPem:          csr,
 	}))
 	code, detail := connectDetail(t, err)
@@ -638,7 +641,7 @@ func TestJoin_FSMMissingCADoesNotConsumeToken(t *testing.T) {
 		NodeId:          "n-fsm",
 		BootId:          "boot-n-fsm",
 		ProtocolVersion: int32(version.Protocol),
-		RaftAddress:     "n-fsm-raft",
+		RaftAddress:     "n-fsm.invalid:18685",
 		CsrPem:          csr,
 	})); err != nil {
 		t.Fatalf("same token after restoring ca.key: %v", err)
@@ -668,7 +671,7 @@ func TestJoin_ControlUnavailableDoesNotFallBackToFileToken(t *testing.T) {
 		NodeId:          "control-missing-joiner",
 		BootId:          "control-missing-boot",
 		ProtocolVersion: int32(version.Protocol),
-		RaftAddress:     "control-missing-raft",
+		RaftAddress:     "control-missing.invalid:18685",
 		CsrPem:          csr,
 	}))
 	code, detail := connectDetail(t, err)
@@ -697,7 +700,7 @@ func TestJoin_FSMBadCSRDoesNotConsumeToken(t *testing.T) {
 		NodeId:          "n-bad",
 		BootId:          "boot-n-bad",
 		ProtocolVersion: int32(version.Protocol),
-		RaftAddress:     "n-bad-raft",
+		RaftAddress:     "n-bad.invalid:18685",
 		CsrPem:          []byte("not-a-csr"),
 	}))
 	code, detail := connectDetail(t, err)
@@ -714,7 +717,7 @@ func TestJoin_FSMBadCSRDoesNotConsumeToken(t *testing.T) {
 		NodeId:          "n-bad",
 		BootId:          "boot-n-bad",
 		ProtocolVersion: int32(version.Protocol),
-		RaftAddress:     "n-bad-raft",
+		RaftAddress:     "n-bad.invalid:18685",
 		CsrPem:          csr,
 	})); err != nil {
 		t.Fatalf("same token after bad csr: %v", err)
@@ -1081,7 +1084,7 @@ func TestRequestJoin_RetriesPendingAdmissionWithSameIdentity(t *testing.T) {
 	}
 	joiner := newClusterEnvFull(t, clusterEnvCfg{
 		withMesh: true,
-		raftAddr: func() string { return "pending-joiner-raft" },
+		raftAddr: func() string { return "pending-joiner.invalid:18685" },
 	})
 	first := connect.NewRequest(&procmeshv1.RequestJoinRequest{
 		Meta:       &procmeshv1.MutationMeta{OperationId: "op-local-first", Operator: "t"},
@@ -1170,7 +1173,7 @@ func TestJoin_UsesRaftTokenNotFile(t *testing.T) {
 		ProtocolVersion: int32(version.Protocol),
 		ApiAddress:      "127.0.0.1:18683",
 		GossipAddress:   "127.0.0.1:7947",
-		RaftAddress:     "127.0.0.1:118685",
+		RaftAddress:     "127.0.0.1:18686",
 		CsrPem:          csr,
 	}))
 	if err != nil {
@@ -1189,11 +1192,74 @@ func TestJoin_UsesRaftTokenNotFile(t *testing.T) {
 		t.Fatal("tokens.json must not be written")
 	}
 	m, ok := raftNode.View().Members[joinerID]
-	if !ok || m.Status != control.MemberAdmitted || m.RaftAddr != "127.0.0.1:118685" {
+	if !ok || m.Status != control.MemberAdmitted || m.RaftAddr != "127.0.0.1:18686" {
 		t.Fatalf("member=%+v ok=%v", m, ok)
 	}
-	if len(admitted) != 1 || admitted[0] != joinerID+"=127.0.0.1:118685" {
+	if len(admitted) != 1 || admitted[0] != joinerID+"=127.0.0.1:18686" {
 		t.Fatalf("onAdmit=%v", admitted)
+	}
+}
+
+func TestJoin_RejectsUnspecifiedRaftAddressBeforeConsumingToken(t *testing.T) {
+	ctx := context.Background()
+	raftNode := startTestRaft(t, "seed")
+	admitCalls := 0
+	e := newClusterEnvFull(t, clusterEnvCfg{
+		withMesh: true,
+		control:  raftNode,
+		onAdmit: func(_, _ string) error {
+			admitCalls++
+			return nil
+		},
+	})
+	e.init(t)
+	adm := control.Admission{Node: raftNode}
+	plain, info, err := adm.CreateToken(time.Hour, 1, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	csr, _, err := control.NewCSR("join", "wildcard-joiner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.cluster.Join(ctx, connect.NewRequest(&procmeshv1.JoinClusterRequest{
+		Meta:            &procmeshv1.MutationMeta{OperationId: "op-wildcard", Operator: "t"},
+		Token:           plain,
+		NodeId:          "wildcard-joiner",
+		BootId:          "wildcard-boot",
+		ProtocolVersion: int32(version.Protocol),
+		RaftAddress:     "0.0.0.0:18685",
+		CsrPem:          csr,
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("join code=%v err=%v", connect.CodeOf(err), err)
+	}
+	view := raftNode.View()
+	if got := view.JoinTokens[info.ID].Remaining; got != 1 {
+		t.Fatalf("wildcard join consumed token: remaining=%d", got)
+	}
+	if _, exists := view.JoinAttempts["wildcard-joiner"]; exists {
+		t.Fatal("wildcard join created an attempt")
+	}
+	if admitCalls != 0 {
+		t.Fatalf("OnAdmit calls=%d", admitCalls)
+	}
+}
+
+func TestRequestJoin_RejectsUnspecifiedRaftAddressBeforePersistingIdentity(t *testing.T) {
+	e := newClusterEnvFull(t, clusterEnvCfg{
+		raftAddr: func() string { return "[::]:18685" },
+	})
+	_, err := e.cluster.RequestJoin(context.Background(), connect.NewRequest(&procmeshv1.RequestJoinRequest{
+		Meta:       &procmeshv1.MutationMeta{OperationId: "op-local-wildcard", Operator: "t"},
+		SeedServer: "127.0.0.1:1",
+		Token:      "unused-token",
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("request join code=%v err=%v", connect.CodeOf(err), err)
+	}
+	if _, err := os.Stat(filepath.Join(e.dir, "join.pending.json")); !os.IsNotExist(err) {
+		t.Fatalf("wildcard RequestJoin persisted identity: %v", err)
 	}
 }
 
@@ -1228,7 +1294,7 @@ func TestJoin_AddNonvoterFailureReturnsUnavailableAndCanResume(t *testing.T) {
 		NodeId:          "retry-joiner",
 		BootId:          "retry-boot",
 		ProtocolVersion: int32(version.Protocol),
-		RaftAddress:     "retry-joiner-raft",
+		RaftAddress:     "retry-joiner.invalid:18685",
 		CsrPem:          csr,
 	})
 	if _, err := e.cluster.Join(ctx, req); connect.CodeOf(err) != connect.CodeUnavailable {
@@ -1298,7 +1364,7 @@ func TestJoin_AddNonvoterErrorAfterCommitUsesMembershipReadback(t *testing.T) {
 		NodeId:          "uncertain-joiner",
 		BootId:          "uncertain-boot",
 		ProtocolVersion: int32(version.Protocol),
-		RaftAddress:     "uncertain-joiner-raft",
+		RaftAddress:     "uncertain-joiner.invalid:18685",
 		CsrPem:          csr,
 	}))
 	if err != nil {
@@ -1333,7 +1399,7 @@ func TestJoin_DoesNotSucceedWithoutCommittedRaftMembership(t *testing.T) {
 		NodeId:          "missing-membership",
 		BootId:          "missing-membership-boot",
 		ProtocolVersion: int32(version.Protocol),
-		RaftAddress:     "missing-membership-raft",
+		RaftAddress:     "missing-membership.invalid:18685",
 		CsrPem:          csr,
 	}))
 	if connect.CodeOf(err) != connect.CodeUnavailable || !strings.Contains(err.Error(), "raft nonvoter not committed") {
@@ -1371,7 +1437,7 @@ func TestJoin_StaleRaftAddressDoesNotCompleteAdmission(t *testing.T) {
 		NodeId:          "stale-address",
 		BootId:          "stale-address-boot",
 		ProtocolVersion: int32(version.Protocol),
-		RaftAddress:     "new-raft-address",
+		RaftAddress:     "new-raft.invalid:18685",
 		CsrPem:          csr,
 	}))
 	if connect.CodeOf(err) != connect.CodeUnavailable {
@@ -1421,7 +1487,7 @@ func TestJoin_MixedProtocolRaftMemberBlocksNewFSMCommands(t *testing.T) {
 		NodeId:          "mixed-version-joiner",
 		BootId:          "mixed-version-boot",
 		ProtocolVersion: int32(version.Protocol),
-		RaftAddress:     "mixed-version-raft",
+		RaftAddress:     "mixed-version.invalid:18685",
 		CsrPem:          csr,
 	}))
 	code, detail := connectDetail(t, err)
@@ -1501,7 +1567,7 @@ func TestJoin_PreviouslyJoinedRaftMemberStillRequiresCurrentProtocol(t *testing.
 		NodeId:          "next",
 		BootId:          "next-boot",
 		ProtocolVersion: int32(version.Protocol),
-		RaftAddress:     "next-raft",
+		RaftAddress:     "next.invalid:18685",
 		CsrPem:          csr,
 	}))
 	code, detail := connectDetail(t, err)
@@ -1675,7 +1741,7 @@ func TestJoin_ForwardsToLeader(t *testing.T) {
 		BootId:          "boot-fwd",
 		ProtocolVersion: int32(version.Protocol),
 		ApiAddress:      "127.0.0.1:9101",
-		RaftAddress:     "forward-joiner-raft",
+		RaftAddress:     "forward-joiner.invalid:18685",
 		CsrPem:          csr,
 	}))
 	if err != nil {

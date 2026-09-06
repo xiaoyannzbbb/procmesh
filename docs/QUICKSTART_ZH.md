@@ -716,6 +716,8 @@ CLI 只有在节点已写入 Raft configuration 且准入状态为 `ADMITTED` �
 
 加入在远端提交 `join_prepare` 后若因成员写入超时或 Leader 切换而失败，本地尚不会写入 `cluster.json`，只保留可复用的 pending identity；不要删除 pending 文件、数据目录或重复初始化。Leader 会在启动时及此后每 5 秒自动对账 FSM 准入状态与 Raft configuration。若本地已经存在 `cluster.json`，说明远端曾确认成员关系并完成 `ADMITTED`，不应重新执行 Join；按下一节检查成员关系。
 
+Raft advertise 必须是可拨号的 `host:port`，不能使用监听通配地址 `0.0.0.0`、`::` 或端口 `0`。Agent 会在本地发起 Join 前检查，Leader 也会在消费 token 或创建 Join attempt 前重新检查。监听地址可以继续使用 `0.0.0.0:18685`，但此时必须通过 `control.advertise` 或 `network.advertise_host` 提供其他节点实际可达的地址。
+
 包含 protocol 1 节点的集群升级到 protocol 2 时，应先滚动升级 Raft configuration 中全部现存 voter 和 nonvoter，升级期间不要执行 Join。混合版本状态下 Join 会返回 `INCOMPATIBLE_VERSION`；成员版本尚未通过 Gossip 确认时返回 `UNAVAILABLE`。不要通过重建 token 绕过该门控。
 
 `cluster init` 只有在本机 Raft control 完成启动后才返回管理员初始密码。若该阶段返回 `UNAVAILABLE`，本次生成的集群身份与 Raft 临时状态会被撤销，可以在排除监听地址、磁盘权限等问题后重新执行初始化。
@@ -777,7 +779,7 @@ RPC、认证或 quorum 错误同样返回退出码 `1`，但错误写到 stderr�
 | `JOIN_INCOMPLETE` | Raft 已精确包含该成员，但 FSM 仍为 `JOINING`：推进为 `ADMITTED`。 |
 | `REMOVAL_PENDING` | FSM 已为 `REMOVED`/`REVOKED`，但 Raft 中仍存在：重试移除。 |
 | `UNEXPECTED_MEMBER` | Raft 中存在、FSM 中完全未知：标记 `BLOCKED`，绝不自动删除。 |
-| `INVALID_DESIRED_MEMBER` | FSM 中的活动成员缺少 Raft 地址：标记 `BLOCKED`，不猜测或覆盖权威状态。 |
+| `INVALID_DESIRED_MEMBER` | FSM 中的活动成员缺少 Raft 地址，或保存了 `0.0.0.0`/`::` 等不可拨号地址：标记 `BLOCKED`，不猜测、覆盖或推进准入状态。 |
 
 同一轮中一个成员失败不会阻塞其它独立成员。即使最终状态为 `BLOCKED`，命令仍可能已经修复其它安全项，因此应同时检查 `repaired` 和剩余 issue。不要为消除 `UNEXPECTED_MEMBER` 或 `INVALID_DESIRED_MEMBER` 而直接编辑 Raft/FSM 文件或删除数据目录；先核对节点身份、集群历史、quorum 和备份，再按事故恢复流程处理。
 
@@ -839,6 +841,16 @@ Agent 间 RPC 在集群初始化后使用 mTLS。如果证书或集群身份不�
 ### 11.10 Raft 操作返回 quorum 或 unavailable
 
 确认多数 voter 在线且 `18685/TCP` 双向可达。三 voter 集群至少需要两个 voter 在线。Gossip 显示 `ALIVE` 不等于 Raft 一定具有 quorum，两者使用不同端口和一致性机制。
+
+如果 `cluster membership check` 同时报告一个 `JOINING`/`NON_VOTER` 成员，且该成员历史上使用了 `0.0.0.0:18685` 或 `[::]:18685`，它可能让 Leader 把该地址解释为自己的本地 Raft listener，造成持续切主。包含该修复的版本会拒绝向这类已持久化地址拨号，使 Leader 能恢复稳定，但不会擅自删除成员。恢复步骤如下：
+
+1. 通过 SSH 或其他不依赖 ProcMesh quorum 的通道，先升级一个现有 voter 到包含修复的版本并重启 Agent；业务进程由 shim 继续托管。
+2. 等待该节点当选并确认所有存活节点连续看到 `procmesh_cluster_control_quorum 1`。若仍未稳定，再逐个升级其他 voter；每次只重启一个。
+3. 使用固定 `operation_id` 显式执行 `node remove <BAD_NODE_ID>`。不要运行 `cluster membership reconcile`，因为不可拨号的活动成员会保持 `BLOCKED`，等待人工核对和删除。
+4. 确认 `cluster membership check` 返回 `CLEAN`，并观察 Leader、quorum 和本地业务进程。
+5. 再通过更新页滚动升级剩余节点。更新器逐个替换三个二进制文件，等待节点以目标版本恢复 `ALIVE/LIVE` 后才继续，并保留一份旧二进制在 `$data_dir/update/previous/`。
+
+升级本身不会改写已经持久化的 Raft configuration，因此不能跳过第 3 步。不要直接编辑 `raft.db`、删除 Raft 数据目录或重新执行 `cluster init`。
 
 ### 11.11 升级后创建加入令牌返回 `admission capability unavailable`
 

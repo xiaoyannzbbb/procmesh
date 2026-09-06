@@ -163,18 +163,8 @@ func TestRaft_StartErrorsAndNilNode(t *testing.T) {
 		t.Fatal("passthrough")
 	}
 
-	n2, err := Start(RaftConfig{Dir: t.TempDir(), Bind: "127.0.0.1:0", NodeID: "n1", Advertise: "127.0.0.1:0"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n2.Advertise() != "127.0.0.1:0" {
-		t.Fatalf("advertise=%q", n2.Advertise())
-	}
-	if err := n2.Shutdown(); err != nil {
-		t.Fatal(err)
-	}
-	if err := n2.Shutdown(); err != nil {
-		t.Fatal(err)
+	if _, err := Start(RaftConfig{Dir: t.TempDir(), Bind: "127.0.0.1:0", NodeID: "n1", Advertise: "127.0.0.1:0"}); err == nil {
+		t.Fatal("expected zero advertise port error")
 	}
 
 	_, trans := raft.NewInmemTransport("")
@@ -183,6 +173,19 @@ func TestRaft_StartErrorsAndNilNode(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = inmem.Shutdown() })
+}
+
+func TestRaft_ShutdownIsIdempotent(t *testing.T) {
+	n, err := Start(RaftConfig{Dir: t.TempDir(), Bind: "127.0.0.1:0", NodeID: "n1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := n.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestRaft_ForcedSnapshot(t *testing.T) {

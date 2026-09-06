@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Prevent Raft Leader churn when an older Agent has persisted a wildcard peer address such as `0.0.0.0:18685` or `[::]:18685`. New joins reject non-dialable Raft advertise addresses before consuming a token, the transport refuses unsafe legacy peer dials, and membership reconciliation reports those entries as blocked instead of admitting them.
+
 ### Added
 
 #### Resource Metrics Collection (2026-08-16)
@@ -53,4 +57,3 @@ When disk usage exceeds thresholds, the Agent automatically protects itself:
 - Unit tests: 91.5% coverage in `internal/metrics`
 - Integration tests: Collector lifecycle validation
 - E2E tests: Full pipeline validation (Agent → Collector → API/Cluster)
-

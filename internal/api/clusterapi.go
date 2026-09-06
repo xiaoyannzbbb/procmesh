@@ -203,6 +203,9 @@ func (s *ClusterAPI) Join(ctx context.Context, req *connect.Request[procmeshv1.J
 		if raftAddr == "" {
 			return nil, ToConnect(errcode.E(errcode.INVALID, "raft_address required"))
 		}
+		if err := control.ValidateRaftAddress(raftAddr); err != nil {
+			return nil, ToConnect(err)
+		}
 		csrHash := sha256.Sum256(req.Msg.GetCsrPem())
 		join := func() error {
 			if compatibilityErr := s.requireJoinFSMCompatibility(req.Msg.GetNodeId()); compatibilityErr != nil {
@@ -336,6 +339,10 @@ func (s *ClusterAPI) RequestJoin(ctx context.Context, req *connect.Request[procm
 	if req.Msg.GetToken() == "" {
 		return nil, ToConnect(errcode.E(errcode.INVALID, "token required"))
 	}
+	raftAddr := s.Deps.raftAddr()
+	if err := control.ValidateRaftAddress(raftAddr); err != nil {
+		return nil, ToConnect(err)
+	}
 	s.joinMu.Lock()
 	defer s.joinMu.Unlock()
 	nodeID, err := s.Deps.localNodeID(ctx)
@@ -356,7 +363,7 @@ func (s *ClusterAPI) RequestJoin(ctx context.Context, req *connect.Request[procm
 		ProtocolVersion: int32(version.Protocol),
 		ApiAddress:      s.Deps.APIAddr,
 		GossipAddress:   s.Deps.gossipAddr(),
-		RaftAddress:     s.Deps.raftAddr(),
+		RaftAddress:     raftAddr,
 		CsrPem:          pending.CSRPEM,
 	}))
 	if err != nil {
