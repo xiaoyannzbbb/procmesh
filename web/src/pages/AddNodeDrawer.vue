@@ -420,7 +420,7 @@ defineExpose({ confirmRouteLeave });
         <p class="secret-warning"><ShieldAlert :size="17" aria-hidden="true" />{{ t("nodes.add.secretWarning") }}</p>
         <div class="command-block">
           <span class="field-label">{{ t("nodes.add.commandLabel") }}</span>
-          <code tabindex="0">{{ command }}</code>
+          <code tabindex="0" data-testid="join-command">{{ command }}</code>
           <button type="button" class="btn copy-button" :disabled="!command" @click="copyCommand">
             <Check v-if="copyState === 'copied'" :size="16" aria-hidden="true" />
             <Clipboard v-else :size="16" aria-hidden="true" />

@@ -15,7 +15,7 @@ test("admin creates a one-time join command from the nodes drawer", async ({ pag
   await page.getByRole("button", { name: "Generate join command" }).click();
   await expect(page.getByText("Run this command on the new node", { exact: true })).toBeVisible();
 
-  const command = page.locator(".command-block code");
+  const command = drawer.getByTestId("join-command");
   await expect(command).toContainText("procmesh agent join --seed");
   await expect(command).toContainText("--token '");
   await expect(command).not.toContainText("--server");
