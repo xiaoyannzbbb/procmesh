@@ -43,6 +43,32 @@ message PromoteNodeRequest {
 }
 message PromoteNodeResponse {}
 
+message MembershipIssue {
+  string node_id = 1;
+  string kind = 2; // MISSING_MEMBER | ADDRESS_MISMATCH | JOIN_INCOMPLETE | REMOVAL_PENDING | UNEXPECTED_MEMBER | INVALID_DESIRED_MEMBER
+  bool repairable = 3;
+  string member_state = 4; // JOINING | ADMITTED | REMOVED | REVOKED; empty when unknown to the FSM
+  string actual_role = 5; // VOTER | NON_VOTER; empty when absent from Raft
+}
+
+message MembershipReport {
+  string status = 1; // CLEAN | DRIFTED | BLOCKED
+  string freshness = 2; // LIVE | STALE | UNKNOWN
+  bool has_quorum = 3;
+  bool leader = 4;
+  repeated MembershipIssue issues = 5;
+  int64 observed_unix_ms = 6;
+}
+
+message CheckMembershipRequest {}
+message CheckMembershipResponse { MembershipReport report = 1; }
+
+message ReconcileMembershipRequest { MutationMeta meta = 1; }
+message ReconcileMembershipResponse {
+  MembershipReport report = 1;
+  int32 repaired = 2;
+}
+
 service NodeService {
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
   rpc GetNode(GetNodeRequest) returns (GetNodeResponse);
@@ -50,6 +76,8 @@ service NodeService {
   rpc RevokeJoinToken(RevokeJoinTokenRequest) returns (RevokeJoinTokenResponse);
   rpc RemoveNode(RemoveNodeRequest) returns (RemoveNodeResponse);
   rpc PromoteNode(PromoteNodeRequest) returns (PromoteNodeResponse);
+  rpc CheckMembership(CheckMembershipRequest) returns (CheckMembershipResponse);
+  rpc ReconcileMembership(ReconcileMembershipRequest) returns (ReconcileMembershipResponse);
 }
 
 message InitClusterRequest {

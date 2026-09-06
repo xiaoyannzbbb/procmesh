@@ -61,6 +61,7 @@ type rpcRuntime struct {
 	process          api.ProcessRemotePolicy
 	updateLocal      api.LocalInfoProvider
 	membershipOnce   sync.Once
+	membershipFailed bool
 }
 
 func (r *rpcRuntime) startRPC() error {

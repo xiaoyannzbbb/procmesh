@@ -49,6 +49,12 @@ const (
 	NodeServiceRemoveNodeProcedure = "/procmesh.v1.NodeService/RemoveNode"
 	// NodeServicePromoteNodeProcedure is the fully-qualified name of the NodeService's PromoteNode RPC.
 	NodeServicePromoteNodeProcedure = "/procmesh.v1.NodeService/PromoteNode"
+	// NodeServiceCheckMembershipProcedure is the fully-qualified name of the NodeService's
+	// CheckMembership RPC.
+	NodeServiceCheckMembershipProcedure = "/procmesh.v1.NodeService/CheckMembership"
+	// NodeServiceReconcileMembershipProcedure is the fully-qualified name of the NodeService's
+	// ReconcileMembership RPC.
+	NodeServiceReconcileMembershipProcedure = "/procmesh.v1.NodeService/ReconcileMembership"
 	// ClusterServiceInitProcedure is the fully-qualified name of the ClusterService's Init RPC.
 	ClusterServiceInitProcedure = "/procmesh.v1.ClusterService/Init"
 	// ClusterServiceJoinProcedure is the fully-qualified name of the ClusterService's Join RPC.
@@ -68,6 +74,8 @@ type NodeServiceClient interface {
 	RevokeJoinToken(context.Context, *connect.Request[v1.RevokeJoinTokenRequest]) (*connect.Response[v1.RevokeJoinTokenResponse], error)
 	RemoveNode(context.Context, *connect.Request[v1.RemoveNodeRequest]) (*connect.Response[v1.RemoveNodeResponse], error)
 	PromoteNode(context.Context, *connect.Request[v1.PromoteNodeRequest]) (*connect.Response[v1.PromoteNodeResponse], error)
+	CheckMembership(context.Context, *connect.Request[v1.CheckMembershipRequest]) (*connect.Response[v1.CheckMembershipResponse], error)
+	ReconcileMembership(context.Context, *connect.Request[v1.ReconcileMembershipRequest]) (*connect.Response[v1.ReconcileMembershipResponse], error)
 }
 
 // NewNodeServiceClient constructs a client for the procmesh.v1.NodeService service. By default, it
@@ -117,17 +125,31 @@ func NewNodeServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 			connect.WithSchema(nodeServiceMethods.ByName("PromoteNode")),
 			connect.WithClientOptions(opts...),
 		),
+		checkMembership: connect.NewClient[v1.CheckMembershipRequest, v1.CheckMembershipResponse](
+			httpClient,
+			baseURL+NodeServiceCheckMembershipProcedure,
+			connect.WithSchema(nodeServiceMethods.ByName("CheckMembership")),
+			connect.WithClientOptions(opts...),
+		),
+		reconcileMembership: connect.NewClient[v1.ReconcileMembershipRequest, v1.ReconcileMembershipResponse](
+			httpClient,
+			baseURL+NodeServiceReconcileMembershipProcedure,
+			connect.WithSchema(nodeServiceMethods.ByName("ReconcileMembership")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // nodeServiceClient implements NodeServiceClient.
 type nodeServiceClient struct {
-	listNodes       *connect.Client[v1.ListNodesRequest, v1.ListNodesResponse]
-	getNode         *connect.Client[v1.GetNodeRequest, v1.GetNodeResponse]
-	createJoinToken *connect.Client[v1.CreateJoinTokenRequest, v1.CreateJoinTokenResponse]
-	revokeJoinToken *connect.Client[v1.RevokeJoinTokenRequest, v1.RevokeJoinTokenResponse]
-	removeNode      *connect.Client[v1.RemoveNodeRequest, v1.RemoveNodeResponse]
-	promoteNode     *connect.Client[v1.PromoteNodeRequest, v1.PromoteNodeResponse]
+	listNodes           *connect.Client[v1.ListNodesRequest, v1.ListNodesResponse]
+	getNode             *connect.Client[v1.GetNodeRequest, v1.GetNodeResponse]
+	createJoinToken     *connect.Client[v1.CreateJoinTokenRequest, v1.CreateJoinTokenResponse]
+	revokeJoinToken     *connect.Client[v1.RevokeJoinTokenRequest, v1.RevokeJoinTokenResponse]
+	removeNode          *connect.Client[v1.RemoveNodeRequest, v1.RemoveNodeResponse]
+	promoteNode         *connect.Client[v1.PromoteNodeRequest, v1.PromoteNodeResponse]
+	checkMembership     *connect.Client[v1.CheckMembershipRequest, v1.CheckMembershipResponse]
+	reconcileMembership *connect.Client[v1.ReconcileMembershipRequest, v1.ReconcileMembershipResponse]
 }
 
 // ListNodes calls procmesh.v1.NodeService.ListNodes.
@@ -160,6 +182,16 @@ func (c *nodeServiceClient) PromoteNode(ctx context.Context, req *connect.Reques
 	return c.promoteNode.CallUnary(ctx, req)
 }
 
+// CheckMembership calls procmesh.v1.NodeService.CheckMembership.
+func (c *nodeServiceClient) CheckMembership(ctx context.Context, req *connect.Request[v1.CheckMembershipRequest]) (*connect.Response[v1.CheckMembershipResponse], error) {
+	return c.checkMembership.CallUnary(ctx, req)
+}
+
+// ReconcileMembership calls procmesh.v1.NodeService.ReconcileMembership.
+func (c *nodeServiceClient) ReconcileMembership(ctx context.Context, req *connect.Request[v1.ReconcileMembershipRequest]) (*connect.Response[v1.ReconcileMembershipResponse], error) {
+	return c.reconcileMembership.CallUnary(ctx, req)
+}
+
 // NodeServiceHandler is an implementation of the procmesh.v1.NodeService service.
 type NodeServiceHandler interface {
 	ListNodes(context.Context, *connect.Request[v1.ListNodesRequest]) (*connect.Response[v1.ListNodesResponse], error)
@@ -168,6 +200,8 @@ type NodeServiceHandler interface {
 	RevokeJoinToken(context.Context, *connect.Request[v1.RevokeJoinTokenRequest]) (*connect.Response[v1.RevokeJoinTokenResponse], error)
 	RemoveNode(context.Context, *connect.Request[v1.RemoveNodeRequest]) (*connect.Response[v1.RemoveNodeResponse], error)
 	PromoteNode(context.Context, *connect.Request[v1.PromoteNodeRequest]) (*connect.Response[v1.PromoteNodeResponse], error)
+	CheckMembership(context.Context, *connect.Request[v1.CheckMembershipRequest]) (*connect.Response[v1.CheckMembershipResponse], error)
+	ReconcileMembership(context.Context, *connect.Request[v1.ReconcileMembershipRequest]) (*connect.Response[v1.ReconcileMembershipResponse], error)
 }
 
 // NewNodeServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -213,6 +247,18 @@ func NewNodeServiceHandler(svc NodeServiceHandler, opts ...connect.HandlerOption
 		connect.WithSchema(nodeServiceMethods.ByName("PromoteNode")),
 		connect.WithHandlerOptions(opts...),
 	)
+	nodeServiceCheckMembershipHandler := connect.NewUnaryHandler(
+		NodeServiceCheckMembershipProcedure,
+		svc.CheckMembership,
+		connect.WithSchema(nodeServiceMethods.ByName("CheckMembership")),
+		connect.WithHandlerOptions(opts...),
+	)
+	nodeServiceReconcileMembershipHandler := connect.NewUnaryHandler(
+		NodeServiceReconcileMembershipProcedure,
+		svc.ReconcileMembership,
+		connect.WithSchema(nodeServiceMethods.ByName("ReconcileMembership")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/procmesh.v1.NodeService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case NodeServiceListNodesProcedure:
@@ -227,6 +273,10 @@ func NewNodeServiceHandler(svc NodeServiceHandler, opts ...connect.HandlerOption
 			nodeServiceRemoveNodeHandler.ServeHTTP(w, r)
 		case NodeServicePromoteNodeProcedure:
 			nodeServicePromoteNodeHandler.ServeHTTP(w, r)
+		case NodeServiceCheckMembershipProcedure:
+			nodeServiceCheckMembershipHandler.ServeHTTP(w, r)
+		case NodeServiceReconcileMembershipProcedure:
+			nodeServiceReconcileMembershipHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -258,6 +308,14 @@ func (UnimplementedNodeServiceHandler) RemoveNode(context.Context, *connect.Requ
 
 func (UnimplementedNodeServiceHandler) PromoteNode(context.Context, *connect.Request[v1.PromoteNodeRequest]) (*connect.Response[v1.PromoteNodeResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.NodeService.PromoteNode is not implemented"))
+}
+
+func (UnimplementedNodeServiceHandler) CheckMembership(context.Context, *connect.Request[v1.CheckMembershipRequest]) (*connect.Response[v1.CheckMembershipResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.NodeService.CheckMembership is not implemented"))
+}
+
+func (UnimplementedNodeServiceHandler) ReconcileMembership(context.Context, *connect.Request[v1.ReconcileMembershipRequest]) (*connect.Response[v1.ReconcileMembershipResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("procmesh.v1.NodeService.ReconcileMembership is not implemented"))
 }
 
 // ClusterServiceClient is a client for the procmesh.v1.ClusterService service.

@@ -148,6 +148,10 @@ func hopRPCPerm(procedure string) (perm string, write bool, ok bool) {
 		return auth.PermNodeManage, true, true
 	case "CreateJoinToken":
 		return auth.PermNodeManage, true, true
+	case "CheckMembership":
+		return auth.PermClusterRead, false, true
+	case "ReconcileMembership":
+		return auth.PermClusterManage, true, true
 	default:
 		// ApplyProcess 的 create/update 由 handler 判定
 		return "", false, false

@@ -1,15 +1,66 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/qleelulu/procmesh/internal/control"
 )
+
+func TestRunMembershipReconcilerRetriesAfterFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	ticks := make(chan time.Time)
+	done := make(chan struct{})
+	attempted := make(chan int, 2)
+	attempts := 0
+	reconcile := func() {
+		attempts++
+		attempted <- attempts
+	}
+	reconcile() // The synchronous startup attempt fails.
+	go func() {
+		runMembershipReconciler(ctx, ticks, reconcile)
+		close(done)
+	}()
+
+	if got := <-attempted; got != 1 {
+		t.Fatalf("first attempt=%d", got)
+	}
+	ticks <- time.Now()
+	if got := <-attempted; got != 2 {
+		t.Fatalf("retry attempt=%d", got)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("membership reconciler did not stop")
+	}
+}
+
+func TestMembershipReconcileLogsOnlyFailureTransitionAndRecovery(t *testing.T) {
+	var logs bytes.Buffer
+	r := &rpcRuntime{logger: slog.New(slog.NewTextHandler(&logs, nil))}
+	r.logMembershipReconcileResult(errors.New("first failure"))
+	r.logMembershipReconcileResult(errors.New("repeated failure"))
+	r.logMembershipReconcileResult(nil)
+	r.logMembershipReconcileResult(nil)
+
+	out := logs.String()
+	if got := strings.Count(out, "raft membership reconcile failed"); got != 1 {
+		t.Fatalf("failure logs=%d output=%q", got, out)
+	}
+	if got := strings.Count(out, "raft membership reconcile recovered"); got != 1 {
+		t.Fatalf("recovery logs=%d output=%q", got, out)
+	}
+}
 
 func TestMembershipReconcilerRepairsHistoricalMissingNonvoter(t *testing.T) {
 	n, err := control.Start(control.RaftConfig{

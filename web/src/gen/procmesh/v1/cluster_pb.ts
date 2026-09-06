@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file procmesh/v1/cluster.proto.
  */
 export const file_procmesh_v1_cluster: GenFile = /*@__PURE__*/
-  fileDesc("Chlwcm9jbWVzaC92MS9jbHVzdGVyLnByb3RvEgtwcm9jbWVzaC52MSISChBMaXN0Tm9kZXNSZXF1ZXN0IjUKEUxpc3ROb2Rlc1Jlc3BvbnNlEiAKBW5vZGVzGAEgAygLMhEucHJvY21lc2gudjEuTm9kZSIoCg5HZXROb2RlUmVxdWVzdBIWCg5pZF9vcl9ob3N0bmFtZRgBIAEoCSIyCg9HZXROb2RlUmVzcG9uc2USHwoEbm9kZRgBIAEoCzIRLnByb2NtZXNoLnYxLk5vZGUiZAoWQ3JlYXRlSm9pblRva2VuUmVxdWVzdBInCgRtZXRhGAEgASgLMhkucHJvY21lc2gudjEuTXV0YXRpb25NZXRhEhMKC3R0bF9zZWNvbmRzGAIgASgDEgwKBHVzZXMYAyABKAUiXgoXQ3JlYXRlSm9pblRva2VuUmVzcG9uc2USEAoIdG9rZW5faWQYASABKAkSDQoFdG9rZW4YAiABKAkSFAoMZXhwaXJlc191bml4GAMgASgDEgwKBHVzZXMYBCABKAUiUwoWUmV2b2tlSm9pblRva2VuUmVxdWVzdBInCgRtZXRhGAEgASgLMhkucHJvY21lc2gudjEuTXV0YXRpb25NZXRhEhAKCHRva2VuX2lkGAIgASgJIhkKF1Jldm9rZUpvaW5Ub2tlblJlc3BvbnNlIk0KEVJlbW92ZU5vZGVSZXF1ZXN0EicKBG1ldGEYASABKAsyGS5wcm9jbWVzaC52MS5NdXRhdGlvbk1ldGESDwoHbm9kZV9pZBgCIAEoCSIUChJSZW1vdmVOb2RlUmVzcG9uc2UiTgoSUHJvbW90ZU5vZGVSZXF1ZXN0EicKBG1ldGEYASABKAsyGS5wcm9jbWVzaC52MS5NdXRhdGlvbk1ldGESDwoHbm9kZV9pZBgCIAEoCSIVChNQcm9tb3RlTm9kZVJlc3BvbnNlIlUKEkluaXRDbHVzdGVyUmVxdWVzdBInCgRtZXRhGAEgASgLMhkucHJvY21lc2gudjEuTXV0YXRpb25NZXRhEhYKDmFkbWluX3VzZXJuYW1lGAIgASgJImoKE0luaXRDbHVzdGVyUmVzcG9uc2USEgoKY2x1c3Rlcl9pZBgBIAEoCRIPCgdub2RlX2lkGAIgASgJEhYKDmFkbWluX3VzZXJuYW1lGAMgASgJEhYKDmFkbWluX3Bhc3N3b3JkGAQgASgJIoMCChJKb2luQ2x1c3RlclJlcXVlc3QSJwoEbWV0YRgBIAEoCzIZLnByb2NtZXNoLnYxLk11dGF0aW9uTWV0YRINCgV0b2tlbhgCIAEoCRIPCgdub2RlX2lkGAMgASgJEhAKCGhvc3RuYW1lGAQgASgJEg8KB2Jvb3RfaWQYBSABKAkSGAoQcHJvdG9jb2xfdmVyc2lvbhgGIAEoBRITCgthcGlfYWRkcmVzcxgHIAEoCRIWCg5nb3NzaXBfYWRkcmVzcxgIIAEoCRITCgtycGNfYWRkcmVzcxgJIAEoCRIPCgdjc3JfcGVtGAogASgMEhQKDHJhZnRfYWRkcmVzcxgLIAEoCSJ4ChNKb2luQ2x1c3RlclJlc3BvbnNlEhIKCmNsdXN0ZXJfaWQYASABKAkSDgoGY2FfcGVtGAIgASgMEhAKCGNlcnRfcGVtGAMgASgMEhYKDmdvc3NpcF9hZGRyZXNzGAQgASgJEhMKC3JhZnRfbGVhZGVyGAUgASgJIhgKFkNsdXN0ZXJPdmVydmlld1JlcXVlc3Qi8AQKF0NsdXN0ZXJPdmVydmlld1Jlc3BvbnNlEhIKCmNsdXN0ZXJfaWQYASABKAkSDwoHbWVtYmVycxgCIAEoBRINCgVhbGl2ZRgDIAEoBRIWCg5jb250cm9sX3F1b3J1bRgEIAEoCBIWCg5jb250cm9sX2xlYWRlchgFIAEoCRIPCgdzdXNwZWN0GAYgASgFEg4KBmZhaWxlZBgHIAEoBRIVCg1wcm9jZXNzX3RvdGFsGAggASgFEhcKD3Byb2Nlc3NfcnVubmluZxgJIAEoBRIZChFwcm9jZXNzX3VuaGVhbHRoeRgKIAEoBRIVCg1wcm9jZXNzX2ZhdGFsGAsgASgFEhMKC2NwdV9wZXJjZW50GAwgASgFEhYKDm1lbW9yeV9wZXJjZW50GA0gASgFEhQKDGRpc2tfcGVyY2VudBgOIAEoBRIWCg5nb3NzaXBfaGVhbHRoeRgPIAEoCBITCgtycGNfaGVhbHRoeRgQIAEoCBIWCg5hZ2VudF9kZWdyYWRlZBgRIAEoCBIZChFjZXJ0X2V4cGlyZXNfdW5peBgSIAEoAxIXCg9jYV9leHBpcmVzX3VuaXgYEyABKAMSFAoMdmlld191bml4X21zGBQgASgDEhUKDXBsYXRmb3JtX25vdGUYFSABKAkSTwoOdmVyc2lvbl9jb3VudHMYFiADKAsyNy5wcm9jbWVzaC52MS5DbHVzdGVyT3ZlcnZpZXdSZXNwb25zZS5WZXJzaW9uQ291bnRzRW50cnkaNAoSVmVyc2lvbkNvdW50c0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoBToCOAEiYQoSUmVxdWVzdEpvaW5SZXF1ZXN0EicKBG1ldGEYASABKAsyGS5wcm9jbWVzaC52MS5NdXRhdGlvbk1ldGESEwoLc2VlZF9zZXJ2ZXIYAiABKAkSDQoFdG9rZW4YAyABKAkiQQoTUmVxdWVzdEpvaW5SZXNwb25zZRISCgpjbHVzdGVyX2lkGAEgASgJEhYKDmdvc3NpcF9hZGRyZXNzGAIgASgJMvwDCgtOb2RlU2VydmljZRJKCglMaXN0Tm9kZXMSHS5wcm9jbWVzaC52MS5MaXN0Tm9kZXNSZXF1ZXN0Gh4ucHJvY21lc2gudjEuTGlzdE5vZGVzUmVzcG9uc2USRAoHR2V0Tm9kZRIbLnByb2NtZXNoLnYxLkdldE5vZGVSZXF1ZXN0GhwucHJvY21lc2gudjEuR2V0Tm9kZVJlc3BvbnNlElwKD0NyZWF0ZUpvaW5Ub2tlbhIjLnByb2NtZXNoLnYxLkNyZWF0ZUpvaW5Ub2tlblJlcXVlc3QaJC5wcm9jbWVzaC52MS5DcmVhdGVKb2luVG9rZW5SZXNwb25zZRJcCg9SZXZva2VKb2luVG9rZW4SIy5wcm9jbWVzaC52MS5SZXZva2VKb2luVG9rZW5SZXF1ZXN0GiQucHJvY21lc2gudjEuUmV2b2tlSm9pblRva2VuUmVzcG9uc2USTQoKUmVtb3ZlTm9kZRIeLnByb2NtZXNoLnYxLlJlbW92ZU5vZGVSZXF1ZXN0Gh8ucHJvY21lc2gudjEuUmVtb3ZlTm9kZVJlc3BvbnNlElAKC1Byb21vdGVOb2RlEh8ucHJvY21lc2gudjEuUHJvbW90ZU5vZGVSZXF1ZXN0GiAucHJvY21lc2gudjEuUHJvbW90ZU5vZGVSZXNwb25zZTLPAgoOQ2x1c3RlclNlcnZpY2USSQoESW5pdBIfLnByb2NtZXNoLnYxLkluaXRDbHVzdGVyUmVxdWVzdBogLnByb2NtZXNoLnYxLkluaXRDbHVzdGVyUmVzcG9uc2USSQoESm9pbhIfLnByb2NtZXNoLnYxLkpvaW5DbHVzdGVyUmVxdWVzdBogLnByb2NtZXNoLnYxLkpvaW5DbHVzdGVyUmVzcG9uc2USUAoLUmVxdWVzdEpvaW4SHy5wcm9jbWVzaC52MS5SZXF1ZXN0Sm9pblJlcXVlc3QaIC5wcm9jbWVzaC52MS5SZXF1ZXN0Sm9pblJlc3BvbnNlElUKCE92ZXJ2aWV3EiMucHJvY21lc2gudjEuQ2x1c3Rlck92ZXJ2aWV3UmVxdWVzdBokLnByb2NtZXNoLnYxLkNsdXN0ZXJPdmVydmlld1Jlc3BvbnNlQjtaOWdpdGh1Yi5jb20vcWxlZWx1bHUvcHJvY21lc2gvcHJvdG8vcHJvY21lc2gvdjE7cHJvY21lc2h2MWIGcHJvdG8z", [file_procmesh_v1_cluster_types, file_procmesh_v1_mutation]);
+  fileDesc("Chlwcm9jbWVzaC92MS9jbHVzdGVyLnByb3RvEgtwcm9jbWVzaC52MSISChBMaXN0Tm9kZXNSZXF1ZXN0IjUKEUxpc3ROb2Rlc1Jlc3BvbnNlEiAKBW5vZGVzGAEgAygLMhEucHJvY21lc2gudjEuTm9kZSIoCg5HZXROb2RlUmVxdWVzdBIWCg5pZF9vcl9ob3N0bmFtZRgBIAEoCSIyCg9HZXROb2RlUmVzcG9uc2USHwoEbm9kZRgBIAEoCzIRLnByb2NtZXNoLnYxLk5vZGUiZAoWQ3JlYXRlSm9pblRva2VuUmVxdWVzdBInCgRtZXRhGAEgASgLMhkucHJvY21lc2gudjEuTXV0YXRpb25NZXRhEhMKC3R0bF9zZWNvbmRzGAIgASgDEgwKBHVzZXMYAyABKAUiXgoXQ3JlYXRlSm9pblRva2VuUmVzcG9uc2USEAoIdG9rZW5faWQYASABKAkSDQoFdG9rZW4YAiABKAkSFAoMZXhwaXJlc191bml4GAMgASgDEgwKBHVzZXMYBCABKAUiUwoWUmV2b2tlSm9pblRva2VuUmVxdWVzdBInCgRtZXRhGAEgASgLMhkucHJvY21lc2gudjEuTXV0YXRpb25NZXRhEhAKCHRva2VuX2lkGAIgASgJIhkKF1Jldm9rZUpvaW5Ub2tlblJlc3BvbnNlIk0KEVJlbW92ZU5vZGVSZXF1ZXN0EicKBG1ldGEYASABKAsyGS5wcm9jbWVzaC52MS5NdXRhdGlvbk1ldGESDwoHbm9kZV9pZBgCIAEoCSIUChJSZW1vdmVOb2RlUmVzcG9uc2UiTgoSUHJvbW90ZU5vZGVSZXF1ZXN0EicKBG1ldGEYASABKAsyGS5wcm9jbWVzaC52MS5NdXRhdGlvbk1ldGESDwoHbm9kZV9pZBgCIAEoCSIVChNQcm9tb3RlTm9kZVJlc3BvbnNlIm8KD01lbWJlcnNoaXBJc3N1ZRIPCgdub2RlX2lkGAEgASgJEgwKBGtpbmQYAiABKAkSEgoKcmVwYWlyYWJsZRgDIAEoCBIUCgxtZW1iZXJfc3RhdGUYBCABKAkSEwoLYWN0dWFsX3JvbGUYBSABKAkioQEKEE1lbWJlcnNoaXBSZXBvcnQSDgoGc3RhdHVzGAEgASgJEhEKCWZyZXNobmVzcxgCIAEoCRISCgpoYXNfcXVvcnVtGAMgASgIEg4KBmxlYWRlchgEIAEoCBIsCgZpc3N1ZXMYBSADKAsyHC5wcm9jbWVzaC52MS5NZW1iZXJzaGlwSXNzdWUSGAoQb2JzZXJ2ZWRfdW5peF9tcxgGIAEoAyIYChZDaGVja01lbWJlcnNoaXBSZXF1ZXN0IkgKF0NoZWNrTWVtYmVyc2hpcFJlc3BvbnNlEi0KBnJlcG9ydBgBIAEoCzIdLnByb2NtZXNoLnYxLk1lbWJlcnNoaXBSZXBvcnQiRQoaUmVjb25jaWxlTWVtYmVyc2hpcFJlcXVlc3QSJwoEbWV0YRgBIAEoCzIZLnByb2NtZXNoLnYxLk11dGF0aW9uTWV0YSJeChtSZWNvbmNpbGVNZW1iZXJzaGlwUmVzcG9uc2USLQoGcmVwb3J0GAEgASgLMh0ucHJvY21lc2gudjEuTWVtYmVyc2hpcFJlcG9ydBIQCghyZXBhaXJlZBgCIAEoBSJVChJJbml0Q2x1c3RlclJlcXVlc3QSJwoEbWV0YRgBIAEoCzIZLnByb2NtZXNoLnYxLk11dGF0aW9uTWV0YRIWCg5hZG1pbl91c2VybmFtZRgCIAEoCSJqChNJbml0Q2x1c3RlclJlc3BvbnNlEhIKCmNsdXN0ZXJfaWQYASABKAkSDwoHbm9kZV9pZBgCIAEoCRIWCg5hZG1pbl91c2VybmFtZRgDIAEoCRIWCg5hZG1pbl9wYXNzd29yZBgEIAEoCSKDAgoSSm9pbkNsdXN0ZXJSZXF1ZXN0EicKBG1ldGEYASABKAsyGS5wcm9jbWVzaC52MS5NdXRhdGlvbk1ldGESDQoFdG9rZW4YAiABKAkSDwoHbm9kZV9pZBgDIAEoCRIQCghob3N0bmFtZRgEIAEoCRIPCgdib290X2lkGAUgASgJEhgKEHByb3RvY29sX3ZlcnNpb24YBiABKAUSEwoLYXBpX2FkZHJlc3MYByABKAkSFgoOZ29zc2lwX2FkZHJlc3MYCCABKAkSEwoLcnBjX2FkZHJlc3MYCSABKAkSDwoHY3NyX3BlbRgKIAEoDBIUCgxyYWZ0X2FkZHJlc3MYCyABKAkieAoTSm9pbkNsdXN0ZXJSZXNwb25zZRISCgpjbHVzdGVyX2lkGAEgASgJEg4KBmNhX3BlbRgCIAEoDBIQCghjZXJ0X3BlbRgDIAEoDBIWCg5nb3NzaXBfYWRkcmVzcxgEIAEoCRITCgtyYWZ0X2xlYWRlchgFIAEoCSIYChZDbHVzdGVyT3ZlcnZpZXdSZXF1ZXN0IvAEChdDbHVzdGVyT3ZlcnZpZXdSZXNwb25zZRISCgpjbHVzdGVyX2lkGAEgASgJEg8KB21lbWJlcnMYAiABKAUSDQoFYWxpdmUYAyABKAUSFgoOY29udHJvbF9xdW9ydW0YBCABKAgSFgoOY29udHJvbF9sZWFkZXIYBSABKAkSDwoHc3VzcGVjdBgGIAEoBRIOCgZmYWlsZWQYByABKAUSFQoNcHJvY2Vzc190b3RhbBgIIAEoBRIXCg9wcm9jZXNzX3J1bm5pbmcYCSABKAUSGQoRcHJvY2Vzc191bmhlYWx0aHkYCiABKAUSFQoNcHJvY2Vzc19mYXRhbBgLIAEoBRITCgtjcHVfcGVyY2VudBgMIAEoBRIWCg5tZW1vcnlfcGVyY2VudBgNIAEoBRIUCgxkaXNrX3BlcmNlbnQYDiABKAUSFgoOZ29zc2lwX2hlYWx0aHkYDyABKAgSEwoLcnBjX2hlYWx0aHkYECABKAgSFgoOYWdlbnRfZGVncmFkZWQYESABKAgSGQoRY2VydF9leHBpcmVzX3VuaXgYEiABKAMSFwoPY2FfZXhwaXJlc191bml4GBMgASgDEhQKDHZpZXdfdW5peF9tcxgUIAEoAxIVCg1wbGF0Zm9ybV9ub3RlGBUgASgJEk8KDnZlcnNpb25fY291bnRzGBYgAygLMjcucHJvY21lc2gudjEuQ2x1c3Rlck92ZXJ2aWV3UmVzcG9uc2UuVmVyc2lvbkNvdW50c0VudHJ5GjQKElZlcnNpb25Db3VudHNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAU6AjgBImEKElJlcXVlc3RKb2luUmVxdWVzdBInCgRtZXRhGAEgASgLMhkucHJvY21lc2gudjEuTXV0YXRpb25NZXRhEhMKC3NlZWRfc2VydmVyGAIgASgJEg0KBXRva2VuGAMgASgJIkEKE1JlcXVlc3RKb2luUmVzcG9uc2USEgoKY2x1c3Rlcl9pZBgBIAEoCRIWCg5nb3NzaXBfYWRkcmVzcxgCIAEoCTLEBQoLTm9kZVNlcnZpY2USSgoJTGlzdE5vZGVzEh0ucHJvY21lc2gudjEuTGlzdE5vZGVzUmVxdWVzdBoeLnByb2NtZXNoLnYxLkxpc3ROb2Rlc1Jlc3BvbnNlEkQKB0dldE5vZGUSGy5wcm9jbWVzaC52MS5HZXROb2RlUmVxdWVzdBocLnByb2NtZXNoLnYxLkdldE5vZGVSZXNwb25zZRJcCg9DcmVhdGVKb2luVG9rZW4SIy5wcm9jbWVzaC52MS5DcmVhdGVKb2luVG9rZW5SZXF1ZXN0GiQucHJvY21lc2gudjEuQ3JlYXRlSm9pblRva2VuUmVzcG9uc2USXAoPUmV2b2tlSm9pblRva2VuEiMucHJvY21lc2gudjEuUmV2b2tlSm9pblRva2VuUmVxdWVzdBokLnByb2NtZXNoLnYxLlJldm9rZUpvaW5Ub2tlblJlc3BvbnNlEk0KClJlbW92ZU5vZGUSHi5wcm9jbWVzaC52MS5SZW1vdmVOb2RlUmVxdWVzdBofLnByb2NtZXNoLnYxLlJlbW92ZU5vZGVSZXNwb25zZRJQCgtQcm9tb3RlTm9kZRIfLnByb2NtZXNoLnYxLlByb21vdGVOb2RlUmVxdWVzdBogLnByb2NtZXNoLnYxLlByb21vdGVOb2RlUmVzcG9uc2USXAoPQ2hlY2tNZW1iZXJzaGlwEiMucHJvY21lc2gudjEuQ2hlY2tNZW1iZXJzaGlwUmVxdWVzdBokLnByb2NtZXNoLnYxLkNoZWNrTWVtYmVyc2hpcFJlc3BvbnNlEmgKE1JlY29uY2lsZU1lbWJlcnNoaXASJy5wcm9jbWVzaC52MS5SZWNvbmNpbGVNZW1iZXJzaGlwUmVxdWVzdBooLnByb2NtZXNoLnYxLlJlY29uY2lsZU1lbWJlcnNoaXBSZXNwb25zZTLPAgoOQ2x1c3RlclNlcnZpY2USSQoESW5pdBIfLnByb2NtZXNoLnYxLkluaXRDbHVzdGVyUmVxdWVzdBogLnByb2NtZXNoLnYxLkluaXRDbHVzdGVyUmVzcG9uc2USSQoESm9pbhIfLnByb2NtZXNoLnYxLkpvaW5DbHVzdGVyUmVxdWVzdBogLnByb2NtZXNoLnYxLkpvaW5DbHVzdGVyUmVzcG9uc2USUAoLUmVxdWVzdEpvaW4SHy5wcm9jbWVzaC52MS5SZXF1ZXN0Sm9pblJlcXVlc3QaIC5wcm9jbWVzaC52MS5SZXF1ZXN0Sm9pblJlc3BvbnNlElUKCE92ZXJ2aWV3EiMucHJvY21lc2gudjEuQ2x1c3Rlck92ZXJ2aWV3UmVxdWVzdBokLnByb2NtZXNoLnYxLkNsdXN0ZXJPdmVydmlld1Jlc3BvbnNlQjtaOWdpdGh1Yi5jb20vcWxlZWx1bHUvcHJvY21lc2gvcHJvdG8vcHJvY21lc2gvdjE7cHJvY21lc2h2MWIGcHJvdG8z", [file_procmesh_v1_cluster_types, file_procmesh_v1_mutation]);
 
 /**
  * @generated from message procmesh.v1.ListNodesRequest
@@ -249,6 +249,164 @@ export const PromoteNodeResponseSchema: GenMessage<PromoteNodeResponse> = /*@__P
   messageDesc(file_procmesh_v1_cluster, 11);
 
 /**
+ * @generated from message procmesh.v1.MembershipIssue
+ */
+export type MembershipIssue = Message<"procmesh.v1.MembershipIssue"> & {
+  /**
+   * @generated from field: string node_id = 1;
+   */
+  nodeId: string;
+
+  /**
+   * MISSING_MEMBER | ADDRESS_MISMATCH | JOIN_INCOMPLETE | REMOVAL_PENDING | UNEXPECTED_MEMBER | INVALID_DESIRED_MEMBER
+   *
+   * @generated from field: string kind = 2;
+   */
+  kind: string;
+
+  /**
+   * @generated from field: bool repairable = 3;
+   */
+  repairable: boolean;
+
+  /**
+   * JOINING | ADMITTED | REMOVED | REVOKED; empty when unknown to the FSM
+   *
+   * @generated from field: string member_state = 4;
+   */
+  memberState: string;
+
+  /**
+   * VOTER | NON_VOTER; empty when absent from Raft
+   *
+   * @generated from field: string actual_role = 5;
+   */
+  actualRole: string;
+};
+
+/**
+ * Describes the message procmesh.v1.MembershipIssue.
+ * Use `create(MembershipIssueSchema)` to create a new message.
+ */
+export const MembershipIssueSchema: GenMessage<MembershipIssue> = /*@__PURE__*/
+  messageDesc(file_procmesh_v1_cluster, 12);
+
+/**
+ * @generated from message procmesh.v1.MembershipReport
+ */
+export type MembershipReport = Message<"procmesh.v1.MembershipReport"> & {
+  /**
+   * CLEAN | DRIFTED | BLOCKED
+   *
+   * @generated from field: string status = 1;
+   */
+  status: string;
+
+  /**
+   * LIVE | STALE | UNKNOWN
+   *
+   * @generated from field: string freshness = 2;
+   */
+  freshness: string;
+
+  /**
+   * @generated from field: bool has_quorum = 3;
+   */
+  hasQuorum: boolean;
+
+  /**
+   * @generated from field: bool leader = 4;
+   */
+  leader: boolean;
+
+  /**
+   * @generated from field: repeated procmesh.v1.MembershipIssue issues = 5;
+   */
+  issues: MembershipIssue[];
+
+  /**
+   * @generated from field: int64 observed_unix_ms = 6;
+   */
+  observedUnixMs: bigint;
+};
+
+/**
+ * Describes the message procmesh.v1.MembershipReport.
+ * Use `create(MembershipReportSchema)` to create a new message.
+ */
+export const MembershipReportSchema: GenMessage<MembershipReport> = /*@__PURE__*/
+  messageDesc(file_procmesh_v1_cluster, 13);
+
+/**
+ * @generated from message procmesh.v1.CheckMembershipRequest
+ */
+export type CheckMembershipRequest = Message<"procmesh.v1.CheckMembershipRequest"> & {
+};
+
+/**
+ * Describes the message procmesh.v1.CheckMembershipRequest.
+ * Use `create(CheckMembershipRequestSchema)` to create a new message.
+ */
+export const CheckMembershipRequestSchema: GenMessage<CheckMembershipRequest> = /*@__PURE__*/
+  messageDesc(file_procmesh_v1_cluster, 14);
+
+/**
+ * @generated from message procmesh.v1.CheckMembershipResponse
+ */
+export type CheckMembershipResponse = Message<"procmesh.v1.CheckMembershipResponse"> & {
+  /**
+   * @generated from field: procmesh.v1.MembershipReport report = 1;
+   */
+  report?: MembershipReport | undefined;
+};
+
+/**
+ * Describes the message procmesh.v1.CheckMembershipResponse.
+ * Use `create(CheckMembershipResponseSchema)` to create a new message.
+ */
+export const CheckMembershipResponseSchema: GenMessage<CheckMembershipResponse> = /*@__PURE__*/
+  messageDesc(file_procmesh_v1_cluster, 15);
+
+/**
+ * @generated from message procmesh.v1.ReconcileMembershipRequest
+ */
+export type ReconcileMembershipRequest = Message<"procmesh.v1.ReconcileMembershipRequest"> & {
+  /**
+   * @generated from field: procmesh.v1.MutationMeta meta = 1;
+   */
+  meta?: MutationMeta | undefined;
+};
+
+/**
+ * Describes the message procmesh.v1.ReconcileMembershipRequest.
+ * Use `create(ReconcileMembershipRequestSchema)` to create a new message.
+ */
+export const ReconcileMembershipRequestSchema: GenMessage<ReconcileMembershipRequest> = /*@__PURE__*/
+  messageDesc(file_procmesh_v1_cluster, 16);
+
+/**
+ * @generated from message procmesh.v1.ReconcileMembershipResponse
+ */
+export type ReconcileMembershipResponse = Message<"procmesh.v1.ReconcileMembershipResponse"> & {
+  /**
+   * @generated from field: procmesh.v1.MembershipReport report = 1;
+   */
+  report?: MembershipReport | undefined;
+
+  /**
+   * @generated from field: int32 repaired = 2;
+   */
+  repaired: number;
+};
+
+/**
+ * Describes the message procmesh.v1.ReconcileMembershipResponse.
+ * Use `create(ReconcileMembershipResponseSchema)` to create a new message.
+ */
+export const ReconcileMembershipResponseSchema: GenMessage<ReconcileMembershipResponse> = /*@__PURE__*/
+  messageDesc(file_procmesh_v1_cluster, 17);
+
+/**
  * @generated from message procmesh.v1.InitClusterRequest
  */
 export type InitClusterRequest = Message<"procmesh.v1.InitClusterRequest"> & {
@@ -268,7 +426,7 @@ export type InitClusterRequest = Message<"procmesh.v1.InitClusterRequest"> & {
  * Use `create(InitClusterRequestSchema)` to create a new message.
  */
 export const InitClusterRequestSchema: GenMessage<InitClusterRequest> = /*@__PURE__*/
-  messageDesc(file_procmesh_v1_cluster, 12);
+  messageDesc(file_procmesh_v1_cluster, 18);
 
 /**
  * @generated from message procmesh.v1.InitClusterResponse
@@ -300,7 +458,7 @@ export type InitClusterResponse = Message<"procmesh.v1.InitClusterResponse"> & {
  * Use `create(InitClusterResponseSchema)` to create a new message.
  */
 export const InitClusterResponseSchema: GenMessage<InitClusterResponse> = /*@__PURE__*/
-  messageDesc(file_procmesh_v1_cluster, 13);
+  messageDesc(file_procmesh_v1_cluster, 19);
 
 /**
  * @generated from message procmesh.v1.JoinClusterRequest
@@ -367,7 +525,7 @@ export type JoinClusterRequest = Message<"procmesh.v1.JoinClusterRequest"> & {
  * Use `create(JoinClusterRequestSchema)` to create a new message.
  */
 export const JoinClusterRequestSchema: GenMessage<JoinClusterRequest> = /*@__PURE__*/
-  messageDesc(file_procmesh_v1_cluster, 14);
+  messageDesc(file_procmesh_v1_cluster, 20);
 
 /**
  * @generated from message procmesh.v1.JoinClusterResponse
@@ -404,7 +562,7 @@ export type JoinClusterResponse = Message<"procmesh.v1.JoinClusterResponse"> & {
  * Use `create(JoinClusterResponseSchema)` to create a new message.
  */
 export const JoinClusterResponseSchema: GenMessage<JoinClusterResponse> = /*@__PURE__*/
-  messageDesc(file_procmesh_v1_cluster, 15);
+  messageDesc(file_procmesh_v1_cluster, 21);
 
 /**
  * @generated from message procmesh.v1.ClusterOverviewRequest
@@ -417,7 +575,7 @@ export type ClusterOverviewRequest = Message<"procmesh.v1.ClusterOverviewRequest
  * Use `create(ClusterOverviewRequestSchema)` to create a new message.
  */
 export const ClusterOverviewRequestSchema: GenMessage<ClusterOverviewRequest> = /*@__PURE__*/
-  messageDesc(file_procmesh_v1_cluster, 16);
+  messageDesc(file_procmesh_v1_cluster, 22);
 
 /**
  * @generated from message procmesh.v1.ClusterOverviewResponse
@@ -543,7 +701,7 @@ export type ClusterOverviewResponse = Message<"procmesh.v1.ClusterOverviewRespon
  * Use `create(ClusterOverviewResponseSchema)` to create a new message.
  */
 export const ClusterOverviewResponseSchema: GenMessage<ClusterOverviewResponse> = /*@__PURE__*/
-  messageDesc(file_procmesh_v1_cluster, 17);
+  messageDesc(file_procmesh_v1_cluster, 23);
 
 /**
  * @generated from message procmesh.v1.RequestJoinRequest
@@ -572,7 +730,7 @@ export type RequestJoinRequest = Message<"procmesh.v1.RequestJoinRequest"> & {
  * Use `create(RequestJoinRequestSchema)` to create a new message.
  */
 export const RequestJoinRequestSchema: GenMessage<RequestJoinRequest> = /*@__PURE__*/
-  messageDesc(file_procmesh_v1_cluster, 18);
+  messageDesc(file_procmesh_v1_cluster, 24);
 
 /**
  * @generated from message procmesh.v1.RequestJoinResponse
@@ -594,7 +752,7 @@ export type RequestJoinResponse = Message<"procmesh.v1.RequestJoinResponse"> & {
  * Use `create(RequestJoinResponseSchema)` to create a new message.
  */
 export const RequestJoinResponseSchema: GenMessage<RequestJoinResponse> = /*@__PURE__*/
-  messageDesc(file_procmesh_v1_cluster, 19);
+  messageDesc(file_procmesh_v1_cluster, 25);
 
 /**
  * @generated from service procmesh.v1.NodeService
@@ -647,6 +805,22 @@ export const NodeService: GenService<{
     methodKind: "unary";
     input: typeof PromoteNodeRequestSchema;
     output: typeof PromoteNodeResponseSchema;
+  },
+  /**
+   * @generated from rpc procmesh.v1.NodeService.CheckMembership
+   */
+  checkMembership: {
+    methodKind: "unary";
+    input: typeof CheckMembershipRequestSchema;
+    output: typeof CheckMembershipResponseSchema;
+  },
+  /**
+   * @generated from rpc procmesh.v1.NodeService.ReconcileMembership
+   */
+  reconcileMembership: {
+    methodKind: "unary";
+    input: typeof ReconcileMembershipRequestSchema;
+    output: typeof ReconcileMembershipResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_procmesh_v1_cluster, 0);

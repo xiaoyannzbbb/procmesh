@@ -40,6 +40,8 @@ commands:
   process adopt <instance-id> --pid N
   start|stop|restart|logs <id-or-name>
   cluster init [--admin-user NAME]
+  cluster membership check
+  cluster membership reconcile
   agent join --seed HOST:PORT --token TOKEN
   node list
   node status [id-or-hostname]

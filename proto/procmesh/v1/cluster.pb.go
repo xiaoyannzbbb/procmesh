@@ -581,6 +581,342 @@ func (*PromoteNodeResponse) Descriptor() ([]byte, []int) {
 	return file_procmesh_v1_cluster_proto_rawDescGZIP(), []int{11}
 }
 
+type MembershipIssue struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Kind          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"` // MISSING_MEMBER | ADDRESS_MISMATCH | JOIN_INCOMPLETE | REMOVAL_PENDING | UNEXPECTED_MEMBER | INVALID_DESIRED_MEMBER
+	Repairable    bool                   `protobuf:"varint,3,opt,name=repairable,proto3" json:"repairable,omitempty"`
+	MemberState   string                 `protobuf:"bytes,4,opt,name=member_state,json=memberState,proto3" json:"member_state,omitempty"` // JOINING | ADMITTED | REMOVED | REVOKED; empty when unknown to the FSM
+	ActualRole    string                 `protobuf:"bytes,5,opt,name=actual_role,json=actualRole,proto3" json:"actual_role,omitempty"`    // VOTER | NON_VOTER; empty when absent from Raft
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MembershipIssue) Reset() {
+	*x = MembershipIssue{}
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MembershipIssue) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MembershipIssue) ProtoMessage() {}
+
+func (x *MembershipIssue) ProtoReflect() protoreflect.Message {
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MembershipIssue.ProtoReflect.Descriptor instead.
+func (*MembershipIssue) Descriptor() ([]byte, []int) {
+	return file_procmesh_v1_cluster_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *MembershipIssue) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
+}
+
+func (x *MembershipIssue) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *MembershipIssue) GetRepairable() bool {
+	if x != nil {
+		return x.Repairable
+	}
+	return false
+}
+
+func (x *MembershipIssue) GetMemberState() string {
+	if x != nil {
+		return x.MemberState
+	}
+	return ""
+}
+
+func (x *MembershipIssue) GetActualRole() string {
+	if x != nil {
+		return x.ActualRole
+	}
+	return ""
+}
+
+type MembershipReport struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Status         string                 `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`       // CLEAN | DRIFTED | BLOCKED
+	Freshness      string                 `protobuf:"bytes,2,opt,name=freshness,proto3" json:"freshness,omitempty"` // LIVE | STALE | UNKNOWN
+	HasQuorum      bool                   `protobuf:"varint,3,opt,name=has_quorum,json=hasQuorum,proto3" json:"has_quorum,omitempty"`
+	Leader         bool                   `protobuf:"varint,4,opt,name=leader,proto3" json:"leader,omitempty"`
+	Issues         []*MembershipIssue     `protobuf:"bytes,5,rep,name=issues,proto3" json:"issues,omitempty"`
+	ObservedUnixMs int64                  `protobuf:"varint,6,opt,name=observed_unix_ms,json=observedUnixMs,proto3" json:"observed_unix_ms,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *MembershipReport) Reset() {
+	*x = MembershipReport{}
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MembershipReport) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MembershipReport) ProtoMessage() {}
+
+func (x *MembershipReport) ProtoReflect() protoreflect.Message {
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MembershipReport.ProtoReflect.Descriptor instead.
+func (*MembershipReport) Descriptor() ([]byte, []int) {
+	return file_procmesh_v1_cluster_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *MembershipReport) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *MembershipReport) GetFreshness() string {
+	if x != nil {
+		return x.Freshness
+	}
+	return ""
+}
+
+func (x *MembershipReport) GetHasQuorum() bool {
+	if x != nil {
+		return x.HasQuorum
+	}
+	return false
+}
+
+func (x *MembershipReport) GetLeader() bool {
+	if x != nil {
+		return x.Leader
+	}
+	return false
+}
+
+func (x *MembershipReport) GetIssues() []*MembershipIssue {
+	if x != nil {
+		return x.Issues
+	}
+	return nil
+}
+
+func (x *MembershipReport) GetObservedUnixMs() int64 {
+	if x != nil {
+		return x.ObservedUnixMs
+	}
+	return 0
+}
+
+type CheckMembershipRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckMembershipRequest) Reset() {
+	*x = CheckMembershipRequest{}
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckMembershipRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckMembershipRequest) ProtoMessage() {}
+
+func (x *CheckMembershipRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckMembershipRequest.ProtoReflect.Descriptor instead.
+func (*CheckMembershipRequest) Descriptor() ([]byte, []int) {
+	return file_procmesh_v1_cluster_proto_rawDescGZIP(), []int{14}
+}
+
+type CheckMembershipResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Report        *MembershipReport      `protobuf:"bytes,1,opt,name=report,proto3" json:"report,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckMembershipResponse) Reset() {
+	*x = CheckMembershipResponse{}
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckMembershipResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckMembershipResponse) ProtoMessage() {}
+
+func (x *CheckMembershipResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckMembershipResponse.ProtoReflect.Descriptor instead.
+func (*CheckMembershipResponse) Descriptor() ([]byte, []int) {
+	return file_procmesh_v1_cluster_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *CheckMembershipResponse) GetReport() *MembershipReport {
+	if x != nil {
+		return x.Report
+	}
+	return nil
+}
+
+type ReconcileMembershipRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Meta          *MutationMeta          `protobuf:"bytes,1,opt,name=meta,proto3" json:"meta,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReconcileMembershipRequest) Reset() {
+	*x = ReconcileMembershipRequest{}
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReconcileMembershipRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReconcileMembershipRequest) ProtoMessage() {}
+
+func (x *ReconcileMembershipRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReconcileMembershipRequest.ProtoReflect.Descriptor instead.
+func (*ReconcileMembershipRequest) Descriptor() ([]byte, []int) {
+	return file_procmesh_v1_cluster_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *ReconcileMembershipRequest) GetMeta() *MutationMeta {
+	if x != nil {
+		return x.Meta
+	}
+	return nil
+}
+
+type ReconcileMembershipResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Report        *MembershipReport      `protobuf:"bytes,1,opt,name=report,proto3" json:"report,omitempty"`
+	Repaired      int32                  `protobuf:"varint,2,opt,name=repaired,proto3" json:"repaired,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReconcileMembershipResponse) Reset() {
+	*x = ReconcileMembershipResponse{}
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReconcileMembershipResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReconcileMembershipResponse) ProtoMessage() {}
+
+func (x *ReconcileMembershipResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReconcileMembershipResponse.ProtoReflect.Descriptor instead.
+func (*ReconcileMembershipResponse) Descriptor() ([]byte, []int) {
+	return file_procmesh_v1_cluster_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *ReconcileMembershipResponse) GetReport() *MembershipReport {
+	if x != nil {
+		return x.Report
+	}
+	return nil
+}
+
+func (x *ReconcileMembershipResponse) GetRepaired() int32 {
+	if x != nil {
+		return x.Repaired
+	}
+	return 0
+}
+
 type InitClusterRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Meta          *MutationMeta          `protobuf:"bytes,1,opt,name=meta,proto3" json:"meta,omitempty"`
@@ -591,7 +927,7 @@ type InitClusterRequest struct {
 
 func (x *InitClusterRequest) Reset() {
 	*x = InitClusterRequest{}
-	mi := &file_procmesh_v1_cluster_proto_msgTypes[12]
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -603,7 +939,7 @@ func (x *InitClusterRequest) String() string {
 func (*InitClusterRequest) ProtoMessage() {}
 
 func (x *InitClusterRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_procmesh_v1_cluster_proto_msgTypes[12]
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -616,7 +952,7 @@ func (x *InitClusterRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InitClusterRequest.ProtoReflect.Descriptor instead.
 func (*InitClusterRequest) Descriptor() ([]byte, []int) {
-	return file_procmesh_v1_cluster_proto_rawDescGZIP(), []int{12}
+	return file_procmesh_v1_cluster_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *InitClusterRequest) GetMeta() *MutationMeta {
@@ -645,7 +981,7 @@ type InitClusterResponse struct {
 
 func (x *InitClusterResponse) Reset() {
 	*x = InitClusterResponse{}
-	mi := &file_procmesh_v1_cluster_proto_msgTypes[13]
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -657,7 +993,7 @@ func (x *InitClusterResponse) String() string {
 func (*InitClusterResponse) ProtoMessage() {}
 
 func (x *InitClusterResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_procmesh_v1_cluster_proto_msgTypes[13]
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -670,7 +1006,7 @@ func (x *InitClusterResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InitClusterResponse.ProtoReflect.Descriptor instead.
 func (*InitClusterResponse) Descriptor() ([]byte, []int) {
-	return file_procmesh_v1_cluster_proto_rawDescGZIP(), []int{13}
+	return file_procmesh_v1_cluster_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *InitClusterResponse) GetClusterId() string {
@@ -720,7 +1056,7 @@ type JoinClusterRequest struct {
 
 func (x *JoinClusterRequest) Reset() {
 	*x = JoinClusterRequest{}
-	mi := &file_procmesh_v1_cluster_proto_msgTypes[14]
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -732,7 +1068,7 @@ func (x *JoinClusterRequest) String() string {
 func (*JoinClusterRequest) ProtoMessage() {}
 
 func (x *JoinClusterRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_procmesh_v1_cluster_proto_msgTypes[14]
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -745,7 +1081,7 @@ func (x *JoinClusterRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JoinClusterRequest.ProtoReflect.Descriptor instead.
 func (*JoinClusterRequest) Descriptor() ([]byte, []int) {
-	return file_procmesh_v1_cluster_proto_rawDescGZIP(), []int{14}
+	return file_procmesh_v1_cluster_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *JoinClusterRequest) GetMeta() *MutationMeta {
@@ -838,7 +1174,7 @@ type JoinClusterResponse struct {
 
 func (x *JoinClusterResponse) Reset() {
 	*x = JoinClusterResponse{}
-	mi := &file_procmesh_v1_cluster_proto_msgTypes[15]
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -850,7 +1186,7 @@ func (x *JoinClusterResponse) String() string {
 func (*JoinClusterResponse) ProtoMessage() {}
 
 func (x *JoinClusterResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_procmesh_v1_cluster_proto_msgTypes[15]
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -863,7 +1199,7 @@ func (x *JoinClusterResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JoinClusterResponse.ProtoReflect.Descriptor instead.
 func (*JoinClusterResponse) Descriptor() ([]byte, []int) {
-	return file_procmesh_v1_cluster_proto_rawDescGZIP(), []int{15}
+	return file_procmesh_v1_cluster_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *JoinClusterResponse) GetClusterId() string {
@@ -909,7 +1245,7 @@ type ClusterOverviewRequest struct {
 
 func (x *ClusterOverviewRequest) Reset() {
 	*x = ClusterOverviewRequest{}
-	mi := &file_procmesh_v1_cluster_proto_msgTypes[16]
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -921,7 +1257,7 @@ func (x *ClusterOverviewRequest) String() string {
 func (*ClusterOverviewRequest) ProtoMessage() {}
 
 func (x *ClusterOverviewRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_procmesh_v1_cluster_proto_msgTypes[16]
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -934,7 +1270,7 @@ func (x *ClusterOverviewRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClusterOverviewRequest.ProtoReflect.Descriptor instead.
 func (*ClusterOverviewRequest) Descriptor() ([]byte, []int) {
-	return file_procmesh_v1_cluster_proto_rawDescGZIP(), []int{16}
+	return file_procmesh_v1_cluster_proto_rawDescGZIP(), []int{22}
 }
 
 type ClusterOverviewResponse struct {
@@ -967,7 +1303,7 @@ type ClusterOverviewResponse struct {
 
 func (x *ClusterOverviewResponse) Reset() {
 	*x = ClusterOverviewResponse{}
-	mi := &file_procmesh_v1_cluster_proto_msgTypes[17]
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -979,7 +1315,7 @@ func (x *ClusterOverviewResponse) String() string {
 func (*ClusterOverviewResponse) ProtoMessage() {}
 
 func (x *ClusterOverviewResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_procmesh_v1_cluster_proto_msgTypes[17]
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -992,7 +1328,7 @@ func (x *ClusterOverviewResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClusterOverviewResponse.ProtoReflect.Descriptor instead.
 func (*ClusterOverviewResponse) Descriptor() ([]byte, []int) {
-	return file_procmesh_v1_cluster_proto_rawDescGZIP(), []int{17}
+	return file_procmesh_v1_cluster_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *ClusterOverviewResponse) GetClusterId() string {
@@ -1160,7 +1496,7 @@ type RequestJoinRequest struct {
 
 func (x *RequestJoinRequest) Reset() {
 	*x = RequestJoinRequest{}
-	mi := &file_procmesh_v1_cluster_proto_msgTypes[18]
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1172,7 +1508,7 @@ func (x *RequestJoinRequest) String() string {
 func (*RequestJoinRequest) ProtoMessage() {}
 
 func (x *RequestJoinRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_procmesh_v1_cluster_proto_msgTypes[18]
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1185,7 +1521,7 @@ func (x *RequestJoinRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RequestJoinRequest.ProtoReflect.Descriptor instead.
 func (*RequestJoinRequest) Descriptor() ([]byte, []int) {
-	return file_procmesh_v1_cluster_proto_rawDescGZIP(), []int{18}
+	return file_procmesh_v1_cluster_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *RequestJoinRequest) GetMeta() *MutationMeta {
@@ -1219,7 +1555,7 @@ type RequestJoinResponse struct {
 
 func (x *RequestJoinResponse) Reset() {
 	*x = RequestJoinResponse{}
-	mi := &file_procmesh_v1_cluster_proto_msgTypes[19]
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1231,7 +1567,7 @@ func (x *RequestJoinResponse) String() string {
 func (*RequestJoinResponse) ProtoMessage() {}
 
 func (x *RequestJoinResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_procmesh_v1_cluster_proto_msgTypes[19]
+	mi := &file_procmesh_v1_cluster_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1244,7 +1580,7 @@ func (x *RequestJoinResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RequestJoinResponse.ProtoReflect.Descriptor instead.
 func (*RequestJoinResponse) Descriptor() ([]byte, []int) {
-	return file_procmesh_v1_cluster_proto_rawDescGZIP(), []int{19}
+	return file_procmesh_v1_cluster_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *RequestJoinResponse) GetClusterId() string {
@@ -1294,7 +1630,32 @@ const file_procmesh_v1_cluster_proto_rawDesc = "" +
 	"\x12PromoteNodeRequest\x12-\n" +
 	"\x04meta\x18\x01 \x01(\v2\x19.procmesh.v1.MutationMetaR\x04meta\x12\x17\n" +
 	"\anode_id\x18\x02 \x01(\tR\x06nodeId\"\x15\n" +
-	"\x13PromoteNodeResponse\"j\n" +
+	"\x13PromoteNodeResponse\"\xa2\x01\n" +
+	"\x0fMembershipIssue\x12\x17\n" +
+	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x12\n" +
+	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x1e\n" +
+	"\n" +
+	"repairable\x18\x03 \x01(\bR\n" +
+	"repairable\x12!\n" +
+	"\fmember_state\x18\x04 \x01(\tR\vmemberState\x12\x1f\n" +
+	"\vactual_role\x18\x05 \x01(\tR\n" +
+	"actualRole\"\xdf\x01\n" +
+	"\x10MembershipReport\x12\x16\n" +
+	"\x06status\x18\x01 \x01(\tR\x06status\x12\x1c\n" +
+	"\tfreshness\x18\x02 \x01(\tR\tfreshness\x12\x1d\n" +
+	"\n" +
+	"has_quorum\x18\x03 \x01(\bR\thasQuorum\x12\x16\n" +
+	"\x06leader\x18\x04 \x01(\bR\x06leader\x124\n" +
+	"\x06issues\x18\x05 \x03(\v2\x1c.procmesh.v1.MembershipIssueR\x06issues\x12(\n" +
+	"\x10observed_unix_ms\x18\x06 \x01(\x03R\x0eobservedUnixMs\"\x18\n" +
+	"\x16CheckMembershipRequest\"P\n" +
+	"\x17CheckMembershipResponse\x125\n" +
+	"\x06report\x18\x01 \x01(\v2\x1d.procmesh.v1.MembershipReportR\x06report\"K\n" +
+	"\x1aReconcileMembershipRequest\x12-\n" +
+	"\x04meta\x18\x01 \x01(\v2\x19.procmesh.v1.MutationMetaR\x04meta\"p\n" +
+	"\x1bReconcileMembershipResponse\x125\n" +
+	"\x06report\x18\x01 \x01(\v2\x1d.procmesh.v1.MembershipReportR\x06report\x12\x1a\n" +
+	"\brepaired\x18\x02 \x01(\x05R\brepaired\"j\n" +
 	"\x12InitClusterRequest\x12-\n" +
 	"\x04meta\x18\x01 \x01(\v2\x19.procmesh.v1.MutationMetaR\x04meta\x12%\n" +
 	"\x0eadmin_username\x18\x02 \x01(\tR\radminUsername\"\x9b\x01\n" +
@@ -1367,7 +1728,7 @@ const file_procmesh_v1_cluster_proto_rawDesc = "" +
 	"\x13RequestJoinResponse\x12\x1d\n" +
 	"\n" +
 	"cluster_id\x18\x01 \x01(\tR\tclusterId\x12%\n" +
-	"\x0egossip_address\x18\x02 \x01(\tR\rgossipAddress2\xfc\x03\n" +
+	"\x0egossip_address\x18\x02 \x01(\tR\rgossipAddress2\xc4\x05\n" +
 	"\vNodeService\x12J\n" +
 	"\tListNodes\x12\x1d.procmesh.v1.ListNodesRequest\x1a\x1e.procmesh.v1.ListNodesResponse\x12D\n" +
 	"\aGetNode\x12\x1b.procmesh.v1.GetNodeRequest\x1a\x1c.procmesh.v1.GetNodeResponse\x12\\\n" +
@@ -1375,7 +1736,9 @@ const file_procmesh_v1_cluster_proto_rawDesc = "" +
 	"\x0fRevokeJoinToken\x12#.procmesh.v1.RevokeJoinTokenRequest\x1a$.procmesh.v1.RevokeJoinTokenResponse\x12M\n" +
 	"\n" +
 	"RemoveNode\x12\x1e.procmesh.v1.RemoveNodeRequest\x1a\x1f.procmesh.v1.RemoveNodeResponse\x12P\n" +
-	"\vPromoteNode\x12\x1f.procmesh.v1.PromoteNodeRequest\x1a .procmesh.v1.PromoteNodeResponse2\xcf\x02\n" +
+	"\vPromoteNode\x12\x1f.procmesh.v1.PromoteNodeRequest\x1a .procmesh.v1.PromoteNodeResponse\x12\\\n" +
+	"\x0fCheckMembership\x12#.procmesh.v1.CheckMembershipRequest\x1a$.procmesh.v1.CheckMembershipResponse\x12h\n" +
+	"\x13ReconcileMembership\x12'.procmesh.v1.ReconcileMembershipRequest\x1a(.procmesh.v1.ReconcileMembershipResponse2\xcf\x02\n" +
 	"\x0eClusterService\x12I\n" +
 	"\x04Init\x12\x1f.procmesh.v1.InitClusterRequest\x1a .procmesh.v1.InitClusterResponse\x12I\n" +
 	"\x04Join\x12\x1f.procmesh.v1.JoinClusterRequest\x1a .procmesh.v1.JoinClusterResponse\x12P\n" +
@@ -1394,68 +1757,82 @@ func file_procmesh_v1_cluster_proto_rawDescGZIP() []byte {
 	return file_procmesh_v1_cluster_proto_rawDescData
 }
 
-var file_procmesh_v1_cluster_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_procmesh_v1_cluster_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
 var file_procmesh_v1_cluster_proto_goTypes = []any{
-	(*ListNodesRequest)(nil),        // 0: procmesh.v1.ListNodesRequest
-	(*ListNodesResponse)(nil),       // 1: procmesh.v1.ListNodesResponse
-	(*GetNodeRequest)(nil),          // 2: procmesh.v1.GetNodeRequest
-	(*GetNodeResponse)(nil),         // 3: procmesh.v1.GetNodeResponse
-	(*CreateJoinTokenRequest)(nil),  // 4: procmesh.v1.CreateJoinTokenRequest
-	(*CreateJoinTokenResponse)(nil), // 5: procmesh.v1.CreateJoinTokenResponse
-	(*RevokeJoinTokenRequest)(nil),  // 6: procmesh.v1.RevokeJoinTokenRequest
-	(*RevokeJoinTokenResponse)(nil), // 7: procmesh.v1.RevokeJoinTokenResponse
-	(*RemoveNodeRequest)(nil),       // 8: procmesh.v1.RemoveNodeRequest
-	(*RemoveNodeResponse)(nil),      // 9: procmesh.v1.RemoveNodeResponse
-	(*PromoteNodeRequest)(nil),      // 10: procmesh.v1.PromoteNodeRequest
-	(*PromoteNodeResponse)(nil),     // 11: procmesh.v1.PromoteNodeResponse
-	(*InitClusterRequest)(nil),      // 12: procmesh.v1.InitClusterRequest
-	(*InitClusterResponse)(nil),     // 13: procmesh.v1.InitClusterResponse
-	(*JoinClusterRequest)(nil),      // 14: procmesh.v1.JoinClusterRequest
-	(*JoinClusterResponse)(nil),     // 15: procmesh.v1.JoinClusterResponse
-	(*ClusterOverviewRequest)(nil),  // 16: procmesh.v1.ClusterOverviewRequest
-	(*ClusterOverviewResponse)(nil), // 17: procmesh.v1.ClusterOverviewResponse
-	(*RequestJoinRequest)(nil),      // 18: procmesh.v1.RequestJoinRequest
-	(*RequestJoinResponse)(nil),     // 19: procmesh.v1.RequestJoinResponse
-	nil,                             // 20: procmesh.v1.ClusterOverviewResponse.VersionCountsEntry
-	(*Node)(nil),                    // 21: procmesh.v1.Node
-	(*MutationMeta)(nil),            // 22: procmesh.v1.MutationMeta
+	(*ListNodesRequest)(nil),            // 0: procmesh.v1.ListNodesRequest
+	(*ListNodesResponse)(nil),           // 1: procmesh.v1.ListNodesResponse
+	(*GetNodeRequest)(nil),              // 2: procmesh.v1.GetNodeRequest
+	(*GetNodeResponse)(nil),             // 3: procmesh.v1.GetNodeResponse
+	(*CreateJoinTokenRequest)(nil),      // 4: procmesh.v1.CreateJoinTokenRequest
+	(*CreateJoinTokenResponse)(nil),     // 5: procmesh.v1.CreateJoinTokenResponse
+	(*RevokeJoinTokenRequest)(nil),      // 6: procmesh.v1.RevokeJoinTokenRequest
+	(*RevokeJoinTokenResponse)(nil),     // 7: procmesh.v1.RevokeJoinTokenResponse
+	(*RemoveNodeRequest)(nil),           // 8: procmesh.v1.RemoveNodeRequest
+	(*RemoveNodeResponse)(nil),          // 9: procmesh.v1.RemoveNodeResponse
+	(*PromoteNodeRequest)(nil),          // 10: procmesh.v1.PromoteNodeRequest
+	(*PromoteNodeResponse)(nil),         // 11: procmesh.v1.PromoteNodeResponse
+	(*MembershipIssue)(nil),             // 12: procmesh.v1.MembershipIssue
+	(*MembershipReport)(nil),            // 13: procmesh.v1.MembershipReport
+	(*CheckMembershipRequest)(nil),      // 14: procmesh.v1.CheckMembershipRequest
+	(*CheckMembershipResponse)(nil),     // 15: procmesh.v1.CheckMembershipResponse
+	(*ReconcileMembershipRequest)(nil),  // 16: procmesh.v1.ReconcileMembershipRequest
+	(*ReconcileMembershipResponse)(nil), // 17: procmesh.v1.ReconcileMembershipResponse
+	(*InitClusterRequest)(nil),          // 18: procmesh.v1.InitClusterRequest
+	(*InitClusterResponse)(nil),         // 19: procmesh.v1.InitClusterResponse
+	(*JoinClusterRequest)(nil),          // 20: procmesh.v1.JoinClusterRequest
+	(*JoinClusterResponse)(nil),         // 21: procmesh.v1.JoinClusterResponse
+	(*ClusterOverviewRequest)(nil),      // 22: procmesh.v1.ClusterOverviewRequest
+	(*ClusterOverviewResponse)(nil),     // 23: procmesh.v1.ClusterOverviewResponse
+	(*RequestJoinRequest)(nil),          // 24: procmesh.v1.RequestJoinRequest
+	(*RequestJoinResponse)(nil),         // 25: procmesh.v1.RequestJoinResponse
+	nil,                                 // 26: procmesh.v1.ClusterOverviewResponse.VersionCountsEntry
+	(*Node)(nil),                        // 27: procmesh.v1.Node
+	(*MutationMeta)(nil),                // 28: procmesh.v1.MutationMeta
 }
 var file_procmesh_v1_cluster_proto_depIdxs = []int32{
-	21, // 0: procmesh.v1.ListNodesResponse.nodes:type_name -> procmesh.v1.Node
-	21, // 1: procmesh.v1.GetNodeResponse.node:type_name -> procmesh.v1.Node
-	22, // 2: procmesh.v1.CreateJoinTokenRequest.meta:type_name -> procmesh.v1.MutationMeta
-	22, // 3: procmesh.v1.RevokeJoinTokenRequest.meta:type_name -> procmesh.v1.MutationMeta
-	22, // 4: procmesh.v1.RemoveNodeRequest.meta:type_name -> procmesh.v1.MutationMeta
-	22, // 5: procmesh.v1.PromoteNodeRequest.meta:type_name -> procmesh.v1.MutationMeta
-	22, // 6: procmesh.v1.InitClusterRequest.meta:type_name -> procmesh.v1.MutationMeta
-	22, // 7: procmesh.v1.JoinClusterRequest.meta:type_name -> procmesh.v1.MutationMeta
-	20, // 8: procmesh.v1.ClusterOverviewResponse.version_counts:type_name -> procmesh.v1.ClusterOverviewResponse.VersionCountsEntry
-	22, // 9: procmesh.v1.RequestJoinRequest.meta:type_name -> procmesh.v1.MutationMeta
-	0,  // 10: procmesh.v1.NodeService.ListNodes:input_type -> procmesh.v1.ListNodesRequest
-	2,  // 11: procmesh.v1.NodeService.GetNode:input_type -> procmesh.v1.GetNodeRequest
-	4,  // 12: procmesh.v1.NodeService.CreateJoinToken:input_type -> procmesh.v1.CreateJoinTokenRequest
-	6,  // 13: procmesh.v1.NodeService.RevokeJoinToken:input_type -> procmesh.v1.RevokeJoinTokenRequest
-	8,  // 14: procmesh.v1.NodeService.RemoveNode:input_type -> procmesh.v1.RemoveNodeRequest
-	10, // 15: procmesh.v1.NodeService.PromoteNode:input_type -> procmesh.v1.PromoteNodeRequest
-	12, // 16: procmesh.v1.ClusterService.Init:input_type -> procmesh.v1.InitClusterRequest
-	14, // 17: procmesh.v1.ClusterService.Join:input_type -> procmesh.v1.JoinClusterRequest
-	18, // 18: procmesh.v1.ClusterService.RequestJoin:input_type -> procmesh.v1.RequestJoinRequest
-	16, // 19: procmesh.v1.ClusterService.Overview:input_type -> procmesh.v1.ClusterOverviewRequest
-	1,  // 20: procmesh.v1.NodeService.ListNodes:output_type -> procmesh.v1.ListNodesResponse
-	3,  // 21: procmesh.v1.NodeService.GetNode:output_type -> procmesh.v1.GetNodeResponse
-	5,  // 22: procmesh.v1.NodeService.CreateJoinToken:output_type -> procmesh.v1.CreateJoinTokenResponse
-	7,  // 23: procmesh.v1.NodeService.RevokeJoinToken:output_type -> procmesh.v1.RevokeJoinTokenResponse
-	9,  // 24: procmesh.v1.NodeService.RemoveNode:output_type -> procmesh.v1.RemoveNodeResponse
-	11, // 25: procmesh.v1.NodeService.PromoteNode:output_type -> procmesh.v1.PromoteNodeResponse
-	13, // 26: procmesh.v1.ClusterService.Init:output_type -> procmesh.v1.InitClusterResponse
-	15, // 27: procmesh.v1.ClusterService.Join:output_type -> procmesh.v1.JoinClusterResponse
-	19, // 28: procmesh.v1.ClusterService.RequestJoin:output_type -> procmesh.v1.RequestJoinResponse
-	17, // 29: procmesh.v1.ClusterService.Overview:output_type -> procmesh.v1.ClusterOverviewResponse
-	20, // [20:30] is the sub-list for method output_type
-	10, // [10:20] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	27, // 0: procmesh.v1.ListNodesResponse.nodes:type_name -> procmesh.v1.Node
+	27, // 1: procmesh.v1.GetNodeResponse.node:type_name -> procmesh.v1.Node
+	28, // 2: procmesh.v1.CreateJoinTokenRequest.meta:type_name -> procmesh.v1.MutationMeta
+	28, // 3: procmesh.v1.RevokeJoinTokenRequest.meta:type_name -> procmesh.v1.MutationMeta
+	28, // 4: procmesh.v1.RemoveNodeRequest.meta:type_name -> procmesh.v1.MutationMeta
+	28, // 5: procmesh.v1.PromoteNodeRequest.meta:type_name -> procmesh.v1.MutationMeta
+	12, // 6: procmesh.v1.MembershipReport.issues:type_name -> procmesh.v1.MembershipIssue
+	13, // 7: procmesh.v1.CheckMembershipResponse.report:type_name -> procmesh.v1.MembershipReport
+	28, // 8: procmesh.v1.ReconcileMembershipRequest.meta:type_name -> procmesh.v1.MutationMeta
+	13, // 9: procmesh.v1.ReconcileMembershipResponse.report:type_name -> procmesh.v1.MembershipReport
+	28, // 10: procmesh.v1.InitClusterRequest.meta:type_name -> procmesh.v1.MutationMeta
+	28, // 11: procmesh.v1.JoinClusterRequest.meta:type_name -> procmesh.v1.MutationMeta
+	26, // 12: procmesh.v1.ClusterOverviewResponse.version_counts:type_name -> procmesh.v1.ClusterOverviewResponse.VersionCountsEntry
+	28, // 13: procmesh.v1.RequestJoinRequest.meta:type_name -> procmesh.v1.MutationMeta
+	0,  // 14: procmesh.v1.NodeService.ListNodes:input_type -> procmesh.v1.ListNodesRequest
+	2,  // 15: procmesh.v1.NodeService.GetNode:input_type -> procmesh.v1.GetNodeRequest
+	4,  // 16: procmesh.v1.NodeService.CreateJoinToken:input_type -> procmesh.v1.CreateJoinTokenRequest
+	6,  // 17: procmesh.v1.NodeService.RevokeJoinToken:input_type -> procmesh.v1.RevokeJoinTokenRequest
+	8,  // 18: procmesh.v1.NodeService.RemoveNode:input_type -> procmesh.v1.RemoveNodeRequest
+	10, // 19: procmesh.v1.NodeService.PromoteNode:input_type -> procmesh.v1.PromoteNodeRequest
+	14, // 20: procmesh.v1.NodeService.CheckMembership:input_type -> procmesh.v1.CheckMembershipRequest
+	16, // 21: procmesh.v1.NodeService.ReconcileMembership:input_type -> procmesh.v1.ReconcileMembershipRequest
+	18, // 22: procmesh.v1.ClusterService.Init:input_type -> procmesh.v1.InitClusterRequest
+	20, // 23: procmesh.v1.ClusterService.Join:input_type -> procmesh.v1.JoinClusterRequest
+	24, // 24: procmesh.v1.ClusterService.RequestJoin:input_type -> procmesh.v1.RequestJoinRequest
+	22, // 25: procmesh.v1.ClusterService.Overview:input_type -> procmesh.v1.ClusterOverviewRequest
+	1,  // 26: procmesh.v1.NodeService.ListNodes:output_type -> procmesh.v1.ListNodesResponse
+	3,  // 27: procmesh.v1.NodeService.GetNode:output_type -> procmesh.v1.GetNodeResponse
+	5,  // 28: procmesh.v1.NodeService.CreateJoinToken:output_type -> procmesh.v1.CreateJoinTokenResponse
+	7,  // 29: procmesh.v1.NodeService.RevokeJoinToken:output_type -> procmesh.v1.RevokeJoinTokenResponse
+	9,  // 30: procmesh.v1.NodeService.RemoveNode:output_type -> procmesh.v1.RemoveNodeResponse
+	11, // 31: procmesh.v1.NodeService.PromoteNode:output_type -> procmesh.v1.PromoteNodeResponse
+	15, // 32: procmesh.v1.NodeService.CheckMembership:output_type -> procmesh.v1.CheckMembershipResponse
+	17, // 33: procmesh.v1.NodeService.ReconcileMembership:output_type -> procmesh.v1.ReconcileMembershipResponse
+	19, // 34: procmesh.v1.ClusterService.Init:output_type -> procmesh.v1.InitClusterResponse
+	21, // 35: procmesh.v1.ClusterService.Join:output_type -> procmesh.v1.JoinClusterResponse
+	25, // 36: procmesh.v1.ClusterService.RequestJoin:output_type -> procmesh.v1.RequestJoinResponse
+	23, // 37: procmesh.v1.ClusterService.Overview:output_type -> procmesh.v1.ClusterOverviewResponse
+	26, // [26:38] is the sub-list for method output_type
+	14, // [14:26] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_procmesh_v1_cluster_proto_init() }
@@ -1471,7 +1848,7 @@ func file_procmesh_v1_cluster_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_procmesh_v1_cluster_proto_rawDesc), len(file_procmesh_v1_cluster_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   21,
+			NumMessages:   27,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

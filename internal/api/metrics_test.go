@@ -69,6 +69,41 @@ func TestMetrics_ControlQuorumTrue(t *testing.T) {
 	assertBatchMetricsPresent(t, body)
 }
 
+func TestMetrics_RaftMembershipReconcile(t *testing.T) {
+	m, st, _ := newTestManager(t)
+	ctrl := startTestRaft(t, "seed")
+	if err := (&control.Admission{Node: ctrl}).Admit("seed", ctrl.Advertise(), "AA"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.AddNonvoter("orphan", "secret-orphan-raft"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.ReconcileRaftMembership(); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(Options{
+		Mgr: m, Store: st, Started: time.Now(), Cluster: ClusterDeps{Control: ctrl},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	srv.Engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rec.Body.String()
+	for _, want := range []string{
+		"procmesh_raft_membership_reconcile_pending_issues 1",
+		"procmesh_raft_membership_reconcile_last_success_unix ",
+		"procmesh_raft_membership_reconcile_consecutive_failures 0",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "secret-orphan-raft") {
+		t.Fatalf("metrics leaked Raft address:\n%s", body)
+	}
+}
+
 func TestMetrics_ForwardTotal(t *testing.T) {
 	m, st, _ := newTestManager(t)
 	fakeCli := &fakeProcessClient{

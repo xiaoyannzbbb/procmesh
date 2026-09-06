@@ -153,6 +153,7 @@ func NewServer(opts Options) (*Server, error) {
 	np, nh := procmeshv1connect.NewNodeServiceHandler(&NodeAPI{
 		Deps: opts.Cluster, Auth: opts.Auth, Degraded: degraded,
 		LocalOnly: opts.LocalOnly, LocalID: opts.LocalID,
+		Store: batchAuditStore(opts),
 		IsLeader: func() bool {
 			n := opts.Cluster.controlNode()
 			return n == nil || n.IsLeader()
@@ -416,7 +417,15 @@ func (s *Server) metrics(c *gin.Context) {
 		countMetricSampleRows(s.opts.Store),
 		backupLastSuccessUnix(s.opts.Backup),
 		collectClusterBackupMetrics(s.opts.Cluster),
+		s.membershipReconcileStats(),
 	))
+}
+
+func (s *Server) membershipReconcileStats() control.MembershipReconcileStats {
+	if n := s.opts.Cluster.controlNode(); n != nil {
+		return n.MembershipReconcileStats()
+	}
+	return control.MembershipReconcileStats{}
 }
 
 func (s *Server) controlQuorum() int {

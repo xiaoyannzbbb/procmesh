@@ -216,16 +216,23 @@ func (r *rpcRuntime) startMembershipReconciler() {
 		go func() {
 			ticker := time.NewTicker(membershipReconcileEvery)
 			defer ticker.Stop()
-			for {
-				select {
-				case <-r.ctx.Done():
-					return
-				case <-ticker.C:
-					r.reconcileRaftMembership()
-				}
-			}
+			runMembershipReconciler(r.ctx, ticker.C, r.reconcileRaftMembership)
 		}()
 	})
+}
+
+func runMembershipReconciler(ctx context.Context, ticks <-chan time.Time, reconcile func()) {
+	if reconcile == nil {
+		return
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticks:
+			reconcile()
+		}
+	}
 }
 
 func (r *rpcRuntime) reconcileRaftMembership() {
@@ -233,8 +240,27 @@ func (r *rpcRuntime) reconcileRaftMembership() {
 	if n == nil || !n.IsLeader() {
 		return
 	}
-	if err := n.ReconcileRaftMembership(); err != nil && r.logger != nil {
-		r.logger.With("component", "raft").Warn("raft membership reconcile failed", "error", err)
+	r.logMembershipReconcileResult(n.ReconcileRaftMembership())
+}
+
+func (r *rpcRuntime) logMembershipReconcileResult(err error) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	firstFailure := err != nil && !r.membershipFailed
+	recovered := err == nil && r.membershipFailed
+	r.membershipFailed = err != nil
+	logger := r.logger
+	r.mu.Unlock()
+	if logger == nil {
+		return
+	}
+	if firstFailure {
+		logger.With("component", "raft").Warn("raft membership reconcile failed", "error", err)
+	}
+	if recovered {
+		logger.With("component", "raft").Info("raft membership reconcile recovered")
 	}
 }
 

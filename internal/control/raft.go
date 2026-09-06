@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hashicorp/raft"
@@ -48,6 +49,7 @@ type Node struct {
 	clusterID     string
 	quorumContact time.Duration
 	membershipMu  sync.Mutex
+	membership    membershipReconcileMetrics
 
 	closers   []io.Closer
 	closeOnce sync.Once
@@ -60,6 +62,51 @@ const (
 	RaftVoter    RaftSuffrage = "VOTER"
 	RaftNonVoter RaftSuffrage = "NON_VOTER"
 )
+
+type MembershipStatus string
+
+const (
+	MembershipClean   MembershipStatus = "CLEAN"
+	MembershipDrifted MembershipStatus = "DRIFTED"
+	MembershipBlocked MembershipStatus = "BLOCKED"
+)
+
+type MembershipIssueKind string
+
+const (
+	MembershipMissing         MembershipIssueKind = "MISSING_MEMBER"
+	MembershipAddressMismatch MembershipIssueKind = "ADDRESS_MISMATCH"
+	MembershipJoinIncomplete  MembershipIssueKind = "JOIN_INCOMPLETE"
+	MembershipRemovalPending  MembershipIssueKind = "REMOVAL_PENDING"
+	MembershipUnexpected      MembershipIssueKind = "UNEXPECTED_MEMBER"
+	MembershipInvalidDesired  MembershipIssueKind = "INVALID_DESIRED_MEMBER"
+)
+
+type MembershipIssue struct {
+	NodeID      string
+	Kind        MembershipIssueKind
+	Repairable  bool
+	MemberState MemberStatus
+	ActualRole  RaftSuffrage
+}
+
+type MembershipReport struct {
+	Status    MembershipStatus
+	HasQuorum bool
+	Issues    []MembershipIssue
+}
+
+type MembershipReconcileStats struct {
+	PendingIssues       int64
+	LastSuccessUnix     int64
+	ConsecutiveFailures uint64
+}
+
+type membershipReconcileMetrics struct {
+	pendingIssues       atomic.Int64
+	lastSuccessUnix     atomic.Int64
+	consecutiveFailures atomic.Uint64
+}
 
 // RaftMembershipView is a request-level snapshot without Raft addresses or
 // HashiCorp-specific types, so API consumers cannot expose control-plane peers.
@@ -317,6 +364,95 @@ func (n *Node) RaftMemberMatches(nodeID, raftAddr string) (bool, error) {
 	return view.memberMatches(nodeID, raftAddr), nil
 }
 
+func (n *Node) CheckRaftMembership() (MembershipReport, error) {
+	membership, err := n.RaftMembershipView()
+	if err != nil {
+		return MembershipReport{}, fmt.Errorf("read raft membership: %w", err)
+	}
+	report := MembershipReport{Status: MembershipClean, HasQuorum: membership.HasQuorum}
+	state := n.View()
+	nodeIDs := make([]string, 0, len(state.Members))
+	for nodeID, member := range state.Members {
+		if member.Status == MemberAdmitted || member.Status == MemberJoining ||
+			member.Status == MemberRemoved || member.Status == MemberRevoked {
+			nodeIDs = append(nodeIDs, nodeID)
+		}
+	}
+	sort.Strings(nodeIDs)
+	for _, nodeID := range nodeIDs {
+		member := state.Members[nodeID]
+		if member.Status == MemberRemoved || member.Status == MemberRevoked {
+			if actualRole, exists := membership.Members[nodeID]; exists {
+				report.Issues = append(report.Issues, MembershipIssue{
+					NodeID:      nodeID,
+					Kind:        MembershipRemovalPending,
+					Repairable:  true,
+					MemberState: member.Status,
+					ActualRole:  actualRole,
+				})
+			}
+			continue
+		}
+		if member.RaftAddr == "" {
+			report.Issues = append(report.Issues, MembershipIssue{
+				NodeID:      nodeID,
+				Kind:        MembershipInvalidDesired,
+				Repairable:  false,
+				MemberState: member.Status,
+			})
+			continue
+		}
+		if membership.memberMatches(nodeID, member.RaftAddr) {
+			if member.Status == MemberJoining {
+				report.Issues = append(report.Issues, MembershipIssue{
+					NodeID:      nodeID,
+					Kind:        MembershipJoinIncomplete,
+					Repairable:  true,
+					MemberState: member.Status,
+					ActualRole:  membership.Members[nodeID],
+				})
+			}
+			continue
+		}
+		kind := MembershipMissing
+		if _, exists := membership.Members[nodeID]; exists {
+			kind = MembershipAddressMismatch
+		}
+		report.Issues = append(report.Issues, MembershipIssue{
+			NodeID:      nodeID,
+			Kind:        kind,
+			Repairable:  true,
+			MemberState: member.Status,
+			ActualRole:  membership.Members[nodeID],
+		})
+	}
+	actualNodeIDs := make([]string, 0, len(membership.Members))
+	for nodeID := range membership.Members {
+		if _, exists := state.Members[nodeID]; !exists {
+			actualNodeIDs = append(actualNodeIDs, nodeID)
+		}
+	}
+	sort.Strings(actualNodeIDs)
+	for _, nodeID := range actualNodeIDs {
+		report.Issues = append(report.Issues, MembershipIssue{
+			NodeID:     nodeID,
+			Kind:       MembershipUnexpected,
+			Repairable: false,
+			ActualRole: membership.Members[nodeID],
+		})
+	}
+	for _, issue := range report.Issues {
+		if !issue.Repairable {
+			report.Status = MembershipBlocked
+			return report, nil
+		}
+	}
+	if len(report.Issues) > 0 {
+		report.Status = MembershipDrifted
+	}
+	return report, nil
+}
+
 func (v RaftMembershipView) memberMatches(nodeID, raftAddr string) bool {
 	role, exists := v.Members[nodeID]
 	if !exists || (role != RaftNonVoter && role != RaftVoter) {
@@ -407,9 +543,13 @@ func (n *Node) WithMembershipOp(fn func() error) error {
 // ReconcileRaftMembership converges admitted and in-progress members from the
 // FSM into the Raft configuration. The FSM remains the desired membership.
 func (n *Node) ReconcileRaftMembership() error {
-	return n.WithMembershipOp(func() error {
+	return n.WithMembershipOp(func() (reconcileErr error) {
+		defer func() { n.recordMembershipReconcile(reconcileErr) }()
 		if err := n.requireLeader(); err != nil {
 			return err
+		}
+		if !n.HasQuorum() {
+			return errcode.E(errcode.UNAVAILABLE, "raft control quorum unavailable")
 		}
 		membership, err := n.RaftMembershipView()
 		if err != nil {
@@ -429,16 +569,26 @@ func (n *Node) ReconcileRaftMembership() error {
 				continue
 			}
 			if !membership.memberMatches(nodeID, member.RaftAddr) {
-				addErr := n.AddNonvoter(nodeID, member.RaftAddr)
+				actualRole := membership.Members[nodeID]
+				var addErr error
+				if actualRole == RaftVoter {
+					addErr = n.AddVoter(nodeID, member.RaftAddr)
+				} else {
+					addErr = n.AddNonvoter(nodeID, member.RaftAddr)
+				}
 				refreshed, readErr := n.RaftMembershipView()
 				if readErr != nil {
-					return errcode.Wrap(errcode.UNAVAILABLE, "confirm raft nonvoter", readErr)
+					reconcileErr = errors.Join(reconcileErr, errcode.Wrap(errcode.UNAVAILABLE, "confirm raft member "+nodeID, readErr))
+					continue
 				}
 				if !refreshed.memberMatches(nodeID, member.RaftAddr) {
 					if addErr != nil {
-						return errcode.Wrap(errcode.UNAVAILABLE, "add raft nonvoter", addErr)
+						reconcileErr = errors.Join(reconcileErr, errcode.Wrap(errcode.UNAVAILABLE, "repair raft member "+nodeID, addErr))
+					} else {
+						reconcileErr = errors.Join(reconcileErr, errcode.E(errcode.UNAVAILABLE, "raft member "+nodeID+" address not committed"))
 					}
-					return errcode.E(errcode.UNAVAILABLE, "raft nonvoter address not committed")
+					membership = refreshed
+					continue
 				}
 				membership = refreshed
 			}
@@ -447,21 +597,77 @@ func (n *Node) ReconcileRaftMembership() error {
 			}
 			attempt, ok := state.JoinAttempts[nodeID]
 			if !ok {
-				return errcode.E(errcode.CONFLICT, "joining member has no join attempt")
+				reconcileErr = errors.Join(reconcileErr, errcode.E(errcode.CONFLICT, "joining member "+nodeID+" has no join attempt"))
+				continue
 			}
 			cmd, encodeErr := EncodeCommand(CmdJoinComplete, JoinCompleteBody{
 				OperationID: attempt.OperationID,
 				NodeID:      nodeID,
 			})
 			if encodeErr != nil {
-				return encodeErr
+				reconcileErr = errors.Join(reconcileErr, encodeErr)
+				continue
 			}
 			if applyErr := n.Apply(cmd, admissionApplyTO); applyErr != nil {
-				return applyErr
+				reconcileErr = errors.Join(reconcileErr, applyErr)
 			}
 		}
-		return nil
+		removedNodeIDs := make([]string, 0, len(state.Members))
+		for nodeID, member := range state.Members {
+			if member.Status == MemberRemoved || member.Status == MemberRevoked {
+				removedNodeIDs = append(removedNodeIDs, nodeID)
+			}
+		}
+		sort.Strings(removedNodeIDs)
+		for _, nodeID := range removedNodeIDs {
+			if _, exists := membership.Members[nodeID]; !exists {
+				continue
+			}
+			removeErr := n.RemoveServer(nodeID)
+			refreshed, readErr := n.RaftMembershipView()
+			if readErr != nil {
+				reconcileErr = errors.Join(reconcileErr, errcode.Wrap(errcode.UNAVAILABLE, "confirm raft member removal "+nodeID, readErr))
+				continue
+			}
+			if _, exists := refreshed.Members[nodeID]; exists {
+				if removeErr != nil {
+					reconcileErr = errors.Join(reconcileErr, errcode.Wrap(errcode.UNAVAILABLE, "remove raft member "+nodeID, removeErr))
+				} else {
+					reconcileErr = errors.Join(reconcileErr, errcode.E(errcode.UNAVAILABLE, "raft member "+nodeID+" removal not committed"))
+				}
+				membership = refreshed
+				continue
+			}
+			membership = refreshed
+		}
+		return reconcileErr
 	})
+}
+
+func (n *Node) recordMembershipReconcile(reconcileErr error) {
+	if n == nil {
+		return
+	}
+	if report, err := n.CheckRaftMembership(); err == nil {
+		n.membership.pendingIssues.Store(int64(len(report.Issues)))
+	}
+	if reconcileErr != nil {
+		n.membership.consecutiveFailures.Add(1)
+		return
+	}
+	n.membership.consecutiveFailures.Store(0)
+	n.membership.lastSuccessUnix.Store(time.Now().Unix())
+}
+
+func (n *Node) MembershipReconcileStats() MembershipReconcileStats {
+	if n == nil {
+		return MembershipReconcileStats{}
+	}
+	return MembershipReconcileStats{
+		PendingIssues:       n.membership.pendingIssues.Load(),
+		LastSuccessUnix:     n.membership.lastSuccessUnix.Load(),
+		ConsecutiveFailures: n.membership.consecutiveFailures.Load(),
+	}
 }
 
 // LeaderTermContext is canceled as soon as this node leaves the supplied

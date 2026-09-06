@@ -93,6 +93,26 @@ func TestRBAC_ViewerDeniedWrites(t *testing.T) {
 		Meta: &procmeshv1.MutationMeta{OperationId: "op-view-tok", Operator: "viewer"},
 	}))
 	assertDenied(t, err)
+
+	_, err = e.node.CheckMembership(ctx, bearerReq(sid, &procmeshv1.CheckMembershipRequest{}))
+	if connect.CodeOf(err) == connect.CodePermissionDenied {
+		t.Fatalf("viewer membership check denied: %v", err)
+	}
+	_, err = e.node.ReconcileMembership(ctx, bearerReq(sid, &procmeshv1.ReconcileMembershipRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-view-membership", Operator: "viewer"},
+	}))
+	assertDenied(t, err)
+}
+
+func TestHopRPCPerm_MembershipCheckAndReconcile(t *testing.T) {
+	perm, write, ok := hopRPCPerm(procmeshv1connect.NodeServiceCheckMembershipProcedure)
+	if !ok || write || perm != auth.PermClusterRead {
+		t.Fatalf("check membership mapping perm=%q write=%v ok=%v", perm, write, ok)
+	}
+	perm, write, ok = hopRPCPerm(procmeshv1connect.NodeServiceReconcileMembershipProcedure)
+	if !ok || !write || perm != auth.PermClusterManage {
+		t.Fatalf("reconcile membership mapping perm=%q write=%v ok=%v", perm, write, ok)
+	}
 }
 
 func TestRBAC_AgentScopeDeniedOnClusterAPI(t *testing.T) {
@@ -118,6 +138,13 @@ func TestRBAC_AgentScopeDeniedOnClusterAPI(t *testing.T) {
 
 	_, err = e.node.CreateJoinToken(ctx, bearerReq(sid, &procmeshv1.CreateJoinTokenRequest{
 		Meta: &procmeshv1.MutationMeta{OperationId: "op-agent-tok", Operator: "agentop"},
+	}))
+	assertDenied(t, err)
+
+	_, err = e.node.CheckMembership(ctx, bearerReq(sid, &procmeshv1.CheckMembershipRequest{}))
+	assertDenied(t, err)
+	_, err = e.node.ReconcileMembership(ctx, bearerReq(sid, &procmeshv1.ReconcileMembershipRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-agent-membership", Operator: "agentop"},
 	}))
 	assertDenied(t, err)
 }

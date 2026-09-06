@@ -61,6 +61,48 @@ func (createJoinTokenClientFunc) PromoteNode(context.Context, *connect.Request[p
 	panic("unexpected PromoteNode")
 }
 
+func (createJoinTokenClientFunc) CheckMembership(context.Context, *connect.Request[procmeshv1.CheckMembershipRequest]) (*connect.Response[procmeshv1.CheckMembershipResponse], error) {
+	panic("unexpected CheckMembership")
+}
+
+func (createJoinTokenClientFunc) ReconcileMembership(context.Context, *connect.Request[procmeshv1.ReconcileMembershipRequest]) (*connect.Response[procmeshv1.ReconcileMembershipResponse], error) {
+	panic("unexpected ReconcileMembership")
+}
+
+type reconcileMembershipClientFunc func(context.Context, *connect.Request[procmeshv1.ReconcileMembershipRequest]) (*connect.Response[procmeshv1.ReconcileMembershipResponse], error)
+
+func (reconcileMembershipClientFunc) ListNodes(context.Context, *connect.Request[procmeshv1.ListNodesRequest]) (*connect.Response[procmeshv1.ListNodesResponse], error) {
+	panic("unexpected ListNodes")
+}
+
+func (reconcileMembershipClientFunc) GetNode(context.Context, *connect.Request[procmeshv1.GetNodeRequest]) (*connect.Response[procmeshv1.GetNodeResponse], error) {
+	panic("unexpected GetNode")
+}
+
+func (reconcileMembershipClientFunc) CreateJoinToken(context.Context, *connect.Request[procmeshv1.CreateJoinTokenRequest]) (*connect.Response[procmeshv1.CreateJoinTokenResponse], error) {
+	panic("unexpected CreateJoinToken")
+}
+
+func (reconcileMembershipClientFunc) RevokeJoinToken(context.Context, *connect.Request[procmeshv1.RevokeJoinTokenRequest]) (*connect.Response[procmeshv1.RevokeJoinTokenResponse], error) {
+	panic("unexpected RevokeJoinToken")
+}
+
+func (reconcileMembershipClientFunc) RemoveNode(context.Context, *connect.Request[procmeshv1.RemoveNodeRequest]) (*connect.Response[procmeshv1.RemoveNodeResponse], error) {
+	panic("unexpected RemoveNode")
+}
+
+func (reconcileMembershipClientFunc) PromoteNode(context.Context, *connect.Request[procmeshv1.PromoteNodeRequest]) (*connect.Response[procmeshv1.PromoteNodeResponse], error) {
+	panic("unexpected PromoteNode")
+}
+
+func (reconcileMembershipClientFunc) CheckMembership(context.Context, *connect.Request[procmeshv1.CheckMembershipRequest]) (*connect.Response[procmeshv1.CheckMembershipResponse], error) {
+	panic("unexpected CheckMembership")
+}
+
+func (f reconcileMembershipClientFunc) ReconcileMembership(ctx context.Context, req *connect.Request[procmeshv1.ReconcileMembershipRequest]) (*connect.Response[procmeshv1.ReconcileMembershipResponse], error) {
+	return f(ctx, req)
+}
+
 type failingRaftMembershipReader struct{}
 
 func (failingRaftMembershipReader) RaftMembershipView() (control.RaftMembershipView, error) {
@@ -149,6 +191,206 @@ func TestApplyRaftMembershipRoles(t *testing.T) {
 	}
 }
 
+func TestCheckMembershipReportsDriftWithoutRaftAddresses(t *testing.T) {
+	ctrl := startTestRaft(t, "seed")
+	adm := control.Admission{Node: ctrl}
+	if err := adm.Admit("seed", ctrl.Advertise(), "AA"); err != nil {
+		t.Fatal(err)
+	}
+	if err := adm.Admit("missing", "missing-raft.internal:18685", "BB"); err != nil {
+		t.Fatal(err)
+	}
+	api := &NodeAPI{Deps: ClusterDeps{Control: ctrl}}
+
+	resp, err := api.CheckMembership(context.Background(), connect.NewRequest(&procmeshv1.CheckMembershipRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := resp.Msg.GetReport()
+	if report.GetStatus() != "DRIFTED" || report.GetFreshness() != "LIVE" || len(report.GetIssues()) != 1 {
+		t.Fatalf("report=%+v", report)
+	}
+	issue := report.GetIssues()[0]
+	if issue.GetNodeId() != "missing" || issue.GetKind() != "MISSING_MEMBER" || !issue.GetRepairable() {
+		t.Fatalf("issue=%+v", issue)
+	}
+	if strings.Contains(resp.Msg.String(), "missing-raft.internal") {
+		t.Fatalf("response leaked Raft address: %s", resp.Msg.String())
+	}
+}
+
+func TestReconcileMembershipRepairsDriftAndReturnsCleanReport(t *testing.T) {
+	ctrl := startTestRaft(t, "seed")
+	adm := control.Admission{Node: ctrl}
+	if err := adm.Admit("seed", ctrl.Advertise(), "AA"); err != nil {
+		t.Fatal(err)
+	}
+	if err := adm.Admit("missing", "missing-raft", "BB"); err != nil {
+		t.Fatal(err)
+	}
+	api := &NodeAPI{Deps: ClusterDeps{Control: ctrl}}
+
+	resp, err := api.ReconcileMembership(context.Background(), connect.NewRequest(&procmeshv1.ReconcileMembershipRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-membership-reconcile", Operator: "admin"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Msg.GetRepaired() != 1 || resp.Msg.GetReport().GetStatus() != "CLEAN" {
+		t.Fatalf("response=%+v", resp.Msg)
+	}
+	if matches, err := ctrl.RaftMemberMatches("missing", "missing-raft"); err != nil || !matches {
+		t.Fatalf("membership matches=%v err=%v", matches, err)
+	}
+}
+
+func TestReconcileMembershipForwardsToLeader(t *testing.T) {
+	forwarded := false
+	api := &NodeAPI{
+		Deps:        ClusterDeps{},
+		LocalID:     "follower",
+		IsLeader:    func() bool { return false },
+		LeaderRoute: func() (Route, error) { return Route{NodeID: "leader", RPC: "leader-rpc"}, nil },
+		Forward: nodeForwarderFunc(func(_ context.Context, route Route) (procmeshv1connect.NodeServiceClient, error) {
+			if route.NodeID != "leader" {
+				t.Fatalf("route=%+v", route)
+			}
+			return reconcileMembershipClientFunc(func(_ context.Context, req *connect.Request[procmeshv1.ReconcileMembershipRequest]) (*connect.Response[procmeshv1.ReconcileMembershipResponse], error) {
+				forwarded = true
+				if req.Msg.GetMeta().GetOperationId() != "op-forward-reconcile" || rpc.SourceOf(req.Header()) != "follower" || rpc.TargetOf(req.Header()) != "leader" {
+					t.Fatalf("forwarded request meta=%+v header=%v", req.Msg.GetMeta(), req.Header())
+				}
+				return connect.NewResponse(&procmeshv1.ReconcileMembershipResponse{Report: &procmeshv1.MembershipReport{Status: "CLEAN"}}), nil
+			}), nil
+		}),
+	}
+
+	resp, err := api.ReconcileMembership(context.Background(), connect.NewRequest(&procmeshv1.ReconcileMembershipRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-forward-reconcile", Operator: "admin"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !forwarded || resp.Msg.GetReport().GetStatus() != "CLEAN" {
+		t.Fatalf("forwarded=%v response=%+v", forwarded, resp.Msg)
+	}
+}
+
+func TestReconcileMembershipAuditsLeaderMutationWithoutAddresses(t *testing.T) {
+	ctrl := startTestRaft(t, "seed")
+	adm := control.Admission{Node: ctrl}
+	if err := adm.Admit("seed", ctrl.Advertise(), "AA"); err != nil {
+		t.Fatal(err)
+	}
+	if err := adm.Admit("missing", "secret-raft.internal:18685", "BB"); err != nil {
+		t.Fatal(err)
+	}
+	st := openStoreAt(t, filepath.Join(t.TempDir(), "audit.db"))
+	api := &NodeAPI{Deps: ClusterDeps{Control: ctrl}, Store: st, LocalID: "seed"}
+	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-admin", Username: "admin"})
+
+	_, err := api.ReconcileMembership(ctx, connect.NewRequest(&procmeshv1.ReconcileMembershipRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-audit-membership", Operator: "admin"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := st.ListAudit(context.Background(), "cluster:membership", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events=%+v", events)
+	}
+	event := events[0]
+	if event.Action != "cluster.membership.reconcile" || event.OperationID != "op-audit-membership" ||
+		event.Result != "SUCCESS" || event.UserID != "user-admin" || event.SourceAgent != "seed" {
+		t.Fatalf("event=%+v", event)
+	}
+	if strings.Contains(string(event.Metadata), "secret-raft.internal") {
+		t.Fatalf("audit leaked Raft address: %s", event.Metadata)
+	}
+}
+
+func TestReconcileMembershipRequiresOperationID(t *testing.T) {
+	ctrl := startTestRaft(t, "seed")
+	api := &NodeAPI{Deps: ClusterDeps{Control: ctrl}}
+
+	_, err := api.ReconcileMembership(context.Background(), connect.NewRequest(&procmeshv1.ReconcileMembershipRequest{}))
+	code, detail := connectDetail(t, err)
+	if code != connect.CodeInvalidArgument || detail != "INVALID" {
+		t.Fatalf("code=%v detail=%q err=%v", code, detail, err)
+	}
+}
+
+func TestReconcileMembershipAuditsBlockedWithoutRemovingUnexpectedMember(t *testing.T) {
+	ctrl := startTestRaft(t, "seed")
+	if err := ctrl.AddNonvoter("orphan", "secret-orphan-raft"); err != nil {
+		t.Fatal(err)
+	}
+	st := openStoreAt(t, filepath.Join(t.TempDir(), "audit.db"))
+	api := &NodeAPI{Deps: ClusterDeps{Control: ctrl}, Store: st, LocalID: "seed"}
+	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-admin", Username: "admin"})
+
+	resp, err := api.ReconcileMembership(ctx, connect.NewRequest(&procmeshv1.ReconcileMembershipRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-blocked-membership", Operator: "admin"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Msg.GetReport().GetStatus() != "BLOCKED" {
+		t.Fatalf("report=%+v", resp.Msg.GetReport())
+	}
+	if matches, err := ctrl.RaftMemberMatches("orphan", "secret-orphan-raft"); err != nil || !matches {
+		t.Fatalf("unexpected member changed: matches=%v err=%v", matches, err)
+	}
+	events, err := st.ListAudit(context.Background(), "cluster:membership", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Result != "BLOCKED" {
+		t.Fatalf("events=%+v", events)
+	}
+	if strings.Contains(string(events[0].Metadata), "secret-orphan-raft") {
+		t.Fatalf("audit leaked Raft address: %s", events[0].Metadata)
+	}
+}
+
+func TestReconcileMembershipAuditsPartialFailureAndResolvedCount(t *testing.T) {
+	ctrl := startTestRaft(t, "seed")
+	adm := control.Admission{Node: ctrl}
+	if err := adm.Admit("seed", ctrl.Advertise(), "AA"); err != nil {
+		t.Fatal(err)
+	}
+	if err := adm.Admit("a-conflict", ctrl.Advertise(), "BB"); err != nil {
+		t.Fatal(err)
+	}
+	if err := adm.Admit("z-repairable", "z-repairable-raft", "CC"); err != nil {
+		t.Fatal(err)
+	}
+	st := openStoreAt(t, filepath.Join(t.TempDir(), "audit.db"))
+	api := &NodeAPI{Deps: ClusterDeps{Control: ctrl}, Store: st, LocalID: "seed"}
+	ctx := WithPrincipal(context.Background(), auth.Principal{UserID: "user-admin", Username: "admin"})
+
+	_, err := api.ReconcileMembership(ctx, connect.NewRequest(&procmeshv1.ReconcileMembershipRequest{
+		Meta: &procmeshv1.MutationMeta{OperationId: "op-partial-membership", Operator: "admin"},
+	}))
+	if connect.CodeOf(err) != connect.CodeUnavailable {
+		t.Fatalf("code=%v err=%v", connect.CodeOf(err), err)
+	}
+	events, err := st.ListAudit(context.Background(), "cluster:membership", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Result != "FAILED" {
+		t.Fatalf("events=%+v", events)
+	}
+	metadata := string(events[0].Metadata)
+	if !strings.Contains(metadata, `"repaired":1`) || !strings.Contains(metadata, `"status":"DRIFTED"`) {
+		t.Fatalf("metadata=%s", metadata)
+	}
+}
+
 func TestApplyRaftMembershipNoQuorumNeverShowsLeader(t *testing.T) {
 	view := control.RaftMembershipView{
 		Members:   map[string]control.RaftSuffrage{"old-leader": control.RaftVoter},
@@ -159,6 +401,16 @@ func TestApplyRaftMembershipNoQuorumNeverShowsLeader(t *testing.T) {
 	applyRaftMembership(node, &view)
 	if node.GetRaftRole() != "VOTER" || node.GetRaftRoleFreshness() != "STALE" {
 		t.Fatalf("role=%q freshness=%q", node.GetRaftRole(), node.GetRaftRoleFreshness())
+	}
+}
+
+func TestMembershipReportNoQuorumNeverShowsLeader(t *testing.T) {
+	report := membershipReportToProto(control.MembershipReport{
+		Status:    control.MembershipClean,
+		HasQuorum: false,
+	}, true, time.Unix(1_700_000_000, 0))
+	if report.GetFreshness() != "STALE" || report.GetHasQuorum() || report.GetLeader() {
+		t.Fatalf("report=%+v", report)
 	}
 }
 

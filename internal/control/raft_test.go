@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -118,6 +119,208 @@ func TestRaft_MembershipViewLeaderAndNonvoter(t *testing.T) {
 	}
 }
 
+func TestRaft_CheckMembershipReportsMissingMemberWithoutAddresses(t *testing.T) {
+	n, err := control.Start(control.RaftConfig{
+		Dir:    t.TempDir(),
+		Bind:   "127.0.0.1:0",
+		NodeID: "seed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = n.Shutdown() })
+	if err := n.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	waitLeader(t, []*control.Node{n}, 10*time.Second)
+
+	adm := control.Admission{Node: n}
+	if err := adm.Admit("seed", n.Advertise(), "AA"); err != nil {
+		t.Fatal(err)
+	}
+	if err := adm.Admit("missing", "missing-raft.internal:18685", "BB"); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := n.CheckRaftMembership()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != control.MembershipDrifted || !report.HasQuorum {
+		t.Fatalf("report=%+v", report)
+	}
+	if len(report.Issues) != 1 {
+		t.Fatalf("issues=%+v", report.Issues)
+	}
+	issue := report.Issues[0]
+	if issue.NodeID != "missing" || issue.Kind != control.MembershipMissing || !issue.Repairable {
+		t.Fatalf("issue=%+v", issue)
+	}
+	if strings.Contains(fmt.Sprintf("%+v", report), "missing-raft.internal") {
+		t.Fatalf("membership report leaked Raft address: %+v", report)
+	}
+}
+
+func TestRaft_CheckMembershipReportsAddressMismatch(t *testing.T) {
+	n, err := control.Start(control.RaftConfig{Dir: t.TempDir(), Bind: "127.0.0.1:0", NodeID: "seed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = n.Shutdown() })
+	if err := n.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	waitLeader(t, []*control.Node{n}, 10*time.Second)
+	adm := control.Admission{Node: n}
+	if err := adm.Admit("seed", n.Advertise(), "AA"); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.AddNonvoter("member", "old-raft.internal:18685"); err != nil {
+		t.Fatal(err)
+	}
+	if err := adm.Admit("member", "new-raft.internal:18685", "BB"); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := n.CheckRaftMembership()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Issues) != 1 || report.Issues[0].Kind != control.MembershipAddressMismatch {
+		t.Fatalf("report=%+v", report)
+	}
+}
+
+func TestRaft_CheckMembershipReportsIncompleteJoin(t *testing.T) {
+	n, err := control.Start(control.RaftConfig{Dir: t.TempDir(), Bind: "127.0.0.1:0", NodeID: "seed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = n.Shutdown() })
+	if err := n.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	waitLeader(t, []*control.Node{n}, 10*time.Second)
+	adm := control.Admission{Node: n}
+	if err := adm.Admit("seed", n.Advertise(), "AA"); err != nil {
+		t.Fatal(err)
+	}
+	plain, _, err := adm.CreateToken(time.Hour, 1, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := adm.PrepareJoin(control.JoinPrepare{
+		OperationID: "op-incomplete", Token: plain, NodeID: "joining", RaftAddr: "joining-raft",
+		CSRHash: "hash", CertPEM: []byte("cert"), CertSerial: "BB",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.AddNonvoter("joining", "joining-raft"); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := n.CheckRaftMembership()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Issues) != 1 || report.Issues[0].Kind != control.MembershipJoinIncomplete {
+		t.Fatalf("report=%+v", report)
+	}
+}
+
+func TestRaft_CheckMembershipReportsPendingRemoval(t *testing.T) {
+	n, err := control.Start(control.RaftConfig{Dir: t.TempDir(), Bind: "127.0.0.1:0", NodeID: "seed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = n.Shutdown() })
+	if err := n.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	waitLeader(t, []*control.Node{n}, 10*time.Second)
+	adm := control.Admission{Node: n}
+	if err := adm.Admit("seed", n.Advertise(), "AA"); err != nil {
+		t.Fatal(err)
+	}
+	if err := adm.Admit("removed", "removed-raft", "BB"); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.AddNonvoter("removed", "removed-raft"); err != nil {
+		t.Fatal(err)
+	}
+	cmd := mustEncode(t, control.CmdMemberRemove, control.MemberRemoveBody{NodeID: "removed"})
+	if err := n.Apply(cmd, 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := n.CheckRaftMembership()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Issues) != 1 || report.Issues[0].Kind != control.MembershipRemovalPending || !report.Issues[0].Repairable {
+		t.Fatalf("report=%+v", report)
+	}
+}
+
+func TestRaft_CheckMembershipBlocksOnUnexpectedRaftMember(t *testing.T) {
+	n, err := control.Start(control.RaftConfig{Dir: t.TempDir(), Bind: "127.0.0.1:0", NodeID: "seed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = n.Shutdown() })
+	if err := n.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	waitLeader(t, []*control.Node{n}, 10*time.Second)
+	adm := control.Admission{Node: n}
+	if err := adm.Admit("seed", n.Advertise(), "AA"); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.AddNonvoter("orphan", "orphan-raft"); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := n.CheckRaftMembership()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != control.MembershipBlocked || len(report.Issues) != 1 {
+		t.Fatalf("report=%+v", report)
+	}
+	issue := report.Issues[0]
+	if issue.NodeID != "orphan" || issue.Kind != control.MembershipUnexpected || issue.Repairable {
+		t.Fatalf("issue=%+v", issue)
+	}
+}
+
+func TestRaft_CheckMembershipBlocksOnMissingDesiredAddress(t *testing.T) {
+	n, err := control.Start(control.RaftConfig{Dir: t.TempDir(), Bind: "127.0.0.1:0", NodeID: "seed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = n.Shutdown() })
+	if err := n.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	waitLeader(t, []*control.Node{n}, 10*time.Second)
+	adm := control.Admission{Node: n}
+	if err := adm.Admit("seed", n.Advertise(), "AA"); err != nil {
+		t.Fatal(err)
+	}
+	if err := adm.Admit("invalid", "", "BB"); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := n.CheckRaftMembership()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != control.MembershipBlocked || len(report.Issues) != 1 ||
+		report.Issues[0].Kind != control.MembershipInvalidDesired || report.Issues[0].Repairable {
+		t.Fatalf("report=%+v", report)
+	}
+}
+
 func TestRaft_ReconcileMembershipAddsMissingMembersAndCompletesJoin(t *testing.T) {
 	n, err := control.Start(control.RaftConfig{
 		Dir:    t.TempDir(),
@@ -227,6 +430,118 @@ func TestRaft_ReconcileMembershipCorrectsAddressBeforeCompletingJoin(t *testing.
 	}
 }
 
+func TestRaft_ReconcileMembershipCompletesPendingRemoval(t *testing.T) {
+	n, err := control.Start(control.RaftConfig{Dir: t.TempDir(), Bind: "127.0.0.1:0", NodeID: "seed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = n.Shutdown() })
+	if err := n.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	waitLeader(t, []*control.Node{n}, 10*time.Second)
+	adm := control.Admission{Node: n}
+	if err := adm.Admit("seed", n.Advertise(), "AA"); err != nil {
+		t.Fatal(err)
+	}
+	if err := adm.Admit("removed", "removed-raft", "BB"); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.AddNonvoter("removed", "removed-raft"); err != nil {
+		t.Fatal(err)
+	}
+	cmd := mustEncode(t, control.CmdMemberRemove, control.MemberRemoveBody{NodeID: "removed"})
+	if err := n.Apply(cmd, 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := n.ReconcileRaftMembership(); err != nil {
+		t.Fatal(err)
+	}
+	membership, err := n.RaftMembershipView()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := membership.Members["removed"]; exists {
+		t.Fatalf("removed member remains in Raft: %+v", membership.Members)
+	}
+	report, err := n.CheckRaftMembership()
+	if err != nil || report.Status != control.MembershipClean {
+		t.Fatalf("report=%+v err=%v", report, err)
+	}
+}
+
+func TestRaft_ReconcileMembershipContinuesAfterIndependentMemberFailure(t *testing.T) {
+	n, err := control.Start(control.RaftConfig{Dir: t.TempDir(), Bind: "127.0.0.1:0", NodeID: "seed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = n.Shutdown() })
+	if err := n.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	waitLeader(t, []*control.Node{n}, 10*time.Second)
+	adm := control.Admission{Node: n}
+	if err := adm.Admit("seed", n.Advertise(), "AA"); err != nil {
+		t.Fatal(err)
+	}
+	// HashiCorp Raft rejects a second server ID at the seed's address.
+	if err := adm.Admit("a-conflict", n.Advertise(), "BB"); err != nil {
+		t.Fatal(err)
+	}
+	if err := adm.Admit("z-repairable", "z-repairable-raft", "CC"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := n.ReconcileRaftMembership(); err == nil {
+		t.Fatal("expected conflicting member reconcile error")
+	}
+	view, err := n.RaftMembershipView()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Members["z-repairable"] != control.RaftNonVoter {
+		t.Fatalf("later repairable member was starved: %+v", view.Members)
+	}
+	stats := n.MembershipReconcileStats()
+	if stats.PendingIssues != 1 || stats.LastSuccessUnix != 0 || stats.ConsecutiveFailures != 1 {
+		t.Fatalf("stats=%+v", stats)
+	}
+}
+
+func TestRaft_ReconcileMembershipNeverRemovesUnexpectedMember(t *testing.T) {
+	n, err := control.Start(control.RaftConfig{Dir: t.TempDir(), Bind: "127.0.0.1:0", NodeID: "seed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = n.Shutdown() })
+	if err := n.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	waitLeader(t, []*control.Node{n}, 10*time.Second)
+	if err := (&control.Admission{Node: n}).Admit("seed", n.Advertise(), "AA"); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.AddNonvoter("orphan", "orphan-raft"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := n.ReconcileRaftMembership(); err != nil {
+		t.Fatal(err)
+	}
+	view, err := n.RaftMembershipView()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Members["orphan"] != control.RaftNonVoter {
+		t.Fatalf("unexpected member was removed: %+v", view.Members)
+	}
+	stats := n.MembershipReconcileStats()
+	if stats.PendingIssues != 1 || stats.LastSuccessUnix == 0 || stats.ConsecutiveFailures != 0 {
+		t.Fatalf("stats=%+v", stats)
+	}
+}
+
 func TestRaft_MembershipViewClearsLeaderWithoutQuorum(t *testing.T) {
 	nodes := startInmemVoters(t, 3)
 	leader := waitLeader(t, nodes, 10*time.Second)
@@ -254,6 +569,12 @@ func TestRaft_MembershipViewClearsLeaderWithoutQuorum(t *testing.T) {
 	}
 	if len(view.Members) != 3 {
 		t.Fatalf("members=%+v", view.Members)
+	}
+	if err := leader.ReconcileRaftMembership(); !errcode.Is(err, errcode.UNAVAILABLE) {
+		t.Fatalf("reconcile without quorum err=%v", err)
+	}
+	if got := leader.MembershipReconcileStats().ConsecutiveFailures; got != 1 {
+		t.Fatalf("consecutive failures=%d", got)
 	}
 }
 

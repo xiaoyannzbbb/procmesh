@@ -191,7 +191,7 @@ func collectBatchMetrics(eng *batch.Engine) batchMetricSnapshot {
 	return out
 }
 
-func renderMetrics(uptimeSeconds float64, running, members, alive int, rpcForward uint64, quorum int, batchStats batchMetricSnapshot, sampleRows int64, backupLastSuccess int64, clusterSnap clusterBackupMetricSnapshot) []byte {
+func renderMetrics(uptimeSeconds float64, running, members, alive int, rpcForward uint64, quorum int, batchStats batchMetricSnapshot, sampleRows int64, backupLastSuccess int64, clusterSnap clusterBackupMetricSnapshot, membershipStats control.MembershipReconcileStats) []byte {
 	body := fmt.Sprintf(
 		"# HELP procmesh_agent_uptime Agent uptime in seconds.\n"+
 			"# TYPE procmesh_agent_uptime gauge\n"+
@@ -231,7 +231,24 @@ func renderMetrics(uptimeSeconds float64, running, members, alive int, rpcForwar
 		batchStats.Denied, batchStats.Conflict, batchStats.Unavailable, batchStats.Invalid,
 		sampleRows,
 	)
-	return []byte(body + renderAlertSendMetrics() + renderBackupMetrics(backupLastSuccess, clusterSnap))
+	return []byte(body + renderMembershipReconcileMetrics(membershipStats) + renderAlertSendMetrics() + renderBackupMetrics(backupLastSuccess, clusterSnap))
+}
+
+func renderMembershipReconcileMetrics(stats control.MembershipReconcileStats) string {
+	return fmt.Sprintf(
+		"# HELP procmesh_raft_membership_reconcile_pending_issues Number of Raft membership issues remaining after the latest reconcile attempt.\n"+
+			"# TYPE procmesh_raft_membership_reconcile_pending_issues gauge\n"+
+			"procmesh_raft_membership_reconcile_pending_issues %d\n"+
+			"# HELP procmesh_raft_membership_reconcile_last_success_unix Unix time of the latest successful Raft membership reconcile.\n"+
+			"# TYPE procmesh_raft_membership_reconcile_last_success_unix gauge\n"+
+			"procmesh_raft_membership_reconcile_last_success_unix %d\n"+
+			"# HELP procmesh_raft_membership_reconcile_consecutive_failures Consecutive failed Raft membership reconcile attempts.\n"+
+			"# TYPE procmesh_raft_membership_reconcile_consecutive_failures gauge\n"+
+			"procmesh_raft_membership_reconcile_consecutive_failures %d\n",
+		stats.PendingIssues,
+		stats.LastSuccessUnix,
+		stats.ConsecutiveFailures,
+	)
 }
 
 func backupLastSuccessUnix(eng *backup.Engine) int64 {

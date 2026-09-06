@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http/httptrace"
 	"sort"
@@ -15,6 +16,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/rpc"
+	"github.com/qleelulu/procmesh/internal/store"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
@@ -39,6 +41,7 @@ type NodeAPI struct {
 	LeaderRoute func() (Route, error)
 	Forward     NodeForwarder
 	Capability  CapabilityForwarder
+	Store       *store.Store
 }
 
 func (s *NodeAPI) ListNodes(ctx context.Context, _ *connect.Request[procmeshv1.ListNodesRequest]) (*connect.Response[procmeshv1.ListNodesResponse], error) {
@@ -306,6 +309,163 @@ func (s *NodeAPI) PromoteNode(ctx context.Context, req *connect.Request[procmesh
 		return nil, ToConnect(err)
 	}
 	return connect.NewResponse(&procmeshv1.PromoteNodeResponse{}), nil
+}
+
+func (s *NodeAPI) CheckMembership(ctx context.Context, _ *connect.Request[procmeshv1.CheckMembershipRequest]) (*connect.Response[procmeshv1.CheckMembershipResponse], error) {
+	if err := requirePerm(ctx, s.Auth, auth.PermClusterRead, "", false, true); err != nil {
+		return nil, err
+	}
+	ctrl := s.Deps.controlNode()
+	if ctrl == nil {
+		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "raft control not configured"))
+	}
+	report, err := ctrl.CheckRaftMembership()
+	if err != nil {
+		return nil, ToConnect(errcode.Wrap(errcode.UNAVAILABLE, "check raft membership", err))
+	}
+	return connect.NewResponse(&procmeshv1.CheckMembershipResponse{
+		Report: membershipReportToProto(report, ctrl.IsLeader(), s.Deps.now()),
+	}), nil
+}
+
+func (s *NodeAPI) ReconcileMembership(ctx context.Context, req *connect.Request[procmeshv1.ReconcileMembershipRequest]) (*connect.Response[procmeshv1.ReconcileMembershipResponse], error) {
+	if err := requirePerm(ctx, s.Auth, auth.PermClusterManage, "", true, true); err != nil {
+		return nil, err
+	}
+	if err := rejectDegraded(s.Degraded); err != nil {
+		return nil, err
+	}
+	operationID, _, err := metaOf(req.Msg.GetMeta())
+	if err != nil {
+		return nil, err
+	}
+	if !s.LocalOnly && s.IsLeader != nil && !s.IsLeader() {
+		return s.forwardReconcileMembership(ctx, req)
+	}
+	ctrl := s.Deps.controlNode()
+	if ctrl == nil {
+		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "raft control not configured"))
+	}
+	auditResult := "FAILED"
+	auditStatus := ""
+	repaired := 0
+	defer func() {
+		s.auditMembershipReconcile(ctx, operationID, auditResult, auditStatus, repaired)
+	}()
+	before, err := ctrl.CheckRaftMembership()
+	if err != nil {
+		return nil, ToConnect(errcode.Wrap(errcode.UNAVAILABLE, "check raft membership", err))
+	}
+	auditStatus = string(before.Status)
+	if err := ctrl.ReconcileRaftMembership(); err != nil {
+		if after, checkErr := ctrl.CheckRaftMembership(); checkErr == nil {
+			repaired = resolvedMembershipIssues(before, after)
+			auditStatus = string(after.Status)
+		}
+		return nil, ToConnect(err)
+	}
+	after, err := ctrl.CheckRaftMembership()
+	if err != nil {
+		return nil, ToConnect(errcode.Wrap(errcode.UNAVAILABLE, "confirm raft membership", err))
+	}
+	repaired = resolvedMembershipIssues(before, after)
+	auditStatus = string(after.Status)
+	if after.Status == control.MembershipBlocked {
+		auditResult = "BLOCKED"
+	} else if after.Status == control.MembershipClean {
+		auditResult = "SUCCESS"
+	}
+	return connect.NewResponse(&procmeshv1.ReconcileMembershipResponse{
+		Report:   membershipReportToProto(after, ctrl.IsLeader(), s.Deps.now()),
+		Repaired: int32(repaired),
+	}), nil
+}
+
+func (s *NodeAPI) auditMembershipReconcile(ctx context.Context, operationID, result, status string, repaired int) {
+	if s.Store == nil {
+		return
+	}
+	metadata, err := json.Marshal(map[string]any{"status": status, "repaired": repaired})
+	if err != nil {
+		metadata = []byte(`{}`)
+	}
+	event := store.AuditEvent{
+		Resource:    "cluster:membership",
+		Action:      "cluster.membership.reconcile",
+		OperationID: operationID,
+		Result:      result,
+		SourceAgent: s.LocalID,
+		Metadata:    metadata,
+	}
+	if principal, ok := PrincipalFrom(ctx); ok {
+		event.UserID = principal.UserID
+		event.Username = principal.Username
+	}
+	_ = s.Store.AppendAudit(ctx, event)
+}
+
+func (s *NodeAPI) forwardReconcileMembership(ctx context.Context, req *connect.Request[procmeshv1.ReconcileMembershipRequest]) (*connect.Response[procmeshv1.ReconcileMembershipResponse], error) {
+	if s.Forward == nil || s.LeaderRoute == nil {
+		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "control leader unavailable"))
+	}
+	route, err := s.LeaderRoute()
+	if err != nil || route.NodeID == "" || route.RPC == "" || route.Local {
+		return nil, ToConnect(errcode.E(errcode.UNAVAILABLE, "control leader unavailable"))
+	}
+	stampHop(req.Header(), s.LocalID, route.NodeID)
+	stampIdentity(req.Header(), ctx)
+	req.Header().Del("Cookie")
+	client, err := s.Forward.Node(ctx, route)
+	if err != nil {
+		return nil, ToConnect(errcode.Wrap(errcode.UNAVAILABLE, "control leader unavailable", rpc.MapDialError(err)))
+	}
+	resp, err := client.ReconcileMembership(ctx, req)
+	if err != nil {
+		return nil, mapForwardErr(err)
+	}
+	return resp, nil
+}
+
+func resolvedMembershipIssues(before, after control.MembershipReport) int {
+	remaining := make(map[string]struct{}, len(after.Issues))
+	for _, issue := range after.Issues {
+		remaining[issue.NodeID+"\x00"+string(issue.Kind)] = struct{}{}
+	}
+	resolved := 0
+	for _, issue := range before.Issues {
+		if !issue.Repairable {
+			continue
+		}
+		if _, exists := remaining[issue.NodeID+"\x00"+string(issue.Kind)]; !exists {
+			resolved++
+		}
+	}
+	return resolved
+}
+
+func membershipReportToProto(report control.MembershipReport, leader bool, now time.Time) *procmeshv1.MembershipReport {
+	freshness := "STALE"
+	if report.HasQuorum {
+		freshness = "LIVE"
+	}
+	out := &procmeshv1.MembershipReport{
+		Status:         string(report.Status),
+		Freshness:      freshness,
+		HasQuorum:      report.HasQuorum,
+		Leader:         leader && report.HasQuorum,
+		ObservedUnixMs: now.UnixMilli(),
+		Issues:         make([]*procmeshv1.MembershipIssue, 0, len(report.Issues)),
+	}
+	for _, issue := range report.Issues {
+		out.Issues = append(out.Issues, &procmeshv1.MembershipIssue{
+			NodeId:      issue.NodeID,
+			Kind:        string(issue.Kind),
+			Repairable:  issue.Repairable,
+			MemberState: string(issue.MemberState),
+			ActualRole:  string(issue.ActualRole),
+		})
+	}
+	return out
 }
 
 func admittedPromoteMember(view control.State, nodeID string) (control.Member, error) {

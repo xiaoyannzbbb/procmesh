@@ -704,6 +704,22 @@ sudo systemctl restart procmesh-agent
 
 CLI 只有在节点已写入 Raft configuration 且准入状态为 `ADMITTED` 后才报告成功。如果返回 `cluster already initialized`，说明该数据目录已经完成集群身份写入，不应继续重复执行 `agent join`。
 
+加入在远端提交 `join_prepare` 后若因成员写入超时或 Leader 切换而失败，本地尚不会写入 `cluster.json`，只保留可复用的 pending identity；不要删除 pending 文件、数据目录或重复初始化。Leader 会每 5 秒自动对账 FSM 准入状态与 Raft configuration。若本地已经存在 `cluster.json`，说明远端曾确认成员关系并完成 `ADMITTED`，不应重新执行 Join；可以在任一已加入 Agent 上用以下命令检查和触发同一套幂等修复逻辑：
+
+```bash
+# cluster.read；可在任一 Agent 执行
+procmesh --server 10.0.0.11:18680 cluster membership check
+
+# cluster.manage；请求会转发到当前 Raft Leader
+procmesh --server 10.0.0.11:18680 cluster membership reconcile
+```
+
+输出中的 `CLEAN` 表示一致；`DRIFTED` 表示存在可自动修复项；`BLOCKED` 表示至少有一项需要人工判断。命令会先打印 `freshness`、quorum、Leader、修复数量和逐节点问题，再在非 `CLEAN` 时返回非零退出码。报告不会暴露 Raft 地址。
+
+自动修复只会补齐或纠正 FSM 中 `JOINING`/`ADMITTED` 的成员、在精确读回确认后完成 `JOINING`，以及从 Raft configuration 移除 FSM 已明确标记为 `REMOVED`/`REVOKED` 的成员。若出现 `UNEXPECTED_MEMBER`，该成员在 Raft 中存在但 FSM 无记录，系统只报告 `BLOCKED`，绝不会自动删除；应先核对集群历史、quorum 和备份，再按事故恢复流程处理。`INVALID_DESIRED_MEMBER` 表示 FSM 成员缺少 Raft 地址，同样需要先修复权威状态。
+
+可通过 `/metrics` 观察 `procmesh_raft_membership_reconcile_pending_issues`、`procmesh_raft_membership_reconcile_last_success_unix` 和 `procmesh_raft_membership_reconcile_consecutive_failures`。连续失败只在首次失败和恢复时写日志，避免周期任务反复刷屏。
+
 包含 protocol 1 节点的集群升级到 protocol 2 时，应先滚动升级 Raft configuration 中全部现存 voter 和 nonvoter，升级期间不要执行 Join。混合版本状态下 Join 会返回 `INCOMPATIBLE_VERSION`；成员版本尚未通过 Gossip 确认时返回 `UNAVAILABLE`。不要通过重建 token 绕过该门控。
 
 `cluster init` 只有在本机 Raft control 完成启动后才返回管理员初始密码。若该阶段返回 `UNAVAILABLE`，本次生成的集群身份与 Raft 临时状态会被撤销，可以在排除监听地址、磁盘权限等问题后重新执行初始化。
