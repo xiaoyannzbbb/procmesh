@@ -88,13 +88,26 @@ func TestMesh_GracefulLeaveMarksLeft(t *testing.T) {
 	}
 
 	deadline := time.Now().Add(3 * time.Second)
+	sawLeft := false
 	for time.Now().Before(deadline) {
 		if st := memberState(a, "nb"); st == cluster.StateLeft {
+			sawLeft = true
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !sawLeft {
+		t.Fatalf("want nb LEFT, got %q members=%+v", memberState(a, "nb"), a.Members())
+	}
+
+	deadline = time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if st := memberState(a, "nb"); st == "" {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("want nb LEFT, got %q members=%+v", memberState(a, "nb"), a.Members())
+	t.Fatalf("want expired nb tombstone removed, got members=%+v", a.Members())
 }
 
 func TestMesh_StaleAlivePresentMemberMarkedSuspect(t *testing.T) {

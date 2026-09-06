@@ -23,10 +23,10 @@ import {
 } from "./clusterView";
 import { formatRemoteError } from "./processView";
 
-type StatusFilter = "all" | "alive" | "suspect" | "failed" | "stale";
+type StatusFilter = "all" | "alive" | "suspect" | "failed" | "stale" | "left";
 type ResourceKey = "cpu" | "memory" | "disk";
 
-const STATUS_FILTERS: StatusFilter[] = ["all", "alive", "suspect", "failed", "stale"];
+const STATUS_FILTERS: StatusFilter[] = ["all", "alive", "suspect", "failed", "stale", "left"];
 const POLL_MS = 5000;
 const MAX_PROCESS_CHIPS = 4;
 
@@ -65,12 +65,14 @@ const allNodes = computed(() => {
 
 const stats = computed(() => {
   const list = allNodes.value;
+  const active = list.filter((node) => node.state.toUpperCase() !== "LEFT");
   return {
-    total: list.length,
-    alive: list.filter((node) => node.state.toUpperCase() === "ALIVE").length,
-    suspect: list.filter((node) => node.state.toUpperCase() === "SUSPECT").length,
-    failed: list.filter((node) => node.state.toUpperCase() === "FAILED").length,
-    stale: list.filter((node) => node.freshness === STALE).length,
+    total: active.length,
+    alive: active.filter((node) => node.state.toUpperCase() === "ALIVE").length,
+    suspect: active.filter((node) => node.state.toUpperCase() === "SUSPECT").length,
+    failed: active.filter((node) => node.state.toUpperCase() === "FAILED").length,
+    stale: active.filter((node) => node.freshness === STALE).length,
+    left: list.filter((node) => node.state.toUpperCase() === "LEFT").length,
   };
 });
 
@@ -81,6 +83,9 @@ const filtersActive = computed(
 const nodes = computed(() => {
   const needle = searchQuery.value.trim().toLowerCase();
   return allNodes.value.filter((node) => {
+    if (statusFilter.value !== "left" && node.state.toUpperCase() === "LEFT") {
+      return false;
+    }
     if (statusFilter.value === "alive" && node.state.toUpperCase() !== "ALIVE") {
       return false;
     }
@@ -91,6 +96,9 @@ const nodes = computed(() => {
       return false;
     }
     if (statusFilter.value === "stale" && node.freshness !== STALE) {
+      return false;
+    }
+    if (statusFilter.value === "left" && node.state.toUpperCase() !== "LEFT") {
       return false;
     }
     if (needle) {
@@ -125,7 +133,8 @@ const staleBanner = computed(() => stats.value.stale > 0);
 
 const subtitle = computed(() => {
   if (filtersActive.value) {
-    return t("nodes.showing", { shown: nodes.value.length, total: stats.value.total });
+    const total = statusFilter.value === "left" ? stats.value.left : stats.value.total;
+    return t("nodes.showing", { shown: nodes.value.length, total });
   }
   return t("nodes.subtitle", { count: stats.value.total });
 });
@@ -465,6 +474,17 @@ onUnmounted(() => {
       >
         <span class="summary-value" :class="{ warn: stats.stale > 0 }">{{ stats.stale }}</span>
         <span class="summary-label">{{ t("nodes.stats.stale") }}</span>
+      </button>
+      <button
+        type="button"
+        class="summary-item"
+        data-stat="left"
+        :class="{ active: statusFilter === 'left' }"
+        :aria-pressed="statusFilter === 'left'"
+        @click="setStatusFilter('left')"
+      >
+        <span class="summary-value">{{ stats.left }}</span>
+        <span class="summary-label">{{ t("nodes.stats.left") }}</span>
       </button>
     </div>
 

@@ -32,10 +32,11 @@ import (
 var errMeshJoin = errors.New("mesh join failed")
 
 type staticMesh struct {
-	mu      sync.Mutex
-	members []cluster.NodeSummary
-	joins   [][]string
-	joinErr error
+	mu             sync.Mutex
+	members        []cluster.NodeSummary
+	knownProtocols map[string]int
+	joins          [][]string
+	joinErr        error
 }
 
 func (m *staticMesh) Members() []cluster.NodeSummary {
@@ -44,6 +45,13 @@ func (m *staticMesh) Members() []cluster.NodeSummary {
 	out := make([]cluster.NodeSummary, len(m.members))
 	copy(out, m.members)
 	return out
+}
+
+func (m *staticMesh) KnownProtocolVersion(nodeID string) (int, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	protocol, ok := m.knownProtocols[nodeID]
+	return protocol, ok
 }
 
 func (m *staticMesh) Join(seeds []string) (int, error) {
@@ -1426,6 +1434,32 @@ func TestJoin_MixedProtocolRaftMemberBlocksNewFSMCommands(t *testing.T) {
 	}
 	if _, exists := view.JoinAttempts["mixed-version-joiner"]; exists {
 		t.Fatal("mixed-version join created an attempt")
+	}
+}
+
+func TestJoinFSMCompatibilityUsesLastKnownProtocolForDepartedRaftMember(t *testing.T) {
+	raftNode := startTestRaft(t, "seed")
+	mesh := &staticMesh{
+		members: []cluster.NodeSummary{{
+			NodeID: "seed", State: cluster.StateAlive, ProtocolVersion: version.Protocol,
+		}},
+		knownProtocols: map[string]int{"departed-control": version.Protocol},
+	}
+	api := &ClusterAPI{Deps: ClusterDeps{
+		Mesh:    mesh,
+		Control: raftNode,
+		RaftMembership: staticRaftMembershipReader{view: control.RaftMembershipView{
+			Members: map[string]control.RaftSuffrage{
+				"seed":             control.RaftVoter,
+				"departed-control": control.RaftVoter,
+			},
+			LeaderID:  "seed",
+			HasQuorum: true,
+		}},
+	}}
+
+	if err := api.requireJoinFSMCompatibility("joining"); err != nil {
+		t.Fatalf("last known compatible protocol must allow join: %v", err)
 	}
 }
 

@@ -421,6 +421,7 @@ declare module "i18next" {
         'nodes.stats.suspect': string
         'nodes.stats.failed': string
         'nodes.stats.stale': string
+        'nodes.stats.left': string
         'nodes.state.alive': string
         'nodes.state.suspect': string
         'nodes.state.failed': string
@@ -1773,6 +1774,7 @@ declare module "i18next" {
         'nodes.stats.suspect': string
         'nodes.stats.failed': string
         'nodes.stats.stale': string
+        'nodes.stats.left': string
         'nodes.state.alive': string
         'nodes.state.suspect': string
         'nodes.state.failed': string

@@ -488,6 +488,10 @@ FAILED 表示：
 
 Agent 主动正常离开。
 
+LEFT 仅作为短期 Gossip 墓碑保留，保留时间与 memberlist 的 dead-node
+传播窗口一致；窗口结束后必须从 Agent 的本地成员视图清理。管理界面的活跃节点
+数量和健康统计不包含 LEFT，保留窗口内的 LEFT 记录作为已离开历史单独展示。
+
 ### REMOVED
 
 管理员将 Agent 从集群删除。

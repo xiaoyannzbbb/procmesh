@@ -79,7 +79,7 @@ async function addNodesTranslations(language: "en" | "zh") {
   await i18n.addResourceBundle(language, "common", {
     nodes: {
       title: chinese ? "节点" : "Nodes",
-      subtitle: chinese ? "共 {{count}} 个节点" : "{{count}} total",
+      subtitle: chinese ? "共 {{count}} 个活跃节点" : "{{count}} active nodes",
       showing: chinese ? "显示 {{shown}} / {{total}}" : "Showing {{shown}} of {{total}}",
       eyebrow: chinese ? "集群成员" : "Cluster members",
       loading: chinese ? "加载中…" : "Loading…",
@@ -148,11 +148,12 @@ async function addNodesTranslations(language: "en" | "zh") {
         cancel: chinese ? "保持打开" : "Keep open",
       },
       stats: {
-        total: chinese ? "全部" : "Total",
+        total: chinese ? "活跃" : "Active",
         alive: chinese ? "存活" : "Alive",
         suspect: chinese ? "可疑" : "Suspect",
         failed: chinese ? "失败" : "Failed",
         stale: chinese ? "过期" : "Stale",
+        left: chinese ? "已离开" : "Left",
       },
       state: {
         alive: chinese ? "存活" : "Alive",
@@ -371,6 +372,37 @@ describe("NodesPage cluster summary", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.text()).toContain("agent-b");
     expect(rows[0]?.text()).not.toContain("agent-a");
+  });
+
+  it("counts LEFT tombstones as history instead of active nodes", async () => {
+    await addNodesTranslations("en");
+    const active = Array.from({ length: 4 }, (_, index) => ({
+      nodeId: `n-${index}`,
+      hostname: `agent-${index}`,
+      state: "ALIVE",
+      lastUpdatedUnixMs: Date.now(),
+      processes: [],
+    }));
+    const departed = {
+      nodeId: "n-left",
+      hostname: "agent-left",
+      state: "LEFT",
+      lastUpdatedUnixMs: Date.now(),
+      processes: [],
+    };
+    const { wrapper } = await mountNodesPage([...active, departed]);
+
+    expect(wrapper.get('[data-stat="total"] .summary-value').text()).toBe("4");
+    expect(wrapper.get('[data-stat="alive"] .summary-value').text()).toBe("4");
+    expect(wrapper.get('[data-stat="stale"] .summary-value').text()).toBe("0");
+    expect(wrapper.get('[data-stat="left"] .summary-value').text()).toBe("1");
+    expect(wrapper.findAll("tbody tr.data-row")).toHaveLength(4);
+
+    await wrapper.get('[data-stat="left"]').trigger("click");
+    await wrapper.vm.$nextTick();
+    const rows = wrapper.findAll("tbody tr.data-row");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.text()).toContain("agent-left");
   });
 });
 

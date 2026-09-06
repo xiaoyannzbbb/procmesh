@@ -53,10 +53,15 @@ type Mesh struct {
 	bound     string
 	list      *memberlist.Memberlist
 	leaving   atomic.Bool
+	// leftRetention matches memberlist's dead-node gossip window. LEFT is
+	// observable during that window, then removed from ProcMesh's copied view.
+	leftRetention time.Duration
 
-	mu        sync.RWMutex
-	view      map[string]NodeSummary
-	conflicts map[string]struct{}
+	mu           sync.RWMutex
+	view         map[string]NodeSummary
+	leftObserved map[string]time.Time
+	protocols    map[string]int
+	conflicts    map[string]struct{}
 }
 
 func Start(cfg Config) (*Mesh, error) {
@@ -82,11 +87,13 @@ func Start(cfg Config) (*Mesh, error) {
 	localName := cfg.NodeID + "#" + snap.BootID
 
 	m := &Mesh{
-		cfg:       cfg,
-		localName: localName,
-		localBoot: snap.BootID,
-		view:      make(map[string]NodeSummary),
-		conflicts: make(map[string]struct{}),
+		cfg:          cfg,
+		localName:    localName,
+		localBoot:    snap.BootID,
+		view:         make(map[string]NodeSummary),
+		leftObserved: make(map[string]time.Time),
+		protocols:    make(map[string]int),
+		conflicts:    make(map[string]struct{}),
 	}
 
 	conf := memberlist.DefaultLANConfig()
@@ -101,6 +108,7 @@ func Start(cfg Config) (*Mesh, error) {
 		conf.TCPTimeout = 200 * time.Millisecond
 	}
 	conf.Name = localName
+	m.leftRetention = conf.GossipToTheDeadTime
 	conf.EnableCompression = cfg.EnableCompression
 	conf.BindAddr = cfg.BindAddr
 	conf.BindPort = cfg.BindPort
@@ -242,6 +250,7 @@ func (m *Mesh) ApplyMemberlistState(nodeID string, state memberlist.NodeStateTyp
 // Members returns the local snapshot plus remote views, sorted by node_id.
 func (m *Mesh) Members() []NodeSummary {
 	m.applyMemberlistStates()
+	m.expireLeftTombstones()
 	local := m.localSummary()
 
 	m.mu.RLock()
@@ -259,6 +268,21 @@ func (m *Mesh) Members() []NodeSummary {
 		return out[i].NodeID < out[j].NodeID
 	})
 	return out
+}
+
+func (m *Mesh) expireLeftTombstones() {
+	now := m.now()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, observed := range m.leftObserved {
+		if now.Sub(observed) < m.leftRetention {
+			continue
+		}
+		delete(m.leftObserved, id)
+		if m.view[id].State == StateLeft {
+			delete(m.view, id)
+		}
+	}
 }
 
 func (m *Mesh) applyMemberlistStates() {
@@ -347,8 +371,9 @@ func (m *Mesh) markSuspectLocked(nodeID string) bool {
 	case StateSuspect:
 		return false
 	}
+	previousState := prev.State
 	prev.State = StateSuspect
-	m.view[nodeID] = prev
+	m.setViewLocked(previousState, prev)
 	return true
 }
 
@@ -396,6 +421,16 @@ func (m *Mesh) DuplicateConflicts() []string {
 	return out
 }
 
+// KnownProtocolVersion returns the last non-zero protocol observed for a peer.
+// It remains available after a LEFT tombstone expires so control-plane
+// compatibility checks do not depend on the user-visible membership cache.
+func (m *Mesh) KnownProtocolVersion(nodeID string) (int, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	protocol, ok := m.protocols[nodeID]
+	return protocol, ok
+}
+
 func (m *Mesh) NotifyJoin(n *memberlist.Node) {
 	if n == nil || n.Name == m.localName {
 		return
@@ -425,7 +460,7 @@ func (m *Mesh) NotifyLeave(n *memberlist.Node) {
 	} else {
 		s.State = StateFailed
 	}
-	m.view[s.NodeID] = s
+	m.setViewLocked(prev.State, s)
 	if m.cfg.Logger != nil {
 		logFn := m.cfg.Logger.Warn
 		if s.State == StateLeft {
@@ -502,7 +537,7 @@ func (m *Mesh) store(s NodeSummary, source string) {
 	if prev.NodeID != "" && keepTerminal(prev.State, s.State) {
 		return
 	}
-	m.view[s.NodeID] = s
+	m.setViewLocked(prev.State, s)
 	m.logRemoteUpdateLocked(prev, s, source)
 }
 
@@ -528,8 +563,26 @@ func (m *Mesh) upsertMeta(s NodeSummary, revive bool, source string) {
 	if s.State == "" {
 		s.State = StateAlive
 	}
-	m.view[s.NodeID] = s
+	m.setViewLocked(prev.State, s)
 	m.logRemoteUpdateLocked(prev, s, source)
+}
+
+func (m *Mesh) setViewLocked(previousState State, current NodeSummary) {
+	m.view[current.NodeID] = current
+	if current.ProtocolVersion > 0 {
+		m.protocols[current.NodeID] = current.ProtocolVersion
+	}
+	if current.State != StateLeft {
+		delete(m.leftObserved, current.NodeID)
+		return
+	}
+	if previousState != StateLeft {
+		m.leftObserved[current.NodeID] = m.now()
+		return
+	}
+	if _, ok := m.leftObserved[current.NodeID]; !ok {
+		m.leftObserved[current.NodeID] = m.now()
+	}
 }
 
 func (m *Mesh) logRemoteUpdateLocked(prev, current NodeSummary, source string) {

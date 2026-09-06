@@ -68,6 +68,10 @@ type NodeLister interface {
 	Members() []cluster.NodeSummary
 }
 
+type nodeProtocolReader interface {
+	KnownProtocolVersion(nodeID string) (int, bool)
+}
+
 type meshJoiner interface {
 	Join(seeds []string) (int, error)
 }
@@ -298,7 +302,12 @@ func (s *ClusterAPI) requireJoinFSMCompatibility(joiningNodeID string) error {
 		}
 		protocol, ok := protocols[nodeID]
 		if !ok || protocol == 0 {
-			return errcode.E(errcode.UNAVAILABLE, "raft member protocol unknown")
+			if reader, supportsHistory := s.Deps.Mesh.(nodeProtocolReader); supportsHistory {
+				protocol, ok = reader.KnownProtocolVersion(nodeID)
+			}
+			if !ok || protocol == 0 {
+				return errcode.E(errcode.UNAVAILABLE, "raft member protocol unknown")
+			}
 		}
 		if protocol != version.Protocol {
 			return errcode.E(errcode.INCOMPATIBLE_VERSION, "raft member protocol is incompatible with join FSM")

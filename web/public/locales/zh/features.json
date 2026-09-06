@@ -355,7 +355,7 @@
   },
   "nodes": {
     "title": "节点",
-    "subtitle": "共 {{count}} 个节点",
+    "subtitle": "共 {{count}} 个活跃节点",
     "showing": "显示 {{shown}} / {{total}}",
     "eyebrow": "集群成员",
     "loading": "加载中…",
@@ -432,11 +432,12 @@
       "cancel": "继续查看"
     },
     "stats": {
-      "total": "全部",
+      "total": "活跃",
       "alive": "存活",
       "suspect": "可疑",
       "failed": "失败",
-      "stale": "过期"
+      "stale": "过期",
+      "left": "已离开"
     },
     "state": {
       "alive": "存活",

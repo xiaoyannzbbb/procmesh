@@ -355,7 +355,7 @@
   },
   "nodes": {
     "title": "Nodes",
-    "subtitle": "{{count}} total",
+    "subtitle": "{{count}} active nodes",
     "showing": "Showing {{shown}} of {{total}}",
     "eyebrow": "Cluster members",
     "loading": "Loading…",
@@ -432,11 +432,12 @@
       "cancel": "Keep open"
     },
     "stats": {
-      "total": "Total",
+      "total": "Active",
       "alive": "Alive",
       "suspect": "Suspect",
       "failed": "Failed",
-      "stale": "Stale"
+      "stale": "Stale",
+      "left": "Left"
     },
     "state": {
       "alive": "Alive",

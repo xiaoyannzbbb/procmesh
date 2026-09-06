@@ -147,7 +147,8 @@ func TestAccept_LoginThroughOriginalFollowerAfterLeaderChange(t *testing.T) {
 	}
 
 	tokenAfterFailover := createJoinToken(t, entryAddr)
-	newAddr, _ := startClusterAgent(t, "")
+	newAddr, newRoot := startClusterAgent(t, "")
+	newNodeID := readNodeID(t, newRoot)
 	code, out, errb = runP1CLI("--server", newAddr, "agent", "join", "--seed", entryAddr, "--token", tokenAfterFailover)
 	if code != 0 {
 		t.Fatalf("join through original follower after leader change exit=%d stdout=%q stderr=%q", code, out, errb)
@@ -155,7 +156,8 @@ func TestAccept_LoginThroughOriginalFollowerAfterLeaderChange(t *testing.T) {
 	deadline = time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
 		code, out, errb = runP1CLI("--server", entryAddr, "node", "list")
-		if code == 0 && len(parseNodeIDs(out)) == 5 {
+		ids := parseNodeIDs(out)
+		if code == 0 && containsAll(ids, newNodeID) {
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
