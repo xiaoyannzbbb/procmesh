@@ -17,6 +17,38 @@ assert_eq() {
   [[ "$got" == "$want" ]] || fail "$label: got '$got', want '$want'"
 }
 
+test_language_detection() {
+  assert_eq 'zh' "$(PROCMESH_LANG=zh LC_ALL=C LANG=C detect_language)" 'explicit Chinese language'
+  assert_eq 'en' "$(PROCMESH_LANG=en LC_ALL=zh_CN.UTF-8 detect_language)" 'explicit English language'
+  assert_eq 'zh' "$(PROCMESH_LANG= LC_ALL=zh_CN.UTF-8 LC_MESSAGES=C LANG=C detect_language)" 'LC_ALL Chinese detection'
+  assert_eq 'zh' "$(PROCMESH_LANG= LC_ALL= LC_MESSAGES=zh_CN.UTF-8 LANG=C detect_language)" 'LC_MESSAGES Chinese detection'
+  assert_eq 'en' "$(PROCMESH_LANG= LC_ALL= LC_MESSAGES= LANG=C detect_language)" 'C locale fallback'
+}
+
+test_language_choice() {
+  assert_eq 'zh' "$(resolve_language_choice zh '')" 'detected language default'
+  assert_eq 'en' "$(resolve_language_choice zh 1)" 'English numeric selection'
+  assert_eq 'zh' "$(resolve_language_choice en 2)" 'Chinese numeric selection'
+  assert_eq 'en' "$(resolve_language_choice zh english)" 'English named selection'
+  assert_eq 'zh' "$(resolve_language_choice en 中文)" 'Chinese named selection'
+  if resolve_language_choice en invalid >/dev/null; then
+    fail 'invalid language selection was accepted'
+  fi
+}
+
+test_message_catalogs() {
+  local key language output
+  for language in en zh; do
+    while IFS= read -r key; do
+      [[ -n "$key" ]] || continue
+      output=$(procmesh_language=$language msg "$key") || fail "missing $language message: $key"
+      [[ -n "$output" ]] || fail "empty $language message: $key"
+    done < <(message_keys)
+  done
+  assert_eq 'HTTP listen address' "$(procmesh_language=en msg prompt.http_listen)" 'English HTTP prompt'
+  assert_eq 'HTTP 监听地址' "$(procmesh_language=zh msg prompt.http_listen)" 'Chinese HTTP prompt'
+}
+
 test_detect_lan_ipv4() {
   ip() {
     printf '1.1.1.1 via 192.168.1.1 dev eth0 src 192.168.1.23 uid 1000\n'
@@ -136,12 +168,20 @@ test_write_default_config() {
 
 test_stdin_entrypoint() {
   local output
-  if ! output=$(bash -s -- --help <"$script_dir/install.sh" 2>&1); then
+  if ! output=$(PROCMESH_LANG=en bash -s -- --help <"$script_dir/install.sh" 2>&1); then
     fail "stdin entrypoint failed: $output"
   fi
   [[ "$output" == *'Usage: scripts/install.sh'* ]] || fail 'stdin entrypoint did not invoke main'
+
+  if ! output=$(PROCMESH_LANG=zh bash -s -- --help <"$script_dir/install.sh" 2>&1); then
+    fail "Chinese stdin entrypoint failed: $output"
+  fi
+  [[ "$output" == *'用法：scripts/install.sh'* ]] || fail 'stdin entrypoint did not use Chinese'
 }
 
+test_language_detection
+test_language_choice
+test_message_catalogs
 test_detect_lan_ipv4
 test_detect_public_ipv4
 test_validate_advertise_host

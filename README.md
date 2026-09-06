@@ -32,7 +32,7 @@ ProcMesh 是一个 Local-First、Agent-Owned、Peer-Managed 的分布式进程�
 curl -fsSL https://raw.githubusercontent.com/xiaoyannzbbb/procmesh/main/scripts/install.sh | bash
 ```
 
-安装过程需要交互式终端。建议保留默认安装目录 `/usr/local/bin`；如果希望 Agent 作为系统服务运行，请在提示时选择安装 systemd unit，并选择立即启用和启动服务。已有配置、数据目录和 systemd unit 不会被覆盖。
+安装过程需要交互式终端。安装器会根据 `LC_ALL`、`LC_MESSAGES` 或 `LANG` 自动探测中文或英文，并在开始时询问使用哪种语言，默认选择探测结果；也可以通过 `PROCMESH_LANG=en` 或 `PROCMESH_LANG=zh` 指定默认语言。建议保留默认安装目录 `/usr/local/bin`；如果希望 Agent 作为系统服务运行，请在提示时选择安装 systemd unit，并选择立即启用和启动服务。已有配置、数据目录和 systemd unit 不会被覆盖。
 
 默认监听地址是 `127.0.0.1:18680`。选择非回环地址时，安装器会加入 `--insecure-listen`，但不会启用 HTTPS；必须通过防火墙、HTTPS 反向代理、VPN 或堡垒机限制访问。
 
