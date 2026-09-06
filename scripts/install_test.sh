@@ -95,10 +95,19 @@ test_write_default_config() {
   grep -Fq '  advertise_host: "10.0.0.1"' "$output" || fail 'default config has no advertise host'
 }
 
+test_stdin_entrypoint() {
+  local output
+  if ! output=$(bash -s -- --help <"$script_dir/install.sh" 2>&1); then
+    fail "stdin entrypoint failed: $output"
+  fi
+  [[ "$output" == *'Usage: scripts/install.sh'* ]] || fail 'stdin entrypoint did not invoke main'
+}
+
 test_detect_lan_ipv4
 test_detect_public_ipv4
 test_validate_advertise_host
 test_write_default_config
 test_write_packaged_config
+test_stdin_entrypoint
 
 printf 'install.sh tests passed\n'

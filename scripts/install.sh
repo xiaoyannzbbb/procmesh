@@ -601,6 +601,8 @@ fi
 printf 'ProcMesh %s installation complete.\n' "$tag"
 }
 
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+script_source=${BASH_SOURCE[0]-}
+if [[ -z "$script_source" || "$script_source" == "$0" ]]; then
   main "$@"
 fi
+unset script_source
