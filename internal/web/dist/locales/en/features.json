@@ -355,7 +355,7 @@
   },
   "nodes": {
     "title": "Nodes",
-    "subtitle": "{{count}} total",
+    "subtitle": "{{count}} active nodes",
     "showing": "Showing {{shown}} of {{total}}",
     "eyebrow": "Cluster members",
     "loading": "Loading…",
@@ -419,6 +419,10 @@
       "copyFailed": "Copy failed. Select the command and copy it manually.",
       "customServerTitle": "When the new node uses a non-default local API address",
       "customServerHint": "--server points to the new node's own API address. --seed points to the selected existing cluster node's API address.",
+      "promoteTitle": "Optional: promote the new node to a Raft voter",
+      "promoteCommandLabel": "Promote command",
+      "promoteExplanation": "New nodes join as non-voters and can still run processes. After the node appears on the Nodes page, replace <NEW_NODE_ID> with its node ID and run this command from an authenticated management terminal. If the command shows <LEADER_API>, replace it with the current Raft leader's API address.",
+      "voterRecommendation": "Keep 3 or 5 Raft voters. Promote only when expanding the control-plane quorum, and avoid maintaining an even voter count.",
       "parametersChanged": "These settings differ from the issued token. The old token may still be valid; generate a new token to apply them.",
       "seedInvalid": "The selected seed is no longer eligible. Select another ALIVE node with an API address before copying.",
       "closeTitle": "Close and lose the plaintext token?",
@@ -428,11 +432,12 @@
       "cancel": "Keep open"
     },
     "stats": {
-      "total": "Total",
+      "total": "Active",
       "alive": "Alive",
       "suspect": "Suspect",
       "failed": "Failed",
-      "stale": "Stale"
+      "stale": "Stale",
+      "left": "Left"
     },
     "state": {
       "alive": "Alive",

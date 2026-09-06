@@ -355,7 +355,7 @@
   },
   "nodes": {
     "title": "节点",
-    "subtitle": "共 {{count}} 个节点",
+    "subtitle": "共 {{count}} 个活跃节点",
     "showing": "显示 {{shown}} / {{total}}",
     "eyebrow": "集群成员",
     "loading": "加载中…",
@@ -419,6 +419,10 @@
       "copyFailed": "复制失败，请选中命令并手动复制。",
       "customServerTitle": "新节点使用非默认本机 API 地址时",
       "customServerHint": "--server 指向新节点自身的 API 地址；--seed 指向所选现有集群节点的 API 地址。",
+      "promoteTitle": "可选：将新节点提升为 Raft 投票成员",
+      "promoteCommandLabel": "提升命令",
+      "promoteExplanation": "新节点默认以非投票成员身份加入，但仍可正常运行进程。节点出现在节点页面后，用它的节点 ID 替换 <NEW_NODE_ID>，再在已登录的管理终端执行此命令。如果命令中显示 <LEADER_API>，请替换为当前 Raft Leader 的 API 地址。",
+      "voterRecommendation": "Raft 投票成员建议保持 3 个或 5 个。仅在需要扩大控制面 quorum 时提升，并避免长期维持偶数个投票成员。",
       "parametersChanged": "当前设置与已签发令牌不同。旧令牌仍可能有效；请生成新令牌以应用这些设置。",
       "seedInvalid": "所选 seed 已不再符合条件。请先选择另一个具有 API 地址的 ALIVE 节点再复制。",
       "closeTitle": "关闭并丢失令牌明文？",
@@ -428,11 +432,12 @@
       "cancel": "继续查看"
     },
     "stats": {
-      "total": "全部",
+      "total": "活跃",
       "alive": "存活",
       "suspect": "可疑",
       "failed": "失败",
-      "stale": "过期"
+      "stale": "过期",
+      "left": "已离开"
     },
     "state": {
       "alive": "存活",
