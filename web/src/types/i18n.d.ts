@@ -405,6 +405,10 @@ declare module "i18next" {
         'nodes.add.copyFailed': string
         'nodes.add.customServerTitle': string
         'nodes.add.customServerHint': string
+        'nodes.add.promoteTitle': string
+        'nodes.add.promoteCommandLabel': string
+        'nodes.add.promoteExplanation': string
+        'nodes.add.voterRecommendation': string
         'nodes.add.parametersChanged': string
         'nodes.add.seedInvalid': string
         'nodes.add.closeTitle': string
@@ -1753,6 +1757,10 @@ declare module "i18next" {
         'nodes.add.copyFailed': string
         'nodes.add.customServerTitle': string
         'nodes.add.customServerHint': string
+        'nodes.add.promoteTitle': string
+        'nodes.add.promoteCommandLabel': string
+        'nodes.add.promoteExplanation': string
+        'nodes.add.voterRecommendation': string
         'nodes.add.parametersChanged': string
         'nodes.add.seedInvalid': string
         'nodes.add.closeTitle': string

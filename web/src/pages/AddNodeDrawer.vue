@@ -1,12 +1,13 @@
 <script setup lang="ts">
 /* eslint-disable i18next/no-literal-string -- Enum values and CLI syntax are protocol literals. */
 import { Code, ConnectError } from "@connectrpc/connect";
-import { Check, Clipboard, LoaderCircle, Plus, RefreshCw, ShieldAlert, Terminal } from "lucide-vue-next";
+import { Check, Clipboard, LoaderCircle, Network, Plus, RefreshCw, ShieldAlert, Terminal } from "lucide-vue-next";
 import { computed, nextTick, onUnmounted, ref, watch } from "vue";
 import ConfirmDialog from "../components/ConfirmDialog.vue";
 import Drawer from "../components/Drawer.vue";
 import FreshnessBadge from "../components/FreshnessBadge.vue";
 import { appCode } from "../lib/connecterr";
+import { LIVE } from "../lib/freshness";
 import { newOperationId } from "../lib/opid";
 import { useNodeClient } from "../lib/rpc/cluster";
 import { session } from "../lib/session";
@@ -15,10 +16,11 @@ import { formatRemoteError } from "./processView";
 import {
   buildCustomServerJoinTemplate,
   buildJoinCommand,
+  buildPromoteCommand,
   parseJoinTokenParameters,
   type DurationUnit,
 } from "./addNode";
-import type { NodeView } from "./clusterView";
+import { RAFT_LEADER, type NodeView } from "./clusterView";
 
 type JoinTokenResult = {
   tokenId: string;
@@ -67,6 +69,15 @@ const eligibleNodes = computed(() =>
 const selectedSeed = computed(() =>
   eligibleNodes.value.find((node) => node.nodeId === selectedNodeId.value),
 );
+const leaderNode = computed(() =>
+  props.nodes.find(
+    (node) =>
+      node.state.toUpperCase() === "ALIVE" &&
+      node.raftRole === RAFT_LEADER &&
+      node.raftRoleFreshness === LIVE &&
+      node.apiAddress.trim().length > 0,
+  ),
+);
 const parameters = computed(() =>
   parseJoinTokenParameters(duration.value.trim(), durationUnit.value, uses.value.trim()),
 );
@@ -88,6 +99,10 @@ const command = computed(() => {
 const customServerCommand = computed(() =>
   buildCustomServerJoinTemplate(selectedSeed.value?.apiAddress ?? "<SEED_API>"),
 );
+const promoteCommand = computed(() => {
+  if (!result.value) return "";
+  return buildPromoteCommand(leaderNode.value?.apiAddress ?? "<LEADER_API>");
+});
 const parametersChanged = computed(() => {
   if (!result.value || !parameters.value) return false;
   return (
@@ -420,6 +435,22 @@ defineExpose({ confirmRouteLeave });
           <code>{{ customServerCommand }}</code>
           <p>{{ t("nodes.add.customServerHint") }}</p>
         </div>
+        <section
+          class="promote-guidance"
+          data-promote-guidance
+          aria-labelledby="promote-guidance-title"
+        >
+          <div class="promote-heading">
+            <Network :size="18" aria-hidden="true" />
+            <strong id="promote-guidance-title">{{ t("nodes.add.promoteTitle") }}</strong>
+          </div>
+          <p>{{ t("nodes.add.promoteExplanation") }}</p>
+          <div class="command-block">
+            <span class="field-label">{{ t("nodes.add.promoteCommandLabel") }}</span>
+            <code tabindex="0">{{ promoteCommand }}</code>
+          </div>
+          <p class="voter-recommendation">{{ t("nodes.add.voterRecommendation") }}</p>
+        </section>
       </section>
     </form>
   </Drawer>
@@ -437,11 +468,11 @@ defineExpose({ confirmRouteLeave });
 
 <style scoped>
 .join-form { display: flex; flex-direction: column; gap: 1rem; }
-.intro, .state-message, .secret-warning, .result-heading, .freshness-warning {
+.intro, .state-message, .secret-warning, .result-heading, .freshness-warning, .promote-heading {
   display: flex; align-items: flex-start; gap: 0.6rem;
 }
 .intro { padding: 0.9rem; border-left: 3px solid var(--color-accent); background: color-mix(in srgb, var(--color-accent) 7%, var(--color-card)); }
-.intro p, .state-message span, .secret-warning, .server-help p, .copy-status { margin: 0; line-height: 1.5; }
+.intro p, .state-message span, .secret-warning, .server-help p, .copy-status, .promote-guidance p { margin: 0; line-height: 1.5; }
 .state-message { flex-wrap: wrap; align-items: center; padding: 0.75rem; border: 1px solid var(--color-border); border-radius: 8px; }
 .state-message span { flex: 1 1 14rem; }
 .warning { color: var(--color-stale-fg); }
@@ -467,6 +498,11 @@ code { display: block; max-width: 100%; padding: 0.75rem; overflow-x: auto; bord
 .server-help { padding: 0.85rem; border: 1px solid var(--color-border); border-radius: 8px; }
 .server-help strong { font-size: 0.875rem; }
 .server-help p { color: var(--color-muted); font-size: 0.825rem; }
+.promote-guidance { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; padding: 0.9rem; border-left: 3px solid var(--color-accent); background: color-mix(in srgb, var(--color-accent) 7%, var(--color-card)); }
+.promote-heading { align-items: center; }
+.promote-heading strong { font-size: 0.9rem; }
+.promote-guidance p { color: var(--color-muted); font-size: 0.85rem; overflow-wrap: anywhere; }
+.promote-guidance .voter-recommendation { color: var(--color-text); font-weight: 600; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .spin { flex: 0 0 auto; animation: spin 800ms linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

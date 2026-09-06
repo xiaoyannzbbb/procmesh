@@ -51,3 +51,7 @@ export function buildJoinCommand(seedAddress: string, token: string): string {
 export function buildCustomServerJoinTemplate(seedAddress: string): string {
   return `procmesh --server <NEW_AGENT_API> agent join ${formatFlagValue("--seed", seedAddress)} --token '<JOIN_TOKEN>'`;
 }
+
+export function buildPromoteCommand(serverAddress: string): string {
+  return `procmesh ${formatFlagValue("--server", serverAddress)} node promote <NEW_NODE_ID>`;
+}
