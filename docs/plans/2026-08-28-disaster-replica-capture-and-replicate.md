@@ -22,7 +22,7 @@
 2. 一键生成预填 `schedule_cron=0 2 * * *`、时区=浏览器 IANA、`enabled=true`；cron 可清空为仅手动。
 3. 自动：仅 Leader；只跑 **策略写入之后** 的 cron fire。`enabled=false` 跳过 cron，手动仍可跑。
 4. 手动 `StartRun`：立即捕获+复制，不要 `primary_run_id` / `snapshot_refs`。同策略已有 `RUNNING` 则返回该 run。
-5. 捕获：源节点本地 process spec + revision history；`sink=replica` 持久落盘；产生 `snapshot_id`+checksum。不写 `BackupRuns`。
+5. 捕获：源节点本地 process spec + revision history；`sink=replica` 持久落盘；产生 `snapshot_id`+checksum。不写 `BackupRuns`。源节点没有 process spec 时仍生成合法的空快照，使全节点策略不会因新建空节点变为 `PARTIAL`；普通手工备份的空列表校验不变。
 6. 复制：有快照后按路由 mTLS 传 Peer。Peer 不 apply。
 7. 失败继续，run 可为 `PARTIAL`。
 8. 重试失败任务：有快照只重传；无快照或源文件丢失则对该源重捕获。成功任务不动。

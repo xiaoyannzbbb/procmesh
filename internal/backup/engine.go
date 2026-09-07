@@ -202,7 +202,7 @@ func (e *Engine) Create(ctx context.Context, opt CreateOpts) (Meta, error) {
 		return Meta{}, errcode.E(errcode.DEGRADED, "disk usage at or above 95%")
 	}
 
-	specs, err := e.collectSpecs(ctx, opt.ProcessIDs)
+	specs, err := e.collectSpecs(ctx, opt.ProcessIDs, false)
 	if err != nil {
 		return Meta{}, err
 	}
@@ -255,6 +255,10 @@ func (e *Engine) Create(ctx context.Context, opt CreateOpts) (Meta, error) {
 
 // CreateCluster snapshots local process specs with cluster namespace paths and idempotent task tracking.
 func (e *Engine) CreateCluster(ctx context.Context, opts ClusterCreateOpts) (Meta, error) {
+	return e.createCluster(ctx, opts, false)
+}
+
+func (e *Engine) createCluster(ctx context.Context, opts ClusterCreateOpts, allowEmpty bool) (Meta, error) {
 	if opts.RunID == "" || opts.TaskID == "" {
 		return Meta{}, errcode.E(errcode.INVALID, "run_id and task_id required")
 	}
@@ -269,7 +273,7 @@ func (e *Engine) CreateCluster(ctx context.Context, opts ClusterCreateOpts) (Met
 	if e.Store != nil {
 		if existing, err := e.Store.GetBackupByTask(ctx, opts.RunID, opts.TaskID); err == nil {
 			// Task already executed, verify checksum matches
-			specs, err := e.collectSpecs(ctx, opts.ProcessIDs)
+			specs, err := e.collectSpecs(ctx, opts.ProcessIDs, allowEmpty)
 			if err != nil {
 				return Meta{}, err
 			}
@@ -321,7 +325,7 @@ func (e *Engine) CreateCluster(ctx context.Context, opts ClusterCreateOpts) (Met
 		return Meta{}, errcode.E(errcode.DEGRADED, "disk usage at or above 95%")
 	}
 
-	specs, err := e.collectSpecs(ctx, opts.ProcessIDs)
+	specs, err := e.collectSpecs(ctx, opts.ProcessIDs, allowEmpty)
 	if err != nil {
 		return Meta{}, err
 	}
@@ -402,7 +406,7 @@ func (e *Engine) CaptureReplicationSnapshot(ctx context.Context, req Replication
 			return Meta{}, err
 		}
 	}
-	meta, err := e.CreateCluster(ctx, ClusterCreateOpts{
+	meta, err := e.createCluster(ctx, ClusterCreateOpts{
 		RunID:      req.RunID,
 		TaskID:     "capture:" + req.SourceNodeID,
 		PolicyID:   req.PolicyID,
@@ -410,7 +414,7 @@ func (e *Engine) CaptureReplicationSnapshot(ctx context.Context, req Replication
 		NodeID:     e.NodeID,
 		Sink:       ReplicaSinkName,
 		SnapshotID: req.SnapshotID,
-	})
+	}, true)
 	if err != nil {
 		return Meta{}, err
 	}
@@ -999,13 +1003,13 @@ func (e *Engine) newID() (string, error) {
 	return newUUID()
 }
 
-func (e *Engine) collectSpecs(ctx context.Context, processIDs []string) ([]process.ProcessSpec, error) {
+func (e *Engine) collectSpecs(ctx context.Context, processIDs []string, allowEmpty bool) ([]process.ProcessSpec, error) {
 	if len(processIDs) == 0 {
 		specs, err := e.Store.ListSpecs(ctx)
 		if err != nil {
 			return nil, err
 		}
-		if len(specs) == 0 {
+		if len(specs) == 0 && !allowEmpty {
 			return nil, errcode.E(errcode.INVALID, "no processes to backup")
 		}
 		return specs, nil

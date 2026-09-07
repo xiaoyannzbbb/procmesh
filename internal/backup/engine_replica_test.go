@@ -11,6 +11,7 @@ import (
 
 	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/errcode"
+	"github.com/qleelulu/procmesh/internal/store"
 )
 
 func testEngineWithProcess(t *testing.T) *backup.Engine {
@@ -53,6 +54,46 @@ func TestEngine_CaptureReplicationSnapshot_IdempotentPerRunAndSource(t *testing.
 	})
 	if err != nil || second.SHA256 != first.SHA256 || second.SnapshotID != first.SnapshotID {
 		t.Fatalf("second=%+v", second)
+	}
+}
+
+func TestEngine_CaptureReplicationSnapshot_AllowsEmptyAgent(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	root := t.TempDir()
+	eng := &backup.Engine{
+		Store:     st,
+		NodeID:    "node-empty",
+		ClusterID: "c1",
+		Sinks: map[string]backup.Sink{
+			backup.ReplicaSinkName: backup.NewFSSink(filepath.Join(root, "backup", "replica")),
+		},
+		Now: func() time.Time { return time.Unix(1_700_000_000, 0).UTC() },
+	}
+	id := backup.StableReplicationSnapshotID("run-empty", eng.NodeID)
+
+	meta, err := eng.CaptureReplicationSnapshot(context.Background(), backup.ReplicationCaptureRequest{
+		RunID: "run-empty", PolicyID: "rp-1", SourceNodeID: eng.NodeID, SnapshotID: id,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.SnapshotID != id || meta.SHA256 == "" || meta.Sink != backup.ReplicaSinkName || len(meta.ProcessIDs) != 0 {
+		t.Fatalf("meta=%+v", meta)
+	}
+	_, payload, err := eng.Get(context.Background(), id, backup.ReplicaSinkName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := backup.Decode(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.NodeID != eng.NodeID || len(snapshot.Processes) != 0 {
+		t.Fatalf("snapshot=%+v", snapshot)
 	}
 }
 
