@@ -28,6 +28,7 @@ func TestGeneratedServicesHaveDomainProtoFiles(t *testing.T) {
 		"procmesh.v1.ClusterBackupService":       "procmesh/v1/cluster_backup.proto",
 		"procmesh.v1.ClusterBackupAgentService":  "procmesh/v1/cluster_backup_agent.proto",
 		"procmesh.v1.PeerReplicationService":     "procmesh/v1/peer_replication.proto",
+		"procmesh.v1.WorkloadSummaryService":     "procmesh/v1/workload_summary.proto",
 		"procmesh.v1.DisasterReplicationService": "procmesh/v1/disaster_replication.proto",
 		"procmesh.v1.UpdateService":              "procmesh/v1/update.proto",
 	}

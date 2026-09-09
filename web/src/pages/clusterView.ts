@@ -56,6 +56,9 @@ export type NodeView = {
   resources: ResourceView;
   processCount: number;
   processes: ProcessView[];
+  workloadFreshness: Freshness;
+  workloadLastVerifiedUnixMs: number;
+  workloadFreshnessReason: string;
   freshness: Freshness;
   lastUpdatedUnixMs: number;
   lastUpdated: string;
@@ -246,7 +249,12 @@ export function mapOverview(input: unknown, nowMs = Date.now()): OverviewView {
   };
 }
 
-export function mapProcess(input: unknown, nodeState: string, nowMs: number): ProcessView {
+export function mapProcess(
+  input: unknown,
+  nodeState: string,
+  nowMs: number,
+  workloadStatus?: Freshness,
+): ProcessView {
   const freshnessUnixMs = toNum(pick(input, "freshnessUnixMs", "freshness_unix_ms"));
   return {
     name: toStr(pick(input, "name")),
@@ -257,7 +265,7 @@ export function mapProcess(input: unknown, nodeState: string, nowMs: number): Pr
     health: toStr(pick(input, "health")),
     latestRevision: toNum(pick(input, "latestRevision", "latest_revision")),
     activeRevision: toNum(pick(input, "activeRevision", "active_revision")),
-    freshness: classify(nowMs, freshnessUnixMs, nodeState, PROCESS_MAX_AGE_MS),
+    freshness: workloadStatus ?? classify(nowMs, freshnessUnixMs, nodeState, PROCESS_MAX_AGE_MS),
     freshnessUnixMs,
   };
 }
@@ -267,9 +275,20 @@ export function mapNode(input: unknown, nowMs: number): NodeView {
   const lastUpdatedUnixMs = toNum(pick(input, "lastUpdatedUnixMs", "last_updated_unix_ms"));
   const resources = asRecord(pick(input, "resources"));
   const processesRaw = pick(input, "processes");
+  const workloadFreshnessRaw = pick(input, "workloadFreshness", "workload_freshness");
+  const explicitWorkloadFreshness =
+    workloadFreshnessRaw === undefined ? undefined : toFreshness(workloadFreshnessRaw);
+  const processWorkloadFreshness = state === "ALIVE" ? explicitWorkloadFreshness : undefined;
   const processes = Array.isArray(processesRaw)
-    ? processesRaw.map((p) => mapProcess(p, state, nowMs))
+    ? processesRaw.map((p) => mapProcess(p, state, nowMs, processWorkloadFreshness))
     : [];
+  const derivedWorkloadFreshness = processes.some((process) => process.freshness === STALE)
+    ? STALE
+    : processes.some((process) => process.freshness === UNKNOWN)
+      ? UNKNOWN
+      : processes.length > 0
+        ? "LIVE"
+        : UNKNOWN;
   const labels = Object.entries(asRecord(pick(input, "labels")))
     .map(([key, value]) => ({ key, value: toStr(value) }))
     .sort((a, b) => a.key.localeCompare(b.key));
@@ -302,6 +321,16 @@ export function mapNode(input: unknown, nowMs: number): NodeView {
     },
     processCount: processes.length,
     processes,
+    workloadFreshness:
+      state === "ALIVE"
+        ? (explicitWorkloadFreshness ?? derivedWorkloadFreshness)
+        : derivedWorkloadFreshness,
+    workloadLastVerifiedUnixMs: toNum(
+      pick(input, "workloadLastVerifiedUnixMs", "workload_last_verified_unix_ms"),
+    ),
+    workloadFreshnessReason: toStr(
+      pick(input, "workloadFreshnessReason", "workload_freshness_reason"),
+    ),
     freshness: classify(nowMs, lastUpdatedUnixMs, state),
     lastUpdatedUnixMs,
     lastUpdated: formatAge(nowMs, lastUpdatedUnixMs),

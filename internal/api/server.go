@@ -418,6 +418,7 @@ func (s *Server) metrics(c *gin.Context) {
 		backupLastSuccessUnix(s.opts.Backup),
 		collectClusterBackupMetrics(s.opts.Cluster),
 		s.membershipReconcileStats(),
+		collectWorkloadSyncStats(s.opts.Cluster),
 	))
 }
 

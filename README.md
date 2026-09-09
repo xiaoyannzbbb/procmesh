@@ -2,7 +2,7 @@
 
 ProcMesh 是一个 Local-First、Agent-Owned、Peer-Managed 的分布式进程管理平台。它在不部署独立中心管理服务器的前提下，为服务器集群提供进程生命周期管理、Web 管理界面、命令行、远程操作和可观测性能力。
 
-每个节点运行一个 ProcMesh Agent。业务进程的配置、状态和日志由所在节点持有权威数据；集群成员与进程摘要通过 Gossip 汇聚，用户、RBAC 与节点准入等控制数据通过内嵌 Raft 保持强一致。
+每个节点运行一个 ProcMesh Agent。业务进程的配置、状态和日志由所在节点持有权威数据；集群成员和轻量版本提示通过 Gossip 汇聚，进程摘要变更由观察节点通过 mTLS RPC 向 Owner 拉取，Gossip push/pull 仅作反熵兜底；用户、RBAC 与节点准入等控制数据通过内嵌 Raft 保持强一致。
 
 ## 特性
 

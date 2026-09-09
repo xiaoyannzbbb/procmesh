@@ -13,6 +13,7 @@ import (
 	"github.com/qleelulu/procmesh/internal/alert"
 	"github.com/qleelulu/procmesh/internal/backup"
 	"github.com/qleelulu/procmesh/internal/batch"
+	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/errcode"
 	"github.com/qleelulu/procmesh/internal/process"
@@ -191,7 +192,7 @@ func collectBatchMetrics(eng *batch.Engine) batchMetricSnapshot {
 	return out
 }
 
-func renderMetrics(uptimeSeconds float64, running, members, alive int, rpcForward uint64, quorum int, batchStats batchMetricSnapshot, sampleRows int64, backupLastSuccess int64, clusterSnap clusterBackupMetricSnapshot, membershipStats control.MembershipReconcileStats) []byte {
+func renderMetrics(uptimeSeconds float64, running, members, alive int, rpcForward uint64, quorum int, batchStats batchMetricSnapshot, sampleRows int64, backupLastSuccess int64, clusterSnap clusterBackupMetricSnapshot, membershipStats control.MembershipReconcileStats, workloadStats cluster.WorkloadSyncStats) []byte {
 	body := fmt.Sprintf(
 		"# HELP procmesh_agent_uptime Agent uptime in seconds.\n"+
 			"# TYPE procmesh_agent_uptime gauge\n"+
@@ -231,7 +232,48 @@ func renderMetrics(uptimeSeconds float64, running, members, alive int, rpcForwar
 		batchStats.Denied, batchStats.Conflict, batchStats.Unavailable, batchStats.Invalid,
 		sampleRows,
 	)
-	return []byte(body + renderMembershipReconcileMetrics(membershipStats) + renderAlertSendMetrics() + renderBackupMetrics(backupLastSuccess, clusterSnap))
+	return []byte(body + renderMembershipReconcileMetrics(membershipStats) + renderWorkloadSyncMetrics(workloadStats) + renderAlertSendMetrics() + renderBackupMetrics(backupLastSuccess, clusterSnap))
+}
+
+type workloadSyncStatsReader interface {
+	WorkloadSyncStats() cluster.WorkloadSyncStats
+}
+
+func collectWorkloadSyncStats(deps ClusterDeps) cluster.WorkloadSyncStats {
+	reader, ok := deps.Mesh.(workloadSyncStatsReader)
+	if !ok || reader == nil {
+		return cluster.WorkloadSyncStats{}
+	}
+	return reader.WorkloadSyncStats()
+}
+
+func renderWorkloadSyncMetrics(stats cluster.WorkloadSyncStats) string {
+	return fmt.Sprintf(
+		"# HELP procmesh_workload_sync_fetch_total Owner workload snapshot fetch attempts by result.\n"+
+			"# TYPE procmesh_workload_sync_fetch_total counter\n"+
+			"procmesh_workload_sync_fetch_total{result=\"success\"} %d\n"+
+			"procmesh_workload_sync_fetch_total{result=\"error\"} %d\n"+
+			"procmesh_workload_sync_fetch_total{result=\"discarded\"} %d\n"+
+			"# HELP procmesh_workload_sync_last_fetch_duration_seconds Duration of the latest completed workload snapshot fetch.\n"+
+			"# TYPE procmesh_workload_sync_last_fetch_duration_seconds gauge\n"+
+			"procmesh_workload_sync_last_fetch_duration_seconds %g\n"+
+			"# HELP procmesh_workload_sync_queue_depth Workload snapshot fetches waiting for a worker.\n"+
+			"# TYPE procmesh_workload_sync_queue_depth gauge\n"+
+			"procmesh_workload_sync_queue_depth %d\n"+
+			"# HELP procmesh_workload_sync_failed_nodes Nodes whose current workload version could not be fetched.\n"+
+			"# TYPE procmesh_workload_sync_failed_nodes gauge\n"+
+			"procmesh_workload_sync_failed_nodes %d\n"+
+			"# HELP procmesh_workload_sync_cache_max_age_seconds Age of the oldest observer-verified remote workload cache.\n"+
+			"# TYPE procmesh_workload_sync_cache_max_age_seconds gauge\n"+
+			"procmesh_workload_sync_cache_max_age_seconds %g\n",
+		stats.FetchSuccessTotal,
+		stats.FetchErrorTotal,
+		stats.FetchDiscardedTotal,
+		stats.LastFetchDurationSeconds,
+		stats.QueueDepth,
+		stats.FailedNodes,
+		stats.CacheMaxAgeSeconds,
+	)
 }
 
 func renderMembershipReconcileMetrics(stats control.MembershipReconcileStats) string {

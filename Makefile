@@ -18,12 +18,14 @@ PROCMESH_PROTO_FILES := \
 	procmesh/v1/cluster_backup.proto \
 	procmesh/v1/cluster_backup_agent.proto \
 	procmesh/v1/peer_replication.proto \
+	procmesh/v1/workload_summary.proto \
 	procmesh/v1/disaster_replication.proto \
 	procmesh/v1/update.proto
 
 WEB_PROTO_FILES := $(filter-out \
 	procmesh/v1/cluster_backup_agent.proto \
-	procmesh/v1/peer_replication.proto, \
+	procmesh/v1/peer_replication.proto \
+	procmesh/v1/workload_summary.proto, \
 	$(PROCMESH_PROTO_FILES))
 test: test-go
 test-go:

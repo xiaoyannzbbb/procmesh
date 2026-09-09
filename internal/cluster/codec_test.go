@@ -1,11 +1,18 @@
 package cluster_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/version"
 )
+
+type oversizedMetaSource struct {
+	s cluster.NodeSummary
+}
+
+func (s oversizedMetaSource) Snapshot() cluster.NodeSummary { return s.s }
 
 func TestEncodeMeta_OmitsProcessesAndFits512(t *testing.T) {
 	s := cluster.NodeSummary{
@@ -39,6 +46,38 @@ func TestEncodeMeta_OmitsProcessesAndFits512(t *testing.T) {
 	}
 	if got.OS != "linux" || got.Arch != "amd64" {
 		t.Fatalf("os/arch %+v", got)
+	}
+}
+
+func TestMesh_NodeMetaAlwaysHonorsLimit(t *testing.T) {
+	labels := make(map[string]string, 32)
+	for i := range 32 {
+		labels[strings.Repeat("k", 20)+string(rune('a'+i))] = strings.Repeat("v", 80)
+	}
+	source := oversizedMetaSource{s: cluster.NodeSummary{
+		NodeID: "node-1", ClusterID: "cluster-1", Hostname: "host-1", BootID: "boot-1",
+		State: cluster.StateAlive, AgentVersion: version.Agent, ProtocolVersion: version.Protocol,
+		APIAddress: "127.0.0.1:18680", RPCAddress: "127.0.0.1:18683", Labels: labels,
+		WorkloadSyncVersion: 1, WorkloadEpoch: "epoch-1", WorkloadVersion: 9, WorkloadObservationSeq: 14,
+	}}
+	mesh, err := cluster.Start(cluster.Config{
+		NodeID: "node-1", BindAddr: "127.0.0.1", BindPort: 0, Source: source, TestFast: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = mesh.Shutdown() })
+	for _, limit := range []int{512, 128, 64, 1} {
+		if raw := mesh.NodeMeta(limit); len(raw) > limit {
+			t.Fatalf("NodeMeta(%d) returned %d bytes", limit, len(raw))
+		}
+	}
+	got, err := cluster.DecodeMeta(mesh.NodeMeta(512))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.WorkloadEpoch != "epoch-1" || got.WorkloadVersion != 9 || got.WorkloadObservationSeq != 14 {
+		t.Fatalf("512-byte metadata lost workload hint: %+v", got)
 	}
 }
 

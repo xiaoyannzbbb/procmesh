@@ -117,6 +117,11 @@ func NewPeerReplicationClient(hc *http.Client, base string) procmeshv1connect.Pe
 	return procmeshv1connect.NewPeerReplicationServiceClient(hc, base)
 }
 
+// NewWorkloadSummaryClient returns an internal workload summary client.
+func NewWorkloadSummaryClient(hc *http.Client, base string) procmeshv1connect.WorkloadSummaryServiceClient {
+	return procmeshv1connect.NewWorkloadSummaryServiceClient(hc, base)
+}
+
 func baseURL(addr string) string {
 	if strings.HasPrefix(addr, "https://") {
 		return addr

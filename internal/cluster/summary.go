@@ -1,5 +1,9 @@
 package cluster
 
+import "context"
+
+const WorkloadSyncV1 = 1
+
 type State string
 
 const (
@@ -24,34 +28,68 @@ type ProcessSummary struct {
 	FreshnessUnixMs int64  `json:"freshness_unix_ms"`
 }
 
+type WorkloadVersion struct {
+	Epoch   string
+	Version uint64
+}
+
+type WorkloadSnapshot struct {
+	NodeID         string
+	Epoch          string
+	Version        uint64
+	ObservationSeq uint64
+	Processes      []ProcessSummary
+}
+
+type WorkloadSyncStats struct {
+	FetchSuccessTotal        uint64
+	FetchErrorTotal          uint64
+	FetchDiscardedTotal      uint64
+	LastFetchDurationSeconds float64
+	QueueDepth               int
+	FailedNodes              int
+	CacheMaxAgeSeconds       float64
+}
+
+type WorkloadFetcher interface {
+	Fetch(context.Context, NodeSummary, WorkloadVersion) (WorkloadSnapshot, error)
+}
+
 type ResourceSummary struct {
-	CPUPercent          int  `json:"cpu_percent"`    // -1 = unknown / not collected
-	MemoryPercent       int  `json:"memory_percent"` // -1 = unknown / not collected
-	DiskPercent         int  `json:"disk_percent"`   // -1 = unknown / not collected
+	CPUPercent          int  `json:"cpu_percent,omitempty"`    // -1 = unknown / not collected
+	MemoryPercent       int  `json:"memory_percent,omitempty"` // -1 = unknown / not collected
+	DiskPercent         int  `json:"disk_percent,omitempty"`   // -1 = unknown / not collected
 	HistoryWritesPaused bool `json:"history_writes_paused,omitempty"`
 	HistoryPausePercent int  `json:"history_pause_percent,omitempty"`
 }
 
 type NodeSummary struct {
-	NodeID              string            `json:"node_id"`
-	ClusterID           string            `json:"cluster_id"`
-	Hostname            string            `json:"hostname"`
-	BootID              string            `json:"boot_id"`
-	State               State             `json:"state"`
-	AgentVersion        string            `json:"agent_version"`
-	ProtocolVersion     int               `json:"protocol_version"`
-	OS                  string            `json:"os,omitempty"`
-	Arch                string            `json:"arch,omitempty"`
-	APIAddress          string            `json:"api_address"`
-	RPCAddress          string            `json:"rpc_address"`
-	GossipAddress       string            `json:"gossip_address"`
-	Labels              map[string]string `json:"labels,omitempty"`
-	Resources           ResourceSummary   `json:"resources"`
-	Processes           []ProcessSummary  `json:"processes,omitempty"`
-	LastUpdatedUnixMs   int64             `json:"last_updated_unix_ms"`
-	DisableRemoteCreate bool              `json:"disable_remote_create,omitempty"`
-	DisableRemoteUpdate bool              `json:"disable_remote_update,omitempty"`
-	DisableRemoteDelete bool              `json:"disable_remote_delete,omitempty"`
+	NodeID                     string            `json:"node_id"`
+	ClusterID                  string            `json:"cluster_id"`
+	Hostname                   string            `json:"hostname"`
+	BootID                     string            `json:"boot_id"`
+	State                      State             `json:"state"`
+	AgentVersion               string            `json:"agent_version"`
+	ProtocolVersion            int               `json:"protocol_version"`
+	OS                         string            `json:"os,omitempty"`
+	Arch                       string            `json:"arch,omitempty"`
+	WorkloadSyncVersion        int               `json:"ws,omitempty"`
+	WorkloadEpoch              string            `json:"we,omitempty"`
+	WorkloadVersion            uint64            `json:"wv,omitempty"`
+	WorkloadObservationSeq     uint64            `json:"wo,omitempty"`
+	WorkloadFreshness          string            `json:"-"`
+	WorkloadLastVerifiedUnixMs int64             `json:"-"`
+	WorkloadFreshnessReason    string            `json:"-"`
+	APIAddress                 string            `json:"api_address"`
+	RPCAddress                 string            `json:"rpc_address"`
+	GossipAddress              string            `json:"gossip_address"`
+	Labels                     map[string]string `json:"labels,omitempty"`
+	Resources                  ResourceSummary   `json:"resources"`
+	Processes                  []ProcessSummary  `json:"processes,omitempty"`
+	LastUpdatedUnixMs          int64             `json:"last_updated_unix_ms"`
+	DisableRemoteCreate        bool              `json:"disable_remote_create,omitempty"`
+	DisableRemoteUpdate        bool              `json:"disable_remote_update,omitempty"`
+	DisableRemoteDelete        bool              `json:"disable_remote_delete,omitempty"`
 }
 
 type SummarySource interface {

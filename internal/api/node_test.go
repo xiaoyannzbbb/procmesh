@@ -139,6 +139,20 @@ func TestNodeToProto_OSArch(t *testing.T) {
 	}
 }
 
+func TestNodeToProto_WorkloadFreshness(t *testing.T) {
+	got := nodeToProto(cluster.NodeSummary{
+		NodeID:                     "n1",
+		WorkloadFreshness:          "STALE",
+		WorkloadLastVerifiedUnixMs: 1_700_000_000_123,
+		WorkloadFreshnessReason:    "FETCH_FAILED",
+	}, nil)
+	if got.GetWorkloadFreshness() != "STALE" ||
+		got.GetWorkloadLastVerifiedUnixMs() != 1_700_000_000_123 ||
+		got.GetWorkloadFreshnessReason() != "FETCH_FAILED" {
+		t.Fatalf("workload freshness = %q/%d/%q", got.GetWorkloadFreshness(), got.GetWorkloadLastVerifiedUnixMs(), got.GetWorkloadFreshnessReason())
+	}
+}
+
 func TestListNodes_StandaloneLocal(t *testing.T) {
 	e := newClusterEnvOpts(t, false, false)
 	listed, err := e.node.ListNodes(context.Background(), connect.NewRequest(&procmeshv1.ListNodesRequest{}))

@@ -396,6 +396,12 @@ func (r *rpcRuntime) localHandler() http.Handler {
 	})
 	mux.Handle(prp, prh)
 
+	// Internal Agent-to-Agent workload summary reads (no user auth, mTLS only).
+	wsp, wsh := procmeshv1connect.NewWorkloadSummaryServiceHandler(&api.WorkloadSummaryAPI{
+		Source: r.src, ClusterID: r.clusterID, NodeID: r.nodeID,
+	})
+	mux.Handle(wsp, wsh)
+
 	return mux
 }
 
@@ -654,4 +660,12 @@ func (f *agentForwarder) PeerReplication(_ context.Context, rt api.Route) (procm
 		return nil, err
 	}
 	return rpc.NewPeerReplicationClient(hc, base), nil
+}
+
+func (f *agentForwarder) WorkloadSummary(_ context.Context, rt api.Route) (procmeshv1connect.WorkloadSummaryServiceClient, error) {
+	hc, base, err := f.dial(rt, 0)
+	if err != nil {
+		return nil, err
+	}
+	return rpc.NewWorkloadSummaryClient(hc, base), nil
 }

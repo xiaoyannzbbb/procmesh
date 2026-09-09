@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package procmesh.v1;
+
+option go_package = "github.com/qleelulu/procmesh/proto/procmesh/v1;procmeshv1";
+
+import "procmesh/v1/cluster_types.proto";
+
+// WorkloadSummaryService exposes sanitized process summaries to admitted
+// peers over the Agent mTLS listener. It is not mounted on the Web listener.
+service WorkloadSummaryService {
+  rpc FetchWorkloadSnapshot(FetchWorkloadSnapshotRequest) returns (stream WorkloadSnapshotChunk);
+}
+
+message FetchWorkloadSnapshotRequest {
+  string known_epoch = 1;
+  uint64 known_version = 2;
+}
+
+message WorkloadSnapshotChunk {
+  string node_id = 1;
+  string epoch = 2;
+  uint64 version = 3;
+  uint64 observation_seq = 4;
+  repeated ProcessSummary processes = 5;
+}

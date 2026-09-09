@@ -206,7 +206,7 @@ func Run(ctx context.Context, opt Options) error {
 			logger.Warn("store reopen failed", "error", err)
 			return serveHTTP(ctx, opt, nil, nil, nil, true, func() error {
 				return errcode.E(errcode.DEGRADED, "store unavailable")
-			}, nil, nil, nil, api.ClusterDeps{}, nil, updateChecker, newUpdateLocal(cfg.Update, opt.DataDir))
+			}, nil, nil, nil, api.ClusterDeps{}, nil, updateChecker, newUpdateLocal(cfg.Update, opt.DataDir), nil)
 		}
 		degraded = true
 	}
@@ -332,15 +332,17 @@ func Run(ctx context.Context, opt Options) error {
 	defer rec.Stop()
 	hostname, _ := os.Hostname()
 	src := &liveSource{
-		nodeID:     nodeID,
-		hostname:   hostname,
-		bootID:     hostBoot,
-		store:      st,
-		mgr:        mgr,
-		metrics:    collector,
-		diskPolicy: cfg.Disk,
-		process:    cfg.Process,
+		nodeID:        nodeID,
+		hostname:      hostname,
+		bootID:        hostBoot,
+		workloadEpoch: newBatchID(),
+		store:         st,
+		mgr:           mgr,
+		metrics:       collector,
+		diskPolicy:    cfg.Disk,
+		process:       cfg.Process,
 	}
+	fwd := &agentForwarder{}
 
 	if control.AlreadyInited(layout.ClusterDir) || agentCertExists(layout.ClusterDir) {
 		// Joiners persist agent.crt without ca.key; skip LoadBundle unless the seed CA key is present.
@@ -361,6 +363,7 @@ func Run(ctx context.Context, opt Options) error {
 		TestFast:          bindPort == 0,
 		EnableCompression: cfg.Gossip.Compression,
 		Logger:            logger.With("component", "gossip"),
+		WorkloadFetcher:   agentWorkloadFetcher{forwarder: fwd},
 	})
 	if err != nil {
 		return fmt.Errorf("start mesh: %w", err)
@@ -391,7 +394,7 @@ func Run(ctx context.Context, opt Options) error {
 		NodeID:     nodeID,
 		Hostname:   hostname,
 		BootID:     hostBoot,
-	}, batchEng, updateChecker, newUpdateLocal(cfg.Update, opt.DataDir))
+	}, batchEng, updateChecker, newUpdateLocal(cfg.Update, opt.DataDir), fwd)
 }
 
 func newUpdateChecker(cfg agentcfg.Update) *update.Checker {
@@ -709,7 +712,7 @@ func newBatchID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
-func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *logmgr.Manager, st *store.Store, degraded bool, ready func() error, mesh *cluster.Mesh, src *liveSource, collector *metrics.Collector, clusterDeps api.ClusterDeps, batchEng *batch.Engine, updateChecker api.LatestChecker, updateLocal api.LocalInfoProvider) error {
+func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *logmgr.Manager, st *store.Store, degraded bool, ready func() error, mesh *cluster.Mesh, src *liveSource, collector *metrics.Collector, clusterDeps api.ClusterDeps, batchEng *batch.Engine, updateChecker api.LatestChecker, updateLocal api.LocalInfoProvider, fwd *agentForwarder) error {
 	ln, err := net.Listen("tcp", opt.Listen)
 	if err != nil {
 		shutdownMesh(mesh)
@@ -730,7 +733,9 @@ func serveHTTP(ctx context.Context, opt Options, mgr *process.Manager, logs *log
 		mesh.Update()
 	}
 
-	fwd := &agentForwarder{}
+	if fwd == nil {
+		fwd = &agentForwarder{}
+	}
 	authSvc := &auth.Service{}
 	started := time.Now()
 	raftDir := ""

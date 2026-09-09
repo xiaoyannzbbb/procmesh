@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/memberlist"
+	"github.com/qleelulu/procmesh/internal/freshness"
 	"github.com/qleelulu/procmesh/internal/version"
 )
 
@@ -42,8 +43,9 @@ type Config struct {
 	SuspectAfter time.Duration
 	// UpdateTimeout bounds UpdateNode dissemination. Zero means
 	// DefaultUpdateTimeout (2s).
-	UpdateTimeout time.Duration
-	Now           func() time.Time
+	UpdateTimeout   time.Duration
+	Now             func() time.Time
+	WorkloadFetcher WorkloadFetcher
 }
 
 type Mesh struct {
@@ -57,11 +59,14 @@ type Mesh struct {
 	// observable during that window, then removed from ProcMesh's copied view.
 	leftRetention time.Duration
 
-	mu           sync.RWMutex
-	view         map[string]NodeSummary
-	leftObserved map[string]time.Time
-	protocols    map[string]int
-	conflicts    map[string]struct{}
+	mu               sync.RWMutex
+	view             map[string]NodeSummary
+	workloads        map[string]cachedWorkload
+	workloadFailures map[string]workloadFetchFailure
+	leftObserved     map[string]time.Time
+	protocols        map[string]int
+	conflicts        map[string]struct{}
+	workloadSync     *workloadSyncer
 }
 
 func Start(cfg Config) (*Mesh, error) {
@@ -87,13 +92,15 @@ func Start(cfg Config) (*Mesh, error) {
 	localName := cfg.NodeID + "#" + snap.BootID
 
 	m := &Mesh{
-		cfg:          cfg,
-		localName:    localName,
-		localBoot:    snap.BootID,
-		view:         make(map[string]NodeSummary),
-		leftObserved: make(map[string]time.Time),
-		protocols:    make(map[string]int),
-		conflicts:    make(map[string]struct{}),
+		cfg:              cfg,
+		localName:        localName,
+		localBoot:        snap.BootID,
+		view:             make(map[string]NodeSummary),
+		workloads:        make(map[string]cachedWorkload),
+		workloadFailures: make(map[string]workloadFetchFailure),
+		leftObserved:     make(map[string]time.Time),
+		protocols:        make(map[string]int),
+		conflicts:        make(map[string]struct{}),
 	}
 
 	conf := memberlist.DefaultLANConfig()
@@ -138,6 +145,9 @@ func Start(cfg Config) (*Mesh, error) {
 		return nil, fmt.Errorf("cluster: start memberlist: %w", err)
 	}
 	m.list = list
+	if cfg.WorkloadFetcher != nil {
+		m.workloadSync = newWorkloadSyncer(m, cfg.WorkloadFetcher)
+	}
 	ln := list.LocalNode()
 	m.bound = net.JoinHostPort(ln.Addr.String(), strconv.Itoa(int(ln.Port)))
 	// Refresh NodeMeta now that the bound port is known.
@@ -175,6 +185,9 @@ func (m *Mesh) Leave(timeout time.Duration) error {
 }
 
 func (m *Mesh) Shutdown() error {
+	if m.workloadSync != nil {
+		m.workloadSync.stop()
+	}
 	if m.list == nil {
 		return nil
 	}
@@ -252,6 +265,7 @@ func (m *Mesh) Members() []NodeSummary {
 	m.applyMemberlistStates()
 	m.expireLeftTombstones()
 	local := m.localSummary()
+	applyLocalWorkloadFreshness(&local, m.now())
 
 	m.mu.RLock()
 	out := make([]NodeSummary, 0, len(m.view)+1)
@@ -259,6 +273,9 @@ func (m *Mesh) Members() []NodeSummary {
 		if id == local.NodeID {
 			continue
 		}
+		workload, ok := m.workloads[id]
+		failure, failed := m.workloadFailures[id]
+		applyRemoteWorkload(&s, workload, ok, failure, failed, m.now())
 		out = append(out, s)
 	}
 	m.mu.RUnlock()
@@ -268,6 +285,87 @@ func (m *Mesh) Members() []NodeSummary {
 		return out[i].NodeID < out[j].NodeID
 	})
 	return out
+}
+
+func applyLocalWorkloadFreshness(summary *NodeSummary, now time.Time) {
+	if summary.WorkloadSyncVersion >= WorkloadSyncV1 && summary.WorkloadEpoch != "" && summary.WorkloadVersion > 0 {
+		summary.WorkloadFreshness = freshness.ClassifyProcess(now, summary.WorkloadLastVerifiedUnixMs, string(summary.State))
+		if summary.WorkloadFreshness == freshness.LIVE {
+			summary.WorkloadFreshnessReason = "CURRENT"
+		} else {
+			summary.WorkloadFreshnessReason = workloadNonLiveReason(summary.State, summary.WorkloadLastVerifiedUnixMs)
+		}
+		return
+	}
+	applyLegacyWorkloadFreshness(summary, now)
+}
+
+func applyRemoteWorkload(summary *NodeSummary, cached cachedWorkload, ok bool, failure workloadFetchFailure, failed bool, now time.Time) {
+	if !ok {
+		summary.Processes = nil
+		summary.WorkloadFreshness = freshness.UNKNOWN
+		if failed && failure.matches(*summary) {
+			summary.WorkloadFreshnessReason = "FETCH_FAILED"
+		} else {
+			summary.WorkloadFreshnessReason = "NO_SNAPSHOT"
+		}
+		return
+	}
+	summary.Processes = cloneProcessSummaries(cached.processes)
+	summary.WorkloadLastVerifiedUnixMs = cached.verifiedUnixMs
+	if cached.epoch == "" || cached.version == 0 {
+		applyLegacyWorkloadFreshness(summary, now)
+		return
+	}
+	if summary.State != StateAlive {
+		summary.WorkloadFreshness = freshness.STALE
+		summary.WorkloadFreshnessReason = "OWNER_NOT_ALIVE"
+		return
+	}
+	if failed && failure.matches(*summary) {
+		summary.WorkloadFreshness = freshness.STALE
+		summary.WorkloadFreshnessReason = "FETCH_FAILED"
+		return
+	}
+	if cached.epoch != summary.WorkloadEpoch || cached.version != summary.WorkloadVersion {
+		summary.WorkloadFreshness = freshness.STALE
+		summary.WorkloadFreshnessReason = "SYNC_PENDING"
+		return
+	}
+	summary.WorkloadFreshness = freshness.ClassifyProcess(now, cached.verifiedUnixMs, string(summary.State))
+	if summary.WorkloadFreshness == freshness.LIVE {
+		summary.WorkloadFreshnessReason = "CURRENT"
+	} else {
+		summary.WorkloadFreshnessReason = workloadNonLiveReason(summary.State, cached.verifiedUnixMs)
+	}
+}
+
+func applyLegacyWorkloadFreshness(summary *NodeSummary, now time.Time) {
+	lastVerified := int64(0)
+	for _, process := range summary.Processes {
+		if process.FreshnessUnixMs > lastVerified {
+			lastVerified = process.FreshnessUnixMs
+		}
+	}
+	summary.WorkloadLastVerifiedUnixMs = lastVerified
+	summary.WorkloadFreshness = freshness.ClassifyProcess(now, lastVerified, string(summary.State))
+	if summary.WorkloadFreshness == freshness.LIVE {
+		summary.WorkloadFreshnessReason = "LEGACY"
+	} else if summary.WorkloadFreshness == freshness.UNKNOWN {
+		summary.WorkloadFreshnessReason = "NO_SNAPSHOT"
+	} else {
+		summary.WorkloadFreshnessReason = workloadNonLiveReason(summary.State, lastVerified)
+	}
+}
+
+func workloadNonLiveReason(state State, lastVerifiedUnixMs int64) string {
+	if state != StateAlive {
+		return "OWNER_NOT_ALIVE"
+	}
+	if lastVerifiedUnixMs <= 0 {
+		return "NO_SNAPSHOT"
+	}
+	return "EXPIRED"
 }
 
 func (m *Mesh) expireLeftTombstones() {
@@ -281,6 +379,8 @@ func (m *Mesh) expireLeftTombstones() {
 		delete(m.leftObserved, id)
 		if m.view[id].State == StateLeft {
 			delete(m.view, id)
+			delete(m.workloads, id)
+			delete(m.workloadFailures, id)
 		}
 	}
 }
@@ -378,12 +478,15 @@ func (m *Mesh) markSuspectLocked(nodeID string) bool {
 }
 
 func (m *Mesh) NodeMeta(limit int) []byte {
-	raw := EncodeMeta(m.localSummary())
+	s := m.localSummary()
+	raw := EncodeMeta(s)
 	if limit > 0 && len(raw) > limit {
-		s := m.localSummary()
 		s.Labels = nil
 		s.Resources = ResourceSummary{}
 		raw = EncodeMeta(s)
+	}
+	if limit > 0 && len(raw) > limit {
+		return nil
 	}
 	return raw
 }
@@ -537,6 +640,9 @@ func (m *Mesh) store(s NodeSummary, source string) {
 	if prev.NodeID != "" && keepTerminal(prev.State, s.State) {
 		return
 	}
+	s = preserveNewerWorkloadHint(s, prev)
+	m.applyFullWorkloadLocked(s)
+	s.Processes = nil
 	m.setViewLocked(prev.State, s)
 	m.logRemoteUpdateLocked(prev, s, source)
 }
@@ -546,13 +652,14 @@ func (m *Mesh) upsertMeta(s NodeSummary, revive bool, source string) {
 		return
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.rejectLocalCloneLocked(s) {
+		m.mu.Unlock()
 		return
 	}
 	prev := m.view[s.NodeID]
 	if prev.NodeID != "" {
 		s = mergePreserved(s, prev)
+		s = preserveNewerWorkloadHint(s, prev)
 		if !revive && keepTerminal(prev.State, s.State) {
 			s.State = prev.State
 		}
@@ -563,8 +670,15 @@ func (m *Mesh) upsertMeta(s NodeSummary, revive bool, source string) {
 	if s.State == "" {
 		s.State = StateAlive
 	}
+	m.applyWorkloadHintLocked(s)
+	s.Processes = nil
 	m.setViewLocked(prev.State, s)
 	m.logRemoteUpdateLocked(prev, s, source)
+	needsFetch := m.workloadFetchReadyLocked(s.NodeID)
+	m.mu.Unlock()
+	if needsFetch && m.workloadSync != nil {
+		m.workloadSync.enqueue(s.NodeID)
+	}
 }
 
 func (m *Mesh) setViewLocked(previousState State, current NodeSummary) {
@@ -658,15 +772,28 @@ func mergePreserved(s, prev NodeSummary) NodeSummary {
 	if prev.NodeID == "" {
 		return s
 	}
-	if len(s.Processes) == 0 {
-		s.Processes = prev.Processes
-	}
 	if s.Resources == (ResourceSummary{}) {
 		s.Resources = prev.Resources
 	}
 	if s.LastUpdatedUnixMs == 0 {
 		s.LastUpdatedUnixMs = prev.LastUpdatedUnixMs
 	}
+	return s
+}
+
+func preserveNewerWorkloadHint(s, prev NodeSummary) NodeSummary {
+	if s.WorkloadSyncVersion < WorkloadSyncV1 || prev.WorkloadSyncVersion < WorkloadSyncV1 ||
+		s.WorkloadEpoch == "" || s.WorkloadEpoch != prev.WorkloadEpoch {
+		return s
+	}
+	if s.WorkloadVersion > prev.WorkloadVersion ||
+		s.WorkloadVersion == prev.WorkloadVersion && s.WorkloadObservationSeq >= prev.WorkloadObservationSeq {
+		return s
+	}
+	s.WorkloadSyncVersion = prev.WorkloadSyncVersion
+	s.WorkloadEpoch = prev.WorkloadEpoch
+	s.WorkloadVersion = prev.WorkloadVersion
+	s.WorkloadObservationSeq = prev.WorkloadObservationSeq
 	return s
 }
 

@@ -11,11 +11,50 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/qleelulu/procmesh/internal/backup"
+	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/store"
 	procmeshv1 "github.com/qleelulu/procmesh/proto/procmesh/v1"
 	"github.com/qleelulu/procmesh/proto/procmesh/v1/procmeshv1connect"
 )
+
+type workloadStatsNodeLister struct {
+	stats cluster.WorkloadSyncStats
+}
+
+func (l workloadStatsNodeLister) Members() []cluster.NodeSummary { return nil }
+
+func (l workloadStatsNodeLister) WorkloadSyncStats() cluster.WorkloadSyncStats { return l.stats }
+
+func TestMetrics_WorkloadSync(t *testing.T) {
+	m, st, _ := newTestManager(t)
+	srv, err := NewServer(Options{
+		Mgr: m, Store: st, Started: time.Now(),
+		Cluster: ClusterDeps{Mesh: workloadStatsNodeLister{stats: cluster.WorkloadSyncStats{
+			FetchSuccessTotal: 3, FetchErrorTotal: 2, FetchDiscardedTotal: 1,
+			LastFetchDurationSeconds: 0.125, QueueDepth: 4, FailedNodes: 2, CacheMaxAgeSeconds: 12.5,
+		}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	srv.Engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rec.Body.String()
+	for _, want := range []string{
+		`procmesh_workload_sync_fetch_total{result="success"} 3`,
+		`procmesh_workload_sync_fetch_total{result="error"} 2`,
+		`procmesh_workload_sync_fetch_total{result="discarded"} 1`,
+		"procmesh_workload_sync_last_fetch_duration_seconds 0.125",
+		"procmesh_workload_sync_queue_depth 4",
+		"procmesh_workload_sync_failed_nodes 2",
+		"procmesh_workload_sync_cache_max_age_seconds 12.5",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %q:\n%s", want, body)
+		}
+	}
+}
 
 func TestMetrics_ControlQuorum(t *testing.T) {
 	m, st, _ := newTestManager(t)

@@ -206,31 +206,34 @@ func (x *ProcessSummary) GetGroup() string {
 }
 
 type Node struct {
-	state               protoimpl.MessageState `protogen:"open.v1"`
-	NodeId              string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	ClusterId           string                 `protobuf:"bytes,2,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
-	Hostname            string                 `protobuf:"bytes,3,opt,name=hostname,proto3" json:"hostname,omitempty"`
-	BootId              string                 `protobuf:"bytes,4,opt,name=boot_id,json=bootId,proto3" json:"boot_id,omitempty"`
-	State               string                 `protobuf:"bytes,5,opt,name=state,proto3" json:"state,omitempty"` // JOINING | ALIVE | SUSPECT | FAILED | LEFT | REMOVED | REVOKED
-	AgentVersion        string                 `protobuf:"bytes,6,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
-	ProtocolVersion     int32                  `protobuf:"varint,7,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"`
-	ApiAddress          string                 `protobuf:"bytes,8,opt,name=api_address,json=apiAddress,proto3" json:"api_address,omitempty"`
-	RpcAddress          string                 `protobuf:"bytes,9,opt,name=rpc_address,json=rpcAddress,proto3" json:"rpc_address,omitempty"`
-	GossipAddress       string                 `protobuf:"bytes,10,opt,name=gossip_address,json=gossipAddress,proto3" json:"gossip_address,omitempty"`
-	Labels              map[string]string      `protobuf:"bytes,11,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Resources           *ResourceSummary       `protobuf:"bytes,12,opt,name=resources,proto3" json:"resources,omitempty"`
-	Processes           []*ProcessSummary      `protobuf:"bytes,13,rep,name=processes,proto3" json:"processes,omitempty"`
-	LastUpdatedUnixMs   int64                  `protobuf:"varint,14,opt,name=last_updated_unix_ms,json=lastUpdatedUnixMs,proto3" json:"last_updated_unix_ms,omitempty"`
-	AgentGroupIds       []string               `protobuf:"bytes,15,rep,name=agent_group_ids,json=agentGroupIds,proto3" json:"agent_group_ids,omitempty"`
-	RaftRole            string                 `protobuf:"bytes,16,opt,name=raft_role,json=raftRole,proto3" json:"raft_role,omitempty"`                              // LEADER | VOTER | NON_VOTER | NOT_MEMBER | UNKNOWN
-	RaftRoleFreshness   string                 `protobuf:"bytes,17,opt,name=raft_role_freshness,json=raftRoleFreshness,proto3" json:"raft_role_freshness,omitempty"` // LIVE | STALE | UNKNOWN
-	DisableRemoteCreate bool                   `protobuf:"varint,18,opt,name=disable_remote_create,json=disableRemoteCreate,proto3" json:"disable_remote_create,omitempty"`
-	DisableRemoteUpdate bool                   `protobuf:"varint,19,opt,name=disable_remote_update,json=disableRemoteUpdate,proto3" json:"disable_remote_update,omitempty"`
-	DisableRemoteDelete bool                   `protobuf:"varint,20,opt,name=disable_remote_delete,json=disableRemoteDelete,proto3" json:"disable_remote_delete,omitempty"`
-	Os                  string                 `protobuf:"bytes,21,opt,name=os,proto3" json:"os,omitempty"`     // linux | darwin | ... empty if the peer has not advertised it
-	Arch                string                 `protobuf:"bytes,22,opt,name=arch,proto3" json:"arch,omitempty"` // amd64 | arm64 | arm | ... empty if unknown
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	state                      protoimpl.MessageState `protogen:"open.v1"`
+	NodeId                     string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	ClusterId                  string                 `protobuf:"bytes,2,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
+	Hostname                   string                 `protobuf:"bytes,3,opt,name=hostname,proto3" json:"hostname,omitempty"`
+	BootId                     string                 `protobuf:"bytes,4,opt,name=boot_id,json=bootId,proto3" json:"boot_id,omitempty"`
+	State                      string                 `protobuf:"bytes,5,opt,name=state,proto3" json:"state,omitempty"` // JOINING | ALIVE | SUSPECT | FAILED | LEFT | REMOVED | REVOKED
+	AgentVersion               string                 `protobuf:"bytes,6,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
+	ProtocolVersion            int32                  `protobuf:"varint,7,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"`
+	ApiAddress                 string                 `protobuf:"bytes,8,opt,name=api_address,json=apiAddress,proto3" json:"api_address,omitempty"`
+	RpcAddress                 string                 `protobuf:"bytes,9,opt,name=rpc_address,json=rpcAddress,proto3" json:"rpc_address,omitempty"`
+	GossipAddress              string                 `protobuf:"bytes,10,opt,name=gossip_address,json=gossipAddress,proto3" json:"gossip_address,omitempty"`
+	Labels                     map[string]string      `protobuf:"bytes,11,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Resources                  *ResourceSummary       `protobuf:"bytes,12,opt,name=resources,proto3" json:"resources,omitempty"`
+	Processes                  []*ProcessSummary      `protobuf:"bytes,13,rep,name=processes,proto3" json:"processes,omitempty"`
+	LastUpdatedUnixMs          int64                  `protobuf:"varint,14,opt,name=last_updated_unix_ms,json=lastUpdatedUnixMs,proto3" json:"last_updated_unix_ms,omitempty"`
+	AgentGroupIds              []string               `protobuf:"bytes,15,rep,name=agent_group_ids,json=agentGroupIds,proto3" json:"agent_group_ids,omitempty"`
+	RaftRole                   string                 `protobuf:"bytes,16,opt,name=raft_role,json=raftRole,proto3" json:"raft_role,omitempty"`                              // LEADER | VOTER | NON_VOTER | NOT_MEMBER | UNKNOWN
+	RaftRoleFreshness          string                 `protobuf:"bytes,17,opt,name=raft_role_freshness,json=raftRoleFreshness,proto3" json:"raft_role_freshness,omitempty"` // LIVE | STALE | UNKNOWN
+	DisableRemoteCreate        bool                   `protobuf:"varint,18,opt,name=disable_remote_create,json=disableRemoteCreate,proto3" json:"disable_remote_create,omitempty"`
+	DisableRemoteUpdate        bool                   `protobuf:"varint,19,opt,name=disable_remote_update,json=disableRemoteUpdate,proto3" json:"disable_remote_update,omitempty"`
+	DisableRemoteDelete        bool                   `protobuf:"varint,20,opt,name=disable_remote_delete,json=disableRemoteDelete,proto3" json:"disable_remote_delete,omitempty"`
+	Os                         string                 `protobuf:"bytes,21,opt,name=os,proto3" json:"os,omitempty"`                                                                                          // linux | darwin | ... empty if the peer has not advertised it
+	Arch                       string                 `protobuf:"bytes,22,opt,name=arch,proto3" json:"arch,omitempty"`                                                                                      // amd64 | arm64 | arm | ... empty if unknown
+	WorkloadFreshness          string                 `protobuf:"bytes,23,opt,name=workload_freshness,json=workloadFreshness,proto3" json:"workload_freshness,omitempty"`                                   // LIVE | STALE | UNKNOWN
+	WorkloadLastVerifiedUnixMs int64                  `protobuf:"varint,24,opt,name=workload_last_verified_unix_ms,json=workloadLastVerifiedUnixMs,proto3" json:"workload_last_verified_unix_ms,omitempty"` // observer-local verification time
+	WorkloadFreshnessReason    string                 `protobuf:"bytes,25,opt,name=workload_freshness_reason,json=workloadFreshnessReason,proto3" json:"workload_freshness_reason,omitempty"`               // CURRENT | SYNC_PENDING | FETCH_FAILED | OWNER_NOT_ALIVE | EXPIRED | NO_SNAPSHOT | LEGACY
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
 }
 
 func (x *Node) Reset() {
@@ -417,6 +420,27 @@ func (x *Node) GetArch() string {
 	return ""
 }
 
+func (x *Node) GetWorkloadFreshness() string {
+	if x != nil {
+		return x.WorkloadFreshness
+	}
+	return ""
+}
+
+func (x *Node) GetWorkloadLastVerifiedUnixMs() int64 {
+	if x != nil {
+		return x.WorkloadLastVerifiedUnixMs
+	}
+	return 0
+}
+
+func (x *Node) GetWorkloadFreshnessReason() string {
+	if x != nil {
+		return x.WorkloadFreshnessReason
+	}
+	return ""
+}
+
 var File_procmesh_v1_cluster_types_proto protoreflect.FileDescriptor
 
 const file_procmesh_v1_cluster_types_proto_rawDesc = "" +
@@ -439,7 +463,7 @@ const file_procmesh_v1_cluster_types_proto_rawDesc = "" +
 	"\x11freshness_unix_ms\x18\a \x01(\x03R\x0ffreshnessUnixMs\x12\x1d\n" +
 	"\n" +
 	"process_id\x18\b \x01(\tR\tprocessId\x12\x14\n" +
-	"\x05group\x18\t \x01(\tR\x05group\"\x91\a\n" +
+	"\x05group\x18\t \x01(\tR\x05group\"\xc0\b\n" +
 	"\x04Node\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x1d\n" +
 	"\n" +
@@ -466,7 +490,10 @@ const file_procmesh_v1_cluster_types_proto_rawDesc = "" +
 	"\x15disable_remote_update\x18\x13 \x01(\bR\x13disableRemoteUpdate\x122\n" +
 	"\x15disable_remote_delete\x18\x14 \x01(\bR\x13disableRemoteDelete\x12\x0e\n" +
 	"\x02os\x18\x15 \x01(\tR\x02os\x12\x12\n" +
-	"\x04arch\x18\x16 \x01(\tR\x04arch\x1a9\n" +
+	"\x04arch\x18\x16 \x01(\tR\x04arch\x12-\n" +
+	"\x12workload_freshness\x18\x17 \x01(\tR\x11workloadFreshness\x12B\n" +
+	"\x1eworkload_last_verified_unix_ms\x18\x18 \x01(\x03R\x1aworkloadLastVerifiedUnixMs\x12:\n" +
+	"\x19workload_freshness_reason\x18\x19 \x01(\tR\x17workloadFreshnessReason\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B;Z9github.com/qleelulu/procmesh/proto/procmesh/v1;procmeshv1b\x06proto3"

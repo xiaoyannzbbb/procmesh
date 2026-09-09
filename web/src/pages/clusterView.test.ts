@@ -163,6 +163,24 @@ describe("mapProcess / mapNode", () => {
     expect(node.processes[0]?.freshness).toBe(LIVE);
   });
 
+  it("honors server workload freshness when a newer snapshot is pending", () => {
+    const node = mapNode(
+      {
+        nodeId: "n1",
+        state: "ALIVE",
+        lastUpdatedUnixMs: nowMs,
+        workloadFreshness: "STALE",
+        workloadLastVerifiedUnixMs: nowMs - 1_000,
+        workloadFreshnessReason: "SYNC_PENDING",
+        processes: [{ name: "api", observed: "RUNNING", freshnessUnixMs: nowMs }],
+      },
+      nowMs,
+    );
+    expect(node.workloadFreshness).toBe(STALE);
+    expect(node.workloadFreshnessReason).toBe("SYNC_PENDING");
+    expect(node.processes[0]?.freshness).toBe(STALE);
+  });
+
   it("marks a RUNNING process on a FAILED node as STALE", () => {
     const row = mapProcess(
       {
@@ -189,6 +207,8 @@ describe("mapProcess / mapNode", () => {
         state: "FAILED",
         agentVersion: "0.1.0",
         lastUpdatedUnixMs: nowMs - 60_000,
+        workloadFreshness: "LIVE",
+        workloadLastVerifiedUnixMs: nowMs - 1_000,
         resources: { cpuPercent: 1, memoryPercent: 2, diskPercent: 3 },
         processes: [
           {

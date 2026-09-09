@@ -1625,6 +1625,12 @@ Configuration Revision Summary
 Health Summary
 ```
 
+Process Summary 的实时同步不把明细塞入 NodeMeta：Owner 在 NodeMeta 中发布
+`epoch/version/observation_seq` 轻量提示。观察节点发现内容版本变化后，通过 Agent
+mTLS RPC 拉取完整、脱敏的摘要；内容版本不变且 observation_seq 前进时，只使用观察
+节点本地接收时间刷新验证时间。memberlist LocalState 保留为低频反熵兜底，不作为实时
+主通道，也不改变 Owner 的单写权威。
+
 ---
 
 # 40. 不通过 Gossip 同步的数据

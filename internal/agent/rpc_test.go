@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/hashicorp/memberlist"
 	"github.com/qleelulu/procmesh/internal/api"
 	"github.com/qleelulu/procmesh/internal/backup"
+	"github.com/qleelulu/procmesh/internal/cluster"
 	"github.com/qleelulu/procmesh/internal/control"
 	"github.com/qleelulu/procmesh/internal/rpc"
 	"github.com/qleelulu/procmesh/internal/update"
@@ -81,6 +83,86 @@ func TestRPCRuntime_StartRPCLockedWiresClusterIDIntoPeerReplicationHandler(t *te
 	if err == nil || connect.CodeOf(err) != connect.CodePermissionDenied || !strings.Contains(err.Error(), "control unavailable") {
 		t.Fatalf("valid mTLS cluster should reach control-state authorization, got %v", err)
 	}
+}
+
+func TestRPCRuntime_WorkloadFetcherReadsOwnerSnapshotOverMTLS(t *testing.T) {
+	const clusterID, ownerID = "cluster-workload", "owner-workload"
+	dir := t.TempDir()
+	bundle, err := control.NewBundle(clusterID, ownerID, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := control.WriteBundle(dir, bundle); err != nil {
+		t.Fatal(err)
+	}
+	ownerProcesses := []cluster.ProcessSummary{{ProcessID: "p1", Name: "worker", Observed: "RUNNING"}}
+	src := &liveSource{
+		nodeID: ownerID, bootID: "boot-owner", workloadEpoch: "epoch-owner",
+		readWorkload: func(context.Context) ([]cluster.ProcessSummary, error) {
+			return append([]cluster.ProcessSummary(nil), ownerProcesses...), nil
+		},
+	}
+	runtime := &rpcRuntime{
+		dir: dir, nodeID: ownerID, opt: Options{RPCListen: "127.0.0.1:0"}, src: src,
+		logger: slog.New(slog.DiscardHandler), fwd: &agentForwarder{},
+	}
+	if err := runtime.startRPC(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { runtime.shutdown(context.Background()) })
+
+	observerCreds := issuePeerAgentCreds(t, bundle, clusterID, "observer-workload", time.Now())
+	forwarder := &agentForwarder{}
+	forwarder.set(observerCreds, clusterID, nil)
+	fetcher := agentWorkloadFetcher{forwarder: forwarder}
+	snapshot, err := fetcher.Fetch(context.Background(), cluster.NodeSummary{
+		NodeID: ownerID, RPCAddress: runtime.ln.Addr().String(),
+	}, cluster.WorkloadVersion{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.NodeID != ownerID || snapshot.Epoch != "epoch-owner" || snapshot.Version != 1 || snapshot.ObservationSeq == 0 {
+		t.Fatalf("snapshot identity/version = %+v", snapshot)
+	}
+	if len(snapshot.Processes) != 1 || snapshot.Processes[0].ProcessID != "p1" || snapshot.Processes[0].Observed != "RUNNING" {
+		t.Fatalf("snapshot processes = %+v", snapshot.Processes)
+	}
+
+	ownerState := src.Snapshot()
+	ownerState.RPCAddress = runtime.ln.Addr().String()
+	observerSource := &liveSource{
+		nodeID: "observer-workload", bootID: "boot-observer", workloadEpoch: "epoch-observer",
+		readWorkload: func(context.Context) ([]cluster.ProcessSummary, error) { return nil, nil },
+	}
+	observer, err := cluster.Start(cluster.Config{
+		NodeID: "observer-workload", BindAddr: "127.0.0.1", BindPort: 0,
+		Source: observerSource, TestFast: true, WorkloadFetcher: fetcher,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = observer.Shutdown() })
+	observer.MergeForTest(cluster.EncodeState(ownerState))
+
+	ownerProcesses = []cluster.ProcessSummary{{ProcessID: "p2", Name: "replacement", Observed: "STOPPED"}}
+	hint := src.Snapshot()
+	hint.RPCAddress = runtime.ln.Addr().String()
+	observer.NotifyUpdate(&memberlist.Node{
+		Name: ownerID + "#boot-owner",
+		Meta: cluster.EncodeMeta(hint),
+	})
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, member := range observer.Members() {
+			if member.NodeID == ownerID && len(member.Processes) == 1 &&
+				member.Processes[0].ProcessID == "p2" && member.WorkloadFreshness == "LIVE" &&
+				observer.WorkloadSyncStats().FetchSuccessTotal > 0 {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("observer did not converge through workload RPC: members=%+v stats=%+v", observer.Members(), observer.WorkloadSyncStats())
 }
 
 func TestRPCRuntime_InternalUpdateServiceExposesLocalInfo(t *testing.T) {

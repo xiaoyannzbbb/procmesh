@@ -48,4 +48,7 @@ message Node {
   bool disable_remote_delete = 20;
   string os = 21; // linux | darwin | ... empty if the peer has not advertised it
   string arch = 22; // amd64 | arm64 | arm | ... empty if unknown
+  string workload_freshness = 23; // LIVE | STALE | UNKNOWN
+  int64 workload_last_verified_unix_ms = 24; // observer-local verification time
+  string workload_freshness_reason = 25; // CURRENT | SYNC_PENDING | FETCH_FAILED | OWNER_NOT_ALIVE | EXPIRED | NO_SNAPSHOT | LEGACY
 }
